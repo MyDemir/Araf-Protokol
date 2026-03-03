@@ -15,6 +15,7 @@ function App() {
   const [isBanned, setIsBanned] = useState(false);
   const [cancelStatus, setCancelStatus] = useState(null);
   const [cooldownPassed, setCooldownPassed] = useState(false);
+  const [chargebackAccepted, setChargebackAccepted] = useState(false); // YENİ: Chargeback Güvenlik Onayı
 
   // --- KULLANICI VE VERİ STATE'LERİ ---
   const [lang, setLang] = useState('TR'); 
@@ -24,7 +25,7 @@ function App() {
   
   const [bankOwner, setBankOwner] = useState('Ahmet Polat');
   const [bankIBAN, setBankIBAN] = useState('TR12 3456 7890 1234 5678 90');
-  const [telegramHandle, setTelegramHandle] = useState('@ahmet_tr'); 
+  const [telegramHandle, setTelegramHandle] = useState('ahmet_tr'); 
 
   const [activeTrade, setActiveTrade] = useState(null);
 
@@ -72,6 +73,7 @@ function App() {
     setTradeState('LOCKED');
     setCancelStatus(null);
     setCooldownPassed(false);
+    setChargebackAccepted(false); // Yeni işleme başlarken onayı sıfırla
     setCurrentView('tradeRoom');
   };
 
@@ -91,6 +93,12 @@ function App() {
     setFeedbackText('');
     setFeedbackRating(0);
     showToast(lang === 'TR' ? 'Geri bildiriminiz için teşekkürler!' : 'Thank you for your feedback!', 'success');
+  };
+
+  // YENİ: XSS Korumalı Telegram URL Üretici
+  const getSafeTelegramUrl = (handle) => {
+    const safeHandle = handle.replace(/[^a-zA-Z0-9_]/g, '');
+    return `https://t.me/${safeHandle}`;
   };
 
   // --- ÇEVİRİ SÖZLÜĞÜ ---
@@ -389,7 +397,7 @@ function App() {
       <main className={`max-w-6xl mx-auto p-4 md:p-6 mt-4 transition-colors duration-500 ${bgTheme} pb-24`}>
         <div className="mb-4 p-2 bg-slate-800 rounded-xl border border-slate-700 flex flex-wrap gap-2 items-center text-xs">
           <button onClick={() => setTradeState('LOCKED')} className={`px-3 py-1.5 rounded ${tradeState === 'LOCKED' ? 'bg-blue-600' : 'bg-slate-700'}`}>1. LOCKED</button>
-          <button onClick={() => { setTradeState('PAID'); setCooldownPassed(false); }} className={`px-3 py-1.5 rounded ${tradeState === 'PAID' ? 'bg-emerald-600' : 'bg-slate-700'}`}>2. PAID</button>
+          <button onClick={() => { setTradeState('PAID'); setCooldownPassed(false); setChargebackAccepted(false); }} className={`px-3 py-1.5 rounded ${tradeState === 'PAID' ? 'bg-emerald-600' : 'bg-slate-700'}`}>2. PAID</button>
           <button onClick={() => setTradeState('CHALLENGED')} className={`px-3 py-1.5 rounded ${tradeState === 'CHALLENGED' ? 'bg-red-600' : 'bg-slate-700'}`}>3. CHALLENGED</button>
           {tradeState === 'PAID' && isMaker && (
             <button onClick={() => setCooldownPassed(!cooldownPassed)} className="ml-auto bg-orange-600 px-3 py-1.5 rounded font-bold">⏱️ Simüle Et: 1 Saat {cooldownPassed ? 'Geri Al' : 'İleri Sar'}</button>
@@ -405,7 +413,7 @@ function App() {
           <span className="text-xl">🛡️</span>
           <div>
             <p className="text-red-400 font-bold">{lang === 'TR' ? 'Güvenlik Uyarısı!' : 'Security Warning!'}</p>
-            <p className="text-slate-300 text-xs mt-0.5">{lang === 'TR' ? 'Araf Protocol destek ekibi size ASLA mesaj atmaz. Tüm sorunları kontrat butonlarıyla çözün. Karşı tarafa veya başka cüzdanlara asla elden para göndermeyin.' : 'Araf Protocol support will NEVER DM you. Resolve all issues via contract buttons. Never send funds directly to other wallets.'}</p>
+            <p className="text-slate-300 text-xs mt-0.5">{lang === 'TR' ? 'Araf Protocol destek ekibi size ASLA mesaj atmaz. Tüm sorunları kontrat butonlarıyla çözün. Harici cüzdanlara asla elden para göndermeyin.' : 'Araf Protocol support will NEVER DM you. Resolve all issues via contract buttons. Never send funds to external wallets.'}</p>
           </div>
         </div>
 
@@ -427,7 +435,7 @@ function App() {
                   <p className="font-mono text-emerald-400 mt-1 break-all text-sm">{bankIBAN}</p>
                   <div className="mt-4 p-2 bg-slate-800 rounded-lg flex items-start space-x-2 border border-slate-600">
                     <span className="text-lg">🔒</span>
-                    <p className="text-[10px] text-slate-300 leading-tight">Bu bilgiler blockchain'e kaydedilmez. Sadece bu işleme özel cüzdanlar arası şifreli olarak iletilmiştir.</p>
+                    <p className="text-[10px] text-slate-300 leading-tight">Bu bilgiler blockchain'e kaydedilmez. Sadece bu işleme özel şifreli olarak iletilmiştir.</p>
                   </div>
                 </div>
               ) : (
@@ -437,9 +445,10 @@ function App() {
                 </div>
               )}
 
+              {/* GÜVENLİ XSS KORUMALI TELEGRAM BUTONU */}
               <div className="bg-slate-900 p-3 rounded-xl border border-slate-700 flex justify-between items-center">
                 <span className="text-slate-400">{lang === 'TR' ? 'Karşı Taraf:' : 'Counterparty:'}</span>
-                <a href={`https://t.me/${telegramHandle.replace('@', '')}`} target="_blank" rel="noreferrer" className="flex items-center space-x-1 text-blue-400 hover:text-blue-300 transition bg-blue-500/10 px-3 py-1.5 rounded-lg border border-blue-500/30">
+                <a href={getSafeTelegramUrl(telegramHandle)} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-1 text-blue-400 hover:text-blue-300 transition bg-blue-500/10 px-3 py-1.5 rounded-lg border border-blue-500/30">
                   <span>💬</span><span className="font-bold text-xs">{lang === 'TR' ? 'Mesaj At' : 'Message'}</span>
                 </a>
               </div>
@@ -463,20 +472,39 @@ function App() {
             )}
 
             {tradeState === 'PAID' && (
-              <div className="text-center py-4">
+              <div className="text-center py-4 flex flex-col items-center">
                 <h2 className="text-lg md:text-xl font-bold text-emerald-400 mb-2">{lang === 'TR' ? 'Ödeme Bildirildi' : 'Payment Reported'}</h2>
-                <div className="w-full max-w-sm mx-auto bg-slate-900 border border-slate-700 rounded-2xl p-4 mb-6">
+                <div className="w-full max-w-sm bg-slate-900 border border-slate-700 rounded-2xl p-4 mb-6">
                   <p className="text-xs text-slate-500 mb-1 uppercase font-bold">Grace Period</p>
                   <div className="text-4xl sm:text-5xl font-mono font-bold text-white tracking-wider">47:59:12</div>
                 </div>
                 {isTaker ? (
                   <p className="text-slate-400 text-sm mb-4">{lang === 'TR' ? 'Satıcının onayı bekleniyor.' : 'Waiting for seller release.'}</p>
                 ) : (
-                  <div className="flex flex-col sm:flex-row justify-center gap-3">
-                    <button className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-3 rounded-xl font-bold">{lang === 'TR' ? 'Serbest Bırak' : 'Release USDT'}</button>
-                    <button onClick={() => cooldownPassed && setTradeState('CHALLENGED')} disabled={!cooldownPassed} className={`w-full sm:w-auto px-6 py-3 rounded-xl font-bold transition ${cooldownPassed ? 'bg-red-500/10 text-red-500 border border-red-500/50 hover:bg-red-500 hover:text-white' : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'}`}>
-                      {cooldownPassed ? (lang === 'TR' ? 'İtiraz Et' : 'Challenge') : '⏳ Cooldown 59:12'}
-                    </button>
+                  <div className="w-full max-w-md flex flex-col space-y-4">
+                    {/* YENİ: CHARGEBACK GÜVENLİK ONAYI */}
+                    <label className="flex items-start space-x-3 p-3 bg-red-950/30 border border-red-900/50 rounded-xl cursor-pointer text-left">
+                      <input 
+                        type="checkbox" 
+                        checked={chargebackAccepted} 
+                        onChange={(e) => setChargebackAccepted(e.target.checked)}
+                        className="mt-1 w-4 h-4 accent-emerald-500 rounded bg-slate-800 border-slate-600 focus:ring-emerald-500 focus:ring-offset-slate-900"
+                      />
+                      <span className="text-xs text-slate-300">
+                        <strong className="text-red-400">{lang === 'TR' ? 'UYARI:' : 'WARNING:'}</strong> {lang === 'TR' ? 'Paranın farklı isimli bir hesaptan gelmediğini ve Chargeback (Ters İbraz) riskini anladığımı kabul ediyorum.' : 'I confirm the funds came from the correct name and understand the Chargeback risk.'}
+                      </span>
+                    </label>
+
+                    <div className="flex flex-col sm:flex-row justify-center gap-3">
+                      <button 
+                        disabled={!chargebackAccepted}
+                        className={`w-full sm:w-auto px-8 py-3 rounded-xl font-bold transition ${chargebackAccepted ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}>
+                        {lang === 'TR' ? 'Serbest Bırak' : 'Release USDT'}
+                      </button>
+                      <button onClick={() => cooldownPassed && setTradeState('CHALLENGED')} disabled={!cooldownPassed} className={`w-full sm:w-auto px-6 py-3 rounded-xl font-bold transition ${cooldownPassed ? 'bg-red-500/10 text-red-500 border border-red-500/50 hover:bg-red-500 hover:text-white' : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'}`}>
+                        {cooldownPassed ? (lang === 'TR' ? 'İtiraz Et' : 'Challenge') : '⏳ Cooldown 59:12'}
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
