@@ -247,7 +247,8 @@ function App() {
 
   const renderProfileModal = () => {
     if (!showProfileModal) return null;
-    const myOrders = orders.filter(o => o.maker === address); // Dinamik adres eşleşmesi
+    // Adres bağlıysa kendi ilanlarını filtrele
+    const myOrders = address ? orders.filter(o => o.maker.toLowerCase() === address.toLowerCase()) : [];
 
     return (
       <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
@@ -277,18 +278,17 @@ function App() {
                     </div>
                   </div>
                 )}
-                {/* NOT: Banka ve IBAN bilgileri artık Backend PII servisinden yönetilir */}
-                <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-2">Kayıtlı Veriler (Şifreli)</p>
+                {/* YENİ: Cüzdan Durumu Göstergesi */}
                 <div className="bg-slate-900 p-4 rounded-xl border border-slate-700">
-                   <p className="text-slate-400 text-xs mb-1">Cüzdan Adresi</p>
-                   <p className="font-mono text-white">{address || 'Bağlı Değil'}</p>
+                   <p className="text-slate-400 text-xs mb-1 uppercase tracking-widest font-bold">Cüzdan Adresi</p>
+                   <p className="font-mono text-white text-xs break-all">{address ? address : 'Bağlı Değil'}</p>
                 </div>
               </div>
             )}
             
             {profileTab === 'ilanlarim' && (
               <div className="space-y-3">
-                {myOrders.map(order => (
+                {myOrders.length > 0 ? myOrders.map(order => (
                   <div key={order.id} className={`bg-slate-900 border rounded-xl p-4 transition-all duration-200 ${confirmDeleteId === order.id ? 'border-red-500/60 bg-red-950/20' : 'border-slate-700'}`}>
                     <div className="flex justify-between items-center">
                       <div>
@@ -307,7 +307,7 @@ function App() {
                       </div>
                     )}
                   </div>
-                ))}
+                )) : <p className="text-center text-slate-500 text-xs mt-4">İlan bulunamadı.</p>}
               </div>
             )}
 
@@ -350,7 +350,7 @@ function App() {
   };
 
   // ==========================================
-  // --- 7. PAZAR YERİ EKRANI (DASHBOARD) ---
+  // --- 5. PAZAR YERİ EKRANI (DASHBOARD) ---
   // ==========================================
   const renderDashboard = () => (
     <main className="max-w-6xl mx-auto p-4 md:p-6 pb-24 relative">
@@ -422,7 +422,7 @@ function App() {
   );
 
   // ==========================================
-  // --- 8. İŞLEM VE ARAF ODASI (TRADE ROOM) ---
+  // --- 6. İŞLEM VE ARAF ODASI (TRADE ROOM) ---
   // ==========================================
   const renderTradeRoom = () => {
     const isChallenged = tradeState === 'CHALLENGED';
@@ -468,13 +468,12 @@ function App() {
               {isTaker ? (
                 <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 relative overflow-hidden">
                   <div className="absolute top-0 right-0 bg-blue-600 text-white text-[10px] font-bold px-2 py-1 rounded-bl-lg">End-to-End Encrypted</div>
-                  <p className="text-slate-400 mb-1 uppercase text-[10px] tracking-widest font-bold">🛡️ {lang === 'TR' ? 'Güvenli PII Verisi' : 'Secure PII Data'}</p>
+                  <p className="text-slate-400 mb-2 uppercase text-[10px] tracking-widest font-bold">🛡️ {lang === 'TR' ? 'Güvenli PII Verisi' : 'Secure PII Data'}</p>
                   
-                  {/* H-03 Düzeltmesi: Statik IBAN yerine Güvenli Bileşen Entegrasyonu */}
+                  {/* H-03 Entegrasyonu */}
                   <PIIDisplay 
                     tradeId={activeTrade?.id || 'TEST'} 
                     authToken={jwtToken} 
-                    lang={lang}
                   />
 
                   <div className="mt-4 p-2 bg-slate-800 rounded-lg flex items-start space-x-2 border border-slate-600">
@@ -526,7 +525,6 @@ function App() {
                   <p className="text-slate-400 text-sm mb-4">{lang === 'TR' ? 'Satıcının onayı bekleniyor.' : 'Waiting for seller release.'}</p>
                 ) : (
                   <div className="w-full max-w-md flex flex-col space-y-4">
-                    {/* M-01 Düzeltmesi: Audit log desteği içeren chargeback onayı */}
                     <label className="flex items-start space-x-3 p-3 bg-red-950/30 border border-red-900/50 rounded-xl cursor-pointer text-left">
                       <input 
                         type="checkbox" 
@@ -604,7 +602,7 @@ function App() {
   };
 
   // ==========================================
-  // --- 9. ANA YAPI (ROUTER & NAVBAR) ---
+  // --- 7. ANA YAPI (ROUTER & NAVBAR) ---
   // ==========================================
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans">
@@ -614,32 +612,34 @@ function App() {
           <span className="text-lg font-bold tracking-widest hidden sm:block">ARAF</span>
         </div>
         
-        {/* YENİ: DİNAMİK WEB3 NAVBAR BUTONLARI */}
-        <div className="flex items-center space-x-3">
-          <button onClick={() => setLang(lang === 'TR' ? 'EN' : 'TR')} className="bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-lg text-sm font-bold text-slate-300 hover:bg-slate-700 hover:text-white transition shadow-inner">
-            🌐 {lang}
+        {/* MOBİL UYUMLU NAVBAR BUTONLARI */}
+        <div className="flex items-center space-x-2 sm:space-x-3">
+          <button onClick={() => setLang(lang === 'TR' ? 'EN' : 'TR')} className="bg-slate-800 border border-slate-700 px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold text-slate-300 hover:bg-slate-700 hover:text-white transition shadow-inner">
+            🌐 <span className="hidden xs:inline">{lang}</span>
           </button>
           
           <button onClick={() => setShowMakerModal(true)} className="hidden md:block text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-sm font-medium">{t.createAd}</button>
           
-          <button onClick={() => {setShowProfileModal(true); setProfileTab('aktif');}} className="hidden md:flex items-center space-x-1 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-slate-700 transition">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>3 {lang === 'TR' ? 'Aktif' : 'Active'}</span>
-          </button>
-
           <button 
             onClick={() => isConnected ? disconnect() : setShowWalletModal(true)}
-            className={`hidden sm:block px-4 py-1.5 rounded-lg font-bold text-sm transition-all ${
+            className={`flex items-center justify-center px-3 sm:px-4 py-1.5 rounded-lg font-bold text-xs sm:text-sm transition-all ${
               isConnected 
               ? 'bg-slate-800 text-emerald-400 border border-emerald-500/20 hover:bg-red-950/20 hover:text-red-400' 
               : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20'
             }`}
           >
-            {isConnected ? formatAddress(address) : (lang === 'TR' ? 'Cüzdan Bağla' : 'Connect Wallet')}
+            {isConnected ? (
+              <>
+                <span className="hidden sm:inline">{formatAddress(address)}</span>
+                <span className="sm:hidden">0x..{address?.slice(-3)}</span>
+              </>
+            ) : (
+              lang === 'TR' ? 'Cüzdan' : 'Connect'
+            )}
           </button>
 
-          <button onClick={() => setShowProfileModal(true)} className="w-8 h-8 bg-slate-800 border border-slate-700 rounded-full flex items-center justify-center text-sm hover:bg-slate-700 relative">
-            👤 {isBanned && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border border-slate-900"></span>}
+          <button onClick={() => setShowProfileModal(true)} className="w-8 h-8 bg-slate-800 border border-slate-700 rounded-full flex items-center justify-center text-sm hover:bg-slate-700 relative shrink-0">
+            👤 {isBanned && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-slate-900"></span>}
           </button>
         </div>
       </nav>
