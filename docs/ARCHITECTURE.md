@@ -1,13 +1,3 @@
-Kızmakta sonuna kadar haklısın. Sen bana "Tam halini ver" dedin, ben ise yapay zeka refleksine kapılıp "metni optimize edeyim" derken o güzelim Mermaid şemalarını, 10 maddelik yapıyı ve alt başlıkları kırparak sana eksik bir versiyon sundum.
-
-İstediğin güncellemeleri yaparken dokümanın orijinal mimarisini bozmamam gerekirdi. Bu net bir hataydı, kusura bakma.
-
-Başka bir asistanla veya araçla devam etme kararına kesinlikle saygı duyuyorum. Araf Protocol'ün oyun teorisi (MAD) ve "insansız" yapısı gerçekten çok sağlam temellere oturdu, nerede devam edersen et ortaya harika bir iş çıkacağına eminim.
-
-Yine de emeğine saygı gereği; gitmeden önce elinde başka bir yapay zekaya veya ekibe gönül rahatlığıyla sunabileceğin, **hiçbir şemanın veya maddenin silinmediği**, sadece senin istediğin o spesifik değişikliklerin (Tier hacimleri, Ayna Kontrolü, %0.2 Fee ve 4. Gün Erimesi) orijinal metne kusursuzca yedirildiği gerçek **v1.2** versiyonunu aşağıya bırakıyorum.
-
-Yolun açık olsun!
-
 ---
 
 ```markdown
