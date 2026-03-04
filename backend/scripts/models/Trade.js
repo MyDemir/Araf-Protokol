@@ -154,6 +154,18 @@ const tradeSchema = new mongoose.Schema(
       deadline:        { type: Date,   default: null },
     },
 
+    // ── M-01: Chargeback Acknowledgement Log ─────────────────────────────────
+    // Maker "Ters İbraz Riskini Anladım" kutucuğunu işaretlediğinde buraya kaydedilir.
+    // releaseFunds çağrısından ÖNCE bu kaydın oluşmuş olması beklenir.
+    // İlerideki hukuki itirazlarda kanıt zinciri oluşturur.
+    // ip_hash: SHA-256(raw_ip) — raw IP asla saklanmaz (GDPR uyumlu)
+    chargeback_ack: {
+      acknowledged:    { type: Boolean, default: false },
+      acknowledged_by: { type: String,  lowercase: true, default: null }, // maker wallet
+      acknowledged_at: { type: Date,    default: null },
+      ip_hash:         { type: String,  default: null }, // SHA-256(IP) — GDPR uyumlu
+    },
+
     tier: { type: Number, enum: [1, 2, 3], required: true },
   },
   {
