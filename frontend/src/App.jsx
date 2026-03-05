@@ -98,6 +98,9 @@ function App() {
     try {
       setIsLoggingIn(true);
       
+      // UX GÜNCELLEMESİ: Kullanıcıyı yönlendir
+      showToast(lang === 'TR' ? 'Lütfen cüzdanınızdan imza isteğini onaylayın 🦊' : 'Please approve the signature request in your wallet 🦊', 'info');
+
       // 1. Backend'den Nonce (Tek kullanımlık şifre) al
       const nonceRes = await fetch(`${API_URL}/api/auth/nonce?wallet=${address}`);
       const { nonce } = await nonceRes.json();
@@ -128,7 +131,12 @@ function App() {
       }
     } catch (error) {
       console.error("SIWE Error:", error);
-      showToast(lang === 'TR' ? 'Giriş iptal edildi veya başarısız oldu.' : 'Login cancelled or failed.', 'error');
+      // UX GÜNCELLEMESİ: Hata durumunda bilgi ver
+      if (error.message?.includes('rejected')) {
+        showToast(lang === 'TR' ? 'İmza işlemi sizin tarafınızdan iptal edildi.' : 'Signature request was cancelled by you.', 'error');
+      } else {
+        showToast(lang === 'TR' ? 'Giriş başarısız oldu.' : 'Login failed.', 'error');
+      }
     } finally {
       setIsLoggingIn(false);
     }
@@ -686,15 +694,25 @@ function App() {
               else disconnect();
             }}
             disabled={isLoggingIn}
-            className={`flex items-center justify-center px-3 sm:px-4 py-1.5 rounded-lg font-bold text-xs sm:text-sm transition-all ${
-              isConnected && jwtToken
+            className={`flex items-center justify-center space-x-2 px-3 sm:px-4 py-1.5 rounded-lg font-bold text-xs sm:text-sm transition-all ${
+              isLoggingIn
+              ? 'bg-orange-800 text-orange-200 cursor-not-allowed opacity-80' 
+              : isConnected && jwtToken
               ? 'bg-slate-800 text-emerald-400 border border-emerald-500/20 hover:bg-red-950/20 hover:text-red-400' 
               : isConnected && !jwtToken
               ? 'bg-orange-600 hover:bg-orange-500 text-white shadow-lg shadow-orange-900/20 animate-pulse'
               : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20'
             }`}
           >
-            {isLoggingIn ? (lang === 'TR' ? 'Bekleniyor...' : 'Pending...') :
+            {isLoggingIn ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-orange-200" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                {lang === 'TR' ? 'Bekleniyor...' : 'Pending...'}
+              </>
+            ) :
               isConnected && jwtToken ? (
               <>
                 <span className="hidden sm:inline">{formatAddress(address)}</span>
