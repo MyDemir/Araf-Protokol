@@ -11,9 +11,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 const config = createConfig({
   chains: [base, baseSepolia],
   connectors: [
-    injected(), 
+    injected(), // MetaMask, Rabby vb. yerel cüzdanlar
     coinbaseWallet({ appName: 'Araf Protocol' }),
-    walletConnect({ projectId: '3fcc6b444f67d32e656910629a888c34' }), // Test için geçici ID
+    // GEÇİCİ OLARAK UYUTULDU (403 Reown hatasını engellemek için)
+    // walletConnect({ projectId: '3fcc6b444f67d32e656910629a888c34' }), 
   ],
   transports: {
     [base.id]: http(),
