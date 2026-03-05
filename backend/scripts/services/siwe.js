@@ -4,15 +4,15 @@
  * SIWE (Sign-In with Ethereum) Authentication Service
  *
  * Flow:
- *   1. Frontend: GET /api/auth/nonce?address=0x...  → receives nonce
- *   2. Frontend: Signs SIWE message with MetaMask
- *   3. Frontend: POST /api/auth/verify { message, signature }
- *   4. Backend:  Verifies signature → issues JWT (15min) + refresh token
+ * 1. Frontend: GET /api/auth/nonce?address=0x...  -> receives nonce
+ * 2. Frontend: Signs SIWE message with MetaMask
+ * 3. Frontend: POST /api/auth/verify { message, signature }
+ * 4. Backend:  Verifies signature -> issues JWT (15min) + refresh token
  *
  * Security:
- *   - Nonce stored in Redis with 5-minute TTL (NOT MongoDB)
- *   - Nonce invalidated immediately after use (prevents replay)
- *   - JWT is short-lived (15 min); trade-scoped PII tokens even shorter
+ * - Nonce stored in Redis with 5-minute TTL (NOT MongoDB)
+ * - Nonce invalidated immediately after use (prevents replay)
+ * - JWT is short-lived (15 min); trade-scoped PII tokens even shorter
  */
 
 const { SiweMessage }   = require("siwe");
@@ -91,15 +91,26 @@ async function verifySiweSignature(message, signature) {
     throw new Error("SIWE_DOMAIN ortam değişkeni production'da set edilmeli.");
   }
 
+  // 🛡️ DİNAMİK PROTOKOL: Codespaces, Ngrok veya Localhost uyumu
+  let expectedScheme = "https";
+  if (process.env.NODE_ENV !== "production") {
+    try {
+      expectedScheme = new URL(siweMsg.uri).protocol.replace(":", "");
+    } catch (e) {
+      expectedScheme = "http";
+    }
+  }
+
   const result = await siweMsg.verify({
     signature,
-    scheme: process.env.NODE_ENV === "production" ? "https" : "http",
     domain: domain || "localhost",
     nonce,
+    scheme: expectedScheme,
   });
 
   if (!result.success) {
-    throw new Error(`SIWE verification failed: ${result.error?.type}`);
+    // Tanımsız (undefined) hata mesajını önlemek için düzeltildi
+    throw new Error(result.error?.message || result.error?.type || "İmza doğrulama başarısız.");
   }
 
   return siweMsg.address.toLowerCase();
@@ -136,10 +147,10 @@ function issueJWT(walletAddress) {
 function issuePIIToken(walletAddress, tradeId) {
   return jwt.sign(
     {
-      sub:     walletAddress.toLowerCase(),
+      sub:      walletAddress.toLowerCase(),
       tradeId: tradeId.toString(),
-      type:    "pii",
-      iat:     Math.floor(Date.now() / 1000),
+      type:     "pii",
+      iat:      Math.floor(Date.now() / 1000),
     },
     JWT_SECRET,
     { expiresIn: PII_EXPIRES, algorithm: "HS256" }
