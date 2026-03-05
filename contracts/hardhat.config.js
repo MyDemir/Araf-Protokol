@@ -8,6 +8,7 @@ module.exports = {
     settings: {
       optimizer: { enabled: true, runs: 200 },
       viaIR: true, // Karmaşık kontratların derlenmesini kolaylaştırır
+      evmVersion: "cancun" //mcopy hatasi için
     },
   },
   networks: {
