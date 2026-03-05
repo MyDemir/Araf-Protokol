@@ -2,7 +2,7 @@
  * ArafEscrow Deploy Script
  *
  * L-01 Güvenlik Düzeltmesi:
- * Deploy tamamlandıktan hemen sonra ownership, TREASURY_ADDRESS'e devredilir.
+ * Deploy ve test token ayarları tamamlandıktan hemen sonra ownership, TREASURY_ADDRESS'e devredilir.
  * Bu sayede DEPLOYER_PRIVATE_KEY sızsa bile kontrat üzerinde hiçbir yetkisi kalmaz.
  *
  * Kullanım: npx hardhat run scripts/deploy.js --network base-sepolia
