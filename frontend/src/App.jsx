@@ -8,7 +8,7 @@ import { injected } from 'wagmi/connectors';
 import PIIDisplay from './components/PIIDisplay'; // H-03 Entegrasyonu
 
 // YENİ: Backend API Adresimiz (Codespace testleri için dinamik)
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
 function App() {
   // ==========================================
