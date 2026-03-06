@@ -10,14 +10,22 @@
  *
  * In production: replace Master Key derivation with AWS KMS / HashiCorp Vault API call.
  * The interface stays identical — only _getMasterKey() changes.
+ *
+ * H-05 Fix: HKDF implementasyonu Node.js native crypto.hkdf() ile değiştirildi.
+ * Önceki implementasyon iki zincirlenmiş HMAC kullanıyordu (RFC 5869 uyumlu değil).
+ * Mevcut şifreli veriler yeniden şifreleme gerektirir — migration planı yapılmalı.
  */
 
 const crypto = require("crypto");
+const { promisify } = require("util");
 
-const ALGORITHM   = "aes-256-gcm";
-const IV_LENGTH   = 12;    // GCM recommended
-const TAG_LENGTH  = 16;
-const KEY_LENGTH  = 32;    // 256-bit
+const ALGORITHM  = "aes-256-gcm";
+const IV_LENGTH  = 12;    // GCM recommended
+const TAG_LENGTH = 16;
+const KEY_LENGTH = 32;    // 256-bit
+
+// H-05 Fix: Node.js native hkdf — callback tabanlı, promisify ile async kullanılır
+const hkdfAsync = promisify(crypto.hkdf);
 
 /**
  * @returns {Buffer} 32-byte master key from environment
@@ -32,37 +40,40 @@ function _getMasterKey() {
 }
 
 /**
- * Derives a wallet-specific DEK using HKDF.
+ * Derives a wallet-specific DEK using HKDF (RFC 5869, SHA-256).
  * Same wallet always gets the same DEK — deterministic but unique per wallet.
  *
+ * H-05 Fix: Node.js native crypto.hkdf() kullanılıyor (RFC 5869 tam uyumlu).
+ * Önceki iki HMAC zinciri yerini aldı.
+ *
  * @param {string} walletAddress - lowercase Ethereum address
- * @returns {Buffer} 32-byte DEK
+ * @returns {Promise<Buffer>} 32-byte DEK
  */
-function _deriveDataKey(walletAddress) {
+async function _deriveDataKey(walletAddress) {
   const masterKey = _getMasterKey();
+  const salt      = Buffer.alloc(32, 0); // deterministic salt (wallet adresi info'da)
   const info      = Buffer.from(`araf-pii-${walletAddress.toLowerCase()}`);
-  // HKDF-SHA256
-  const prk = crypto.createHmac("sha256", masterKey).update(info).digest();
-  const dek = crypto.createHmac("sha256", prk).update("araf-v1").digest();
-  return dek.slice(0, KEY_LENGTH);
+
+  const dek = await hkdfAsync("sha256", masterKey, salt, info, KEY_LENGTH);
+  return Buffer.from(dek);
 }
 
 /**
  * Encrypts a plaintext string for a specific wallet.
  *
- * @param {string} plaintext    - Data to encrypt (IBAN, name, etc.)
+ * @param {string} plaintext     - Data to encrypt (IBAN, name, etc.)
  * @param {string} walletAddress - Wallet this data belongs to
- * @returns {string} base64-encoded encrypted blob (iv + authTag + ciphertext)
+ * @returns {Promise<string>} base64-encoded encrypted blob (iv + authTag + ciphertext)
  */
-function encrypt(plaintext, walletAddress) {
+async function encrypt(plaintext, walletAddress) {
   if (!plaintext || typeof plaintext !== "string") {
     throw new TypeError("encrypt: plaintext must be a non-empty string");
   }
 
-  const dek = _deriveDataKey(walletAddress);
+  const dek = await _deriveDataKey(walletAddress);
   const iv  = crypto.randomBytes(IV_LENGTH);
 
-  const cipher = crypto.createCipheriv(ALGORITHM, dek, iv);
+  const cipher    = crypto.createCipheriv(ALGORITHM, dek, iv);
   const encrypted = Buffer.concat([
     cipher.update(plaintext, "utf8"),
     cipher.final(),
@@ -79,15 +90,15 @@ function encrypt(plaintext, walletAddress) {
  *
  * @param {string} encryptedBase64 - base64 blob from encrypt()
  * @param {string} walletAddress   - Must match the wallet used during encryption
- * @returns {string} Decrypted plaintext
+ * @returns {Promise<string>} Decrypted plaintext
  * @throws {Error} If decryption fails (wrong key, tampered data)
  */
-function decrypt(encryptedBase64, walletAddress) {
+async function decrypt(encryptedBase64, walletAddress) {
   if (!encryptedBase64 || typeof encryptedBase64 !== "string") {
     throw new TypeError("decrypt: encryptedBase64 must be a non-empty string");
   }
 
-  const dek = _deriveDataKey(walletAddress);
+  const dek      = await _deriveDataKey(walletAddress);
   const combined = Buffer.from(encryptedBase64, "base64");
 
   if (combined.length < IV_LENGTH + TAG_LENGTH + 1) {
@@ -115,13 +126,13 @@ function decrypt(encryptedBase64, walletAddress) {
  *
  * @param {{ bankOwner, iban, telegram }} pii
  * @param {string} walletAddress
- * @returns {{ bankOwner_enc, iban_enc, telegram_enc }}
+ * @returns {Promise<{ bankOwner_enc, iban_enc, telegram_enc }>}
  */
-function encryptPII(pii, walletAddress) {
+async function encryptPII(pii, walletAddress) {
   return {
-    bankOwner_enc: pii.bankOwner ? encrypt(pii.bankOwner, walletAddress) : null,
-    iban_enc:      pii.iban      ? encrypt(pii.iban,      walletAddress) : null,
-    telegram_enc:  pii.telegram  ? encrypt(pii.telegram,  walletAddress) : null,
+    bankOwner_enc: pii.bankOwner ? await encrypt(pii.bankOwner, walletAddress) : null,
+    iban_enc:      pii.iban      ? await encrypt(pii.iban,      walletAddress) : null,
+    telegram_enc:  pii.telegram  ? await encrypt(pii.telegram,  walletAddress) : null,
   };
 }
 
@@ -131,13 +142,13 @@ function encryptPII(pii, walletAddress) {
  *
  * @param {{ bankOwner_enc, iban_enc, telegram_enc }} encPII
  * @param {string} walletAddress
- * @returns {{ bankOwner, iban, telegram }}
+ * @returns {Promise<{ bankOwner, iban, telegram }>}
  */
-function decryptPII(encPII, walletAddress) {
+async function decryptPII(encPII, walletAddress) {
   return {
-    bankOwner: encPII.bankOwner_enc ? decrypt(encPII.bankOwner_enc, walletAddress) : null,
-    iban:      encPII.iban_enc      ? decrypt(encPII.iban_enc,      walletAddress) : null,
-    telegram:  encPII.telegram_enc  ? decrypt(encPII.telegram_enc,  walletAddress) : null,
+    bankOwner: encPII.bankOwner_enc ? await decrypt(encPII.bankOwner_enc, walletAddress) : null,
+    iban:      encPII.iban_enc      ? await decrypt(encPII.iban_enc,      walletAddress) : null,
+    telegram:  encPII.telegram_enc  ? await decrypt(encPII.telegram_enc,  walletAddress) : null,
   };
 }
 
