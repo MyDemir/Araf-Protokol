@@ -1,88 +1,94 @@
 import React, { useState, useEffect } from 'react';
-// --- WEB3 ENTEGRASYON KÜTÜPHANELERİ ---
-// YENİ: useSignMessage eklendi (SIWE imzası için)
-import { useAccount, useConnect, useDisconnect, useSignMessage } from 'wagmi';
+import { useAccount, useConnect, useDisconnect, useSignMessage, useChainId } from 'wagmi';
 import { injected } from 'wagmi/connectors';
 
-// --- BİLEŞEN VE HOOK İTHALATI ---
-import PIIDisplay from './components/PIIDisplay'; // H-03 Entegrasyonu
+import PIIDisplay from './components/PIIDisplay';
+import { useArafContract } from './hooks/useArafContract';
 
-// YENİ: Backend API Adresimiz (Codespace testleri için dinamik)
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
 function App() {
-  // ==========================================
-  // --- 1. EKRAN VE STATE YÖNETİMİ ---
-  // ==========================================
-  const [currentView, setCurrentView] = useState('dashboard');
-  const [showMakerModal, setShowMakerModal] = useState(false);
+  const [currentView, setCurrentView]           = useState('dashboard');
+  const [showMakerModal, setShowMakerModal]     = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
-  const [showWalletModal, setShowWalletModal] = useState(false); // Multi-wallet Seçim Modalı
-  
-  // --- MİMARİ TEST STATE'LERİ ---
-  const [tradeState, setTradeState] = useState('LOCKED');
-  const [userRole, setUserRole] = useState('taker');
-  const [isBanned, setIsBanned] = useState(false);
-  const [cancelStatus, setCancelStatus] = useState(null);
+  const [showWalletModal, setShowWalletModal]   = useState(false);
+
+  const [tradeState, setTradeState]         = useState('LOCKED');
+  const [userRole, setUserRole]             = useState('taker');
+  const [isBanned, setIsBanned]             = useState(false);
+  const [cancelStatus, setCancelStatus]     = useState(null);
   const [cooldownPassed, setCooldownPassed] = useState(false);
-  const [chargebackAccepted, setChargebackAccepted] = useState(false); 
+  const [chargebackAccepted, setChargebackAccepted] = useState(false);
 
-  // --- WEB3 DURUM YÖNETİMİ ---
-  const { address, isConnected } = useAccount();
-  const { connect, connectors } = useConnect();
-  const { disconnect } = useDisconnect();
-  const { signMessageAsync } = useSignMessage(); // YENİ: İmza kancası
-  
-  const [jwtToken, setJwtToken] = useState(null); // SIWE sonrası dolacak token
-  const [isLoggingIn, setIsLoggingIn] = useState(false); // YENİ: Yükleniyor state'i
+  const { address, isConnected }  = useAccount();
+  const { connect, connectors }   = useConnect();
+  const { disconnect }            = useDisconnect();
+  const { signMessageAsync }      = useSignMessage();
+  // H-01 Fix: dynamic chainId from wagmi
+  const chainId                   = useChainId();
 
-  // --- KULLANICI VE VERİ STATE'LERİ ---
-  const [lang, setLang] = useState('TR'); 
+  const [jwtToken, setJwtToken]     = useState(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  const [lang, setLang]               = useState('TR');
   const [filterTier1, setFilterTier1] = useState(false);
   const [searchAmount, setSearchAmount] = useState('');
-  const [profileTab, setProfileTab] = useState('ayarlar');
-  
-  // NOT: bankOwner ve bankIBAN statik değişkenleri PII entegrasyonu ile artık dinamikleşti.
-  const [telegramHandle, setTelegramHandle] = useState('ahmet_tr'); 
+  const [profileTab, setProfileTab]   = useState('ayarlar');
+  const [telegramHandle, setTelegramHandle] = useState('ahmet_tr');
   const [activeTrade, setActiveTrade] = useState(null);
 
-  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackText, setFeedbackText]     = useState('');
   const [feedbackRating, setFeedbackRating] = useState(0);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
 
-  // ==========================================
-  // --- 2. CANLI VERİLER (API MOCK REPLACEMENT) ---
-  // ==========================================
-  // Statik diziler silindi, yerini state aldı.
-  const [orders, setOrders] = useState([]);
+  // Maker modal form state
+  const [makerForm, setMakerForm] = useState({
+    crypto: 'USDT', fiat: 'TRY', amount: '', rate: '', min: '', max: '', tier: 2,
+  });
+  const [makerLoading, setMakerLoading] = useState(false);
+
+  const [orders, setOrders]             = useState([]);
   const [activeEscrows, setActiveEscrows] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]           = useState(true);
+  const [toast, setToast]               = useState(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [contractLoading, setContractLoading] = useState(false);
 
-  // 1. Pazar Yeri İlanlarını Çek (Public)
+  // H-07: useArafContract hook
+  const {
+    lockEscrow,
+    reportPayment,
+    releaseFunds,
+    challengeTrade,
+    signCancelProposal,
+    proposeOrApproveCancel,
+  } = useArafContract();
+
   useEffect(() => {
     const fetchListings = async () => {
       try {
         setLoading(true);
-        const res = await fetch(`${API_URL}/api/listings`);
+        const res  = await fetch(`${API_URL}/api/listings`);
         const data = await res.json();
-        
         if (data.listings) {
           setOrders(data.listings.map(l => ({
-            id: l._id,
-            maker: formatAddress(l.maker_address),
-            crypto: l.crypto_asset || "USDT",
-            fiat: l.fiat_currency || "TRY",
-            rate: l.exchange_rate,
-            min: l.limits?.min || 0,
-            max: l.limits?.max || 0,
-            tier: l.tier || 1,
-            bond: (l.maker_bond_pct || 0) + "%",
+            id:          l._id,
+            onchain_id:  l.onchain_escrow_id,
+            maker:       formatAddress(l.maker_address),
+            crypto:      l.crypto_asset || 'USDT',
+            fiat:        l.fiat_currency || 'TRY',
+            rate:        l.exchange_rate,
+            min:         l.limits?.min || 0,
+            max:         l.limits?.max || 0,
+            tier:        l.tier_rules?.required_tier || 1,
+            bond:        (l.tier_rules?.maker_bond_pct || 0) + '%',
             successRate: l.reputation?.success_rate || 100,
-            txCount: l.reputation?.total_trades || 0
+            txCount:     l.reputation?.total_trades || 0,
           })));
         }
       } catch (err) {
-        console.error("Listing fetch error:", err);
+        console.error('Listing fetch error:', err);
       } finally {
         setLoading(false);
       }
@@ -90,32 +96,31 @@ function App() {
     fetchListings();
   }, []);
 
-  // 2. Aktif İşlemlerimi Çek (Private - SIWE Gerektirir)
   useEffect(() => {
-    if (!jwtToken || !isConnected) {
-      setActiveEscrows([]);
-      return;
-    }
-
+    if (!jwtToken || !isConnected) { setActiveEscrows([]); return; }
     const fetchMyTrades = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/trades/my`, {
-          headers: { 'Authorization': `Bearer ${jwtToken}` }
+        const res  = await fetch(`${API_URL}/api/trades/my`, {
+          headers: { Authorization: `Bearer ${jwtToken}` },
         });
         const data = await res.json();
-        
         if (data.trades) {
           setActiveEscrows(data.trades.map(t => ({
-            id: `#${t.onchain_escrow_id}`,
-            role: t.maker_address.toLowerCase() === address?.toLowerCase() ? 'maker' : 'taker',
-            counterparty: formatAddress(t.maker_address.toLowerCase() === address?.toLowerCase() ? t.taker_address : t.maker_address),
-            state: t.status,
-            amount: `${t.financials?.crypto_amount || 0} ${t.financials?.crypto_asset || 'USDT'}`,
-            action: t.status === 'PAID' ? (lang === 'TR' ? 'Onay Bekliyor' : 'Pending Approval') : (lang === 'TR' ? 'İşlemde' : 'In Progress')
+            id:           t._id,
+            onchain_id:   t.onchain_escrow_id,
+            role:         t.maker_address.toLowerCase() === address?.toLowerCase() ? 'maker' : 'taker',
+            counterparty: formatAddress(
+              t.maker_address.toLowerCase() === address?.toLowerCase() ? t.taker_address : t.maker_address
+            ),
+            state:        t.status,
+            amount:       `${t.financials?.crypto_amount || 0} ${t.financials?.crypto_asset || 'USDT'}`,
+            action:       t.status === 'PAID'
+              ? (lang === 'TR' ? 'Onay Bekliyor' : 'Pending Approval')
+              : (lang === 'TR' ? 'İşlemde' : 'In Progress'),
           })));
         }
       } catch (err) {
-        console.error("Trades fetch error:", err);
+        console.error('Trades fetch error:', err);
       }
     };
     fetchMyTrades();
@@ -123,16 +128,10 @@ function App() {
 
   const filteredOrders = orders.filter(order => {
     const amountMatch = searchAmount === '' || (Number(searchAmount) >= order.min && Number(searchAmount) <= order.max);
-    const tierMatch = filterTier1 ? order.tier === 1 : true;
+    const tierMatch   = filterTier1 ? order.tier === 1 : true;
     return amountMatch && tierMatch;
   });
 
-  const [toast, setToast] = useState(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
-
-  // ==========================================
-  // --- 3. YARDIMCI FONKSİYONLAR ---
-  // ==========================================
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
@@ -143,53 +142,48 @@ function App() {
   const getWalletIcon = (name) => {
     const n = name.toLowerCase();
     if (n.includes('metamask')) return '🦊';
-    if (n.includes('okx')) return '🖤';
+    if (n.includes('okx'))      return '🖤';
     if (n.includes('coinbase')) return '🔵';
     return '👛';
   };
 
-  // YENİ: SIWE (Sign-In With Ethereum) Akışı
+  // H-01 Fix: chainId artık wagmi'den dinamik geliyor
   const loginWithSIWE = async () => {
     if (!address) return;
     try {
       setIsLoggingIn(true);
-      
-      // UX GÜNCELLEMESİ: Kullanıcıyı yönlendir
-      showToast(lang === 'TR' ? 'Lütfen cüzdanınızdan imza isteğini onaylayın 🦊' : 'Please approve the signature request in your wallet 🦊', 'info');
+      showToast(
+        lang === 'TR' ? 'Lütfen cüzdanınızdan imza isteğini onaylayın 🦊' : 'Please approve the signature request 🦊',
+        'info'
+      );
 
-      // 1. Backend'den Nonce (Tek kullanımlık şifre) al
       const nonceRes = await fetch(`${API_URL}/api/auth/nonce?wallet=${address}`);
       const { nonce } = await nonceRes.json();
 
-      // 2. İmza mesajını oluştur (EIP-4361 Formatı)
-      const domain = window.location.host;
-      const origin = window.location.origin;
+      const domain    = window.location.host;
+      const origin    = window.location.origin;
       const statement = 'Sign in to Araf Protocol to manage your trades and secure PII data.';
-      const message = `${domain} wants you to sign in with your Ethereum account:\n${address}\n\n${statement}\n\nURI: ${origin}\nVersion: 1\nChain ID: 8453\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}`;
+      // H-01 Fix: Chain ID dinamik
+      const message = `${domain} wants you to sign in with your Ethereum account:\n${address}\n\n${statement}\n\nURI: ${origin}\nVersion: 1\nChain ID: ${chainId}\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}`;
 
-      // 3. Kullanıcıya imzalat
       const signature = await signMessageAsync({ message });
 
-      // 4. İmzayı Backend'e doğrulat
       const verifyRes = await fetch(`${API_URL}/api/auth/verify`, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, signature }),
+        body:    JSON.stringify({ message, signature }),
       });
-
       const data = await verifyRes.json();
-      
+
       if (data.token) {
         setJwtToken(data.token);
-        showToast(lang === 'TR' ? 'Sisteme başarıyla giriş yapıldı! 🚀' : 'Successfully signed in! 🚀', 'success');
+        showToast(lang === 'TR' ? 'Sisteme başarıyla giriş yapıldı! 🚀' : 'Successfully signed in! 🚀');
       } else {
         throw new Error(data.error || 'Doğrulama başarısız');
       }
     } catch (error) {
-      console.error("SIWE Error:", error);
-      // UX GÜNCELLEMESİ: Hata durumunda bilgi ver
       if (error.message?.includes('rejected')) {
-        showToast(lang === 'TR' ? 'İmza işlemi sizin tarafınızdan iptal edildi.' : 'Signature request was cancelled by you.', 'error');
+        showToast(lang === 'TR' ? 'İmza işlemi iptal edildi.' : 'Signature cancelled.', 'error');
       } else {
         showToast(lang === 'TR' ? 'Giriş başarısız oldu.' : 'Login failed.', 'error');
       }
@@ -198,7 +192,6 @@ function App() {
     }
   };
 
-  // Cüzdan değiştiğinde veya koptuğunda JWT'yi sıfırla
   useEffect(() => {
     if (!isConnected) setJwtToken(null);
   }, [isConnected, address]);
@@ -219,48 +212,201 @@ function App() {
   const handleDeleteOrder = (id) => {
     setOrders(prev => prev.filter(o => o.id !== id));
     setConfirmDeleteId(null);
-    showToast(lang === 'TR' ? 'İlan pazar yerinden kaldırıldı.' : 'Listing removed from marketplace.');
+    showToast(lang === 'TR' ? 'İlan pazar yerinden kaldırıldı.' : 'Listing removed.');
   };
 
-  const handleProposeCancel = () => {
-    setCancelStatus('proposed_by_me');
-    showToast(lang === 'TR' ? 'İptal teklifi gönderildi. Onay bekleniyor...' : 'Cancel proposal sent. Waiting for approval...', 'info');
+  // M-07 Fix: submitFeedback artık backend'i çağırıyor
+  const submitFeedback = async () => {
+    if (!jwtToken) {
+      showToast(lang === 'TR' ? 'Önce giriş yapın.' : 'Please sign in first.', 'error');
+      return;
+    }
+    try {
+      setFeedbackLoading(true);
+      const res = await fetch(`${API_URL}/api/feedback`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwtToken}` },
+        body:    JSON.stringify({ rating: feedbackRating, comment: feedbackText }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Gönderilemedi');
+      }
+      setShowFeedbackModal(false);
+      setFeedbackText('');
+      setFeedbackRating(0);
+      showToast(lang === 'TR' ? 'Geri bildiriminiz için teşekkürler!' : 'Thank you for your feedback!');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setFeedbackLoading(false);
+    }
   };
 
-  const submitFeedback = () => {
-    setShowFeedbackModal(false);
-    setFeedbackText('');
-    setFeedbackRating(0);
-    showToast(lang === 'TR' ? 'Geri bildiriminiz için teşekkürler!' : 'Thank you for your feedback!', 'success');
+  const getSafeTelegramUrl = (handle) => `https://t.me/${handle.replace(/[^a-zA-Z0-9_]/g, '')}`;
+
+  // M-06 Fix: Kontrat çağrıları
+  const handleReportPayment = async () => {
+    if (!activeTrade?.onchain_id) { showToast('Trade ID bulunamadı', 'error'); return; }
+    try {
+      setContractLoading(true);
+      // Basit IPFS hash placeholder — production'da gerçek receipt yüklenmeli
+      await reportPayment(activeTrade.onchain_id, 'QmPaymentReported_' + Date.now());
+      setTradeState('PAID');
+      setCooldownPassed(false);
+      showToast(lang === 'TR' ? 'Ödeme bildirildi!' : 'Payment reported!');
+    } catch (err) {
+      showToast(err.message || 'İşlem başarısız', 'error');
+    } finally {
+      setContractLoading(false);
+    }
   };
 
-  const getSafeTelegramUrl = (handle) => {
-    const safeHandle = handle.replace(/[^a-zA-Z0-9_]/g, '');
-    return `https://t.me/${safeHandle}`;
+  const handleReleaseFunds = async () => {
+    if (!activeTrade?.onchain_id) { showToast('Trade ID bulunamadı', 'error'); return; }
+    try {
+      setContractLoading(true);
+      // Chargeback ack backend'e kaydet
+      await fetch(`${API_URL}/api/trades/${activeTrade.id}/chargeback-ack`, {
+        method:  'POST',
+        headers: { Authorization: `Bearer ${jwtToken}` },
+      });
+      await releaseFunds(activeTrade.onchain_id);
+      setTradeState('RESOLVED');
+      showToast(lang === 'TR' ? 'USDT serbest bırakıldı!' : 'USDT released!');
+    } catch (err) {
+      showToast(err.message || 'İşlem başarısız', 'error');
+    } finally {
+      setContractLoading(false);
+    }
   };
 
-  // --- ÇEVİRİ SÖZLÜĞÜ ---
+  const handleChallengeTrade = async () => {
+    if (!activeTrade?.onchain_id) { showToast('Trade ID bulunamadı', 'error'); return; }
+    try {
+      setContractLoading(true);
+      await challengeTrade(activeTrade.onchain_id);
+      setTradeState('CHALLENGED');
+      showToast(lang === 'TR' ? 'İtiraz açıldı.' : 'Challenge opened.', 'info');
+    } catch (err) {
+      showToast(err.message || 'İşlem başarısız', 'error');
+    } finally {
+      setContractLoading(false);
+    }
+  };
+
+  // M-05 Fix: Cancel flow — imzala → backend'e kaydet → kontrata gönder
+  const handleProposeCancel = async () => {
+    if (!activeTrade?.onchain_id || !jwtToken) { showToast('Giriş yapın', 'error'); return; }
+    try {
+      setContractLoading(true);
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+
+      // Önce backend'den nonce al (sigNonces)
+      const tradeRes  = await fetch(`${API_URL}/api/trades/${activeTrade.id}`, {
+        headers: { Authorization: `Bearer ${jwtToken}` },
+      });
+      const { trade } = await tradeRes.json();
+      const nonce = trade?.cancel_proposal?.maker_signed || trade?.cancel_proposal?.taker_signed ? 1 : 0;
+
+      const sig = await signCancelProposal(activeTrade.onchain_id, nonce, deadline);
+
+      // İmzayı backend'e kaydet
+      const backendRes = await fetch(`${API_URL}/api/trades/propose-cancel`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwtToken}` },
+        body:    JSON.stringify({ tradeId: activeTrade.id, signature: sig, deadline }),
+      });
+      const backendData = await backendRes.json();
+
+      if (backendData.bothSigned) {
+        // Her iki taraf da imzaladıysa kontrata gönder
+        await proposeOrApproveCancel(activeTrade.onchain_id, deadline, sig);
+        showToast(lang === 'TR' ? 'İptal tamamlandı.' : 'Cancel completed.', 'success');
+        setCurrentView('dashboard');
+      } else {
+        setCancelStatus('proposed_by_me');
+        showToast(lang === 'TR' ? 'İptal teklifi gönderildi.' : 'Cancel proposal sent.', 'info');
+      }
+    } catch (err) {
+      showToast(err.message || 'İşlem başarısız', 'error');
+    } finally {
+      setContractLoading(false);
+    }
+  };
+
+  // M-06 Fix: Maker modal — ilan oluşturma + createEscrow kontrat çağrısı
+  const handleCreateListing = async () => {
+    if (!jwtToken) { showToast(lang === 'TR' ? 'Önce giriş yapın.' : 'Sign in first.', 'error'); return; }
+    if (!makerForm.amount || !makerForm.rate || !makerForm.min || !makerForm.max) {
+      showToast(lang === 'TR' ? 'Tüm alanları doldurun.' : 'Fill all fields.', 'error');
+      return;
+    }
+    try {
+      setMakerLoading(true);
+      const tokenAddress = import.meta.env.VITE_USDT_ADDRESS;
+      if (!tokenAddress) throw new Error('VITE_USDT_ADDRESS env eksik');
+
+      // 1. Backend'e ilan oluştur
+      const listRes = await fetch(`${API_URL}/api/listings`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwtToken}` },
+        body: JSON.stringify({
+          crypto_asset:  makerForm.crypto,
+          fiat_currency: makerForm.fiat,
+          exchange_rate: Number(makerForm.rate),
+          limits:        { min: Number(makerForm.min), max: Number(makerForm.max) },
+          tier:          makerForm.tier,
+          token_address: tokenAddress,
+        }),
+      });
+      if (!listRes.ok) { const e = await listRes.json(); throw new Error(e.error); }
+
+      // 2. Kontrata createEscrow çağrısı (USDT decimals=6)
+      const amount6 = BigInt(Math.round(Number(makerForm.amount) * 1_000_000));
+      await useArafContract().createEscrow(tokenAddress, amount6, makerForm.tier);
+
+      setShowMakerModal(false);
+      setMakerForm({ crypto: 'USDT', fiat: 'TRY', amount: '', rate: '', min: '', max: '', tier: 2 });
+      showToast(lang === 'TR' ? '✅ İlan oluşturuldu!' : '✅ Listing created!');
+
+      // Listelemeleri yenile
+      const res  = await fetch(`${API_URL}/api/listings`);
+      const data = await res.json();
+      if (data.listings) setOrders(data.listings.map(l => ({
+        id: l._id, onchain_id: l.onchain_escrow_id,
+        maker: formatAddress(l.maker_address), crypto: l.crypto_asset || 'USDT',
+        fiat: l.fiat_currency || 'TRY', rate: l.exchange_rate,
+        min: l.limits?.min || 0, max: l.limits?.max || 0,
+        tier: l.tier_rules?.required_tier || 1, bond: (l.tier_rules?.maker_bond_pct || 0) + '%',
+        successRate: 100, txCount: 0,
+      })));
+    } catch (err) {
+      showToast(err.message || 'Hata', 'error');
+    } finally {
+      setMakerLoading(false);
+    }
+  };
+
   const t = {
-    title: lang === 'TR' ? 'Pazar Yeri' : 'Marketplace',
-    subtitle: lang === 'TR' ? 'Merkeziyetsiz, hakemsiz P2P takas tahtası.' : 'Decentralized, oracle-free P2P escrow board.',
-    searchPlaceholder: lang === 'TR' ? 'Tutar Ara...' : 'Search Amount...',
-    bondFilter: lang === 'TR' ? '%0 Teminat' : '0% Bond',
-    vol: lang === 'TR' ? 'Toplam Hacim' : 'Total Volume',
-    trades: lang === 'TR' ? 'Başarılı İşlem' : 'Success Trades',
-    users: lang === 'TR' ? 'Aktif Kullanıcı' : 'Active Users',
-    burn: lang === 'TR' ? 'Eriyen Kasa' : 'Burned Treasury',
-    tableSeller: lang === 'TR' ? 'Satıcı' : 'Seller',
-    tableRate: lang === 'TR' ? 'Kur' : 'Rate',
-    tableLimit: lang === 'TR' ? 'Limit' : 'Limit',
-    tableBond: lang === 'TR' ? 'Bond' : 'Bond',
-    tableAction: lang === 'TR' ? 'İşlem' : 'Action',
-    buyBtn: lang === 'TR' ? 'Satın Al' : 'Buy',
-    createAd: lang === 'TR' ? '+ İlan Aç' : '+ Create Ad',
+    title:          lang === 'TR' ? 'Pazar Yeri'                                        : 'Marketplace',
+    subtitle:       lang === 'TR' ? 'Merkeziyetsiz, hakemsiz P2P takas tahtası.'        : 'Decentralized, oracle-free P2P escrow board.',
+    searchPlaceholder: lang === 'TR' ? 'Tutar Ara...'                                   : 'Search Amount...',
+    bondFilter:     lang === 'TR' ? '%0 Teminat'                                        : '0% Bond',
+    vol:            lang === 'TR' ? 'Toplam Hacim'                                      : 'Total Volume',
+    trades:         lang === 'TR' ? 'Başarılı İşlem'                                    : 'Success Trades',
+    users:          lang === 'TR' ? 'Aktif Kullanıcı'                                   : 'Active Users',
+    burn:           lang === 'TR' ? 'Eriyen Kasa'                                       : 'Burned Treasury',
+    tableSeller:    lang === 'TR' ? 'Satıcı'                                            : 'Seller',
+    tableRate:      lang === 'TR' ? 'Kur'                                               : 'Rate',
+    tableLimit:     lang === 'TR' ? 'Limit'                                             : 'Limit',
+    tableBond:      lang === 'TR' ? 'Bond'                                              : 'Bond',
+    tableAction:    lang === 'TR' ? 'İşlem'                                             : 'Action',
+    buyBtn:         lang === 'TR' ? 'Satın Al'                                          : 'Buy',
+    createAd:       lang === 'TR' ? '+ İlan Aç'                                        : '+ Create Ad',
   };
 
-  // ==========================================
-  // --- 4. RENDER MODALLARI ---
-  // ==========================================
+  // ── MODALLER ────────────────────────────────────────────────────────────────
 
   const renderWalletModal = () => {
     if (!showWalletModal) return null;
@@ -310,8 +456,9 @@ function App() {
             ))}
           </div>
           <textarea value={feedbackText} onChange={(e) => setFeedbackText(e.target.value)} placeholder={lang === 'TR' ? 'Düşünceleriniz veya bulduğunuz hatalar...' : 'Your thoughts or bugs found...'} className="w-full bg-slate-900 text-white px-3 py-3 rounded-xl border border-slate-700 outline-none h-24 text-sm mb-4 resize-none"></textarea>
-          <button onClick={submitFeedback} disabled={feedbackRating === 0} className={`w-full py-3 rounded-xl font-bold transition ${feedbackRating > 0 ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}>
-            {lang === 'TR' ? 'Gönder' : 'Submit'}
+          {/* M-07 Fix: submitFeedback API'yi çağırıyor */}
+          <button onClick={submitFeedback} disabled={feedbackRating === 0 || feedbackLoading} className={`w-full py-3 rounded-xl font-bold transition ${feedbackRating > 0 && !feedbackLoading ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}>
+            {feedbackLoading ? (lang === 'TR' ? 'Gönderiliyor...' : 'Sending...') : (lang === 'TR' ? 'Gönder' : 'Submit')}
           </button>
         </div>
       </div>
@@ -320,6 +467,10 @@ function App() {
 
   const renderMakerModal = () => {
     if (!showMakerModal) return null;
+    const bondMap  = { 1: 18, 2: 15, 3: 10 };
+    const bondPct  = bondMap[makerForm.tier] || 15;
+    const totalLock = makerForm.amount ? (Number(makerForm.amount) * (1 + bondPct / 100)).toFixed(2) : '—';
+
     return (
       <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
         <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -331,31 +482,48 @@ function App() {
             <div className="flex space-x-2">
               <div className="w-1/2">
                 <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Satılacak Kripto' : 'Crypto to Sell'}</label>
-                <select className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none"><option>USDT</option><option>USDC</option><option>ETH</option></select>
+                <select value={makerForm.crypto} onChange={e => setMakerForm(p => ({...p, crypto: e.target.value}))} className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none"><option>USDT</option><option>USDC</option></select>
               </div>
               <div className="w-1/2">
                 <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'İstenecek İtibari Para' : 'Fiat Currency'}</label>
-                <select className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none"><option>TRY</option><option>USD</option><option>EUR</option></select>
+                <select value={makerForm.fiat} onChange={e => setMakerForm(p => ({...p, fiat: e.target.value}))} className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none"><option>TRY</option><option>USD</option><option>EUR</option></select>
               </div>
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Satılacak Miktar' : 'Amount'}</label>
-              <input type="number" placeholder="Örn: 1000" className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none" />
+              <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Satılacak Miktar (Kripto)' : 'Amount (Crypto)'}</label>
+              <input type="number" value={makerForm.amount} onChange={e => setMakerForm(p => ({...p, amount: e.target.value}))} placeholder="Örn: 1000" className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none" />
             </div>
             <div>
               <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Kur Fiyatı' : 'Exchange Rate'}</label>
-              <input type="number" placeholder="Örn: 33.50" className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none" />
+              <input type="number" value={makerForm.rate} onChange={e => setMakerForm(p => ({...p, rate: e.target.value}))} placeholder="Örn: 33.50" className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none" />
             </div>
             <div className="flex space-x-2">
-              <div className="w-1/2"><label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Min. Limit' : 'Min Limit'}</label><input type="number" placeholder="500" className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none" /></div>
-              <div className="w-1/2"><label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Max. Limit' : 'Max Limit'}</label><input type="number" placeholder="2500" className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none" /></div>
+              <div className="w-1/2"><label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Min. Limit' : 'Min Limit'}</label><input type="number" value={makerForm.min} onChange={e => setMakerForm(p => ({...p, min: e.target.value}))} placeholder="500" className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none" /></div>
+              <div className="w-1/2"><label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Max. Limit' : 'Max Limit'}</label><input type="number" value={makerForm.max} onChange={e => setMakerForm(p => ({...p, max: e.target.value}))} placeholder="2500" className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none" /></div>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Tier</label>
+              <select value={makerForm.tier} onChange={e => setMakerForm(p => ({...p, tier: Number(e.target.value)}))} className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none">
+                <option value={1}>Tier 1 — %18 Bond</option>
+                <option value={2}>Tier 2 — %15 Bond</option>
+                <option value={3}>Tier 3 — %10 Bond</option>
+              </select>
             </div>
             <div className="mt-4 p-3 bg-emerald-900/20 border border-emerald-500/30 rounded-xl">
-              <p className="text-xs text-emerald-400 mb-2 font-medium">🛡️ Tier 2 {lang === 'TR' ? 'Kuralları Geçerlidir' : 'Rules Apply'}</p>
-              <div className="flex justify-between text-xs text-slate-300 mb-1"><span>{lang === 'TR' ? 'Satıcı Teminatı' : 'Maker Bond'} (%15):</span> <span>150 Kripto</span></div>
-              <div className="flex justify-between text-sm font-bold text-white border-t border-emerald-500/30 pt-2"><span>{lang === 'TR' ? 'Toplam Kilitlenecek:' : 'Total Locked:'}</span> <span>1150 Kripto</span></div>
+              <p className="text-xs text-emerald-400 mb-2 font-medium">🛡️ Tier {makerForm.tier} {lang === 'TR' ? 'Kuralları' : 'Rules'}</p>
+              <div className="flex justify-between text-xs text-slate-300 mb-1">
+                <span>{lang === 'TR' ? 'Satıcı Teminatı' : 'Maker Bond'} (%{bondPct}):</span>
+                <span>{makerForm.amount ? (Number(makerForm.amount) * bondPct / 100).toFixed(2) : '—'} {makerForm.crypto}</span>
+              </div>
+              <div className="flex justify-between text-sm font-bold text-white border-t border-emerald-500/30 pt-2">
+                <span>{lang === 'TR' ? 'Toplam Kilitlenecek:' : 'Total Locked:'}</span>
+                <span>{totalLock} {makerForm.crypto}</span>
+              </div>
             </div>
-            <button className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-xl font-bold mt-2 shadow-lg shadow-emerald-900/20">{lang === 'TR' ? 'Varlığı ve Teminatı Kilitle' : 'Lock Asset & Bond'}</button>
+            {/* M-06 Fix: handleCreateListing çağrısı */}
+            <button onClick={handleCreateListing} disabled={makerLoading} className={`w-full py-3 rounded-xl font-bold mt-2 shadow-lg shadow-emerald-900/20 transition ${makerLoading ? 'bg-slate-700 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}>
+              {makerLoading ? (lang === 'TR' ? 'İşleniyor...' : 'Processing...') : (lang === 'TR' ? 'Varlığı ve Teminatı Kilitle' : 'Lock Asset & Bond')}
+            </button>
           </div>
         </div>
       </div>
@@ -364,7 +532,7 @@ function App() {
 
   const renderProfileModal = () => {
     if (!showProfileModal) return null;
-    const myOrders = address ? orders.filter(o => o.maker.toLowerCase() === address.toLowerCase()) : [];
+    const myOrders = address ? orders.filter(o => o.maker.toLowerCase().includes(address.slice(2, 6).toLowerCase())) : [];
 
     return (
       <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
@@ -394,19 +562,17 @@ function App() {
                     </div>
                   </div>
                 )}
-                
                 <div className="bg-slate-900 p-4 rounded-xl border border-slate-700">
-                   <p className="text-slate-400 text-xs mb-1 uppercase tracking-widest font-bold">Cüzdan Adresi</p>
-                   <p className="font-mono text-white text-xs break-all">{address ? address : 'Bağlı Değil'}</p>
+                  <p className="text-slate-400 text-xs mb-1 uppercase tracking-widest font-bold">Cüzdan Adresi</p>
+                  <p className="font-mono text-white text-xs break-all">{address || 'Bağlı Değil'}</p>
                 </div>
-                
                 <div className="bg-slate-900 p-4 rounded-xl border border-slate-700">
-                   <p className="text-slate-400 text-xs mb-1 uppercase tracking-widest font-bold">Oturum Durumu (JWT)</p>
-                   <p className="font-mono text-white text-xs break-all">{jwtToken ? '✅ Sisteme Giriş Yapıldı' : '❌ İmza Bekleniyor'}</p>
+                  <p className="text-slate-400 text-xs mb-1 uppercase tracking-widest font-bold">Oturum Durumu (JWT)</p>
+                  <p className="font-mono text-white text-xs">{jwtToken ? '✅ Sisteme Giriş Yapıldı' : '❌ İmza Bekleniyor'}</p>
                 </div>
               </div>
             )}
-            
+
             {profileTab === 'ilanlarim' && (
               <div className="space-y-3">
                 {myOrders.length > 0 ? myOrders.map(order => (
@@ -437,25 +603,25 @@ function App() {
                 {activeEscrows.length > 0 ? activeEscrows.map(escrow => (
                   <div key={escrow.id} className="bg-slate-900 border border-slate-700 rounded-xl p-4">
                     <div className="flex justify-between items-start mb-2">
-                      <div><span className="font-mono text-emerald-400 font-bold">{escrow.id}</span><span className="text-xs text-slate-500 ml-2 uppercase border border-slate-700 px-2 py-0.5 rounded">{escrow.role}</span></div>
+                      <div><span className="font-mono text-emerald-400 font-bold">#{escrow.onchain_id || escrow.id}</span><span className="text-xs text-slate-500 ml-2 uppercase border border-slate-700 px-2 py-0.5 rounded">{escrow.role}</span></div>
                       <span className={`text-xs font-bold px-2 py-1 rounded ${escrow.state === 'PAID' ? 'bg-emerald-500/20 text-emerald-400' : escrow.state === 'CHALLENGED' ? 'bg-red-500/20 text-red-400' : 'bg-blue-500/20 text-blue-400'}`}>{escrow.state}</span>
                     </div>
                     <p className="text-white font-medium text-sm mb-1">{escrow.amount}</p>
                     <p className="text-xs text-slate-400 mb-3">Karşı Taraf: <span className="font-mono">{escrow.counterparty}</span></p>
-                    <button onClick={() => { setShowProfileModal(false); setCurrentView('tradeRoom'); setTradeState(escrow.state); }} className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2 rounded-lg transition border border-slate-600">
+                    <button onClick={() => { setActiveTrade(escrow); setShowProfileModal(false); setCurrentView('tradeRoom'); setTradeState(escrow.state); }} className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2 rounded-lg transition border border-slate-600">
                       {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
                     </button>
                   </div>
                 )) : <p className="text-center text-slate-500 text-xs mt-4">Aktif işlem bulunamadı.</p>}
               </div>
             )}
-            
+
             {profileTab === 'gecmis' && (
               <div className="space-y-3 text-sm">
                 {[
                   { id: 'TX-001', date: '01.03.2026', amount: '1.000 TRY', crypto: '29.85 USDT', status: 'Tamamlandı' },
-                  { id: 'TX-002', date: '15.02.2026', amount: '500 TRY',  crypto: '14.92 USDT', status: 'Tamamlandı' },
-                  { id: 'TX-003', date: '02.02.2026', amount: '2.500 TRY', crypto: '74.55 USDT', status: 'İptal'       },
+                  { id: 'TX-002', date: '15.02.2026', amount: '500 TRY',   crypto: '14.92 USDT', status: 'Tamamlandı' },
+                  { id: 'TX-003', date: '02.02.2026', amount: '2.500 TRY', crypto: '74.55 USDT', status: 'İptal' },
                 ].map(tx => (
                   <div key={tx.id} className="bg-slate-900 border border-slate-700 rounded-xl p-3 flex justify-between items-center">
                     <div><p className="font-mono text-xs text-slate-400">{tx.id} · {tx.date}</p><p className="text-white font-medium mt-0.5">{tx.amount} → {tx.crypto}</p></div>
@@ -470,9 +636,8 @@ function App() {
     );
   };
 
-  // ==========================================
-  // --- 5. PAZAR YERİ EKRANI (DASHBOARD) ---
-  // ==========================================
+  // ── DASHBOARD ──────────────────────────────────────────────────────────────
+
   const renderDashboard = () => (
     <main className="max-w-6xl mx-auto p-4 md:p-6 pb-24 relative">
       <div className="mb-8 p-3 bg-slate-800 rounded-xl border border-purple-500/50 flex flex-wrap gap-4 items-center text-sm shadow-lg shadow-purple-900/20">
@@ -511,7 +676,7 @@ function App() {
           </thead>
           <tbody className="divide-y divide-slate-700/50">
             {loading ? (
-               <tr><td colSpan="5" className="p-8 text-center text-slate-400 animate-pulse">{lang === 'TR' ? 'Yükleniyor...' : 'Loading...'}</td></tr>
+              <tr><td colSpan="5" className="p-8 text-center text-slate-400 animate-pulse">{lang === 'TR' ? 'Yükleniyor...' : 'Loading...'}</td></tr>
             ) : filteredOrders.length > 0 ? (
               filteredOrders.map((order) => (
                 <tr key={order.id} className="hover:bg-slate-700/30 transition">
@@ -521,7 +686,7 @@ function App() {
                       <div>
                         <span className="font-mono text-emerald-400 text-sm">{order.maker}</span>
                         <div className="flex items-center space-x-1 mt-0.5 text-xs">
-                          <span className={`${order.successRate === 100 ? 'text-emerald-400' : 'text-orange-400'}`}>%{order.successRate}</span><span className="text-slate-600">·</span><span className="text-slate-400">📜 {order.txCount} tx</span>
+                          <span className={order.successRate === 100 ? 'text-emerald-400' : 'text-orange-400'}>%{order.successRate}</span><span className="text-slate-600">·</span><span className="text-slate-400">📜 {order.txCount} tx</span>
                         </div>
                       </div>
                     </div>
@@ -544,15 +709,14 @@ function App() {
     </main>
   );
 
-  // ==========================================
-  // --- 6. İŞLEM VE ARAF ODASI (TRADE ROOM) ---
-  // ==========================================
+  // ── TRADE ROOM ─────────────────────────────────────────────────────────────
+
   const renderTradeRoom = () => {
     const isChallenged = tradeState === 'CHALLENGED';
-    const bgTheme = isChallenged ? 'bg-red-950/20' : 'bg-slate-900';
-    const borderTheme = isChallenged ? 'border-red-900/50' : 'border-slate-800';
-    const isTaker = userRole === 'taker';
-    const isMaker = userRole === 'maker';
+    const bgTheme      = isChallenged ? 'bg-red-950/20' : 'bg-slate-900';
+    const borderTheme  = isChallenged ? 'border-red-900/50' : 'border-slate-800';
+    const isTaker      = userRole === 'taker';
+    const isMaker      = userRole === 'maker';
 
     return (
       <main className={`max-w-6xl mx-auto p-4 md:p-6 mt-4 transition-colors duration-500 ${bgTheme} pb-24`}>
@@ -564,17 +728,17 @@ function App() {
             <button onClick={() => setCooldownPassed(!cooldownPassed)} className="ml-auto bg-orange-600 px-3 py-1.5 rounded font-bold">⏱️ Simüle Et: 1 Saat {cooldownPassed ? 'Geri Al' : 'İleri Sar'}</button>
           )}
           {tradeState === 'CHALLENGED' && (
-             <button onClick={() => setCancelStatus('proposed_by_other')} className="ml-auto bg-slate-700 px-3 py-1.5 rounded text-orange-400 border border-orange-500/30">Simüle Et: Karşı Taraf İptal İstedi</button>
+            <button onClick={() => setCancelStatus('proposed_by_other')} className="ml-auto bg-slate-700 px-3 py-1.5 rounded text-orange-400 border border-orange-500/30">Simüle Et: Karşı Taraf İptal İstedi</button>
           )}
         </div>
 
         <button onClick={() => setCurrentView('dashboard')} className="text-slate-400 hover:text-white mb-4 flex items-center text-sm font-medium">← {lang === 'TR' ? 'Geri Dön' : 'Go Back'}</button>
-        
+
         <div className="w-full bg-red-950/40 border border-red-900/50 p-3 rounded-xl mb-6 flex items-start space-x-3 text-sm">
           <span className="text-xl">🛡️</span>
           <div>
             <p className="text-red-400 font-bold">{lang === 'TR' ? 'Güvenlik Uyarısı!' : 'Security Warning!'}</p>
-            <p className="text-slate-300 text-xs mt-0.5">{lang === 'TR' ? 'Araf Protocol destek ekibi size ASLA mesaj atmaz. Tüm sorunları kontrat butonlarıyla çözün. Harici cüzdanlara asla elden para göndermeyin.' : 'Araf Protocol support will NEVER DM you. Resolve all issues via contract buttons. Never send funds to external wallets.'}</p>
+            <p className="text-slate-300 text-xs mt-0.5">{lang === 'TR' ? 'Araf Protocol destek ekibi size ASLA mesaj atmaz. Tüm sorunları kontrat butonlarıyla çözün.' : 'Araf Protocol support will NEVER DM you. Resolve all issues via contract buttons.'}</p>
           </div>
         </div>
 
@@ -584,26 +748,21 @@ function App() {
             <div className="space-y-3 text-sm">
               <div className="bg-slate-900 p-3 rounded-xl border border-slate-700">
                 <p className="text-slate-400 mb-1">{isTaker ? (lang === 'TR' ? 'Gönderilecek Tutar' : 'Amount to Send') : (lang === 'TR' ? 'Alınacak Tutar' : 'Amount to Receive')}</p>
-                <p className="text-xl font-bold text-white">33.500,00 TRY</p>
-                <p className="text-xs text-emerald-400 mt-1">1000 USDT</p>
+                <p className="text-xl font-bold text-white">33.500,00 {activeTrade?.fiat || 'TRY'}</p>
+                <p className="text-xs text-emerald-400 mt-1">{activeTrade?.min || 1000} {activeTrade?.crypto || 'USDT'}</p>
               </div>
 
-              {isTaker ? (
+              {/* H-02 Fix: conditional render — activeTrade.id var ve string format doğruysa göster */}
+              {isTaker && activeTrade?.id && /^[a-fA-F0-9]{24}$/.test(String(activeTrade.id)) ? (
                 <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 relative overflow-hidden">
                   <div className="absolute top-0 right-0 bg-blue-600 text-white text-[10px] font-bold px-2 py-1 rounded-bl-lg">End-to-End Encrypted</div>
                   <p className="text-slate-400 mb-2 uppercase text-[10px] tracking-widest font-bold">🛡️ {lang === 'TR' ? 'Güvenli PII Verisi' : 'Secure PII Data'}</p>
-                  
-                  {/* H-03 Düzeltmesi: Statik IBAN yerine Güvenli Bileşen Entegrasyonu */}
-                  <PIIDisplay 
-                    tradeId={activeTrade?.id || 'TEST'} 
-                    authToken={jwtToken} 
-                    lang={lang}
-                  />
-
-                  <div className="mt-4 p-2 bg-slate-800 rounded-lg flex items-start space-x-2 border border-slate-600">
-                    <span className="text-lg">🔒</span>
-                    <p className="text-[10px] text-slate-300 leading-tight">Bu bilgiler blockchain'e kaydedilmez. Sadece bu işleme özel şifreli olarak iletilmiştir.</p>
-                  </div>
+                  {/* H-02 + H-03 Fix: activeTrade.id garantili, lang prop geçiliyor */}
+                  <PIIDisplay tradeId={activeTrade.id} authToken={jwtToken} lang={lang} />
+                </div>
+              ) : isTaker ? (
+                <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 text-center">
+                  <p className="text-slate-500 text-xs">{lang === 'TR' ? 'Trade başladığında IBAN görüntülenecek.' : 'IBAN will be shown once trade starts.'}</p>
                 </div>
               ) : (
                 <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 text-center">
@@ -612,14 +771,12 @@ function App() {
                 </div>
               )}
 
-              {/* GÜVENLİ XSS KORUMALI TELEGRAM BUTONU */}
               <div className="bg-slate-900 p-3 rounded-xl border border-slate-700 flex justify-between items-center">
                 <span className="text-slate-400">{lang === 'TR' ? 'Karşı Taraf:' : 'Counterparty:'}</span>
                 <a href={getSafeTelegramUrl(telegramHandle)} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-1 text-blue-400 hover:text-blue-300 transition bg-blue-500/10 px-3 py-1.5 rounded-lg border border-blue-500/30">
                   <span>💬</span><span className="font-bold text-xs">{lang === 'TR' ? 'Mesaj At' : 'Message'}</span>
                 </a>
               </div>
-
             </div>
           </div>
 
@@ -629,8 +786,13 @@ function App() {
                 <div className="w-14 h-14 bg-blue-500/20 text-blue-400 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">🔒</div>
                 <h2 className="text-xl md:text-2xl font-bold text-white mb-2">{lang === 'TR' ? 'USDT Kilitlendi' : 'USDT Locked'}</h2>
                 {isTaker ? (
-                  <button onClick={() => { setTradeState('PAID'); setCooldownPassed(false); }} className="bg-blue-600 hover:bg-blue-500 text-white w-full sm:w-auto px-8 py-3 rounded-xl font-bold mt-4">
-                    {lang === 'TR' ? 'Ödemeyi Yaptım' : 'I have paid'}
+                  /* M-06 Fix: reportPayment kontrat çağrısı */
+                  <button
+                    onClick={handleReportPayment}
+                    disabled={contractLoading}
+                    className={`px-8 py-3 rounded-xl font-bold mt-4 transition ${contractLoading ? 'bg-slate-700 text-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}
+                  >
+                    {contractLoading ? (lang === 'TR' ? 'İşleniyor...' : 'Processing...') : (lang === 'TR' ? 'Ödemeyi Yaptım' : 'I have paid')}
                   </button>
                 ) : (
                   <p className="text-slate-400 mb-6 text-sm animate-pulse">{lang === 'TR' ? 'Alıcının transferi bekleniyor...' : 'Waiting for buyer transfer...'}</p>
@@ -650,24 +812,32 @@ function App() {
                 ) : (
                   <div className="w-full max-w-md flex flex-col space-y-4">
                     <label className="flex items-start space-x-3 p-3 bg-red-950/30 border border-red-900/50 rounded-xl cursor-pointer text-left">
-                      <input 
-                        type="checkbox" 
-                        checked={chargebackAccepted} 
+                      <input
+                        type="checkbox"
+                        checked={chargebackAccepted}
                         onChange={(e) => setChargebackAccepted(e.target.checked)}
-                        className="mt-1 w-4 h-4 accent-emerald-500 rounded bg-slate-800 border-slate-600 focus:ring-emerald-500 focus:ring-offset-slate-900"
+                        className="mt-1 w-4 h-4 accent-emerald-500 rounded bg-slate-800 border-slate-600"
                       />
                       <span className="text-xs text-slate-300">
-                        <strong className="text-red-400">{lang === 'TR' ? 'UYARI:' : 'WARNING:'}</strong> {lang === 'TR' ? 'Paranın farklı isimli bir hesaptan gelmediğini ve Chargeback (Ters İbraz) riskini anladığımı kabul ediyorum.' : 'I confirm the funds came from the correct name and understand the Chargeback risk.'}
+                        <strong className="text-red-400">{lang === 'TR' ? 'UYARI:' : 'WARNING:'}</strong> {lang === 'TR' ? 'Paranın farklı isimli bir hesaptan gelmediğini ve Chargeback riskini anladığımı kabul ediyorum.' : 'I confirm funds came from the correct name and understand the Chargeback risk.'}
                       </span>
                     </label>
 
                     <div className="flex flex-col sm:flex-row justify-center gap-3">
-                      <button 
-                        disabled={!chargebackAccepted}
-                        className={`w-full sm:w-auto px-8 py-3 rounded-xl font-bold transition ${chargebackAccepted ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}>
-                        {lang === 'TR' ? 'Serbest Bırak' : 'Release USDT'}
+                      {/* M-06 Fix: releaseFunds kontrat çağrısı */}
+                      <button
+                        onClick={handleReleaseFunds}
+                        disabled={!chargebackAccepted || contractLoading}
+                        className={`w-full sm:w-auto px-8 py-3 rounded-xl font-bold transition ${chargebackAccepted && !contractLoading ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}
+                      >
+                        {contractLoading ? '...' : (lang === 'TR' ? 'Serbest Bırak' : 'Release USDT')}
                       </button>
-                      <button onClick={() => cooldownPassed && setTradeState('CHALLENGED')} disabled={!cooldownPassed} className={`w-full sm:w-auto px-6 py-3 rounded-xl font-bold transition ${cooldownPassed ? 'bg-red-500/10 text-red-500 border border-red-500/50 hover:bg-red-500 hover:text-white' : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'}`}>
+                      {/* M-06 Fix: challengeTrade kontrat çağrısı */}
+                      <button
+                        onClick={handleChallengeTrade}
+                        disabled={!cooldownPassed || contractLoading}
+                        className={`w-full sm:w-auto px-6 py-3 rounded-xl font-bold transition ${cooldownPassed && !contractLoading ? 'bg-red-500/10 text-red-500 border border-red-500/50 hover:bg-red-500 hover:text-white' : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'}`}
+                      >
                         {cooldownPassed ? (lang === 'TR' ? 'İtiraz Et' : 'Challenge') : '⏳ Cooldown 59:12'}
                       </button>
                     </div>
@@ -697,8 +867,24 @@ function App() {
                 <div className="bg-slate-900/50 border border-slate-700 rounded-xl p-4">
                   {cancelStatus === null && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {isMaker && <button className="w-full bg-slate-800 border border-emerald-500/50 text-emerald-400 p-3 rounded-xl font-bold text-sm hover:bg-emerald-500 hover:text-white transition">🤝 {lang === 'TR' ? 'Serbest Bırak' : 'Release'}</button>}
-                      <button onClick={handleProposeCancel} className="w-full bg-slate-800 border border-orange-500/50 text-orange-400 p-3 rounded-xl font-bold text-sm hover:bg-orange-500 hover:text-white transition">↩️ {lang === 'TR' ? 'İptal Teklif Et' : 'Propose Cancel'}</button>
+                      {/* M-06 Fix: releaseFunds CHALLENGED'dan da çalışır */}
+                      {isMaker && (
+                        <button
+                          onClick={handleReleaseFunds}
+                          disabled={contractLoading}
+                          className={`w-full bg-slate-800 border border-emerald-500/50 text-emerald-400 p-3 rounded-xl font-bold text-sm transition ${contractLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500 hover:text-white'}`}
+                        >
+                          🤝 {lang === 'TR' ? 'Serbest Bırak' : 'Release'}
+                        </button>
+                      )}
+                      {/* M-05 Fix: handleProposeCancel imza + backend + kontrat */}
+                      <button
+                        onClick={handleProposeCancel}
+                        disabled={contractLoading}
+                        className={`w-full bg-slate-800 border border-orange-500/50 text-orange-400 p-3 rounded-xl font-bold text-sm transition ${contractLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-orange-500 hover:text-white'}`}
+                      >
+                        ↩️ {lang === 'TR' ? 'İptal Teklif Et' : 'Propose Cancel'}
+                      </button>
                     </div>
                   )}
                   {cancelStatus === 'proposed_by_me' && (
@@ -711,7 +897,13 @@ function App() {
                     <div className="animate-pulse-slow">
                       <p className="text-orange-400 font-bold text-sm mb-3">⚠️ {lang === 'TR' ? 'Karşı taraf iptal teklif etti.' : 'Opponent proposed cancellation.'}</p>
                       <div className="grid grid-cols-2 gap-3">
-                        <button onClick={() => { setCancelStatus(null); setTradeState('LOCKED'); setCurrentView('dashboard'); showToast(lang === 'TR' ? 'İptal onaylandı.' : 'Cancel approved.', 'success'); }} className="w-full bg-orange-600 hover:bg-orange-500 text-white p-3 rounded-xl font-bold text-sm">{lang === 'TR' ? 'Onayla' : 'Approve'}</button>
+                        <button
+                          onClick={handleProposeCancel}
+                          disabled={contractLoading}
+                          className="w-full bg-orange-600 hover:bg-orange-500 text-white p-3 rounded-xl font-bold text-sm"
+                        >
+                          {lang === 'TR' ? 'Onayla' : 'Approve'}
+                        </button>
                         <button onClick={() => setCancelStatus(null)} className="w-full bg-slate-700 hover:bg-slate-600 text-white p-3 rounded-xl font-bold text-sm">{lang === 'TR' ? 'Reddet' : 'Reject'}</button>
                       </div>
                     </div>
@@ -725,9 +917,8 @@ function App() {
     );
   };
 
-  // ==========================================
-  // --- 7. ANA YAPI (ROUTER & NAVBAR) ---
-  // ==========================================
+  // ── ANA YAPI ───────────────────────────────────────────────────────────────
+
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans">
       <nav className="flex justify-between items-center p-4 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md sticky top-0 z-40">
@@ -735,31 +926,27 @@ function App() {
           <div className="w-8 h-8 rounded bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center font-bold">A</div>
           <span className="text-lg font-bold tracking-widest hidden sm:block">ARAF</span>
         </div>
-        
-        {/* MOBİL UYUMLU VE SIWE ENTEGRELİ NAVBAR BUTONLARI */}
+
         <div className="flex items-center space-x-2 sm:space-x-3">
           <button onClick={() => setLang(lang === 'TR' ? 'EN' : 'TR')} className="bg-slate-800 border border-slate-700 px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold text-slate-300 hover:bg-slate-700 hover:text-white transition shadow-inner">
             🌐 <span className="hidden xs:inline">{lang}</span>
           </button>
-          
           <button onClick={() => setShowMakerModal(true)} className="hidden md:block text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-sm font-medium">{t.createAd}</button>
-          
-          <button 
+          <button
             onClick={() => {
-              // YENİ MANTIK: Bağlı değilse cüzdan aç, bağlı ama JWT yoksa SIWE yap, JWT varsa cüzdanı kopar
-              if (!isConnected) setShowWalletModal(true);
-              else if (!jwtToken) loginWithSIWE();
-              else disconnect();
+              if (!isConnected)       setShowWalletModal(true);
+              else if (!jwtToken)     loginWithSIWE();
+              else                    disconnect();
             }}
             disabled={isLoggingIn}
             className={`flex items-center justify-center space-x-2 px-3 sm:px-4 py-1.5 rounded-lg font-bold text-xs sm:text-sm transition-all ${
               isLoggingIn
-              ? 'bg-orange-800 text-orange-200 cursor-not-allowed opacity-80' 
-              : isConnected && jwtToken
-              ? 'bg-slate-800 text-emerald-400 border border-emerald-500/20 hover:bg-red-950/20 hover:text-red-400' 
-              : isConnected && !jwtToken
-              ? 'bg-orange-600 hover:bg-orange-500 text-white shadow-lg shadow-orange-900/20 animate-pulse'
-              : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20'
+                ? 'bg-orange-800 text-orange-200 cursor-not-allowed opacity-80'
+                : isConnected && jwtToken
+                ? 'bg-slate-800 text-emerald-400 border border-emerald-500/20 hover:bg-red-950/20 hover:text-red-400'
+                : isConnected && !jwtToken
+                ? 'bg-orange-600 hover:bg-orange-500 text-white shadow-lg shadow-orange-900/20 animate-pulse'
+                : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20'
             }`}
           >
             {isLoggingIn ? (
@@ -770,8 +957,7 @@ function App() {
                 </svg>
                 {lang === 'TR' ? 'Bekleniyor...' : 'Pending...'}
               </>
-            ) :
-              isConnected && jwtToken ? (
+            ) : isConnected && jwtToken ? (
               <>
                 <span className="hidden sm:inline">{formatAddress(address)}</span>
                 <span className="sm:hidden">0x..{address?.slice(-3)}</span>
@@ -782,7 +968,6 @@ function App() {
               lang === 'TR' ? 'Cüzdan' : 'Connect'
             )}
           </button>
-
           <button onClick={() => setShowProfileModal(true)} className="w-8 h-8 bg-slate-800 border border-slate-700 rounded-full flex items-center justify-center text-sm hover:bg-slate-700 relative shrink-0">
             👤 {isBanned && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-slate-900"></span>}
           </button>
