@@ -36,7 +36,8 @@ const listingSchema = new mongoose.Schema(
       max: { type: Number, required: true, min: 0 },
     },
     tier_rules: {
-      required_tier:   { type: Number, enum: [1, 2, 3], required: true },
+      // H-01 Fix: 5 tier (0-4) destekleniyor. Contract ile senkronize.
+      required_tier:   { type: Number, enum: [0, 1, 2, 3, 4], required: true },
       maker_bond_pct:  { type: Number, required: true },
       taker_bond_pct:  { type: Number, required: true },
     },
@@ -121,6 +122,8 @@ const tradeSchema = new mongoose.Schema(
       exchange_rate:  { type: Number, required: true },
       crypto_asset:   { type: String, enum: ["USDT", "USDC"], required: true },
       fiat_currency:  { type: String, enum: ["TRY", "USD", "EUR"], required: true },
+      // H-04 Fix: Bleeding Escrow decay takibi — display cache, autoritative değer on-chain.
+      total_decayed:  { type: Number, default: 0 },
     },
 
     // Mirrors on-chain state machine
@@ -132,10 +135,12 @@ const tradeSchema = new mongoose.Schema(
     },
 
     timers: {
-      locked_at:     { type: Date, default: null },
-      paid_at:       { type: Date, default: null },
-      challenged_at: { type: Date, default: null },
-      resolved_at:   { type: Date, default: null },
+      locked_at:      { type: Date, default: null },
+      paid_at:        { type: Date, default: null },
+      challenged_at:  { type: Date, default: null },
+      resolved_at:    { type: Date, default: null },
+      // H-04 Fix: Son decay zamanı — frontend için bleeding progress hesabında kullanılır
+      last_decay_at:  { type: Date, default: null },
     },
 
     // Taker's payment proof (IPFS hash — not payment verification)
@@ -166,7 +171,10 @@ const tradeSchema = new mongoose.Schema(
       ip_hash:         { type: String,  default: null }, // SHA-256(IP) — GDPR uyumlu
     },
 
-    tier: { type: Number, enum: [1, 2, 3], required: true },
+    // H-01 Fix: 5 tier (0-4) destekleniyor.
+    // Tier 0 = yeni kullanıcı teşviki (bond yok, sadece crypto riski).
+    // Tier 4 = premium, yüksek hacimli trader.
+    tier: { type: Number, enum: [0, 1, 2, 3, 4], required: true },
   },
   {
     timestamps: { createdAt: "created_at", updatedAt: "updated_at" },
