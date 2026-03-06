@@ -5,6 +5,7 @@ const express       = require("express");
 const helmet        = require("helmet");
 const cors          = require("cors");
 const mongoSanitize = require("express-mongo-sanitize");
+const mongoose      = require("mongoose"); // L-03 Fix: graceful shutdown için
 
 // Yapılandırma ve Yardımcı Araçlar
 const { connectDB }    = require("./config/db");
@@ -13,6 +14,9 @@ const logger           = require("./utils/logger");
 
 // Zincir Dinleyici (Worker)
 const worker = require("./services/eventListener");
+
+// H-06 Fix: DLQ Processor — başarısız event'leri izler ve alert gönderir
+const { processDLQ } = require("./services/dlqProcessor");
 
 // Hata Yönetimi
 const { globalErrorHandler } = require("./middleware/errorHandler");
@@ -74,6 +78,9 @@ async function bootstrap() {
     await worker.start();
     logger.info("Event Listener (Zincir Dinleyici) aktif: Base L2 ağı izleniyor.");
 
+    // H-06 Fix: DLQ processor — her 60 saniyede bir çalışır, biriken başarısız event'leri raporlar
+    const dlqInterval = setInterval(processDLQ, 60_000);
+
     // 3. Rotaları İçeri Aktar (Redis ve DB hazır olduktan sonra)
     const authRoutes     = require("./routes/auth");
     const listingRoutes  = require("./routes/listings");
@@ -89,12 +96,12 @@ async function bootstrap() {
     app.use("/api/feedback", feedbackRoutes);
 
     // ── SAĞLIK KONTROLÜ VE HATA YÖNETİMİ ───────────────────────────────────────
-    
+
     // Uygulamanın ve ağın durumunu kontrol etmek için
-    app.get("/health", (req, res) => res.json({ 
-      status: "ok", 
-      worker: "active",
-      timestamp: new Date().toISOString() 
+    app.get("/health", (req, res) => res.json({
+      status:    "ok",
+      worker:    "active",
+      timestamp: new Date().toISOString(),
     }));
 
     // Tanımlanmayan rotalar için 404
@@ -104,14 +111,30 @@ async function bootstrap() {
     app.use(globalErrorHandler);
 
     // 5. SUNUCUYU BAŞLAT
-    const PORT = process.env.PORT || 4000;
-    app.listen(PORT, () => {
+    const PORT   = process.env.PORT || 4000;
+    const server = app.listen(PORT, () => {
       logger.info(`===========================================================`);
       logger.info(`🚀 Araf Protocol Backend Dinleniyor: Port ${PORT}`);
       logger.info(`🌍 Ortam: ${process.env.NODE_ENV || 'development'}`);
       logger.warn(`🛡️  Güvenlik: Zero Private Key Modu Aktif.`);
       logger.info(`===========================================================`);
     });
+
+    // L-03 Fix: Graceful shutdown — SIGTERM/SIGINT sinyallerinde temiz kapanış
+    // Kubernetes/Docker ortamlarında pod'un sağlıklı kapanmasını sağlar.
+    const shutdown = async (signal) => {
+      logger.info(`${signal} alındı. Graceful shutdown başlıyor...`);
+      clearInterval(dlqInterval);
+      server.close(async () => {
+        await worker.stop();
+        await mongoose.connection.close();
+        logger.info("Tüm bağlantılar kapatıldı. Çıkış yapılıyor.");
+        process.exit(0);
+      });
+    };
+
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT",  () => shutdown("SIGINT"));
 
   } catch (err) {
     logger.error("Uygulama başlatılırken kritik hata oluştu:", err);
