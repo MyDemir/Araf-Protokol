@@ -451,7 +451,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         }
 
         // Update reputation
-        _updateReputation(t.maker, false);
+        // S2: CHALLENGED state'ten release → maker haksız challenge açtı → +1 Failed
+        // PAID state'ten release → normal happy path → her ikisi +1 Successful
+        bool makerOpenedDispute = (t.state == TradeState.CHALLENGED);
+        _updateReputation(t.maker, makerOpenedDispute);
         _updateReputation(t.taker, false);
 
         emit EscrowReleased(_tradeId, t.maker, t.taker, takerFee, actualMakerFee);
@@ -668,7 +671,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         if (makerBondAfterFee > 0) IERC20(t.tokenAddress).safeTransfer(t.maker, makerBondAfterFee);
         if (currentTakerBond > 0) IERC20(t.tokenAddress).safeTransfer(t.taker, currentTakerBond);
 
-        _updateReputation(t.maker, false);
+        // S1: autoRelease → maker 48h içinde release etmedi, pasif kaldı → +1 Failed
+        // Taker ödemeyi yaptı ve bekledi → +1 Successful
+        _updateReputation(t.maker, true);
         _updateReputation(t.taker, false);
 
         emit EscrowReleased(_tradeId, t.maker, t.taker, takerFee, actualMakerFee);
