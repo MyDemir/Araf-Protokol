@@ -7,7 +7,7 @@ pragma solidity ^0.8.24;
  *         Bleeding Escrow (time-decay) dispute resolution.
  * @dev    Security: ReentrancyGuard + CEI pattern + EIP-712 cancel.
  *         Network: Base (L2)
- * @author Araf Protocol — v1.2
+ * @author Araf Protocol — v2.0
  */
 
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -43,7 +43,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         uint256 cryptoAmount;   // Locked crypto (no bond — stored separately)
         uint256 makerBond;      // Maker's bond in token
         uint256 takerBond;      // Taker's bond in token (0 for Tier 1)
-        uint8   tier;           // 1, 2, or 3
+        uint8   tier;           // 0, 1, 2, 3 or 4
         TradeState state;
         uint256 lockedAt;
         uint256 paidAt;
@@ -57,53 +57,83 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
     struct Reputation {
         uint256 successfulTrades;
         uint256 failedDisputes;
-        uint256 bannedUntil;    // timestamp; 0 = not banned
+        uint256 bannedUntil;      // timestamp; 0 = not banned
+        uint256 consecutiveBans;  // Ard arda ban sayisi — sure ve tier cezasi icin
     }
 
     // ═══════════════════════════════════════════════════
     //  CONSTANTS — Finalized Protocol Parameters v1.2
     // ═══════════════════════════════════════════════════
 
-    // Tier trade limits (in micro-USD equivalent, for on-chain checks)
-    // Real-world TRY limits enforced off-chain; on-chain checks crypto amount
+    // ── 5-Tier Bond System ──────────────────────────────────────────────────────
+    // TRY limitleri off-chain (backend) tarafindan zorunlu tutulur.
+    // On-chain: tier numarasina gore bond BPS hesaplanir.
+    //
+    // Tier 0 |  250 - 5.000 TRY  | Maker %0 | Taker %0  | Yeni kullanici tesviki
+    // Tier 1 | 5.001-50.000 TRY  | Maker %8 | Taker %10 | 1:1.25 asimetri
+    // Tier 2 | 50K - 250K TRY    | Maker %6 | Taker %8  | 1:1.33 asimetri
+    // Tier 3 | 250K - 1M TRY     | Maker %5 | Taker %5  | 1:1 (esit, guven artar)
+    // Tier 4 | 1M+ TRY           | Maker %2 | Taker %2  | 1:1 (premium, dusuk yuk)
+    //
+    // Tier 0: bond yoktur — sadece kilitli crypto erimeye tabidir.
+    // Psikolojik baski: Taker ispat yukunu tasir; Tier 1-2'de bond asimetrisi bunu hissettirir.
 
-    // Bond percentages in basis points (BPS): 100 BPS = 1%
-    uint256 public constant MAKER_BOND_TIER1_BPS = 1800; // 18%
-    uint256 public constant MAKER_BOND_TIER2_BPS = 1500; // 15%
-    uint256 public constant MAKER_BOND_TIER3_BPS = 1000; // 10%
-    uint256 public constant TAKER_BOND_TIER1_BPS = 0;    // 0%  (Anti-Sybil protected)
-    uint256 public constant TAKER_BOND_TIER2_BPS = 1200; // 12%
-    uint256 public constant TAKER_BOND_TIER3_BPS = 800;  //  8%
+    uint256 public constant MAKER_BOND_TIER0_BPS =    0; //  0%
+    uint256 public constant MAKER_BOND_TIER1_BPS =  800; //  8%
+    uint256 public constant MAKER_BOND_TIER2_BPS =  600; //  6%
+    uint256 public constant MAKER_BOND_TIER3_BPS =  500; //  5%
+    uint256 public constant MAKER_BOND_TIER4_BPS =  200; //  2%
 
-    // Bond reputation modifiers
-    uint256 public constant GOOD_REP_DISCOUNT_BPS = 300; // -3%
-    uint256 public constant BAD_REP_PENALTY_BPS   = 500; // +5%
+    uint256 public constant TAKER_BOND_TIER0_BPS =    0; //  0%  (bond yok, sadece crypto riski)
+    uint256 public constant TAKER_BOND_TIER1_BPS = 1000; // 10%
+    uint256 public constant TAKER_BOND_TIER2_BPS =  800; //  8%
+    uint256 public constant TAKER_BOND_TIER3_BPS =  500; //  5%
+    uint256 public constant TAKER_BOND_TIER4_BPS =  200; //  2%
 
-    // Protocol success fee — symmetric split: %0.1 taker (crypto'dan) + %0.1 maker (bond'dan)
-    // Taker aldığı crypto'dan %0.1 öder → fiat/crypto paritesi korunur
-    // Maker bond iadesinden %0.1 öder → aldığı TL'ye dokunulmaz
-    // Toplam treasury geliri: %0.2/işlem
-    uint256 public constant TAKER_FEE_BPS = 10; // %0.1 — taker crypto'sundan
-    uint256 public constant MAKER_FEE_BPS = 10; // %0.1 — maker bond'undan
+    // Tier gecis kriterleri (off-chain zorunlu, on-chain referans):
+    // T0->T1: 15 basarili islem, 0 failed dispute
+    // T1->T2: 50 basarili + 100.000 TRY hacim, <=1 failed dispute
+    // T2->T3: 100 basarili + 500.000 TRY hacim, <=1 failed dispute
+    // T3->T4: 200 basarili + 2.000.000 TRY hacim, 0 failed dispute
+    // Ceza: Her yeni failed dispute bir ust tier sayacini sifirlar.
+    //       2+ failed dispute mevcut tier'i bir asagi dusurur.
 
-    // Timers
-    uint256 public constant GRACE_PERIOD        = 48 hours;
-    uint256 public constant CHALLENGE_COOLDOWN  = 1 hours;   // Min time after PAID before challenge
-    uint256 public constant USDT_DECAY_START    = 96 hours;  // Day 4 of Bleeding (relative to challengedAt)
-    uint256 public constant MAX_BLEEDING        = 240 hours; // 10 days — then BURNED
-    uint256 public constant WALLET_AGE_MIN      = 7 days;
-    uint256 public constant TIER1_TRADE_COOLDOWN = 24 hours;
+    // ── Reputation Modifiers ─────────────────────────────────────────────────
+    uint256 public constant GOOD_REP_DISCOUNT_BPS = 100; // -1% (temiz gecmise hafif tesvik)
+    uint256 public constant BAD_REP_PENALTY_BPS   = 300; // +3% (ceza — magdur etmeden)
 
-    // Bleeding decay in BPS per day (86400 seconds)
-    uint256 public constant BOND_DECAY_OPENER_BPS_DAY = 1500; // 15%/day
-    uint256 public constant BOND_DECAY_OTHER_BPS_DAY  = 1000; // 10%/day
-    uint256 public constant USDT_DECAY_BPS_DAY        = 400;  //  4%/day (both parties)
+    // ── Protocol Fee ─────────────────────────────────────────────────────────
+    // Simetrik split: %0.1 taker (crypto'dan) + %0.1 maker (bond'dan)
+    // Toplam treasury geliri: %0.2/islem
+    uint256 public constant TAKER_FEE_BPS = 10; // %0.1
+    uint256 public constant MAKER_FEE_BPS = 10; // %0.1
 
-    // Anti-Sybil: minimum native token balance (~$2 worth)
+    // ── Timers ───────────────────────────────────────────────────────────────
+    uint256 public constant GRACE_PERIOD         =  48 hours; // Challenge sonrasi guvenli pencere
+    uint256 public constant CHALLENGE_COOLDOWN   =   1 hours; // PAID'dan sonra min bekleme
+    uint256 public constant USDT_DECAY_START     =  96 hours; // Grace bittikten 96h sonra crypto erir
+    uint256 public constant MAX_BLEEDING         = 240 hours; // 10 gun -> BURN
+    uint256 public constant WALLET_AGE_MIN       =   7 days;
+    uint256 public constant TIER0_TRADE_COOLDOWN =  24 hours; // Tier 0: gunde 1 islem
+    uint256 public constant TIER1_TRADE_COOLDOWN =  24 hours; // Tier 1: gunde 1 islem
+
+    // ── Saatlik Decay (Hourly BPS) ────────────────────────────────────────────
+    // Efektif bleeding: MAX_BLEEDING(240h) - GRACE(48h) = 192h
+    //
+    // Taker bond : 42 BPS/saat -> 192h'de %80.6 erimis, %19.4 kalmis
+    // Maker bond : 26 BPS/saat -> 192h'de %50.1 erimis (crypto zaten kilitli)
+    // Crypto     : 34 BPS/saat x2 taraf -> USDT_DECAY_START'tan sonra baslar
+    //
+    // Tier 0: bond yoktur -> yalnizca crypto decay uygulanir.
+    uint256 public constant TAKER_BOND_DECAY_BPS_H = 42; // BPS/saat
+    uint256 public constant MAKER_BOND_DECAY_BPS_H = 26; // BPS/saat
+    uint256 public constant CRYPTO_DECAY_BPS_H     = 34; // BPS/saat x2 = 68 BPS/h toplam
+
+    // ── Anti-Sybil ───────────────────────────────────────────────────────────
     uint256 public constant DUST_LIMIT = 0.001 ether; // ~$2 on Base
 
-    uint256 private constant BPS_DENOMINATOR = 10_000;
-    uint256 private constant SECONDS_PER_DAY = 86_400;
+    uint256 private constant BPS_DENOMINATOR  = 10_000;
+    uint256 private constant SECONDS_PER_HOUR = 3_600;
 
     // ═══════════════════════════════════════════════════
     //  EIP-712 TYPEHASH
@@ -130,6 +160,11 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
 
     // Anti-Sybil: last trade timestamp for Tier 1 cooldown
     mapping(address => uint256) public lastTradeAt;
+
+    // Consecutive ban cezasi: cuzdan bu tierin uzerinde islem acamaz.
+    // Varsayilan: 4 (Tier 4 = kısıtsız). Her consecutive ban 1 duser.
+    // Off-chain backend bu degeri okuyup tier secimini kisitlar.
+    mapping(address => uint8) public maxAllowedTier;
 
     // Supported payment tokens (USDT, USDC on Base)
     mapping(address => bool) public supportedTokens;
@@ -231,7 +266,13 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         // ── Checks ──
         require(supportedTokens[_token], "ArafEscrow: token not supported");
         require(_cryptoAmount > 0, "ArafEscrow: zero amount");
-        require(_tier >= 1 && _tier <= 3, "ArafEscrow: invalid tier");
+        require(_tier <= 4, "ArafEscrow: invalid tier");
+
+        // Consecutive ban cezasi: cuzdan ban nedeniyle tier kisitlandi mi?
+        uint8 maxTier = maxAllowedTier[msg.sender];
+        if (maxTier > 0) {
+            require(_tier <= maxTier, "ArafEscrow: tier restricted by consecutive ban");
+        }
 
         // Calculate maker bond
         uint256 bondBps = _getMakerBondBps(msg.sender, _tier);
@@ -327,12 +368,12 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
             "ArafEscrow: insufficient native balance"
         );
 
-        // 4. Tier 1 cooldown: max 1 trade per 24h
-        if (t.tier == 1) {
+        // 4. Cooldown: Tier 0 ve Tier 1 icin gunde max 1 islem
+        if (t.tier == 0 || t.tier == 1) {
             require(
                 lastTradeAt[msg.sender] == 0 ||
-                block.timestamp >= lastTradeAt[msg.sender] + TIER1_TRADE_COOLDOWN,
-                "ArafEscrow: Tier 1 cooldown active"
+                block.timestamp >= lastTradeAt[msg.sender] + TIER0_TRADE_COOLDOWN,
+                "ArafEscrow: Tier 0/1 cooldown active (24h)"
             );
         }
 
@@ -716,17 +757,18 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         }
 
         // ── Grace Period (48h) ──
-        // İlk 48 saat boyunca hiçbir şey erimez. Fonlar güvende.
-        // 48h içinde anlaşma sağlanmazsa bleeding başlar.
+        // Ilk 48 saat hicbir sey erimez — fonlar guvende.
+        // 48h'de anlaşma yoksa bleeding baslar.
         uint256 bleedingElapsed = elapsed > GRACE_PERIOD ? elapsed - GRACE_PERIOD : 0;
 
-        // ── Bond Decay ──
-        // Grace period (48h) bittikten sonra başlar.
-        // Opener (maker) %15/gün, diğer taraf (taker) %10/gün erir.
-        uint256 daysElapsed = bleedingElapsed / SECONDS_PER_DAY;
+        // ── Bond Decay (Saatlik / Hourly) ──
+        // Grace period bittikten sonra baslar.
+        // Tier 0'da makerBond ve takerBond sifir oldugundan etki yoktur.
+        // Tier 1-4: Taker 42 BPS/h, Maker 26 BPS/h
+        uint256 hoursElapsed = bleedingElapsed / SECONDS_PER_HOUR;
 
-        uint256 makerBondDecayBps = daysElapsed * BOND_DECAY_OPENER_BPS_DAY;
-        uint256 takerBondDecayBps = daysElapsed * BOND_DECAY_OTHER_BPS_DAY;
+        uint256 makerBondDecayBps = hoursElapsed * MAKER_BOND_DECAY_BPS_H;
+        uint256 takerBondDecayBps = hoursElapsed * TAKER_BOND_DECAY_BPS_H;
 
         // Cap at 100% (10000 BPS)
         if (makerBondDecayBps > BPS_DENOMINATOR) makerBondDecayBps = BPS_DENOMINATOR;
@@ -738,16 +780,15 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         currentMakerBond = t.makerBond - makerBondDecayed;
         currentTakerBond = t.takerBond - takerBondDecayed;
 
-        // ── USDT/Crypto Decay ──
-        // Grace(48h) + buffer(96h) = 144h sonra başlar.
-        // Her iki taraftan %4/gün → toplam %8/gün crypto erimesi.
+        // ── Crypto Decay (Saatlik / Hourly) ──
+        // Grace(48h) + USDT_DECAY_START(96h) = 144h'den sonra baslar.
+        // Her iki taraftan 34 BPS/h = toplam 68 BPS/h crypto erimesi.
+        // Tier 0 dahil tum tierlar icin uygulanir.
         uint256 cryptoDecayed = 0;
         if (bleedingElapsed > USDT_DECAY_START) {
-            uint256 usdtElapsed = bleedingElapsed - USDT_DECAY_START;
-            uint256 bleedingDays = usdtElapsed / SECONDS_PER_DAY;
-
-            // %8/gün toplam (her taraf %4 öder)
-            uint256 cryptoDecayBps = bleedingDays * USDT_DECAY_BPS_DAY * 2; // both sides
+            uint256 usdtElapsed  = bleedingElapsed - USDT_DECAY_START;
+            uint256 usdtHours    = usdtElapsed / SECONDS_PER_HOUR;
+            uint256 cryptoDecayBps = usdtHours * CRYPTO_DECAY_BPS_H * 2; // her iki taraf
             if (cryptoDecayBps > BPS_DENOMINATOR) cryptoDecayBps = BPS_DENOMINATOR;
             cryptoDecayed = (t.cryptoAmount * cryptoDecayBps) / BPS_DENOMINATOR;
         }
@@ -764,18 +805,18 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         view
         returns (uint256 bondBps)
     {
-        if (_tier == 1) bondBps = MAKER_BOND_TIER1_BPS;
+        if      (_tier == 0) return MAKER_BOND_TIER0_BPS; // 0% — rep modifier uygulanmaz
+        else if (_tier == 1) bondBps = MAKER_BOND_TIER1_BPS;
         else if (_tier == 2) bondBps = MAKER_BOND_TIER2_BPS;
-        else bondBps = MAKER_BOND_TIER3_BPS;
+        else if (_tier == 3) bondBps = MAKER_BOND_TIER3_BPS;
+        else                 bondBps = MAKER_BOND_TIER4_BPS;
 
         Reputation storage rep = reputation[_maker];
         if (rep.failedDisputes == 0 && rep.successfulTrades > 0) {
-            // Good reputation discount
             bondBps = bondBps > GOOD_REP_DISCOUNT_BPS
                 ? bondBps - GOOD_REP_DISCOUNT_BPS
                 : 0;
         } else if (rep.failedDisputes >= 1) {
-            // Bad reputation penalty
             bondBps += BAD_REP_PENALTY_BPS;
         }
     }
@@ -788,10 +829,11 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         view
         returns (uint256 bondBps)
     {
-        if (_tier == 1) return TAKER_BOND_TIER1_BPS; // Always 0 for Tier 1
-
-        if (_tier == 2) bondBps = TAKER_BOND_TIER2_BPS;
-        else bondBps = TAKER_BOND_TIER3_BPS;
+        if      (_tier == 0) return TAKER_BOND_TIER0_BPS; // 0% — rep modifier uygulanmaz
+        else if (_tier == 1) bondBps = TAKER_BOND_TIER1_BPS;
+        else if (_tier == 2) bondBps = TAKER_BOND_TIER2_BPS;
+        else if (_tier == 3) bondBps = TAKER_BOND_TIER3_BPS;
+        else                 bondBps = TAKER_BOND_TIER4_BPS;
 
         Reputation storage rep = reputation[_taker];
         if (rep.failedDisputes == 0 && rep.successfulTrades > 0) {
@@ -804,15 +846,47 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
     }
 
     /**
-     * @dev Updates on-chain reputation. Applies 30-day ban if 2+ failed disputes.
+     * @dev Updates on-chain reputation.
+     *
+     *  Ban mekanizmasi (2+ failed dispute tetikler):
+     *  - 1. ban : 30 gun  — consecutiveBans = 1
+     *  - 2. ban : 60 gun  — consecutiveBans = 2 + tier 1 duser
+     *  - 3. ban : 120 gun — consecutiveBans = 3 + tier 1 daha duser
+     *  - ...   : sure 2 katina cikar, her seferinde tier 1 duser
+     *
+     *  Ard arda ban sayimi: onceki ban hala aktifken yeni ban alinirsa
+     *  "consecutive" sayilir. Ban sureleri arasinda temiz gecis olursa
+     *  consecutiveBans sifirlanmaz — kalici hafiza (ceza birikir).
+     *
+     *  maxAllowedTier: consecutive ban cezasiyla tier kisitlanir.
+     *  Orn: T3 cuzdanina 2. consecutive ban gelirse maxAllowedTier = 2.
      */
     function _updateReputation(address _wallet, bool _failed) internal {
         Reputation storage rep = reputation[_wallet];
         if (_failed) {
             rep.failedDisputes++;
-            // 30-day Taker ban if 2+ failed disputes
+
+            // Ban tetikleme: 2+ failed dispute
             if (rep.failedDisputes >= 2) {
-                rep.bannedUntil = block.timestamp + 30 days;
+                rep.consecutiveBans++;
+
+                // Escalating ban duration: 30 * 2^(consecutiveBans-1) gun
+                // 1. ban: 30g, 2. ban: 60g, 3. ban: 120g, ...
+                uint256 banDays = 30 days * (2 ** (rep.consecutiveBans - 1));
+                // Cap: maksimum 365 gun (asiri gaz maliyetini onle)
+                if (banDays > 365 days) banDays = 365 days;
+                rep.bannedUntil = block.timestamp + banDays;
+
+                // Tier demosyon: 2. ban ve sonrasinda maxAllowedTier 1 duser
+                if (rep.consecutiveBans >= 2) {
+                    uint8 current = maxAllowedTier[_wallet];
+                    // Hic set edilmemisse varsayilan = 4
+                    if (current == 0) current = 4;
+                    // Tier 0'in altina dusemez
+                    if (current > 0) {
+                        maxAllowedTier[_wallet] = current - 1;
+                    }
+                }
             }
         } else {
             rep.successfulTrades++;
@@ -847,19 +921,33 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
     }
 
     /**
-     * @notice Returns user reputation.
+     * @notice Returns user reputation and ban details.
      */
     function getReputation(address _wallet)
         external
         view
-        returns (uint256 successful, uint256 failed, uint256 bannedUntil)
+        returns (
+            uint256 successful,
+            uint256 failed,
+            uint256 bannedUntil,
+            uint256 consecutiveBans,
+            uint8   tierCap
+        )
     {
         Reputation storage rep = reputation[_wallet];
-        return (rep.successfulTrades, rep.failedDisputes, rep.bannedUntil);
+        uint8 cap = maxAllowedTier[_wallet];
+        if (cap == 0) cap = 4; // varsayilan: kısıtsız
+        return (
+            rep.successfulTrades,
+            rep.failedDisputes,
+            rep.bannedUntil,
+            rep.consecutiveBans,
+            cap
+        );
     }
 
     /**
-     * @notice Check if wallet passes Anti-Sybil for Tier 1.
+     * @notice Check if wallet passes Anti-Sybil (Tier 0 and Tier 1).
      */
     function antiSybilCheck(address _wallet)
         external
@@ -870,7 +958,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
                block.timestamp >= walletRegisteredAt[_wallet] + WALLET_AGE_MIN;
         funded = _wallet.balance >= DUST_LIMIT;
         cooldownOk = lastTradeAt[_wallet] == 0 ||
-                     block.timestamp >= lastTradeAt[_wallet] + TIER1_TRADE_COOLDOWN;
+                     block.timestamp >= lastTradeAt[_wallet] + TIER0_TRADE_COOLDOWN;
     }
 
     /**
