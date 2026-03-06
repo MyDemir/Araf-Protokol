@@ -159,8 +159,8 @@ describe("ArafEscrow", function () {
       await escrow.connect(taker).reportPayment(tradeId, "QmHash");
       await escrow.connect(maker).releaseFunds(tradeId);
 
-      const [makerSuccess,,] = await escrow.getReputation(maker.address);
-      const [takerSuccess,,] = await escrow.getReputation(taker.address);
+      const [makerSuccess,,,] = await escrow.getReputation(maker.address);
+      const [takerSuccess,,,] = await escrow.getReputation(taker.address);
       expect(makerSuccess).to.equal(1);
       expect(takerSuccess).to.equal(1);
     });
@@ -175,8 +175,8 @@ describe("ArafEscrow", function () {
       await time.increase(FORTY_EIGHT_H + 1);
       await escrow.connect(taker).autoRelease(tradeId);
 
-      const [makerSuccess, makerFailed,] = await escrow.getReputation(maker.address);
-      const [takerSuccess, takerFailed,] = await escrow.getReputation(taker.address);
+      const [makerSuccess, makerFailed,,,] = await escrow.getReputation(maker.address);
+      const [takerSuccess, takerFailed,,,] = await escrow.getReputation(taker.address);
       expect(makerSuccess).to.equal(0);
       expect(makerFailed).to.equal(1);  // Pasif maker ceza alır
       expect(takerSuccess).to.equal(1);
@@ -195,8 +195,8 @@ describe("ArafEscrow", function () {
       await time.increase(FORTY_EIGHT_H + 1);
       await escrow.connect(maker).releaseFunds(tradeId);
 
-      const [makerSuccess, makerFailed,] = await escrow.getReputation(maker.address);
-      const [takerSuccess, takerFailed,] = await escrow.getReputation(taker.address);
+      const [makerSuccess, makerFailed,,,] = await escrow.getReputation(maker.address);
+      const [takerSuccess, takerFailed,,,] = await escrow.getReputation(taker.address);
       expect(makerSuccess).to.equal(0);
       expect(makerFailed).to.equal(1);  // Haksız challenge cezası
       expect(takerSuccess).to.equal(1);
@@ -220,12 +220,151 @@ describe("ArafEscrow", function () {
 
       expect((await escrow.getTrade(tradeId)).state).to.equal(5); // CANCELED
 
-      const [makerSuccess, makerFailed,] = await escrow.getReputation(maker.address);
-      const [takerSuccess, takerFailed,] = await escrow.getReputation(taker.address);
+      const [makerSuccess, makerFailed,,,] = await escrow.getReputation(maker.address);
+      const [takerSuccess, takerFailed,,,] = await escrow.getReputation(taker.address);
       expect(makerSuccess).to.equal(0);
       expect(makerFailed).to.equal(0);  // Nötr — ceza yok
       expect(takerSuccess).to.equal(0);
       expect(takerFailed).to.equal(0);  // Nötr — ceza yok
+    });
+
+    // ── Consecutive Ban Testleri ──────────────────────────────────────────────
+    it("1. ban: 30 gun, tier kisitlamasi yok", async () => {
+      // 2 failed dispute → 1. ban tetiklenir
+      // İlk failed dispute (ban tetiklemez)
+      let tradeId = await setupTrade(2);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmHash");
+      await time.increase(FORTY_EIGHT_H + 1);
+      await escrow.connect(taker).autoRelease(tradeId); // maker +1 failed
+
+      // İkinci failed dispute → ban tetiklenir
+      tradeId = await setupTrade(2);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmHash");
+      await time.increase(FORTY_EIGHT_H + 1);
+      await escrow.connect(taker).autoRelease(tradeId); // maker +1 failed → ban
+
+      const [, failed, bannedUntil, consecutive, tierCap] = await escrow.getReputation(maker.address);
+      expect(failed).to.equal(2);
+      expect(bannedUntil).to.be.gt(0n);
+      expect(consecutive).to.equal(1n);
+      expect(tierCap).to.equal(4); // 1. banda tier kisitlamasi yok
+      // Ban suresi ~30 gun olmali
+      const now = BigInt(await time.latest());
+      expect(bannedUntil).to.be.closeTo(now + BigInt(30 * 24 * 3600), 60n);
+    });
+
+    it("2. consecutive ban: 60 gun + tier 1 duser", async () => {
+      // 3 failed dispute → 2. consecutive ban
+      let tradeId = await setupTrade(2);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmHash");
+      await time.increase(FORTY_EIGHT_H + 1);
+      await escrow.connect(taker).autoRelease(tradeId); // failed #1
+
+      tradeId = await setupTrade(2);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmHash");
+      await time.increase(FORTY_EIGHT_H + 1);
+      await escrow.connect(taker).autoRelease(tradeId); // failed #2 → ban #1
+
+      tradeId = await setupTrade(2);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmHash");
+      await time.increase(FORTY_EIGHT_H + 1);
+      await escrow.connect(taker).autoRelease(tradeId); // failed #3 → ban #2 (consecutive)
+
+      const [, , bannedUntil, consecutive, tierCap] = await escrow.getReputation(maker.address);
+      expect(consecutive).to.equal(2n);
+      expect(tierCap).to.equal(3); // Tier 4'ten 1 duser → max Tier 3
+      const now = BigInt(await time.latest());
+      expect(bannedUntil).to.be.closeTo(now + BigInt(60 * 24 * 3600), 60n);
+    });
+
+    it("tier kisitlanan cuzdan ust tierde islem acamaz", async () => {
+      // maxAllowedTier = 3 olan cüzdan, tier 4 acamaz
+      // 3 failed dispute vererek tier cap 3'e indir
+      let tradeId = await setupTrade(2);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmHash");
+      await time.increase(FORTY_EIGHT_H + 1);
+      await escrow.connect(taker).autoRelease(tradeId);
+
+      tradeId = await setupTrade(2);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmHash");
+      await time.increase(FORTY_EIGHT_H + 1);
+      await escrow.connect(taker).autoRelease(tradeId);
+
+      tradeId = await setupTrade(2);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmHash");
+      await time.increase(FORTY_EIGHT_H + 1);
+      await escrow.connect(taker).autoRelease(tradeId);
+
+      // Tier 4 açmaya çalış → revert beklenir
+      await expect(
+        escrow.connect(maker).createEscrow(await mockUSDT.getAddress(), TRADE_AMOUNT, 4)
+      ).to.be.revertedWith("ArafEscrow: tier restricted by consecutive ban");
+
+      // Tier 3 açabilmeli
+      await expect(
+        escrow.connect(maker).createEscrow(await mockUSDT.getAddress(), TRADE_AMOUNT, 3)
+      ).to.not.be.reverted;
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TIER 0 — Bond Yok, Sadece Crypto Riski
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe("Tier 0", () => {
+    it("maker ve taker bond sifir olmali", async () => {
+      const tradeId = await setupTrade(0);
+      const trade = await escrow.getTrade(tradeId);
+      expect(trade.makerBond).to.equal(0n);
+      expect(trade.takerBond).to.equal(0n);
+    });
+
+    it("taker bond yatirmaz", async () => {
+      const tradeId = await setupTrade(0);
+      const takerBefore = await mockUSDT.balanceOf(taker.address);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      const takerAfter = await mockUSDT.balanceOf(taker.address);
+      expect(takerAfter).to.equal(takerBefore);
+    });
+
+    it("happy path release — sadece protocol fee kesilir", async () => {
+      const tradeId = await setupTrade(0);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmHash");
+      const takerBefore = await mockUSDT.balanceOf(taker.address);
+      await escrow.connect(maker).releaseFunds(tradeId);
+      const takerAfter = await mockUSDT.balanceOf(taker.address);
+      const takerFee = (TRADE_AMOUNT * 10n) / 10000n;
+      expect(takerAfter - takerBefore).to.equal(TRADE_AMOUNT - takerFee);
+    });
+
+    it("dispute: sadece crypto erir, bond yok", async () => {
+      const tradeId = await setupTrade(0);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmHash");
+      await time.increase(ONE_HOUR + 1);
+      await escrow.connect(maker).challengeTrade(tradeId);
+      await time.increase(FORTY_EIGHT_H + 97 * ONE_HOUR);
+      const [currCrypto, currMB, currTB,] = await escrow.getCurrentAmounts(tradeId);
+      expect(currMB).to.equal(0n);
+      expect(currTB).to.equal(0n);
+      expect(currCrypto).to.be.lt(TRADE_AMOUNT);
+    });
+
+    it("24h cooldown uygulanir", async () => {
+      const tradeId = await setupTrade(0);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      const tradeId2 = await setupTrade(0);
+      await expect(
+        escrow.connect(taker).lockEscrow(tradeId2)
+      ).to.be.revertedWith("ArafEscrow: Tier 0/1 cooldown active (24h)");
     });
   });
 
@@ -345,46 +484,51 @@ describe("ArafEscrow", function () {
       expect((await escrow.getTrade(tradeId)).state).to.equal(4); // RESOLVED
     });
 
-    it("decay reduces amounts over time", async () => {
-      const tradeId = await setupTrade(2);
+    it("decay reduces amounts over time (saatlik granularite)", async () => {
+      const tradeId = await setupTrade(1); // Tier 1: maker %8, taker %10
       await escrow.connect(taker).lockEscrow(tradeId);
       await escrow.connect(taker).reportPayment(tradeId, "QmHash");
       await time.increase(ONE_HOUR + 1);
       await escrow.connect(maker).challengeTrade(tradeId);
 
-      // t=0: Challenge açıldı. Grace period (48h) içinde sıfır erime.
+      // Grace icinde — sifir erime
       const [,makerBond0,,decayed0] = await escrow.getCurrentAmounts(tradeId);
-      expect(decayed0).to.equal(0); // Grace içinde — sıfır erime
+      expect(decayed0).to.equal(0n);
 
-      // t=48h: Grace biter, decay başlamaz (tam sınır)
+      // t=48h: Grace tam sinir — hala sifir
       await time.increase(FORTY_EIGHT_H);
-      const [,makerBondGrace,,decayedGrace] = await escrow.getCurrentAmounts(tradeId);
-      expect(decayedGrace).to.equal(0); // Henüz 0 gün bleeding
+      const [,,,decayedGrace] = await escrow.getCurrentAmounts(tradeId);
+      expect(decayedGrace).to.equal(0n);
 
-      // t=48h+24h=72h: 1 gün bleeding → maker -%15, taker -%10
-      await time.increase(24 * 3600);
-      const [,makerBond3,,decayed3] = await escrow.getCurrentAmounts(tradeId);
-      expect(makerBond3).to.be.lt(makerBond0);
-      expect(decayed3).to.be.gt(0);
+      // t=48h+1h: 1 saat bleeding — saatlik decay baslar
+      await time.increase(ONE_HOUR);
+      const [, makerBond1h,, decayed1h] = await escrow.getCurrentAmounts(tradeId);
+      expect(decayed1h).to.be.gt(0n);
+      expect(makerBond1h).to.be.lt(makerBond0);
+
+      // t=48h+24h: daha fazla erime
+      await time.increase(23 * ONE_HOUR);
+      const [, makerBond24h,, decayed24h] = await escrow.getCurrentAmounts(tradeId);
+      expect(decayed24h).to.be.gt(decayed1h);
+      expect(makerBond24h).to.be.lt(makerBond1h);
     });
 
-    it("USDT decay starts only after Day 4 of bleeding (t=144h from challenge)", async () => {
-      const tradeId = await setupTrade(2);
+    it("Crypto decay starts only after Grace(48h)+USDT_DECAY_START(96h)=144h total", async () => {
+      const tradeId = await setupTrade(1);
       await escrow.connect(taker).lockEscrow(tradeId);
       await escrow.connect(taker).reportPayment(tradeId, "QmHash");
       await time.increase(ONE_HOUR + 1);
       await escrow.connect(maker).challengeTrade(tradeId);
 
-      // t=48h+72h=120h: Grace(48h) + 3 gün bleeding → USDT henüz erimemeli
-      // USDT decay: bleedingElapsed(72h) < USDT_DECAY_START(96h) → sıfır
-      await time.increase(FORTY_EIGHT_H + 3 * 24 * 3600);
-      const [crypto120,,,] = await escrow.getCurrentAmounts(tradeId);
-      expect(crypto120).to.equal(TRADE_AMOUNT);
+      // bleedingElapsed=95h < USDT_DECAY_START(96h) — crypto hala tam
+      await time.increase(FORTY_EIGHT_H + 95 * ONE_HOUR);
+      const [crypto143,,,] = await escrow.getCurrentAmounts(tradeId);
+      expect(crypto143).to.equal(TRADE_AMOUNT);
 
-      // t=48h+96h+24h=168h: Grace(48h) + 4 gün bleeding → USDT erimeye başlamalı
-      await time.increase(24 * 3600);
-      const [crypto168,,,] = await escrow.getCurrentAmounts(tradeId);
-      expect(crypto168).to.be.lt(TRADE_AMOUNT);
+      // bleedingElapsed=97h > 96h — crypto erimeye basladi
+      await time.increase(2 * ONE_HOUR);
+      const [crypto145,,,] = await escrow.getCurrentAmounts(tradeId);
+      expect(crypto145).to.be.lt(TRADE_AMOUNT);
     });
 
     it("burns all funds after 10-day timeout", async () => {
@@ -412,8 +556,8 @@ describe("ArafEscrow", function () {
       await time.increase(TEN_DAYS + 1);
       await escrow.burnExpired(tradeId);
 
-      const [, makerFailed,] = await escrow.getReputation(maker.address);
-      const [, takerFailed,] = await escrow.getReputation(taker.address);
+      const [, makerFailed,,,] = await escrow.getReputation(maker.address);
+      const [, takerFailed,,,] = await escrow.getReputation(taker.address);
       expect(makerFailed).to.equal(1);
       expect(takerFailed).to.equal(1);
     });
