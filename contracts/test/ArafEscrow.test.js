@@ -19,9 +19,9 @@ describe("ArafEscrow", function () {
   const INITIAL_BAL    = ethers.parseUnits("10000", USDT_DECIMALS);
 
   // Fee sabitleri — kontratla senkron tutulmalı (SUCCESS_FEE_BPS kaldırıldı)
-  // Simetrik model: taker %0.2 crypto'dan, maker %0.2 bond'dan öder
-  const TAKER_FEE_BPS = 20n;   // %0.2 — taker'ın crypto'sundan
-  const MAKER_FEE_BPS = 20n;   // %0.2 — maker'ın bond'undan
+  // Simetrik model: taker %0.1 crypto'dan, maker %0.1 bond'dan öder
+  const TAKER_FEE_BPS = 10n;   // %0.1 — taker'ın crypto'sundan
+  const MAKER_FEE_BPS = 10n;   // %0.1 — maker'ın bond'undan
   const BPS_DENOM     = 10000n;
 
   const SEVEN_DAYS     = 7 * 24 * 3600;
@@ -448,9 +448,8 @@ describe("ArafEscrow", function () {
   // 6. BOND & FEE CALCULATIONS
   // ═══════════════════════════════════════════════════════════════════════════
   describe("Bond & Fee Calculations", () => {
-    it("treasury receives %0.2 taker fee + %0.2 maker fee = %0.4 total", async () => {
-      // Eski: sadece %0.2 taker fee → 2 USDT
-      // Yeni: %0.2 taker + %0.2 maker → 4 USDT
+    it("treasury receives %0.1 taker fee + %0.1 maker fee = %0.2 total", async () => {
+      // Güncellendi: %0.1 taker + %0.1 maker → 2 USDT (1000 USDT işlem için)
       const tradeId = await setupTrade(2);
       await escrow.connect(taker).lockEscrow(tradeId);
       await escrow.connect(taker).reportPayment(tradeId, "QmHash");
