@@ -25,12 +25,14 @@ const MAX_RETRIES        = 3;
 const BLOCK_BATCH_SIZE   = 1_000; // Process at most 1000 blocks at a time
 
 // Minimal ABI — only the events we care about
+// C-01 Fix: EscrowReleased event imzası düzeltildi — tek 'fee' yerine 'takerFee' + 'makerFee'
+// Orijinal hatalı imza: "event EscrowReleased(..., uint256 fee)" → event decode edilemiyordu
 const ARAF_ABI = [
   "event WalletRegistered(address indexed wallet, uint256 timestamp)",
   "event EscrowCreated(uint256 indexed tradeId, address indexed maker, address token, uint256 amount, uint8 tier)",
   "event EscrowLocked(uint256 indexed tradeId, address indexed taker, uint256 takerBond)",
   "event PaymentReported(uint256 indexed tradeId, string ipfsHash, uint256 timestamp)",
-  "event EscrowReleased(uint256 indexed tradeId, address indexed maker, address indexed taker, uint256 fee)",
+  "event EscrowReleased(uint256 indexed tradeId, address indexed maker, address indexed taker, uint256 takerFee, uint256 makerFee)",
   "event DisputeOpened(uint256 indexed tradeId, address indexed challenger, uint256 timestamp)",
   "event EscrowCanceled(uint256 indexed tradeId, uint256 makerRefund, uint256 takerRefund)",
   "event EscrowBurned(uint256 indexed tradeId, uint256 burnedAmount)",
@@ -114,6 +116,7 @@ class EventWorker {
     if (!this.contract) return;
 
     const events = [
+      "WalletRegistered", // L-04 Fix: WalletRegistered handler eklendi
       "EscrowCreated", "EscrowLocked", "PaymentReported",
       "EscrowReleased", "DisputeOpened", "EscrowCanceled", "EscrowBurned",
     ];
@@ -177,13 +180,14 @@ class EventWorker {
   // ─── Event Handlers ───────────────────────────────────────────────────────
   async _processEvent(event) {
     const handlers = {
-      EscrowCreated:   this._onEscrowCreated.bind(this),
-      EscrowLocked:    this._onEscrowLocked.bind(this),
-      PaymentReported: this._onPaymentReported.bind(this),
-      EscrowReleased:  this._onEscrowReleased.bind(this),
-      DisputeOpened:   this._onDisputeOpened.bind(this),
-      EscrowCanceled:  this._onEscrowCanceled.bind(this),
-      EscrowBurned:    this._onEscrowBurned.bind(this),
+      WalletRegistered: this._onWalletRegistered.bind(this), // L-04 Fix
+      EscrowCreated:    this._onEscrowCreated.bind(this),
+      EscrowLocked:     this._onEscrowLocked.bind(this),
+      PaymentReported:  this._onPaymentReported.bind(this),
+      EscrowReleased:   this._onEscrowReleased.bind(this),
+      DisputeOpened:    this._onDisputeOpened.bind(this),
+      EscrowCanceled:   this._onEscrowCanceled.bind(this),
+      EscrowBurned:     this._onEscrowBurned.bind(this),
     };
 
     const handler = handlers[event.eventName];
@@ -191,6 +195,17 @@ class EventWorker {
       await handler(event);
       logger.debug(`[Worker] Processed: ${event.eventName} tx=${event.transactionHash}`);
     }
+  }
+
+  // L-04 Fix: WalletRegistered event'i işleniyor — önceden handler yoktu
+  async _onWalletRegistered(event) {
+    const { wallet, timestamp } = event.args;
+    await User.findOneAndUpdate(
+      { wallet_address: wallet.toLowerCase() },
+      { $setOnInsert: { wallet_address: wallet.toLowerCase() } },
+      { upsert: true }
+    );
+    logger.info(`[Worker] Wallet registered on-chain: ${wallet.toLowerCase()}`);
   }
 
   async _onEscrowCreated(event) {
@@ -216,8 +231,8 @@ class EventWorker {
       { onchain_escrow_id: Number(tradeId) },
       {
         $set: {
-          status:            "LOCKED",
-          taker_address:     taker.toLowerCase(),
+          status:             "LOCKED",
+          taker_address:      taker.toLowerCase(),
           "timers.locked_at": new Date(),
         },
       }
@@ -240,6 +255,7 @@ class EventWorker {
   }
 
   async _onEscrowReleased(event) {
+    // C-01 Fix: takerFee ve makerFee ayrı ayrı alınıyor (önceki: tek 'fee' parametresi vardı)
     const { tradeId, maker, taker } = event.args;
     await Trade.findOneAndUpdate(
       { onchain_escrow_id: Number(tradeId) },
@@ -292,17 +308,28 @@ class EventWorker {
       // 2+ failed dispute → 30 günlük Taker ban + banned_until set et
       if (currentFailed >= 2) {
         update.$set = {
-          is_banned: true,
+          is_banned:    true,
           banned_until: new Date(Date.now() + 30 * 24 * 3600 * 1000),
         };
       }
       await User.findOneAndUpdate({ wallet_address: wallet }, update, { upsert: true });
     } else {
-      await User.findOneAndUpdate(
+      // H-04 Fix: success_rate doğru hesaplanıyor
+      // Önceki: sadece total_trades artırılıyordu, success_rate hiç güncellenmiyordu
+      const user = await User.findOneAndUpdate(
         { wallet_address: wallet },
         { $inc: { "reputation_cache.total_trades": 1 } },
-        { upsert: true }
+        { upsert: true, new: true }
       );
+      if (user) {
+        const total  = user.reputation_cache.total_trades;
+        const failed = user.reputation_cache.failed_disputes || 0;
+        const rate   = total > 0 ? Math.round(((total - failed) / total) * 100) : 100;
+        await User.updateOne(
+          { wallet_address: wallet },
+          { $set: { "reputation_cache.success_rate": rate } }
+        );
+      }
     }
   }
 }
