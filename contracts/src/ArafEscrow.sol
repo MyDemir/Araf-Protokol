@@ -710,11 +710,15 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
             elapsed = MAX_BLEEDING;
         }
 
+        // ── Grace Period (48h) ──
+        // İlk 48 saat boyunca hiçbir şey erimez. Fonlar güvende.
+        // 48h içinde anlaşma sağlanmazsa bleeding başlar.
+        uint256 bleedingElapsed = elapsed > GRACE_PERIOD ? elapsed - GRACE_PERIOD : 0;
+
         // ── Bond Decay ──
-        // Starts immediately (Day 1 = Hour 0 of CHALLENGED)
-        // Opener (maker, since only maker can challenge) decays at 15%/day
-        // Other party (taker) decays at 10%/day
-        uint256 daysElapsed = elapsed / SECONDS_PER_DAY;
+        // Grace period (48h) bittikten sonra başlar.
+        // Opener (maker) %15/gün, diğer taraf (taker) %10/gün erir.
+        uint256 daysElapsed = bleedingElapsed / SECONDS_PER_DAY;
 
         uint256 makerBondDecayBps = daysElapsed * BOND_DECAY_OPENER_BPS_DAY;
         uint256 takerBondDecayBps = daysElapsed * BOND_DECAY_OTHER_BPS_DAY;
@@ -730,15 +734,14 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         currentTakerBond = t.takerBond - takerBondDecayed;
 
         // ── USDT/Crypto Decay ──
-        // Starts on Day 4 (USDT_DECAY_START = 96h)
+        // Grace(48h) + buffer(96h) = 144h sonra başlar.
+        // Her iki taraftan %4/gün → toplam %8/gün crypto erimesi.
         uint256 cryptoDecayed = 0;
-        if (elapsed > USDT_DECAY_START) {
-            uint256 bleedingElapsed = elapsed - USDT_DECAY_START;
-            uint256 bleedingDays = bleedingElapsed / SECONDS_PER_DAY;
+        if (bleedingElapsed > USDT_DECAY_START) {
+            uint256 usdtElapsed = bleedingElapsed - USDT_DECAY_START;
+            uint256 bleedingDays = usdtElapsed / SECONDS_PER_DAY;
 
-            // 4% per day from EACH party's share
-            // Total decay on combined crypto = 8%/day effectively
-            // Simplified: 4% of total per party → 8% total
+            // %8/gün toplam (her taraf %4 öder)
             uint256 cryptoDecayBps = bleedingDays * USDT_DECAY_BPS_DAY * 2; // both sides
             if (cryptoDecayBps > BPS_DENOMINATOR) cryptoDecayBps = BPS_DENOMINATOR;
             cryptoDecayed = (t.cryptoAmount * cryptoDecayBps) / BPS_DENOMINATOR;
