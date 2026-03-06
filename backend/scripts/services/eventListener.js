@@ -27,6 +27,7 @@ const BLOCK_BATCH_SIZE   = 1_000; // Process at most 1000 blocks at a time
 // Minimal ABI — only the events we care about
 // C-01 Fix: EscrowReleased event imzası düzeltildi — tek 'fee' yerine 'takerFee' + 'makerFee'
 // Orijinal hatalı imza: "event EscrowReleased(..., uint256 fee)" → event decode edilemiyordu
+// H-04 Fix: BleedingDecayed ve CancelProposed event'leri eklendi — önceden yoktu
 const ARAF_ABI = [
   "event WalletRegistered(address indexed wallet, uint256 timestamp)",
   "event EscrowCreated(uint256 indexed tradeId, address indexed maker, address token, uint256 amount, uint8 tier)",
@@ -34,7 +35,9 @@ const ARAF_ABI = [
   "event PaymentReported(uint256 indexed tradeId, string ipfsHash, uint256 timestamp)",
   "event EscrowReleased(uint256 indexed tradeId, address indexed maker, address indexed taker, uint256 takerFee, uint256 makerFee)",
   "event DisputeOpened(uint256 indexed tradeId, address indexed challenger, uint256 timestamp)",
+  "event CancelProposed(uint256 indexed tradeId, address indexed proposer)",
   "event EscrowCanceled(uint256 indexed tradeId, uint256 makerRefund, uint256 takerRefund)",
+  "event BleedingDecayed(uint256 indexed tradeId, uint256 decayedAmount, uint256 timestamp)",
   "event EscrowBurned(uint256 indexed tradeId, uint256 burnedAmount)",
 ];
 
@@ -118,7 +121,11 @@ class EventWorker {
     const events = [
       "WalletRegistered", // L-04 Fix: WalletRegistered handler eklendi
       "EscrowCreated", "EscrowLocked", "PaymentReported",
-      "EscrowReleased", "DisputeOpened", "EscrowCanceled", "EscrowBurned",
+      "EscrowReleased", "DisputeOpened",
+      "CancelProposed",   // H-04 Fix: önceden dinlenmiyordu
+      "EscrowCanceled",
+      "BleedingDecayed",  // H-04 Fix: önceden dinlenmiyordu
+      "EscrowBurned",
     ];
 
     for (const eventName of events) {
@@ -186,7 +193,9 @@ class EventWorker {
       PaymentReported:  this._onPaymentReported.bind(this),
       EscrowReleased:   this._onEscrowReleased.bind(this),
       DisputeOpened:    this._onDisputeOpened.bind(this),
+      CancelProposed:   this._onCancelProposed.bind(this),  // H-04 Fix
       EscrowCanceled:   this._onEscrowCanceled.bind(this),
+      BleedingDecayed:  this._onBleedingDecayed.bind(this), // H-04 Fix
       EscrowBurned:     this._onEscrowBurned.bind(this),
     };
 
@@ -295,24 +304,93 @@ class EventWorker {
     }
   }
 
+  // H-04 Fix: BleedingDecayed event handler — önceden yoktu.
+  // Contract, her decay transferinde bu event'i emit eder.
+  // MongoDB'de toplam eriymiş miktarı ve son decay zamanını izliyoruz (display cache).
+  async _onBleedingDecayed(event) {
+    const { tradeId, decayedAmount } = event.args;
+    await Trade.findOneAndUpdate(
+      { onchain_escrow_id: Number(tradeId) },
+      {
+        $set:  { "timers.last_decay_at": new Date() },
+        $inc:  { "financials.total_decayed": Number(decayedAmount) },
+      }
+    );
+    logger.debug(`[Worker] BleedingDecayed: trade=${tradeId} amount=${decayedAmount}`);
+  }
+
+  // H-04 Fix: CancelProposed event handler — önceden yoktu.
+  // Contract, her cancel proposal imzasında bu event'i emit eder.
+  // MongoDB cancel_proposal.proposed_at güncellenirse frontend'e doğru timestamp gösterilir.
+  async _onCancelProposed(event) {
+    const { tradeId, proposer } = event.args;
+    await Trade.findOneAndUpdate(
+      { onchain_escrow_id: Number(tradeId) },
+      {
+        $set: {
+          "cancel_proposal.proposed_by": proposer.toLowerCase(),
+          "cancel_proposal.proposed_at": new Date(),
+        },
+      }
+    );
+    logger.debug(`[Worker] CancelProposed: trade=${tradeId} proposer=${proposer}`);
+  }
+
+  /**
+   * Reputation cache'ini günceller.
+   * Autoritative değer on-chain'dedir; bu cache sadece hızlı UI render için.
+   *
+   * H-03 Fix: Escalating ban süresi ve tier demosyon eklendi.
+   * Contract mantığı: 2+ failed dispute → ban tetiklenir.
+   *   - 1. ban  : 30 gün  (consecutiveBans = 1, tier değişmez)
+   *   - 2. ban  : 60 gün  (consecutiveBans = 2, maxAllowedTier -= 1)
+   *   - 3. ban  : 120 gün (consecutiveBans = 3, maxAllowedTier -= 1)
+   *   - N. ban  : 30 * 2^(N-1) gün, max 365 gün
+   *
+   * NOT: Gerçek ban süresi on-chain'den okunmalı. Bu sadece display cache.
+   */
   async _incrementReputation(wallet, failed) {
     if (!wallet) return;
 
     if (failed) {
-      // C-03 FIX: banned_until hesaplanarak set edilmeli
-      const user = await User.findOne({ wallet_address: wallet }).select("reputation_cache").lean();
-      const currentFailed = (user?.reputation_cache?.failed_disputes || 0) + 1;
+      // Önce mevcut durumu oku — ban hesabı için gerekli
+      const user = await User.findOne({ wallet_address: wallet })
+        .select("reputation_cache consecutive_bans max_allowed_tier")
+        .lean();
+
+      const currentFailed     = (user?.reputation_cache?.failed_disputes || 0) + 1;
+      const currentConsec     = (user?.consecutive_bans || 0);
+      const currentMaxTier    = (user?.max_allowed_tier ?? 4);
 
       const update = { $inc: { "reputation_cache.failed_disputes": 1 } };
 
-      // 2+ failed dispute → 30 günlük Taker ban + banned_until set et
+      // 2+ failed dispute → ban tetiklenir
       if (currentFailed >= 2) {
+        const newConsecBans = currentConsec + 1;
+
+        // Artan ban süresi: 30 * 2^(newConsecBans-1) gün, max 365 gün
+        const banDays    = Math.min(30 * Math.pow(2, newConsecBans - 1), 365);
+        const bannedUntil = new Date(Date.now() + banDays * 24 * 3600 * 1000);
+
         update.$set = {
-          is_banned:    true,
-          banned_until: new Date(Date.now() + 30 * 24 * 3600 * 1000),
+          is_banned:         true,
+          banned_until:      bannedUntil,
+          consecutive_bans:  newConsecBans,
         };
+
+        // 2. ban ve sonrasında maxAllowedTier bir düşer (min 0)
+        if (newConsecBans >= 2) {
+          update.$set.max_allowed_tier = Math.max(0, currentMaxTier - 1);
+        }
+
+        logger.warn(
+          `[Worker] Ban uygulandı: wallet=${wallet} consecutive=${newConsecBans} ` +
+          `süre=${banDays}g tier_cap=${update.$set.max_allowed_tier ?? currentMaxTier}`
+        );
       }
+
       await User.findOneAndUpdate({ wallet_address: wallet }, update, { upsert: true });
+
     } else {
       // H-04 Fix: success_rate doğru hesaplanıyor
       // Önceki: sadece total_trades artırılıyordu, success_rate hiç güncellenmiyordu
