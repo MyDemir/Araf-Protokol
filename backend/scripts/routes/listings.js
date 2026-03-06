@@ -18,7 +18,8 @@ router.get("/", listingsReadLimiter, async (req, res, next) => {
     const schema = Joi.object({
       fiat:   Joi.string().valid("TRY", "USD", "EUR").optional(),
       amount: Joi.number().positive().optional(),
-      tier:   Joi.number().valid(1, 2, 3).optional(),
+      // H-01 Fix: Tier 0-4 geçerli (önceden 1-3 kabul ediliyordu)
+      tier:   Joi.number().valid(0, 1, 2, 3, 4).optional(),
       page:   Joi.number().integer().min(1).default(1),
       limit:  Joi.number().integer().min(1).max(50).default(20),
     });
@@ -56,7 +57,8 @@ router.post("/", requireAuth, listingsWriteLimiter, async (req, res, next) => {
       fiat_currency:     Joi.string().valid("TRY", "USD", "EUR").required(),
       exchange_rate:     Joi.number().positive().required(),
       limits:            Joi.object({ min: Joi.number().positive().required(), max: Joi.number().positive().required() }).required(),
-      tier:              Joi.number().valid(1, 2, 3).required(),
+      // H-01 Fix: 5 tier destekleniyor (0-4). Tier 0 = yeni kullanıcı teşviki, bond yok.
+      tier:              Joi.number().valid(0, 1, 2, 3, 4).required(),
       token_address:     Joi.string().pattern(/^0x[a-fA-F0-9]{40}$/).required(),
       onchain_escrow_id: Joi.number().optional(),
     });
@@ -67,8 +69,17 @@ router.post("/", requireAuth, listingsWriteLimiter, async (req, res, next) => {
       return res.status(400).json({ error: "limits.max, limits.min'den büyük olmalı" });
     }
 
-    const bondMap = { 1: { maker: 18, taker: 0 }, 2: { maker: 15, taker: 12 }, 3: { maker: 10, taker: 8 } };
-    const bonds   = bondMap[value.tier];
+    // H-01 Fix: Bond oranları contract sabitleriyle eşleştirildi.
+    // ArafEscrow.sol: T0:%0/%0, T1:%8/%10, T2:%6/%8, T3:%5/%5, T4:%2/%2
+    // Tier 0: bond yoktur — sadece kilitli crypto erimeye tabidir (yeni kullanıcı teşviki).
+    const bondMap = {
+      0: { maker: 0,  taker: 0  },
+      1: { maker: 8,  taker: 10 },
+      2: { maker: 6,  taker: 8  },
+      3: { maker: 5,  taker: 5  },
+      4: { maker: 2,  taker: 2  },
+    };
+    const bonds = bondMap[value.tier];
 
     const listing = await Listing.create({
       maker_address:     req.wallet,
