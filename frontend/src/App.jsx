@@ -78,6 +78,10 @@ function App() {
   const [feedbackText, setFeedbackText] = useState('');
   const [feedbackRating, setFeedbackRating] = useState(0);
 
+  // Protocol stats — /api/stats'tan çekilir, 1 saatte bir güncellenir
+  const [protocolStats, setProtocolStats] = useState(null);
+  const [statsLoading, setStatsLoading]   = useState(true);
+
   // ==========================================
   // --- 2. CANLI VERİLER (API MOCK REPLACEMENT) ---
   // ==========================================
@@ -121,7 +125,21 @@ function App() {
     fetchListings();
   }, []);
 
-  // 2. Aktif İşlemlerimi Çek (Private - SIWE Gerektirir)
+  // Stats Çek — herkese açık, auth gerektirmez
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const res  = await fetch(`${API_URL}/api/stats`);
+        const data = await res.json();
+        if (data.stats) setProtocolStats(data.stats);
+      } catch (err) {
+        console.error("Stats fetch error:", err);
+      } finally {
+        setStatsLoading(false);
+      }
+    };
+    fetchStats();
+  }, []);
   useEffect(() => {
     if (!jwtToken || !isConnected) {
       setActiveEscrows([]);
@@ -676,11 +694,54 @@ function App() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <div className="bg-slate-800/60 border border-slate-700 p-4 rounded-2xl shadow-lg relative overflow-hidden group"><div className="absolute -right-4 -top-4 text-emerald-500/10 text-6xl group-hover:scale-110 transition-transform">📈</div><p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">{t.vol}</p><p className="text-2xl font-bold text-white">$4.2M+</p></div>
-        <div className="bg-slate-800/60 border border-slate-700 p-4 rounded-2xl shadow-lg relative overflow-hidden group"><div className="absolute -right-4 -top-4 text-blue-500/10 text-6xl group-hover:scale-110 transition-transform">🤝</div><p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">{t.trades}</p><p className="text-2xl font-bold text-white">12,450</p></div>
-        <div className="bg-slate-800/60 border border-slate-700 p-4 rounded-2xl shadow-lg relative overflow-hidden group"><div className="absolute -right-4 -top-4 text-purple-500/10 text-6xl group-hover:scale-110 transition-transform">👥</div><p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">{t.users}</p><p className="text-2xl font-bold text-white">3,820</p></div>
-        <div className="bg-red-950/30 border border-red-900/50 p-4 rounded-2xl shadow-lg relative overflow-hidden group"><div className="absolute -right-4 -top-4 text-red-500/10 text-6xl group-hover:scale-110 transition-transform">🔥</div><p className="text-red-400/80 text-xs font-medium uppercase tracking-wider mb-1">{t.burn}</p><p className="text-2xl font-bold text-red-400">$14,200</p></div>
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+        {/* 1. Toplam Hacim */}
+        <div className="bg-slate-800/60 border border-slate-700 p-4 rounded-2xl shadow-lg relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 text-emerald-500/10 text-6xl group-hover:scale-110 transition-transform">📈</div>
+          <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">{lang === 'TR' ? 'Toplam Hacim' : 'Total Volume'}</p>
+          {statsLoading
+            ? <div className="h-8 w-24 bg-slate-700 rounded animate-pulse mt-1" />
+            : <p className="text-2xl font-bold text-white">${((protocolStats?.total_volume_usdt ?? 0) / 1000).toFixed(1)}K</p>
+          }
+        </div>
+        {/* 2. Tamamlanan İşlem */}
+        <div className="bg-slate-800/60 border border-slate-700 p-4 rounded-2xl shadow-lg relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 text-blue-500/10 text-6xl group-hover:scale-110 transition-transform">🤝</div>
+          <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">{lang === 'TR' ? 'İşlem' : 'Trades'}</p>
+          {statsLoading
+            ? <div className="h-8 w-20 bg-slate-700 rounded animate-pulse mt-1" />
+            : <p className="text-2xl font-bold text-white">{(protocolStats?.completed_trades ?? 0).toLocaleString()}</p>
+          }
+        </div>
+        {/* 3. Aktif İlan */}
+        <div className="bg-slate-800/60 border border-slate-700 p-4 rounded-2xl shadow-lg relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 text-purple-500/10 text-6xl group-hover:scale-110 transition-transform">📋</div>
+          <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">{lang === 'TR' ? 'Aktif İlan' : 'Active Listings'}</p>
+          {statsLoading
+            ? <div className="h-8 w-16 bg-slate-700 rounded animate-pulse mt-1" />
+            : <p className="text-2xl font-bold text-white">{(protocolStats?.active_listings ?? 0).toLocaleString()}</p>
+          }
+        </div>
+        {/* 4. Ortalama Süre */}
+        <div className="bg-slate-800/60 border border-slate-700 p-4 rounded-2xl shadow-lg relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 text-yellow-500/10 text-6xl group-hover:scale-110 transition-transform">⚡</div>
+          <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">{lang === 'TR' ? 'Ort. Süre' : 'Avg. Time'}</p>
+          {statsLoading
+            ? <div className="h-8 w-20 bg-slate-700 rounded animate-pulse mt-1" />
+            : protocolStats?.avg_trade_hours !== null
+              ? <p className="text-2xl font-bold text-yellow-400">{protocolStats?.avg_trade_hours}s</p>
+              : <p className="text-2xl font-bold text-slate-500">—</p>
+          }
+        </div>
+        {/* 5. Yakılan Teminat */}
+        <div className="bg-red-950/30 border border-red-900/50 p-4 rounded-2xl shadow-lg relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 text-red-500/10 text-6xl group-hover:scale-110 transition-transform">🔥</div>
+          <p className="text-red-400/80 text-xs font-medium uppercase tracking-wider mb-1">{lang === 'TR' ? 'Yakılan' : 'Burned'}</p>
+          {statsLoading
+            ? <div className="h-8 w-20 bg-red-900/30 rounded animate-pulse mt-1" />
+            : <p className="text-2xl font-bold text-red-400">${(protocolStats?.burned_bonds_usdt ?? 0).toFixed(0)}</p>
+          }
+        </div>
       </div>
 
       <div className="overflow-x-auto bg-slate-800/50 rounded-2xl border border-slate-700 shadow-xl">
