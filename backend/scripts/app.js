@@ -87,6 +87,7 @@ async function bootstrap() {
     const tradeRoutes    = require("./routes/trades");
     const piiRoutes      = require("./routes/pii");
     const feedbackRoutes = require("./routes/feedback");
+    const statsRoutes    = require("./routes/stats");
 
     // 4. API Endpoint'lerini Bağla
     app.use("/api/auth",     authRoutes);
@@ -94,6 +95,7 @@ async function bootstrap() {
     app.use("/api/trades",   tradeRoutes);
     app.use("/api/pii",      piiRoutes);
     app.use("/api/feedback", feedbackRoutes);
+    app.use("/api/stats",    statsRoutes);    // Herkese açık — auth gerektirmez
 
     // ── SAĞLIK KONTROLÜ VE HATA YÖNETİMİ ───────────────────────────────────────
 
