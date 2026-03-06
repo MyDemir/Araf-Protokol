@@ -23,12 +23,15 @@ async function main() {
   if (!treasury || treasury === "0x0000000000000000000000000000000000000000") {
     throw new Error("TREASURY_ADDRESS .env'de set edilmeli! (deploy eden cüzdan değil, ana cüzdan)");
   }
-  console.log("Treasury & Owner adresi:", treasury);
+
+  // ethers v6 Fix: resolveName hatası için getAddress kullan
+  const treasuryAddress = ethers.getAddress(treasury);
+  console.log("Treasury & Owner adresi:", treasuryAddress);
 
   // ── Kontrat Deploy ────────────────────────────────────────────────────────
   console.log("\nArafEscrow deploy ediliyor...");
   const ArafEscrow = await ethers.getContractFactory("ArafEscrow");
-  const escrow = await ArafEscrow.deploy(treasury);
+  const escrow = await ArafEscrow.deploy(treasuryAddress);
   await escrow.waitForDeployment();
 
   const address = await escrow.getAddress();
@@ -37,7 +40,7 @@ async function main() {
   // H-07 Fix: ABI'ı frontend'e kopyala — useArafContract hook'u bu dosyayı kullanır
   // Deploy sonrası ABI otomatik olarak frontend/src/abi/ArafEscrow.json'a yazılır
   try {
-    const artifactPath = path.resolve(__dirname, "../artifacts/src/ArafEscrow.sol/ArafEscrow.json");
+    const artifactPath = path.resolve(__dirname, "../artifacts/contracts/src/ArafEscrow.sol/ArafEscrow.json");
     const artifact     = JSON.parse(fs.readFileSync(artifactPath, "utf8"));
     const abiDestDir   = path.resolve(__dirname, "../../frontend/src/abi");
     const abiDestPath  = path.join(abiDestDir, "ArafEscrow.json");
@@ -70,10 +73,10 @@ async function main() {
   }
 
   // ── L-01: Ownership Devri (EN SONA ALINDI) ────────────────────────────────
-  console.log("\nOwnership devrediliyor →", treasury);
-  const tx = await escrow.transferOwnership(treasury);
+  console.log("\nOwnership devrediliyor →", treasuryAddress);
+  const tx = await escrow.transferOwnership(treasuryAddress);
   await tx.wait();
-  console.log("✅ Ownership devredildi:", treasury);
+  console.log("✅ Ownership devredildi:", treasuryAddress);
   console.log("   DEPLOYER_PRIVATE_KEY artık .env'den silinebilir.");
 
   // ── Mainnet Hatırlatması ──────────────────────────────────────────────────
@@ -81,7 +84,7 @@ async function main() {
     console.log("\n─────────────────────────────────────────────────────────");
     console.log("MAINNET DEPLOY TAMAMLANDI");
     console.log(`Kontrat adresi : ${address}`);
-    console.log(`Owner & Treasury: ${treasury}`);
+    console.log(`Owner & Treasury: ${treasuryAddress}`);
     console.log("─────────────────────────────────────────────────────────");
   }
 }
