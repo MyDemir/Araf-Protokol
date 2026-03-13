@@ -3,15 +3,9 @@
 /**
  * Stats Route — Protokol İstatistikleri
  *
- * Endpoint:
- *   GET /api/stats — Herkese açık, önbelleğe alınmış protokol istatistikleri
- *
- * Felsefe:
- *   - "Kod Kanundur": Tüm hesaplamalar backend'de yapılır. Frontend sadece veriyi gösterir.
- *   - Performans: İstatistikler, her istekte yeniden hesaplanmak yerine Redis'te
- *     1 saat süreyle önbelleğe alınır. Bu, veritabanı yükünü azaltır.
- *   - Tarihsel Değişim: 30 gün önceki verilerle karşılaştırma yapmak için
- *     `HistoricalStat` modelinden günlük anlık görüntüler kullanılır.
+ * AFS-006 Fix: HistoricalStat import path'i düzeltildi.
+ * Önceki: require("../models/HistoricalStat") — bu path models/ altında dosya arıyordu
+ * ama dosya routes/HistoricalStat.js'deydi. Şimdi model doğru dizinde (models/).
  */
 
 const express = require("express");
@@ -19,6 +13,7 @@ const router  = express.Router();
 
 const { getRedisClient } = require("../config/redis");
 const logger             = require("../utils/logger");
+// AFS-006 Fix: Doğru dizinden import — artık models/ altında
 const HistoricalStat     = require("../models/HistoricalStat");
 
 const STATS_CACHE_KEY = "cache:protocol_stats";
@@ -38,18 +33,17 @@ router.get("/", async (req, res, next) => {
 
     logger.debug("[Stats] Önbellek boş, yeniden hesaplanıyor...");
 
-    // 2. Canlı hesaplama yerine, en son kaydedilen anlık görüntüyü çek.
-    // Bu, veritabanı yükünü büyük ölçüde azaltır.
+    // 2. En son kaydedilen anlık görüntüyü çek.
     const currentStatsDoc = await HistoricalStat.findOne().sort({ date: -1 }).lean();
     if (!currentStatsDoc) {
-      return res.json({ stats: {} }); // Henüz hiç anlık görüntü yoksa boş obje dön.
+      return res.json({ stats: {} });
     }
-    const { _id, date, __v, ...currentStats } = currentStatsDoc; // Mongo'ya özgü alanları kaldır
+    const { _id, date, __v, created_at, ...currentStats } = currentStatsDoc;
 
     // 3. 30 gün önceki anlık görüntü verisini çek
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const dateString30d = thirtyDaysAgo.toISOString().split('T')[0]; // YYYY-MM-DD
+    const dateString30d = thirtyDaysAgo.toISOString().split('T')[0];
 
     const oldStats = await HistoricalStat.findOne({ date: dateString30d }).lean();
 
