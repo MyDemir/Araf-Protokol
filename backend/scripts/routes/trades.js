@@ -143,6 +143,12 @@ router.post("/propose-cancel", requireAuth, tradesLimiter, async (req, res, next
  *   - Sadece maker çağırabilir
  *   - Trade PAID veya CHALLENGED durumunda olmalı
  *   - Zaten onaylanmışsa 409 döner (idempotent)
+ *
+ * AUDIT FIX E-04: CHALLENGED state'te de chargeback ack'e izin verildi.
+ * ÖNCEKİ: Sadece PAID durumunda izin veriliyordu.
+ *   Sorun: releaseFunds() hem PAID hem CHALLENGED'dan çağrılabiliyor (kontrat tasarımı).
+ *   Maker CHALLENGED state'te release yapmak isterse chargeback ack veremiyordu.
+ * ŞİMDİ: PAID ve CHALLENGED her ikisinde de izin var.
  */
 router.post("/:id/chargeback-ack", requireAuth, tradesLimiter, async (req, res, next) => {
   try {
@@ -158,9 +164,11 @@ router.post("/:id/chargeback-ack", requireAuth, tradesLimiter, async (req, res, 
       return res.status(403).json({ error: "Bu işlem için yetkiniz yok" });
     }
 
-    if (trade.status !== "PAID") {
+    // AUDIT FIX E-04: PAID + CHALLENGED her ikisinde de izin var
+    const allowedStates = ["PAID", "CHALLENGED"];
+    if (!allowedStates.includes(trade.status)) {
       return res.status(400).json({
-        error: `Chargeback onayı yalnızca PAID durumunda yapılabilir (mevcut: ${trade.status})`,
+        error: `Chargeback onayı yalnızca PAID veya CHALLENGED durumunda yapılabilir (mevcut: ${trade.status})`,
       });
     }
 
