@@ -6,6 +6,9 @@ const helmet        = require("helmet");
 const cors          = require("cors");
 const mongoSanitize = require("express-mongo-sanitize");
 const mongoose      = require("mongoose");
+// AUDIT FIX F-01: httpOnly cookie desteği için cookie-parser
+// Kurulum: npm install cookie-parser
+const cookieParser  = require("cookie-parser");
 
 // Yapılandırma ve Yardımcı Araçlar
 const { connectDB }    = require("./config/db");
@@ -23,6 +26,9 @@ const { processDLQ } = require("./services/dlqProcessor");
 
 // AFS-008 Fix: Dosya artık doğru dizinde — backend/scripts/jobs/reputationDecay.js
 // Önceki: backend/scripts/jops/reputationDecay.js (typo: jops → jobs)
+// AUDIT FIX C-03B: Bu görev RELAYER_PRIVATE_KEY kullanıyor.
+// Testnet: Dokümantasyon "Quasi-Zero Key" olarak güncellendi.
+// Mainnet: Gelato/Chainlink Automation'a taşınacak (gerçek zero-key).
 const { runReputationDecay } = require("./jobs/reputationDecay");
 
 // AFS-007 Fix: Dosya artık doğru dizinde — backend/scripts/jobs/statsSnapshot.js
@@ -86,6 +92,9 @@ app.use(cors({
 
 app.use(express.json({ limit: "50kb" }));
 
+// AUDIT FIX F-01: Cookie parser — httpOnly JWT cookie'leri okumak için
+app.use(cookieParser());
+
 app.use(mongoSanitize({
   replaceWith: "_",
   onSanitize: ({ key }) => logger.warn(`[GÜVENLİK] Mongo injection denemesi engellendi: ${key}`),
@@ -119,15 +128,25 @@ async function bootstrap() {
     // H-06 Fix: DLQ processor — her 60 saniyede bir çalışır
     const dlqInterval = setInterval(processDLQ, 60_000);
 
+    // AUDIT FIX B-05: Periyodik job'lar geciktirilmiş başlatma.
+    // ÖNCEKİ: runReputationDecay() ve runStatsSnapshot() hemen çalışıyordu.
+    //   Sorun: Sunucu başlarken event replay + config load + 3 paralel aggregation
+    //   aynı anda MongoDB'ye ağır yük bindiriyordu → cold start timeout (Fly.io 15s).
+    // ŞİMDİ: İlk çalıştırma 30 saniye geciktirildi.
+
     // Reputation Decay Job — her 24 saatte bir çalışır
-    runReputationDecay(); // İlk çalıştırma
+    const reputationDecayDelay = setTimeout(() => {
+      runReputationDecay(); // İlk çalıştırma (30s gecikme sonrası)
+      logger.info("Periyodik İtibar İyileştirme görevi zamanlandı (her 24 saatte bir).");
+    }, 30_000); // AUDIT FIX B-05: 30 saniye gecikme
     const reputationDecayInterval = setInterval(runReputationDecay, 24 * 60 * 60 * 1000);
-    logger.info("Periyodik İtibar İyileştirme görevi zamanlandı (her 24 saatte bir).");
 
     // Stats Snapshot Job — her 24 saatte bir çalışır
-    runStatsSnapshot(); // Sunucu başlarken ilk çalıştırma
+    const statsSnapshotDelay = setTimeout(() => {
+      runStatsSnapshot(); // İlk çalıştırma (60s gecikme sonrası)
+      logger.info("Periyodik İstatistik Kaydetme görevi zamanlandı (her 24 saatte bir).");
+    }, 60_000); // AUDIT FIX B-05: 60 saniye gecikme (reputation decay'den 30s sonra)
     const statsSnapshotInterval = setInterval(runStatsSnapshot, 24 * 60 * 60 * 1000);
-    logger.info("Periyodik İstatistik Kaydetme görevi zamanlandı (her 24 saatte bir).");
 
     // 3. Rotaları İçeri Aktar (Redis ve DB hazır olduktan sonra)
     const authRoutes     = require("./routes/auth");
@@ -171,7 +190,9 @@ async function bootstrap() {
     const shutdown = async (signal) => {
       logger.info(`${signal} alındı. Graceful shutdown başlıyor...`);
       clearInterval(dlqInterval);
+      clearTimeout(reputationDecayDelay);  // AUDIT FIX B-05
       clearInterval(reputationDecayInterval);
+      clearTimeout(statsSnapshotDelay);    // AUDIT FIX B-05
       clearInterval(statsSnapshotInterval);
       server.close(async () => {
         await worker.stop();
