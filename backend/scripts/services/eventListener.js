@@ -13,6 +13,11 @@
  *
  * AFS-018 Fix: _onReputationUpdated artık success_rate hesaplıyor.
  * AFS-025 Fix: Checkpoint yazımı her blokta değil, sadece event işlendiğinde yapılır.
+ *
+ * AUDIT FIX B-01: queryFilter("*") kaldırıldı — event bazlı filtreleme.
+ * AUDIT FIX B-03: reputation_cache $set yerine dot notation — failure_score korunur.
+ * AUDIT FIX B-03: failure_score ve reputation_history artık aktif olarak yazılıyor.
+ * AUDIT FIX B-04: Checkpoint sadece monoton artan şekilde güncellenir.
  */
 
 const { ethers }         = require("ethers");
@@ -28,6 +33,28 @@ const MAX_RETRIES        = 3;
 const BLOCK_BATCH_SIZE   = 1_000;
 // AFS-025 Fix: Checkpoint yazım sıklığı — her N blokta bir (event olmasa bile)
 const CHECKPOINT_INTERVAL_BLOCKS = 50;
+
+// AUDIT FIX B-03: failure_score ağırlıkları
+// Ciddi olaylar daha yüksek puana sahiptir (User.js model yorumlarıyla uyumlu)
+const FAILURE_SCORE_WEIGHTS = {
+  burned:           50,  // BURNED — en ciddi: her iki taraf cezalanır
+  unjust_challenge: 20,  // CHALLENGED → release — haksız itiraz
+  passive_maker:    20,  // autoRelease — maker pasif kaldı
+  failed_dispute:   20,  // Genel failed dispute (ReputationUpdated'dan tespit)
+};
+
+// AUDIT FIX B-01: Dinlenen event isimleri — queryFilter("*") yerine event bazlı filtreleme
+const EVENT_NAMES = [
+  "WalletRegistered",
+  "EscrowCreated", "EscrowLocked", "PaymentReported",
+  "EscrowReleased", "DisputeOpened",
+  "CancelProposed",
+  "EscrowCanceled",
+  "MakerPinged",
+  "ReputationUpdated",
+  "BleedingDecayed",
+  "EscrowBurned",
+];
 
 // Minimal ABI — only the events we care about
 const ARAF_ABI = [
@@ -131,14 +158,30 @@ class EventWorker {
 
     for (let from = fromBlock; from <= toBlock; from += BLOCK_BATCH_SIZE) {
       const to = Math.min(from + BLOCK_BATCH_SIZE - 1, toBlock);
-      const events = await this.contract.queryFilter("*", from, to);
 
-      for (const event of events) {
+      // AUDIT FIX B-01: queryFilter("*") kaldırıldı.
+      // ÖNCEKİ: const events = await this.contract.queryFilter("*", from, to);
+      //   Sorun: TÜM event'leri çekiyordu — RPC rate limit, memory spike.
+      // ŞİMDİ: Her event tipi ayrı ayrı filtrelenir, sonuçlar blok sırasına göre birleştirilir.
+      const allEvents = [];
+      for (const eventName of EVENT_NAMES) {
+        try {
+          const filtered = await this.contract.queryFilter(eventName, from, to);
+          allEvents.push(...filtered);
+        } catch (err) {
+          logger.warn(`[Worker] Replay: ${eventName} sorgusu başarısız (blok ${from}-${to}): ${err.message}`);
+        }
+      }
+      // Blok numarası ve log index sırasına göre sırala — event işleme sırası önemli
+      allEvents.sort((a, b) => a.blockNumber - b.blockNumber || a.logIndex - b.logIndex);
+
+      for (const event of allEvents) {
         await this._processEvent(event);
       }
 
-      await redis.set(CHECKPOINT_KEY, to.toString());
-      logger.debug(`[Worker] Replayed blocks ${from}-${to}`);
+      // AUDIT FIX B-04: Monoton artan checkpoint — race condition önlemi
+      await this._updateCheckpointIfHigher(to);
+      logger.debug(`[Worker] Replayed blocks ${from}-${to} (${allEvents.length} events)`);
     }
 
     this._lastCheckpointBlock = toBlock;
@@ -149,26 +192,13 @@ class EventWorker {
   _attachLiveListeners() {
     if (!this.contract) return;
 
-    const events = [
-      "WalletRegistered",
-      "EscrowCreated", "EscrowLocked", "PaymentReported",
-      "EscrowReleased", "DisputeOpened",
-      "CancelProposed",
-      "EscrowCanceled",
-      "MakerPinged",
-      "ReputationUpdated",
-      "BleedingDecayed",
-      "EscrowBurned",
-    ];
-
-    for (const eventName of events) {
+    for (const eventName of EVENT_NAMES) {
       this.contract.on(eventName, async (...args) => {
         const event = args[args.length - 1];
         await this._processEventWithRetry(event);
 
-        // AFS-025 Fix: Event işlendiğinde checkpoint'i güncelle
-        const redis = getRedisClient();
-        await redis.set(CHECKPOINT_KEY, event.blockNumber.toString());
+        // AUDIT FIX B-04: Event işlendiğinde checkpoint'i monoton artan şekilde güncelle
+        await this._updateCheckpointIfHigher(event.blockNumber);
       });
     }
 
@@ -177,9 +207,8 @@ class EventWorker {
     // Bu, event olmayan bloklarda gereksiz Redis yazımını önler.
     this.provider.on("block", async (blockNumber) => {
       if (blockNumber - this._lastCheckpointBlock >= CHECKPOINT_INTERVAL_BLOCKS) {
-        const redis = getRedisClient();
-        await redis.set(CHECKPOINT_KEY, blockNumber.toString());
-        this._lastCheckpointBlock = blockNumber;
+        // AUDIT FIX B-04: Monoton artan kontrol
+        await this._updateCheckpointIfHigher(blockNumber);
       }
     });
 
@@ -188,6 +217,22 @@ class EventWorker {
       logger.error(`[Worker] Provider error: ${err.message}. Reconnecting...`);
       await this._reconnect();
     });
+  }
+
+  /**
+   * AUDIT FIX B-04: Checkpoint'i sadece mevcut değerden büyükse günceller.
+   * ÖNCEKİ: redis.set(CHECKPOINT_KEY, blockNumber) — koşulsuz yazma.
+   *   Sorun: Geç işlenen event'ler checkpoint'i geri alabiliyordu. Restart sonrası
+   *   aradaki event'ler tekrar replay edilir (idempotent olmalı ama gereksiz yük).
+   * ŞİMDİ: Sadece monoton artan güncelleme — checkpoint asla geri gitmez.
+   */
+  async _updateCheckpointIfHigher(blockNumber) {
+    const redis = getRedisClient();
+    const current = parseInt(await redis.get(CHECKPOINT_KEY) || "0");
+    if (blockNumber > current) {
+      await redis.set(CHECKPOINT_KEY, blockNumber.toString());
+      this._lastCheckpointBlock = blockNumber;
+    }
   }
 
   async _reconnect() {
@@ -323,6 +368,12 @@ class EventWorker {
 
   async _onEscrowReleased(event) {
     const { tradeId } = event.args;
+
+    // AUDIT FIX B-03: Status değişiminden ÖNCE mevcut durumu oku —
+    // CHALLENGED'dan release, maker'ın haksız challenge açtığını gösterir.
+    const existingTrade = await Trade.findOne({ onchain_escrow_id: Number(tradeId) }).lean();
+    const wasDisputed = existingTrade?.status === "CHALLENGED";
+
     const trade = await Trade.findOneAndUpdate(
       { onchain_escrow_id: Number(tradeId) },
       { $set: { status: "RESOLVED", "timers.resolved_at": new Date() } },
@@ -333,6 +384,28 @@ class EventWorker {
       logger.warn(`[Worker] EscrowReleased: Trade #${tradeId} bulunamadı.`);
       return;
     }
+
+    // AUDIT FIX B-03: Haksız challenge → maker failure_score + history
+    if (wasDisputed && trade.maker_address) {
+      const scoreType = "unjust_challenge";
+      const score = FAILURE_SCORE_WEIGHTS[scoreType];
+      await User.findOneAndUpdate(
+        { wallet_address: trade.maker_address },
+        {
+          $inc:  { "reputation_cache.failure_score": score },
+          $push: {
+            reputation_history: {
+              type:    scoreType,
+              score:   score,
+              date:    new Date(),
+              tradeId: Number(tradeId),
+            },
+          },
+        }
+      );
+      logger.info(`[Worker] Failure score updated: ${trade.maker_address} +${score} (${scoreType}) trade #${tradeId}`);
+    }
+
     // İtibar güncellemesi ReputationUpdated eventi ile tetikleniyor.
   }
 
@@ -354,11 +427,38 @@ class EventWorker {
 
   async _onEscrowBurned(event) {
     const { tradeId } = event.args;
-    await Trade.findOneAndUpdate(
+    const trade = await Trade.findOneAndUpdate(
       { onchain_escrow_id: Number(tradeId) },
       { $set: { status: "BURNED", "timers.resolved_at": new Date() } },
       { new: true }
     );
+
+    // AUDIT FIX B-03: BURNED — her iki tarafa failure_score + history yazılır.
+    // BURNED, en ciddi sonuçtur. User.js modelindeki yorum:
+    // "'burned' gibi ciddi olaylar daha yüksek puana sahiptir"
+    if (trade) {
+      const scoreType = "burned";
+      const score = FAILURE_SCORE_WEIGHTS[scoreType];
+      const addresses = [trade.maker_address, trade.taker_address].filter(Boolean);
+
+      for (const addr of addresses) {
+        await User.findOneAndUpdate(
+          { wallet_address: addr },
+          {
+            $inc:  { "reputation_cache.failure_score": score },
+            $push: {
+              reputation_history: {
+                type:    scoreType,
+                score:   score,
+                date:    new Date(),
+                tradeId: Number(tradeId),
+              },
+            },
+          }
+        );
+      }
+      logger.info(`[Worker] Burn failure scores: +${score} to ${addresses.length} parties, trade #${tradeId}`);
+    }
   }
 
   async _onBleedingDecayed(event) {
@@ -397,6 +497,13 @@ class EventWorker {
    * Önceki kod total_trades ve failed_disputes yazıyordu ama success_rate'i
    * hiç hesaplamıyordu. User modeli success_rate'i 100 varsayılan olarak
    * tanımlıyordu — UI'da her zaman %100 gösteriliyordu.
+   *
+   * AUDIT FIX B-03: $set: { "reputation_cache": {...} } kaldırıldı.
+   * ÖNCEKİ: Tüm reputation_cache objesini yeni bir obje ile DEĞİŞTİRİYORDU.
+   *   Sorun: failure_score alanı bu güncellemede yer almadığı için her
+   *   ReputationUpdated event'inde 0'a sıfırlanıyordu → ölü alan.
+   * ŞİMDİ: Dot notation ile sadece değişen alanlar güncellenir.
+   *   failure_score ve reputation_history korunur.
    */
   async _onReputationUpdated(event) {
     const { wallet, successful, failed, bannedUntil, effectiveTier } = event.args;
@@ -407,15 +514,14 @@ class EventWorker {
       ? Math.round((Number(successful) / totalTrades) * 100)
       : 100;
 
+    // AUDIT FIX B-03: Dot notation — failure_score ve reputation_history korunur
     await User.findOneAndUpdate(
       { wallet_address: wallet.toLowerCase() },
-      { $set: { "reputation_cache": {
-          success_rate:    successRate,   // AFS-018 Fix
-          total_trades:    Number(successful),
-          failed_disputes: Number(failed),
-          banned_until:    new Date(Number(bannedUntil) * 1000),
-          effective_tier:  Number(effectiveTier),
-      }}},
+      { $set: {
+        "reputation_cache.success_rate":    successRate,
+        "reputation_cache.total_trades":    Number(successful),
+        "reputation_cache.failed_disputes": Number(failed),
+      }},
       { upsert: true }
     );
   }
