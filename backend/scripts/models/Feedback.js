@@ -6,6 +6,13 @@
  * M-04 Fix: Inline schema `routes/feedback.js` içinden buraya taşındı.
  * Mongoose modelleri her zaman `models/` altında tanımlanmalı —
  * route dosyaları sadece HTTP katmanını yönetmeli.
+ *
+ * AFS-011 Fix: 'category' alanı eklendi.
+ * Route dosyası (feedback.js) Joi ile category doğrulaması yapıp
+ * Feedback.create({ category: value.category }) ile kaydediyordu.
+ * Ancak bu şemada 'category' alanı tanımlı değildi.
+ * Mongoose strict mode varsayılan olarak açık olduğu için bu alan
+ * sessizce drop ediliyordu — hiçbir feedback kategorisi kaydedilmiyordu.
  */
 
 const mongoose = require("mongoose");
@@ -27,6 +34,12 @@ const feedbackSchema = new mongoose.Schema({
     type:      String,
     maxlength: 1000,
     default:   "",
+  },
+  // AFS-011 Fix: Geri bildirim kategorisi — route'daki Joi doğrulamasıyla senkronize
+  category: {
+    type:     String,
+    required: true,
+    enum:     ["bug", "suggestion", "ui/ux", "other"],
   },
   created_at: {
     type:    Date,
