@@ -47,6 +47,9 @@ error NoPriorBanHistory();
 error CleanPeriodNotElapsed();
 error NoBansToReset();
 error DeadlineTooFar(); // AFS-017 Fix: Cancel deadline üst limiti
+// AUDIT FIX C-02: Karşı taraf zaten alternatif çözüm yolu başlattığında
+// aynı işlemde ikinci bir ping yolunun açılmasını engeller.
+error ConflictingPingPath();
 
 contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix: Pausable eklendi
     using SafeERC20 for IERC20;
@@ -156,6 +159,11 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
     // AFS-017 Fix: Cancel imzası için maksimum deadline süresi
     uint256 public constant MAX_CANCEL_DEADLINE  =   7 days;
 
+    // AUDIT FIX C-04: Wash trading caydırıcı — Tier 1+ erişimi için minimum aktif süre.
+    // 24h cooldown ile en hızlı 15 işlem = 15 gün. 30 gün zorunluluğu,
+    // Sybil hesaplarının hızlı tier atlamasını ekonomik olarak caydırır.
+    uint256 public constant MIN_ACTIVE_PERIOD    =  30 days;
+
     // autoRelease: Taker, pasif Maker'a karşı işlemi sonlandırdığında, her iki
     // tarafın teminatından kesilen "ihmal cezası". Bu, Taker'ın da süreci
     // zorla sonlandırmasının küçük bir maliyeti olmasını sağlar.
@@ -164,6 +172,11 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
 
     // ── Saatlik Decay (Hourly BPS) ────────────────────────────────────────────
     // Efektif bleeding: MAX_BLEEDING(240h) - GRACE(48h) = 192h
+    //
+    // AUDIT FIX C-01: Decay oranları artık saniye bazlı hesaplanıyor.
+    // Saatlik BPS değerleri aynı kalıyor, formül saniye cinsinden uygulanıyor:
+    //   decayed = (original * RATE_BPS_H * elapsedSeconds) / (BPS_DENOM * 3600)
+    // Bu, integer bölme step-function sorununu ortadan kaldırır.
     //
     // Taker bond : 42 BPS/saat -> 192h'de %80.6 erimis, %19.4 kalmis
     // Maker bond : 26 BPS/saat -> 192h'de %50.1 erimis (crypto zaten kilitli)
@@ -211,6 +224,11 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
     // hasTierPenalty olmadan, "hiç ceza almamış" ve "Tier 0'a düşürülmüş" ayırt edilemez.
     mapping(address => uint8) public maxAllowedTier;
     mapping(address => bool)  public hasTierPenalty; // AFS-002 Fix: sentinel bayrağı
+
+    // AUDIT FIX C-04: İlk başarılı işlem zamanı — wash trading caydırıcı.
+    // Tier 1+ erişimi için bu timestamp'ten itibaren MIN_ACTIVE_PERIOD geçmiş olmalı.
+    // Bu, Sybil hesaplarının 15 gün içinde Tier 1'e atlamasını engeller.
+    mapping(address => uint256) public firstSuccessfulTradeAt;
 
     // Supported payment tokens (USDT, USDC on Base)
     mapping(address => bool) public supportedTokens;
@@ -427,8 +445,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
      * @param  _tradeId    Trade ID
      * @param  _ipfsHash   IPFS hash of payment receipt
      */
+    // AUDIT FIX C-05: nonReentrant eklendi — state değişikliği yapan fonksiyon
     function reportPayment(uint256 _tradeId, string calldata _ipfsHash)
         external
+        nonReentrant
         inState(_tradeId, TradeState.LOCKED)
     {
         Trade storage t = trades[_tradeId];
@@ -519,8 +539,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
      * yanıt penceresi açarak hatalı itirazları önler.
      * @param  _tradeId  Trade ID
      */
+    // AUDIT FIX C-05: nonReentrant eklendi — state değişikliği yapan fonksiyon
     function pingTakerForChallenge(uint256 _tradeId)
         external
+        nonReentrant
         inState(_tradeId, TradeState.PAID)
     {
         Trade storage t = trades[_tradeId];
@@ -529,6 +551,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
             revert PingCooldownNotElapsed(t.paidAt + 24 hours);
         }
         if (t.challengePingedByMaker) revert AlreadyPinged();
+
+        // AUDIT FIX C-02: Taker zaten autoRelease yolunu başlattıysa,
+        // Maker challenge yolunu açamaz. MEV/transaction ordering manipülasyonunu önler.
+        if (t.pingedByTaker) revert ConflictingPingPath();
 
         t.challengePingedByMaker = true;
         t.challengePingedAt = block.timestamp;
@@ -544,8 +570,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
      * @dev    Simetrik Ping Modeli: Maker önce ping göndermeli ve 24 saat beklemelidir.
      * @param  _tradeId  Trade ID
      */
+    // AUDIT FIX C-05: nonReentrant eklendi — state değişikliği + timer başlatma
     function challengeTrade(uint256 _tradeId)
         external
+        nonReentrant
         inState(_tradeId, TradeState.PAID)
     {
         Trade storage t = trades[_tradeId];
@@ -684,14 +712,20 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
      * "hayat sinyali" gönderir. Bu, autoRelease için bir ön koşuldur.
      * @param  _tradeId  Trade ID
      */
+    // AUDIT FIX C-05: nonReentrant eklendi — state değişikliği yapan fonksiyon
     function pingMaker(uint256 _tradeId)
         external
+        nonReentrant
         inState(_tradeId, TradeState.PAID)
     {
         Trade storage t = trades[_tradeId];
         if (msg.sender != t.taker) revert OnlyTaker();
         if (block.timestamp < t.paidAt + 24 hours) revert PingCooldownNotElapsed(t.paidAt + 24 hours);
         if (t.pingedByTaker) revert AlreadyPinged();
+
+        // AUDIT FIX C-02: Maker zaten challenge yolunu başlattıysa,
+        // Taker autoRelease yolunu açamaz. MEV/transaction ordering manipülasyonunu önler.
+        if (t.challengePingedByMaker) revert ConflictingPingPath();
 
         t.pingedByTaker = true;
         t.pingedAt = block.timestamp;
@@ -751,8 +785,22 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
     // ═══════════════════════════════════════════════════
 
     /**
-     * @dev Calculates current amounts after bleeding decay (linear approximation).
-     * Decay is calculated lazily on-chain — gas efficient.
+     * @dev Calculates current amounts after bleeding decay.
+     *
+     * AUDIT FIX C-01: Saniye bazlı lineer decay hesaplaması.
+     * ÖNCEKİ: hoursElapsed = bleedingElapsed / 3600 (integer bölme → step-function)
+     *   Sorun: İlk 3599 saniyede decay = 0. Küçük miktarlarda saatlik decay sıfıra
+     *   yuvarlanıyordu ve fonlar hiç erimeye başlamıyordu.
+     * ŞİMDİ: decayed = (original * rateBpsH * elapsedSeconds) / (BPS_DENOM * 3600)
+     *   Aynı saatlik oran, saniye cinsinde uygulanır. Step-function yerine sürekli
+     *   ve pürüzsüz (smooth) decay sağlar.
+     *
+     * Overflow analizi (uint256 güvenli):
+     *   Max cryptoAmount: ~10^12 (1B USDT, 6 decimal)
+     *   Max rate * 2: 68
+     *   Max elapsedSeconds: 691200 (192h)
+     *   Çarpım: 10^12 * 68 * 691200 = 4.7 * 10^19 ≪ 2^256
+     *
      * @return currentCrypto    Remaining USDT after USDT decay
      * @return currentMakerBond Remaining maker bond after bond decay
      * @return currentTakerBond Remaining taker bond after bond decay
@@ -780,27 +828,24 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         }
 
         uint256 bleedingElapsed = elapsed > GRACE_PERIOD ? elapsed - GRACE_PERIOD : 0;
-        uint256 hoursElapsed = bleedingElapsed / SECONDS_PER_HOUR;
 
-        uint256 makerBondDecayBps = hoursElapsed * MAKER_BOND_DECAY_BPS_H;
-        uint256 takerBondDecayBps = hoursElapsed * TAKER_BOND_DECAY_BPS_H;
+        // AUDIT FIX C-01: Saniye bazlı bond decay
+        // Formül: decayed = (bond * BPS_per_hour * seconds) / (10000 * 3600)
+        uint256 makerBondDecayed = (t.makerBond * MAKER_BOND_DECAY_BPS_H * bleedingElapsed) / (BPS_DENOMINATOR * SECONDS_PER_HOUR);
+        if (makerBondDecayed > t.makerBond) makerBondDecayed = t.makerBond;
 
-        if (makerBondDecayBps > BPS_DENOMINATOR) makerBondDecayBps = BPS_DENOMINATOR;
-        if (takerBondDecayBps > BPS_DENOMINATOR) takerBondDecayBps = BPS_DENOMINATOR;
-
-        uint256 makerBondDecayed = (t.makerBond * makerBondDecayBps) / BPS_DENOMINATOR;
-        uint256 takerBondDecayed = (t.takerBond * takerBondDecayBps) / BPS_DENOMINATOR;
+        uint256 takerBondDecayed = (t.takerBond * TAKER_BOND_DECAY_BPS_H * bleedingElapsed) / (BPS_DENOMINATOR * SECONDS_PER_HOUR);
+        if (takerBondDecayed > t.takerBond) takerBondDecayed = t.takerBond;
 
         currentMakerBond = t.makerBond - makerBondDecayed;
         currentTakerBond = t.takerBond - takerBondDecayed;
 
+        // AUDIT FIX C-01: Saniye bazlı crypto decay
         uint256 cryptoDecayed = 0;
         if (bleedingElapsed > USDT_DECAY_START) {
-            uint256 usdtElapsed  = bleedingElapsed - USDT_DECAY_START;
-            uint256 usdtHours    = usdtElapsed / SECONDS_PER_HOUR;
-            uint256 cryptoDecayBps = usdtHours * CRYPTO_DECAY_BPS_H * 2;
-            if (cryptoDecayBps > BPS_DENOMINATOR) cryptoDecayBps = BPS_DENOMINATOR;
-            cryptoDecayed = (t.cryptoAmount * cryptoDecayBps) / BPS_DENOMINATOR;
+            uint256 usdtElapsed = bleedingElapsed - USDT_DECAY_START;
+            cryptoDecayed = (t.cryptoAmount * CRYPTO_DECAY_BPS_H * 2 * usdtElapsed) / (BPS_DENOMINATOR * SECONDS_PER_HOUR);
+            if (cryptoDecayed > t.cryptoAmount) cryptoDecayed = t.cryptoAmount;
         }
 
         currentCrypto = t.cryptoAmount - cryptoDecayed;
@@ -896,6 +941,12 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
             }
         } else {
             rep.successfulTrades++;
+
+            // AUDIT FIX C-04: İlk başarılı işlem zamanını kaydet (wash trading caydırıcı).
+            // Bu değer bir kez set edilir ve değişmez — ilk kez başarılı işlem yapıldığında.
+            if (firstSuccessfulTradeAt[_wallet] == 0) {
+                firstSuccessfulTradeAt[_wallet] = block.timestamp;
+            }
         }
 
         emit ReputationUpdated(
@@ -942,6 +993,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
      * - T1: 15+ başarılı, <=2 failed
      * - T0: Diğer tüm durumlar
      *
+     * AUDIT FIX C-04: MIN_ACTIVE_PERIOD kontrolü eklendi.
+     * İlk başarılı işlemden itibaren 30 gün geçmeden Tier 1+ erişimi verilmez.
+     * Bu, Sybil hesaplarının hızlı tier atlamasını caydırır.
+     *
      * AFS-002 Fix: `hasTierPenalty` bayrağı ile maxAllowedTier sentinel problemi çözüldü.
      * hasTierPenalty false → hiç ceza almamış → tier tavanı yok (4 döner).
      * hasTierPenalty true  → maxAllowedTier gerçek ceza değeridir (0 dahil).
@@ -960,6 +1015,17 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
             calculatedTier = 1;
         } else {
             calculatedTier = 0;
+        }
+
+        // AUDIT FIX C-04: Minimum aktif süre kontrolü — wash trading caydırıcı.
+        // İlk başarılı işlemden itibaren MIN_ACTIVE_PERIOD (30 gün) geçmeden
+        // Tier 1+ erişimi verilmez. Bu sayede Sybil hesapları en az 30 gün boyunca
+        // Tier 0'da kalır ve düşük limitlerle (max 5000 TRY) sınırlı olur.
+        if (calculatedTier > 0) {
+            if (firstSuccessfulTradeAt[_wallet] == 0 ||
+                block.timestamp < firstSuccessfulTradeAt[_wallet] + MIN_ACTIVE_PERIOD) {
+                calculatedTier = 0;
+            }
         }
 
         // AFS-002 Fix: hasTierPenalty bayrağı ile kontrol
