@@ -15,14 +15,9 @@
  * - JWT is short-lived (15 min); trade-scoped PII tokens even shorter
  *
  * SEC-02 Fix: JWT_SECRET entropy doğrulaması güçlendirildi.
- *   - Minimum 64 karakter (512-bit) zorunlu
- *   - Shannon entropy kontrolü ile zayıf secret'lar engellenir
- *   - Production'da placeholder değerler otomatik reddedilir
- *
  * CON-04 Fix: Refresh token desteği eklendi.
- *   - JWT (15 dakika) + Refresh Token (7 gün) çift katmanlı auth
- *   - Refresh token Redis'te saklanır, tek kullanımlık (rotation)
- *   - Trade room'da aktif kullanıcılar 401 almadan oturum yenileyebilir
+ * AFS-009 Fix: revokeRefreshToken artık gerçekten Redis'ten tüm token'ları siliyor.
+ * AFS-021 Fix: Redis KEYS komutu SCAN ile değiştirildi (O(N) bloklaması engellendi).
  */
 
 const { SiweMessage }   = require("siwe");
@@ -39,20 +34,9 @@ const NONCE_TTL_SECS  = 5 * 60; // 5 minutes
 // CON-04 Fix: Refresh token ayarları
 const REFRESH_TOKEN_TTL_SECS = 7 * 24 * 60 * 60; // 7 gün
 const REFRESH_TOKEN_PREFIX   = "refresh:";
-// GÜVENLİK İYİLEŞTİRMESİ: Refresh Token Ailesi
-// Bir kullanıcıya ait tüm token'ları gruplamak için. Çalınma durumunda
-// tüm aileyi geçersiz kılacağız.
 const REFRESH_FAMILY_PREFIX = "family:";
 
 // ── SEC-02 Fix: JWT_SECRET Entropy Doğrulaması ───────────────────────────────
-/**
- * Shannon entropy hesaplayıcı — secret'ın gerçekten rastgele olup olmadığını ölçer.
- * crypto.randomBytes(64).toString('hex') ile üretilmiş bir secret ~4.0 entropy verir.
- * "password123456789..." gibi zayıf değerler ~3.0 altında kalır.
- *
- * @param {string} str - Kontrol edilecek string
- * @returns {number}   - Bit cinsinden entropy (0.0 - 8.0 arası)
- */
 function _shannonEntropy(str) {
   const freq = {};
   for (const ch of str) {
@@ -67,8 +51,6 @@ function _shannonEntropy(str) {
   return entropy;
 }
 
-// SEC-02 Fix: Kapsamlı JWT_SECRET doğrulaması
-// Placeholder değerler, kısa secret'lar ve düşük entropy engellenir.
 const KNOWN_PLACEHOLDERS = [
   "CHANGE_THIS_TO_A_LONG_RANDOM_SECRET_MIN_64_CHARS",
   "your-secret-here",
@@ -92,7 +74,6 @@ if (KNOWN_PLACEHOLDERS.some(p => JWT_SECRET.includes(p))) {
     "Gerçek bir rastgele secret ile değiştirin."
   );
 }
-// Shannon entropy kontrolü — zayıf pattern'ları yakala (örn: "aaaa...bbb...ccc")
 const entropy = _shannonEntropy(JWT_SECRET);
 if (entropy < 3.5) {
   throw new Error(
@@ -103,61 +84,55 @@ if (entropy < 3.5) {
 }
 logger.info(`[Auth] JWT_SECRET doğrulandı: ${JWT_SECRET.length} karakter, entropy: ${entropy.toFixed(2)} bit`);
 
+// ─── AFS-021 Fix: Redis SCAN yardımcısı ──────────────────────────────────────
+/**
+ * Redis KEYS yerine SCAN kullanarak pattern'a uyan anahtarları toplar.
+ * KEYS O(N) bloklaması yapar ve production'da diğer işlemleri durdurabilir.
+ * SCAN ise kursor tabanlıdır ve Redis'i bloklamaz.
+ *
+ * @param {object} redis  - Redis client instance
+ * @param {string} pattern - SCAN pattern (örn: "family:0x...:")
+ * @returns {Promise<string[]>} Eşleşen anahtarlar
+ */
+async function _scanKeys(redis, pattern) {
+  const results = [];
+  let cursor = 0;
+  do {
+    const reply = await redis.scan(cursor, { MATCH: pattern, COUNT: 100 });
+    cursor = reply.cursor;
+    results.push(...reply.keys);
+  } while (cursor !== 0);
+  return results;
+}
+
 // ─── Nonce Management (Redis) ─────────────────────────────────────────────────
 
-/**
- * Generates a cryptographically random nonce and stores it in Redis.
- * TTL: 5 minutes. After use, it is deleted immediately (single-use).
- *
- * @param {string} walletAddress - lowercase address
- * @returns {string} nonce
- */
 async function generateNonce(walletAddress) {
   const redis  = getRedisClient();
   const nonce  = crypto.randomBytes(16).toString("hex");
   const key    = `nonce:${walletAddress.toLowerCase()}`;
-
-  // Atomic set with TTL — overwrites previous nonce (prevents stacking)
   await redis.setEx(key, NONCE_TTL_SECS, nonce);
-
   logger.debug(`Nonce generated for ${walletAddress}`);
   return nonce;
 }
 
-/**
- * Retrieves and immediately invalidates the nonce (single-use).
- *
- * @param {string} walletAddress
- * @returns {string|null} nonce or null if expired/not found
- */
 async function consumeNonce(walletAddress) {
   const redis = getRedisClient();
   const key   = `nonce:${walletAddress.toLowerCase()}`;
-
-  // Atomic getdel — prevents race condition between get and delete
   const nonce = await redis.getDel(key);
-  return nonce; // null if not found or expired
+  return nonce;
 }
 
 // ─── SIWE Verification ────────────────────────────────────────────────────────
 
-/**
- * Verifies a SIWE signature and returns the authenticated wallet address.
- *
- * @param {string} messageStr - Raw SIWE message string
- * @param {string} signature  - Hex-encoded signature (0x...)
- * @returns {Promise<string>} - Lowercase wallet address
- */
 async function verifySiweSignature(messageStr, signature) {
   const message = new SiweMessage(messageStr);
 
-  // Domain doğrulaması — SIWE mesajındaki domain backend'in beklediği domain ile eşleşmeli
   const expectedDomain = process.env.SIWE_DOMAIN || "localhost";
   if (message.domain !== expectedDomain) {
     throw new Error(`SIWE domain mismatch: expected ${expectedDomain}, got ${message.domain}`);
   }
 
-  // Nonce'u Redis'ten al ve tek kullanımlık olarak sil
   const storedNonce = await consumeNonce(message.address.toLowerCase());
   if (!storedNonce) {
     throw new Error("Nonce expired or not found");
@@ -166,7 +141,6 @@ async function verifySiweSignature(messageStr, signature) {
     throw new Error("Nonce mismatch");
   }
 
-  // İmza doğrulaması
   const result = await message.verify({ signature });
   if (!result.success) {
     throw new Error("SIWE signature verification failed");
@@ -177,12 +151,6 @@ async function verifySiweSignature(messageStr, signature) {
 
 // ─── JWT Token Management ─────────────────────────────────────────────────────
 
-/**
- * Issues a short-lived auth JWT (15 min).
- *
- * @param {string} walletAddress - Authenticated wallet
- * @returns {string} Signed JWT
- */
 function issueJWT(walletAddress) {
   return jwt.sign(
     { sub: walletAddress.toLowerCase(), type: "auth" },
@@ -191,14 +159,6 @@ function issueJWT(walletAddress) {
   );
 }
 
-/**
- * Issues a trade-scoped PII token (15 min, even shorter in production).
- * Only valid for a specific tradeId — prevents cross-trade PII access.
- *
- * @param {string} walletAddress
- * @param {string} tradeId
- * @returns {string} Signed PII JWT
- */
 function issuePIIToken(walletAddress, tradeId) {
   return jwt.sign(
     { sub: walletAddress.toLowerCase(), type: "pii", tradeId },
@@ -207,39 +167,12 @@ function issuePIIToken(walletAddress, tradeId) {
   );
 }
 
-/**
- * Verifies any JWT (auth or PII type).
- *
- * @param {string} token
- * @returns {object} Decoded payload
- */
 function verifyJWT(token) {
   return jwt.verify(token, JWT_SECRET);
 }
 
 // ─── CON-04 Fix: Refresh Token Management ─────────────────────────────────────
-/**
- * Refresh Token sistemi — JWT'nin 15 dakikalık ömrünü uzatmak için.
- *
- * Akış:
- *   1. Kullanıcı login olduğunda JWT + refreshToken birlikte verilir
- *   2. JWT expire olunca frontend /api/auth/refresh'e refreshToken gönderir
- *   3. Backend eski refreshToken'ı siler (tek kullanımlık), yeni JWT + refreshToken verir
- *   4. Bu sayede trade room'daki kullanıcılar 15 dakikada bir 401 almaz
- *
- * Güvenlik:
- *   - Refresh token Redis'te saklanır, 7 gün TTL
- *   - Her kullanımda rotasyon yapılır (eski silinir, yeni üretilir)
- *   - Çalınmış token tespit: eski token ile gelirse tüm token'lar iptal edilir
- */
 
-/**
- * Yeni bir refresh token üretir ve Redis'te saklar.
- *
- * @param {string} walletAddress - lowercase Ethereum address
- * @param {string} [familyId] - Opsiyonel: Mevcut token ailesi ID'si. Yoksa yeni aile oluşturulur.
- * @returns {Promise<string>} Opaque refresh token (64 hex karakter)
- */
 async function issueRefreshToken(walletAddress, familyId = null) {
   const redis = getRedisClient();
   const token = crypto.randomBytes(32).toString("hex");
@@ -247,69 +180,52 @@ async function issueRefreshToken(walletAddress, familyId = null) {
   const familyKey = `${REFRESH_FAMILY_PREFIX}${walletAddress.toLowerCase()}:${currentFamilyId}`;
   const tokenKey = `${REFRESH_TOKEN_PREFIX}${token}`;
 
-  // Redis pipeline kullanarak atomik işlem yap
   const multi = redis.multi();
-  // 1. Token'ı aile ID'si ile eşleştir
   multi.setEx(tokenKey, REFRESH_TOKEN_TTL_SECS, currentFamilyId);
-  // 2. Aile listesine yeni token'ı ekle
   multi.sAdd(familyKey, token);
-  multi.expire(familyKey, REFRESH_TOKEN_TTL_SECS); // Ailenin de TTL'i olsun
+  multi.expire(familyKey, REFRESH_TOKEN_TTL_SECS);
   await multi.exec();
   
   logger.debug(`[Auth] Refresh token issued for ${walletAddress}`);
   return token;
 }
 
-/**
- * Refresh token'ı doğrular ve yeni JWT + refresh token çifti döner.
- * Eski refresh token atomik olarak silinir (rotation — replay koruması).
- *
- * @param {string} walletAddress - lowercase Ethereum address
- * @param {string} refreshToken  - Client'ın gönderdiği refresh token
- * @returns {Promise<{token: string, refreshToken: string}>} Yeni JWT + refresh token
- * @throws {Error} Geçersiz veya süresi dolmuş refresh token
- */
 async function rotateRefreshToken(walletAddress, refreshToken) {
   const redis = getRedisClient();
   const tokenKey = `${REFRESH_TOKEN_PREFIX}${refreshToken}`;
 
-  // 1. Token'ı doğrula ve ait olduğu aileyi bul. Atomik olarak sil.
   const familyId = await redis.getDel(tokenKey);
 
   if (!familyId) {
-    // Token ya hiç var olmadı, ya süresi doldu ya da zaten kullanıldı.
-    // GÜVENLİK İYİLEŞTİRMESİ: Bir saldırganın eski/çalınmış bir token'ı deniyor olma ihtimali var.
-    // Güvenlik önlemi olarak, bu token'ın ait olduğu aileyi bulup yok ediyoruz.
-    // Bu, `familyId`'yi token'ın kendisinde saklayarak mümkün olur.
-    // Örnek: `familyId:token` şeklinde bir anahtar.
-    // Şimdiki implementasyonda, bu token'ın hangi aileye ait olduğunu bilemeyiz.
-    // Bu yüzden, bu cüzdana ait TÜM aileleri bulup yok etmek en güvenli yoldur.
-    logger.warn(`[Auth] Geçersiz/kullanılmış refresh token denemesi: wallet=${walletAddress}. Bu cüzdana ait tüm oturumlar sonlandırılıyor.`);
+    // AFS-009 + AFS-021 Fix: Geçersiz token denemesi — tüm aileleri bul ve sil
+    // AFS-021 Fix: redis.keys yerine _scanKeys (SCAN tabanlı) kullanılıyor
+    logger.warn(`[Auth] Geçersiz/kullanılmış refresh token denemesi: wallet=${walletAddress}. Tüm oturumlar sonlandırılıyor.`);
     
-    const familyKeys = await redis.keys(`${REFRESH_FAMILY_PREFIX}${walletAddress.toLowerCase()}:*`);
+    const familyKeys = await _scanKeys(redis, `${REFRESH_FAMILY_PREFIX}${walletAddress.toLowerCase()}:*`);
     if (familyKeys.length > 0) {
-      const multi = redis.multi();
+      // Her ailedeki token'ları topla
       for (const familyKey of familyKeys) {
         const members = await redis.sMembers(familyKey);
+        const multi = redis.multi();
         members.forEach(member => multi.del(`${REFRESH_TOKEN_PREFIX}${member}`));
         multi.del(familyKey);
+        await multi.exec();
       }
-      await multi.exec();
     }
     throw new Error("Refresh token invalid or expired. Please login again.");
   }
 
-  // 2. Ailedeki diğer tüm token'ları sil (rotasyon)
+  // Ailedeki diğer tüm token'ları sil (rotasyon)
   const familyKey = `${REFRESH_FAMILY_PREFIX}${walletAddress.toLowerCase()}:${familyId}`;
   const familyMembers = await redis.sMembers(familyKey);
-  const multi = redis.multi();
-  familyMembers.forEach(member => multi.del(`${REFRESH_TOKEN_PREFIX}${member}`));
-  multi.del(familyKey);
-  await multi.exec();
+  if (familyMembers.length > 0) {
+    const multi = redis.multi();
+    familyMembers.forEach(member => multi.del(`${REFRESH_TOKEN_PREFIX}${member}`));
+    multi.del(familyKey);
+    await multi.exec();
+  }
   
-  // Doğrulama başarılı — yeni çift üret
   const newJWT          = issueJWT(walletAddress);
-  // 3. Aynı aile ID'si ile yeni bir token oluştur
   const newRefreshToken = await issueRefreshToken(walletAddress, familyId);
   
   logger.info(`[Auth] Token rotated for ${walletAddress}`);
@@ -317,17 +233,45 @@ async function rotateRefreshToken(walletAddress, refreshToken) {
 }
 
 /**
- * Bir cüzdanın tüm refresh token'larını iptal eder.
+ * AFS-009 Fix: Bir cüzdanın tüm refresh token'larını iptal eder.
  * Logout veya güvenlik ihlali durumunda kullanılır.
+ *
+ * Önceki implementasyon: Sadece loglama yapıyordu, Redis'ten hiçbir token silmiyordu.
+ * Yeni implementasyon: SCAN ile tüm aileleri bulur ve siler.
+ *
+ * AFS-021 Fix: redis.keys() yerine _scanKeys() (SCAN tabanlı) kullanılıyor.
  *
  * @param {string} walletAddress
  */
 async function revokeRefreshToken(walletAddress) {
-  // Bu fonksiyon artık doğrudan kullanılmıyor, rotasyon mantığı devraldı.
-  // Ancak manuel olarak tüm oturumları kapatmak için saklanabilir.
-  // Implementasyonu aile mantığına göre güncellenmek zorunda.
-  // Şimdilik sadece loglama yapalım.
-  logger.info(`[Auth] Refresh token revoked for ${walletAddress}`);
+  const redis = getRedisClient();
+  const addr  = walletAddress.toLowerCase();
+
+  // AFS-021 Fix: SCAN kullanarak bu cüzdana ait tüm aileleri bul
+  const familyKeys = await _scanKeys(redis, `${REFRESH_FAMILY_PREFIX}${addr}:*`);
+
+  if (familyKeys.length === 0) {
+    logger.info(`[Auth] Revoke: ${addr} için aktif refresh token bulunamadı.`);
+    return;
+  }
+
+  let deletedCount = 0;
+  for (const familyKey of familyKeys) {
+    const members = await redis.sMembers(familyKey);
+    if (members.length > 0) {
+      const multi = redis.multi();
+      members.forEach(member => {
+        multi.del(`${REFRESH_TOKEN_PREFIX}${member}`);
+        deletedCount++;
+      });
+      multi.del(familyKey);
+      await multi.exec();
+    } else {
+      await redis.del(familyKey);
+    }
+  }
+
+  logger.info(`[Auth] Revoke: ${addr} için ${deletedCount} refresh token ve ${familyKeys.length} aile silindi.`);
 }
 
 module.exports = {
@@ -337,7 +281,6 @@ module.exports = {
   issueJWT,
   issuePIIToken,
   verifyJWT,
-  // CON-04 Fix: Refresh token exports
   issueRefreshToken,
   rotateRefreshToken,
   revokeRefreshToken,
