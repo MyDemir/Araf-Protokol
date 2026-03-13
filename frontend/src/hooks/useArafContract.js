@@ -13,6 +13,8 @@
  *   CON-02 Fix: VITE_ESCROW_ADDRESS tanımsızsa anlamlı hata mesajı
  *   CON-09 Fix: Chain ID doğrulaması — yanlış ağda işlem göndermeyi engeller
  *
+ * AUDIT FIX E-01: getReputation view fonksiyonunda ESCROW_ADDRESS guard eklendi.
+ *
  * Kullanım (App.jsx'te):
  *   const { releaseFunds, signCancelProposal, proposeOrApproveCancel } = useArafContract();
  */
@@ -57,6 +59,9 @@ const SUPPORTED_CHAINS = {
   84532: "Base Sepolia",
 };
 
+// AUDIT FIX E-01: Kontrat adresi geçerlilik kontrolü — hem write hem read fonksiyonları için
+const _isValidAddress = ESCROW_ADDRESS && ESCROW_ADDRESS !== "0x0000000000000000000000000000000000000000";
+
 export function useArafContract() {
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
@@ -95,7 +100,7 @@ export function useArafContract() {
         throw new Error("Cüzdan bağlı değil. Lütfen cüzdanınızı bağlayın.");
       }
       // 2. Kontrat adresi yapılandırma kontrolü (CON-02 Fix)
-      if (!ESCROW_ADDRESS || ESCROW_ADDRESS === "0x0000000000000000000000000000000000000000") {
+      if (!_isValidAddress) {
         throw new Error(
           "Kontrat adresi yapılandırılmamış. " +
           "VITE_ESCROW_ADDRESS .env dosyasında geçerli bir adres olarak tanımlı olmalı."
@@ -261,11 +266,31 @@ export function useArafContract() {
     signCancelProposal,
     proposeOrApproveCancel,
     /**
-     * EKSİK FONKSİYON: App.jsx'in ihtiyaç duyduğu getReputation view fonksiyonu.
-     * Bu bir 'write' değil, 'read' işlemi olduğu için publicClient kullanılır.
+     * AUDIT FIX E-01: getReputation view fonksiyonunda ESCROW_ADDRESS guard eklendi.
+     * ÖNCEKİ: ESCROW_ADDRESS undefined olduğunda getAddress(undefined) hata fırlatıyordu.
+     *   writeContract wrapper'ında guard vardı ama getReputation doğrudan export ediliyordu.
+     * ŞİMDİ: _isValidAddress kontrolü ile guard eklendi.
+     *   Adres geçersizse null döner — caller tarafında handle edilmeli.
      */
     getReputation: useCallback(
-      (address) => publicClient.readContract({ address: getAddress(ESCROW_ADDRESS), abi: ArafEscrowABI, functionName: 'getReputation', args: [getAddress(address)] }),
+      async (address) => {
+        // AUDIT FIX E-01: Guard — ESCROW_ADDRESS tanımsızsa null döndür
+        if (!_isValidAddress) {
+          console.warn("[ArafContract] getReputation: ESCROW_ADDRESS tanımsız, null döndürülüyor.");
+          return null;
+        }
+        try {
+          return await publicClient.readContract({
+            address: getAddress(ESCROW_ADDRESS),
+            abi: ArafEscrowABI,
+            functionName: 'getReputation',
+            args: [getAddress(address)],
+          });
+        } catch (err) {
+          console.error("[ArafContract] getReputation hatası:", err.message);
+          return null;
+        }
+      },
       [publicClient]
     ),
   };
