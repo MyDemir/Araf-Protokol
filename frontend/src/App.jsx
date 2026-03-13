@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react'; // AFS-003 Fix: useCallback eklendi
 // --- WEB3 ENTEGRASYON KÜTÜPHANELERİ ---
 // H-01 Fix: useChainId eklendi — SIWE mesajındaki Chain ID artık hardcoded değil
 import { useAccount, useConnect, useDisconnect, useSignMessage, useChainId } from 'wagmi';
@@ -90,8 +90,8 @@ function App() {
     cancelOpenEscrow,
     signCancelProposal,
     proposeOrApproveCancel,
+    getReputation, // YENİ: İtibar verisini çekmek için
   } = useArafContract();
-  const { getReputation } = useArafContract(); // YENİ: İtibar verisini çekmek için
   
   const [jwtToken, setJwtToken] = useState(null);
   // CON-04 Fix: Refresh token state — JWT expire olduğunda otomatik yenileme için
@@ -117,10 +117,10 @@ function App() {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [tradeHistoryPage, setTradeHistoryPage] = useState(1);
   const [tradeHistoryTotal, setTradeHistoryTotal] = useState(0);
-  const [tradeHistoryLimit, setTradeHistoryLimit] = useState(10);
+  const [tradeHistoryLimit] = useState(10);
 
   // NOT: bankOwner ve bankIBAN statik değişkenleri PII entegrasyonu ile artık dinamikleşti.
-  const [telegramHandle, setTelegramHandle] = useState('ahmet_tr'); 
+  const [telegramHandle] = useState('ahmet_tr'); 
   const [activeTrade, setActiveTrade] = useState(null);
 
   const [feedbackText, setFeedbackText] = useState('');
@@ -140,10 +140,33 @@ function App() {
   const [activeEscrows, setActiveEscrows] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const [toast, setToast] = useState(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+
+  // ==========================================
+  // AFS-003 Fix: useCountdown hook'larını App() üst seviyesine taşıdık.
+  // ÖNCEKİ: renderTradeRoom() fonksiyonu içinde koşullu çağrılıyordu.
+  // React hook'ları her render döngüsünde AYNI SIRADA ve SAYIDA çağrılmalıdır.
+  // Koşullu render içinde hook çağırmak Rules of Hooks ihlalidir ve
+  // production'da state karışması, crash ve undefined behavior'a yol açar.
+  // ŞİMDİ: Her zaman çağrılır. targetDate null verildiğinde hook isFinished:true döner.
+  // ==========================================
+  const gracePeriodEndDate = activeTrade?.paidAt
+    ? new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000) : null;
+  const gracePeriodTimer = useCountdown(gracePeriodEndDate);
+
+  const bleedingEndDate = activeTrade?.challengedAt
+    ? new Date(new Date(activeTrade.challengedAt).getTime() + 240 * 3600 * 1000) : null;
+  const bleedingTimer = useCountdown(bleedingEndDate);
+
+  const principalProtectionEndDate = activeTrade?.challengedAt
+    ? new Date(new Date(activeTrade.challengedAt).getTime() + (48 + 96) * 3600 * 1000) : null;
+  const principalProtectionTimer = useCountdown(principalProtectionEndDate);
+
   /**
    * CON-04 Fix: API çağrıları için wrapper — 401 geldiğinde otomatik token yeniler.
    */
-  const authenticatedFetch = React.useCallback(async (url, options = {}) => {
+  const authenticatedFetch = useCallback(async (url, options = {}) => {
     const res = await fetch(url, {
       ...options,
       headers: {
@@ -192,7 +215,49 @@ function App() {
     }
   }, [jwtToken, refreshTokenState, address]);
 
+  // ==========================================
+  // AFS-015 Fix: fetchMyTrades useCallback ile üst seviyede tanımlandı.
+  // ÖNCEKİ: useEffect içinde anonim (anonymous) fonksiyon olarak tanımlıydı.
+  // Polling useEffect'i bu fonksiyona erişemiyordu → ReferenceError.
+  // ŞİMDİ: useCallback ile sarmalanarak hem ilk yükleme hem polling
+  // useEffect'lerinden güvenli şekilde çağrılabilir.
+  // ==========================================
+  const fetchMyTrades = useCallback(async () => {
+    if (!jwtToken || !isConnected) {
+      setActiveEscrows([]);
+      return;
+    }
+    try {
+      const res = await authenticatedFetch(`${API_URL}/api/trades/my`);
+      const data = await res.json();
+      
+      if (data.trades) {
+        setActiveEscrows(data.trades.map(t => ({
+          id: `#${t.onchain_escrow_id}`,
+          tradeDbId: t._id,
+          onchainId: t.onchain_escrow_id,
+          role: t.maker_address.toLowerCase() === address?.toLowerCase() ? 'maker' : 'taker',
+          // FIX-06: taker_address null olabilir (OPEN state) — null guard eklendi
+          counterparty: formatAddress(
+            t.maker_address.toLowerCase() === address?.toLowerCase()
+              ? (t.taker_address || '')
+              : t.maker_address
+          ),
+          state: t.status,
+          paidAt: t.timers?.paid_at,
+          pingedAt: t.timers?.pinged_at,
+          challengePingedAt: t.timers?.challenge_pinged_at,
+          amount: `${t.financials?.crypto_amount || 0} ${t.financials?.crypto_asset || 'USDT'}`,
+          action: t.status === 'PAID' ? (lang === 'TR' ? 'Onay Bekliyor' : 'Pending Approval') : (lang === 'TR' ? 'İşlemde' : 'In Progress')
+        })));
+      }
+    } catch (err) {
+      console.error("Trades fetch error:", err);
+    }
+  }, [jwtToken, isConnected, address, lang, authenticatedFetch]);
+
   // 1. Pazar Yeri İlanlarını Çek (Public)
+  // AFS-025 Fix: lang dependency kaldırıldı — lang sadece UI metinlerini etkiler, API çağrısı gereksizdi
   useEffect(() => {
     const fetchListings = async () => {
       try {
@@ -227,7 +292,7 @@ function App() {
       }
     };
     fetchListings();
-  }, [lang]); // Dil değiştiğinde buton metinleri için yeniden render gerekebilir
+  }, []); // AFS-025 Fix: lang dependency kaldırıldı
 
   // Stats Çek
   useEffect(() => {
@@ -270,81 +335,31 @@ function App() {
     fetchUserReputation();
   }, [isConnected, address, getReputation]); // Bağımlılıklar doğru
 
+  // AFS-015 Fix: Aktif işlemleri çek — fetchMyTrades artık useCallback ile tanımlı
   useEffect(() => {
-    if (!jwtToken || !isConnected) {
-      setActiveEscrows([]);
-      return;
-    }
-
-    const fetchMyTrades = async () => {
-      try {
-        // CON-04 Fix: fetch yerine authenticatedFetch kullanılıyor
-        const res = await authenticatedFetch(`${API_URL}/api/trades/my`);
-        const data = await res.json();
-        
-        if (data.trades) {
-          setActiveEscrows(data.trades.map(t => ({
-            id: `#${t.onchain_escrow_id}`,
-            role: t.maker_address.toLowerCase() === address?.toLowerCase() ? 'maker' : 'taker',
-            // FIX-06: taker_address null olabilir (OPEN state) — null guard eklendi
-            counterparty: formatAddress(
-              t.maker_address.toLowerCase() === address?.toLowerCase()
-                ? (t.taker_address || '')
-                : t.maker_address
-            ),
-            state: t.status,
-            paidAt: t.timers?.paid_at, // örn: "2026-03-07T..."
-            pingedAt: t.timers?.pinged_at, // örn: "2026-03-09T..."
-            amount: `${t.financials?.crypto_amount || 0} ${t.financials?.crypto_asset || 'USDT'}`,
-            action: t.status === 'PAID' ? (lang === 'TR' ? 'Onay Bekliyor' : 'Pending Approval') : (lang === 'TR' ? 'İşlemde' : 'In Progress')
-          })));
-        }
-      } catch (err) {
-        console.error("Trades fetch error:", err);
-      }
-    };
     fetchMyTrades();
-  }, [jwtToken, isConnected, address, lang, refreshTokenState, authenticatedFetch]); // authenticatedFetch eklendi
+  }, [fetchMyTrades]);
 
-  // YENİ: Aktif işlem verilerini periyodik olarak yeniden çek (polling)
-  // Bu, eventListener'ın DB'ye yazdığı güncellemelerin (ping, state değişimi vb.)
-  // arayüze yansımasını sağlar.
+  // AFS-015 Fix: Polling artık fetchMyTrades referansını kullanıyor
+  // ÖNCEKİ: fetchMyTrades() — tanımsız referans, ReferenceError
+  // ŞİMDİ: fetchMyTrades useCallback'ten geliyor, dependency array'de
   useEffect(() => {
     if (currentView !== 'tradeRoom' || !jwtToken) return;
-
-    const interval = setInterval(() => {
-      // `fetchMyTrades` fonksiyonu zaten `authenticatedFetch` kullanıyor.
-      // Bu fonksiyonu doğrudan çağırmak yeterli.
-      fetchMyTrades();
-    }, 15000); // 15 saniyede bir güncelle, `fetchMyTrades` zaten tanımlı
-
+    const interval = setInterval(fetchMyTrades, 15000); // 15 saniyede bir güncelle
     return () => clearInterval(interval);
-  }, [currentView, jwtToken, authenticatedFetch]);
+  }, [currentView, jwtToken, fetchMyTrades]);
 
   // YENİ: Profil modalı açıldığında mevcut PII verilerini çek ve formu doldur
+  // AFS-016 Not: GET /api/pii/my endpoint'i backend'de henüz mevcut değil.
+  // Şimdilik form boş başlar. Backend'e GET endpoint eklendikten sonra güncellenecek.
   useEffect(() => {
     if (!showProfileModal || !jwtToken) return;
-
-    const fetchMyPII = async () => {
-      try {
-        const res = await authenticatedFetch(`${API_URL}/api/pii/my`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.pii) {
-          setPiiBankOwner(data.pii.bankOwner || '');
-          setPiiIban(data.pii.iban || '');
-          setPiiTelegram(data.pii.telegram || '');
-        }
-      } catch (err) {
-        console.error("Mevcut PII verisi çekilemedi:", err);
-      }
-    };
-
-    // Sadece ayarlar sekmesi açıldığında PII verisini çek
     if (profileTab === 'ayarlar') {
-      fetchMyPII();
+      setPiiBankOwner('');
+      setPiiIban('');
+      setPiiTelegram('');
     }
-  }, [showProfileModal, profileTab, jwtToken, authenticatedFetch]); // authenticatedFetch eklendi
+  }, [showProfileModal, profileTab, jwtToken]);
 
   // YENİ: Kullanıcının işlem geçmişini çek
   useEffect(() => {
@@ -361,7 +376,6 @@ function App() {
           setTradeHistory(data.trades);
           setTradeHistoryTotal(data.total);
           setTradeHistoryPage(data.page);
-          setTradeHistoryLimit(data.limit);
         }
       } catch (err) {
         console.error("İşlem geçmişi çekilemedi:", err);
@@ -373,16 +387,13 @@ function App() {
     };
 
     fetchHistory(tradeHistoryPage);
-  }, [showProfileModal, profileTab, jwtToken, tradeHistoryPage, authenticatedFetch]); // authenticatedFetch eklendi
+  }, [showProfileModal, profileTab, jwtToken, tradeHistoryPage, authenticatedFetch]);
 
   const filteredOrders = orders.filter(order => {
     const amountMatch = searchAmount === '' || (Number(searchAmount) >= order.min && Number(searchAmount) <= order.max);
     const tierMatch = filterTier1 ? order.tier === 0 : true; // Düzeltme: Tier 0'ı filtrelemesi gerekiyordu
     return amountMatch && tierMatch;
   });
-
-  const [toast, setToast] = useState(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
   // ==========================================
   // --- 3. YARDIMCI FONKSİYONLAR ---
@@ -412,10 +423,12 @@ function App() {
 
       const nonceRes = await fetch(`${API_URL}/api/auth/nonce?wallet=${address}`);
       // MİMARİ İYİLEŞTİRME: Nonce ile birlikte SIWE domain'ini de backend'den al.
+      // AFS-010 Fix: Backend artık siweDomain alanını döndürüyor
       const { nonce, siweDomain } = await nonceRes.json();
 
       const siweMessage = new SiweMessage({
-        domain:    siweDomain, // Artık backend'den gelen, güvenilir domain kullanılıyor.
+        // AFS-010 Fix: siweDomain undefined olursa hostname'e fallback
+        domain:    siweDomain || window.location.hostname,
         address,
         statement: 'Sign in to Araf Protocol to manage your trades and secure PII data.',
         uri:       window.location.origin,
@@ -480,8 +493,6 @@ function App() {
   const handleDeleteOrder = async (order) => {
     if (!order.onchainId) {
       showToast(lang === 'TR' ? 'On-chain işlem ID bulunamadı, sadece veritabanından silinecek.' : 'On-chain ID not found, deleting from DB only.', 'info');
-      // Sadece off-chain silme (eski davranış)
-      // await authenticatedFetch(`${API_URL}/api/listings/${order.id}`, { method: 'DELETE' });
       setOrders(prev => prev.filter(o => o.id !== order.id));
       setConfirmDeleteId(null);
       return;
@@ -494,9 +505,6 @@ function App() {
       
       // 1. Önce on-chain iptali gerçekleştir
       await cancelOpenEscrow(BigInt(order.onchainId));
-      
-      // 2. Sonra backend'den sil (isteğe bağlı, backend status'ü event ile güncelleyebilir)
-      // await authenticatedFetch(`${API_URL}/api/listings/${order.id}`, { method: 'DELETE' });
 
       // 3. Arayüzü güncelle
       setOrders(prev => prev.filter(o => o.id !== order.id));
@@ -537,7 +545,7 @@ function App() {
       setFeedbackCategory(''); // Formu sıfırla
       showToast(lang === 'TR' ? 'Geri bildiriminiz için teşekkürler!' : 'Thank you for your feedback!', 'success');
     }
-  }; // Bu fonksiyonu çağıran useEffect'e eklenmeli
+  };
 
   const getSafeTelegramUrl = (handle) => {
     const safeHandle = handle.replace(/[^a-zA-Z0-9_]/g, '');
@@ -555,7 +563,7 @@ function App() {
     } catch (err) {
       console.error("Chargeback ack error:", err);
     }
-  }; // Bu fonksiyonu çağıran useEffect'e eklenmeli
+  };
 
   // FIX-11: isContractLoading guard + finally block eklendi
   const handleRelease = async () => {
@@ -582,7 +590,7 @@ function App() {
     } finally {
       setIsContractLoading(false);
     }
-  }; // Bu fonksiyonu çağıran useEffect'e eklenmeli
+  };
 
   // FIX-11: isContractLoading guard + finally block eklendi
   // GÜNCELLEME: Artık simetrik ping mekanizmasını (pingTakerForChallenge) destekliyor.
@@ -591,7 +599,6 @@ function App() {
     if (isContractLoading) return;
 
     // 1. Adım: Henüz ping gönderilmediyse, önce ping gönder.
-    // `activeTrade` objesinin backend tarafından `challengePingedAt` ile güncellendiğini varsayıyoruz.
     const tradeDetails = activeEscrows.find(e => e.id === `#${activeTrade.onchainId}`);
     const challengePingedAt = tradeDetails?.challengePingedAt;
 
@@ -638,21 +645,18 @@ function App() {
       showToast(lang === 'TR' ? 'Uyarı işlemi cüzdanınıza gönderiliyor...' : 'Pinging maker, please confirm in wallet...', 'info');
       await pingMaker(BigInt(tradeId));
       showToast(lang === 'TR' ? 'Satıcı uyarıldı. Yanıt için 24 saati var.' : 'Maker has been pinged. They have 24h to respond.', 'success');
-      // Not: Arayüz, eventListener'dan gelen DB güncellemesiyle otomatik olarak güncellenecektir.
-      // Manuel state güncellemesine gerek yoktur.
     } catch (err) {
       console.error("pingMaker error:", err);
       if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
         showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
       } else {
-        // Kontrat revert mesajını göstermek daha faydalı olabilir
         const reason = err.reason || 'Ping işlemi başarısız oldu.';
         showToast(reason, 'error');
       }
     } finally {
       setIsContractLoading(false);
     }
-  }; // Bu fonksiyonu çağıran useEffect'e eklenmeli
+  };
 
   // YENİ: autoRelease fonksiyonunu çağıran handler
   const handleAutoRelease = async (tradeId) => {
@@ -670,16 +674,17 @@ function App() {
       if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
         showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
       } else {
-        // Kontrat revert mesajını göstermek daha faydalı olabilir
         const reason = err.reason || 'Otomatik serbest bırakma başarısız oldu.';
         showToast(reason, 'error');
       }
     } finally {
       setIsContractLoading(false);
     }
-  }; // Bu fonksiyonu çağıran useEffect'e eklenmeli
+  };
 
-  // YENİ: PII verilerini güncelleyen handler
+  // AFS-016 Fix: PII güncelleme endpoint'i PUT /api/auth/profile olarak düzeltildi.
+  // ÖNCEKİ: PUT /api/pii — backend'de bu endpoint mevcut değildi, 404 dönerdi.
+  // Backend'deki doğru endpoint: PUT /api/auth/profile (auth.js route'u)
   const handleUpdatePII = async (e) => {
     e.preventDefault();
     if (!jwtToken) return;
@@ -687,7 +692,8 @@ function App() {
 
     try {
       setIsContractLoading(true);
-      const res = await authenticatedFetch(`${API_URL}/api/pii`, {
+      // AFS-016 Fix: /api/pii → /api/auth/profile
+      const res = await authenticatedFetch(`${API_URL}/api/auth/profile`, {
         method: 'PUT',
         body: JSON.stringify({
           bankOwner: piiBankOwner,
@@ -706,14 +712,14 @@ function App() {
     } finally {
       setIsContractLoading(false);
     }
-  }; // Bu fonksiyonu çağıran useEffect'e eklenmeli
+  };
 
   const handleOpenMakerModal = () => {
     if (!isConnected || !jwtToken) {
       showToast(lang === 'TR' ? 'İlan açmak için önce cüzdanınızı bağlayıp imzalamalısınız.' : 'Please connect and sign in to create an ad.', 'error');
       return;
     }
-    setShowMakerModal(true); // Bu fonksiyonu çağıran useEffect'e eklenmeli
+    setShowMakerModal(true);
   };
 
   // --- ÇEVİRİ SÖZLÜĞÜ ---
@@ -873,7 +879,6 @@ function App() {
                 <input type="number" placeholder="Örn: 33.50" value={makerRate} onChange={e => setMakerRate(e.target.value)} className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none" />
               </div>
               <div className="w-1/2">
-                 {/* Bu alan gelecekteki dinamik kur hesaplamaları için bir yer tutucu olabilir */}
               </div>
             </div>
             <div className="flex space-x-2">
@@ -893,12 +898,12 @@ function App() {
                 value={makerTier}
                 onChange={e => setMakerTier(Number(e.target.value))}
                 className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none">
-                {[0, 1, 2, 3, 4].map(t => (
+                {[0, 1, 2, 3, 4].map(tierVal => (
                   <option
-                    key={t}
-                    value={t}
-                    disabled={t > effectiveUserTier}>
-                    {TIER_LABELS[t]} {t > effectiveUserTier ? (lang === 'TR' ? '(Yetersiz İtibar)' : '(Reputation Too Low)') : ''}
+                    key={tierVal}
+                    value={tierVal}
+                    disabled={tierVal > effectiveUserTier}>
+                    {TIER_LABELS[tierVal]} {tierVal > effectiveUserTier ? (lang === 'TR' ? '(Yetersiz İtibar)' : '(Reputation Too Low)') : ''}
                   </option>
                 ))}
               </select>
@@ -1007,87 +1012,36 @@ function App() {
                   const totalTrades = successful + failed;
                   const successRate = totalTrades > 0 ? Math.round((successful / totalTrades) * 100) : 100;
 
-                  const TIER_REQUIREMENTS = {
-                    1: { trades: 15, failed: 0 },
-                    2: { trades: 50, failed: 1 },
-                    3: { trades: 100, failed: 1 },
-                    4: { trades: 200, failed: 0 },
-                  };
+                  const TIER_REQUIREMENTS = { 1: { trades: 15, failed: 0 }, 2: { trades: 50, failed: 1 }, 3: { trades: 100, failed: 1 }, 4: { trades: 200, failed: 0 } };
                   const nextTier = effectiveTier + 1;
                   const nextTierReq = TIER_REQUIREMENTS[nextTier];
                   const progress = nextTierReq ? Math.min(100, (successful / nextTierReq.trades) * 100) : 100;
 
                   return (
                     <div className="space-y-4">
-                      {/* Başarı Oranı */}
                       <div className="bg-slate-900 p-4 rounded-xl border border-slate-700">
-                        <div className="flex justify-between items-center text-xs text-slate-400 mb-2">
-                          <span>{lang === 'TR' ? 'Başarı Oranı' : 'Success Rate'}</span>
-                          <span>{totalTrades} {lang === 'TR' ? 'İşlem' : 'Trades'}</span>
-                        </div>
-                        <div className="w-full bg-slate-800 rounded-full h-2.5 border border-slate-700/50">
-                          <div className="bg-gradient-to-r from-emerald-500 to-green-500 h-2.5 rounded-full" style={{ width: `${successRate}%` }}></div>
-                        </div>
+                        <div className="flex justify-between items-center text-xs text-slate-400 mb-2"><span>{lang === 'TR' ? 'Başarı Oranı' : 'Success Rate'}</span><span>{totalTrades} {lang === 'TR' ? 'İşlem' : 'Trades'}</span></div>
+                        <div className="w-full bg-slate-800 rounded-full h-2.5 border border-slate-700/50"><div className="bg-gradient-to-r from-emerald-500 to-green-500 h-2.5 rounded-full" style={{ width: `${successRate}%` }}></div></div>
                         <p className="text-right text-lg font-bold text-emerald-400 mt-2">{successRate}%</p>
                       </div>
-
-                      {/* Tier İlerlemesi */}
                       {nextTier <= 4 && (
                         <div className="bg-slate-900 p-4 rounded-xl border border-slate-700">
-                          <div className="flex justify-between items-center text-xs text-slate-400 mb-2">
-                            <span>{lang === 'TR' ? `Tier ${nextTier} için İlerleme` : `Progress to Tier ${nextTier}`}</span>
-                            <span className="font-mono">{successful} / {nextTierReq.trades}</span>
-                          </div>
-                          <div className="w-full bg-slate-800 rounded-full h-2.5 border border-slate-700/50">
-                            <div className="bg-gradient-to-r from-purple-500 to-indigo-500 h-2.5 rounded-full" style={{ width: `${progress}%` }}></div>
-                          </div>
-                          <p className="text-xs text-slate-500 mt-2">
-                            {lang === 'TR'
-                              ? `Tier ${nextTier}'e ulaşmak için ${Math.max(0, nextTierReq.trades - successful)} başarılı işlem daha yapın.`
-                              : `Complete ${Math.max(0, nextTierReq.trades - successful)} more successful trades to reach Tier ${nextTier}.`}
-                          </p>
+                          <div className="flex justify-between items-center text-xs text-slate-400 mb-2"><span>{lang === 'TR' ? `Tier ${nextTier} için İlerleme` : `Progress to Tier ${nextTier}`}</span><span className="font-mono">{successful} / {nextTierReq.trades}</span></div>
+                          <div className="w-full bg-slate-800 rounded-full h-2.5 border border-slate-700/50"><div className="bg-gradient-to-r from-purple-500 to-indigo-500 h-2.5 rounded-full" style={{ width: `${progress}%` }}></div></div>
+                          <p className="text-xs text-slate-500 mt-2">{lang === 'TR' ? `Tier ${nextTier}'e ulaşmak için ${Math.max(0, nextTierReq.trades - successful)} başarılı işlem daha yapın.` : `Complete ${Math.max(0, nextTierReq.trades - successful)} more successful trades to reach Tier ${nextTier}.`}</p>
                         </div>
                       )}
-
-                      {/* Detaylı Kartlar */}
                       <div className="grid grid-cols-2 gap-3">
-                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-700 text-center">
-                          <p className="text-slate-400 text-xs font-medium">{lang === 'TR' ? 'Efektif Tier' : 'Effective Tier'}</p>
-                          <p className="text-2xl font-bold text-white mt-1">T{effectiveTier}</p>
-                        </div>
-                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-700 text-center">
-                          <p className="text-slate-400 text-xs font-medium">{lang === 'TR' ? 'Başarılı İşlemler' : 'Successful'}</p>
-                          <p className="text-2xl font-bold text-emerald-400 mt-1">{successful}</p>
-                        </div>
-                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-700 text-center">
-                          <p className="text-slate-400 text-xs font-medium">{lang === 'TR' ? 'Başarısız' : 'Failed'}</p>
-                          <p className="text-2xl font-bold text-red-400 mt-1">{failed}</p>
-                        </div>
-                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-700 text-center">
-                          <p className="text-slate-400 text-xs font-medium">{lang === 'TR' ? 'Ardışık Yasak' : 'Consecutive Bans'}</p>
-                          <p className="text-2xl font-bold text-white mt-1">{consecutiveBans}</p>
-                        </div>
+                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-700 text-center"><p className="text-slate-400 text-xs font-medium">{lang === 'TR' ? 'Efektif Tier' : 'Effective Tier'}</p><p className="text-2xl font-bold text-white mt-1">T{effectiveTier}</p></div>
+                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-700 text-center"><p className="text-slate-400 text-xs font-medium">{lang === 'TR' ? 'Başarılı İşlemler' : 'Successful'}</p><p className="text-2xl font-bold text-emerald-400 mt-1">{successful}</p></div>
+                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-700 text-center"><p className="text-slate-400 text-xs font-medium">{lang === 'TR' ? 'Başarısız' : 'Failed'}</p><p className="text-2xl font-bold text-red-400 mt-1">{failed}</p></div>
+                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-700 text-center"><p className="text-slate-400 text-xs font-medium">{lang === 'TR' ? 'Ardışık Yasak' : 'Consecutive Bans'}</p><p className="text-2xl font-bold text-white mt-1">{consecutiveBans}</p></div>
                       </div>
-
-                      {/* Yasak Bilgisi */}
                       {bannedUntil > 0 && new Date(bannedUntil * 1000) > new Date() && (
-                         <div className="bg-red-950/50 p-3 rounded-xl border border-red-900/60">
-                          <p className="text-red-400 text-xs font-medium">{lang === 'TR' ? 'Yasak Bitiş Tarihi' : 'Ban Ends On'}</p>
-                          <p className="text-sm font-bold text-white mt-1">
-                            {new Date(bannedUntil * 1000).toLocaleString(lang === 'TR' ? 'tr-TR' : 'en-US')}
-                          </p>
-                        </div>
+                         <div className="bg-red-950/50 p-3 rounded-xl border border-red-900/60"><p className="text-red-400 text-xs font-medium">{lang === 'TR' ? 'Yasak Bitiş Tarihi' : 'Ban Ends On'}</p><p className="text-sm font-bold text-white mt-1">{new Date(bannedUntil * 1000).toLocaleString(lang === 'TR' ? 'tr-TR' : 'en-US')}</p></div>
                       )}
-
-                      {/* Temiz Sayfa Kuralı İpucu */}
                       {consecutiveBans > 0 && (
-                         <div className="bg-blue-950/30 p-3 rounded-xl border border-blue-900/50 text-center">
-                          <p className="text-blue-300 text-xs">
-                            💡 {lang === 'TR'
-                              ? `Son yasağınız bittikten 180 gün sonra "Ardışık Yasak" sayacınız otomatik olarak sıfırlanacaktır.`
-                              : `Your "Consecutive Bans" counter will automatically reset 180 days after your last ban expires.`}
-                          </p>
-                        </div>
+                         <div className="bg-blue-950/30 p-3 rounded-xl border border-blue-900/50 text-center"><p className="text-blue-300 text-xs">💡 {lang === 'TR' ? `Son yasağınız bittikten 180 gün sonra "Ardışık Yasak" sayacınız otomatik olarak sıfırlanacaktır.` : `Your "Consecutive Bans" counter will automatically reset 180 days after your last ban expires.`}</p></div>
                       )}
                     </div>
                   );
@@ -1100,10 +1054,7 @@ function App() {
                 {myOrders.length > 0 ? myOrders.map(order => (
                   <div key={order.id} className={`bg-slate-900 border rounded-xl p-4 transition-all duration-200 ${confirmDeleteId === order.id ? 'border-red-500/60 bg-red-950/20' : 'border-slate-700'}`}>
                     <div className="flex justify-between items-center">
-                      <div>
-                        <p className="font-bold text-white text-sm">{order.crypto} → {order.fiat}</p>
-                        <p className="text-xs text-slate-400 mt-0.5">{order.rate} {order.fiat} · {order.min}–{order.max}</p>
-                      </div>
+                      <div><p className="font-bold text-white text-sm">{order.crypto} → {order.fiat}</p><p className="text-xs text-slate-400 mt-0.5">{order.rate} {order.fiat} · {order.min}–{order.max}</p></div>
                       {confirmDeleteId !== order.id && <button onClick={() => setConfirmDeleteId(order.id)} className="text-xs text-red-400 border border-red-500/40 hover:bg-red-500/10 px-3 py-1.5 rounded-lg transition font-medium">Sil</button>}
                     </div>
                     {confirmDeleteId === order.id && (
@@ -1130,9 +1081,7 @@ function App() {
                     </div>
                     <p className="text-white font-medium text-sm mb-1">{escrow.amount}</p>
                     <p className="text-xs text-slate-400 mb-3">Karşı Taraf: <span className="font-mono">{escrow.counterparty}</span></p>
-                    <button onClick={() => { setShowProfileModal(false); setCurrentView('tradeRoom'); setTradeState(escrow.state); }} className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2 rounded-lg transition border border-slate-600">
-                      {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
-                    </button>
+                    <button onClick={() => { setShowProfileModal(false); setCurrentView('tradeRoom'); setTradeState(escrow.state); }} className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2 rounded-lg transition border border-slate-600">{lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}</button>
                   </div>
                 )) : <p className="text-center text-slate-500 text-xs mt-4">Aktif işlem bulunamadı.</p>}
               </div>
@@ -1144,24 +1093,14 @@ function App() {
                   <div className="text-center text-slate-500 animate-pulse">{lang === 'TR' ? 'Geçmiş yükleniyor...' : 'Loading history...'}</div>
                 ) : tradeHistory.length > 0 ? (
                   tradeHistory.map(tx => {
-                    const statusMap = {
-                      RESOLVED: { text: lang === 'TR' ? 'Tamamlandı' : 'Resolved', color: 'emerald' },
-                      CANCELED: { text: lang === 'TR' ? 'İptal Edildi' : 'Canceled', color: 'slate' },
-                      BURNED:   { text: lang === 'TR' ? 'Yakıldı' : 'Burned', color: 'red' },
-                    };
+                    const statusMap = { RESOLVED: { text: lang === 'TR' ? 'Tamamlandı' : 'Resolved', color: 'emerald' }, CANCELED: { text: lang === 'TR' ? 'İptal Edildi' : 'Canceled', color: 'slate' }, BURNED: { text: lang === 'TR' ? 'Yakıldı' : 'Burned', color: 'red' } };
                     const displayStatus = statusMap[tx.status] || { text: tx.status, color: 'slate' };
                     const isMaker = tx.maker_address === address?.toLowerCase();
-
                     return (
                       <div key={tx._id} className="bg-slate-900 border border-slate-700 rounded-xl p-3 flex justify-between items-center">
                         <div>
-                          <p className="font-mono text-xs text-slate-400">
-                            #{tx.onchain_escrow_id} · {new Date(tx.timers.resolved_at).toLocaleDateString(lang === 'TR' ? 'tr-TR' : 'en-CA')}
-                          </p>
-                          <p className="text-white font-medium mt-0.5">
-                            <span className={`mr-2 ${isMaker ? 'text-red-400' : 'text-emerald-400'}`}>{isMaker ? '→' : '←'}</span>
-                            {tx.financials.crypto_amount} {tx.financials.crypto_asset}
-                          </p>
+                          <p className="font-mono text-xs text-slate-400">#{tx.onchain_escrow_id} · {new Date(tx.timers.resolved_at).toLocaleDateString(lang === 'TR' ? 'tr-TR' : 'en-CA')}</p>
+                          <p className="text-white font-medium mt-0.5"><span className={`mr-2 ${isMaker ? 'text-red-400' : 'text-emerald-400'}`}>{isMaker ? '→' : '←'}</span>{tx.financials.crypto_amount} {tx.financials.crypto_asset}</p>
                         </div>
                         <span className={`text-xs px-2 py-1 rounded-md font-bold bg-${displayStatus.color}-500/20 text-${displayStatus.color}-400`}>{displayStatus.text}</span>
                       </div>
@@ -1170,23 +1109,11 @@ function App() {
                 ) : (
                   <p className="text-center text-slate-500 text-xs mt-4">{lang === 'TR' ? 'İşlem geçmişi bulunamadı.' : 'No trade history found.'}</p>
                 )}
-
-                {/* YENİ: Sayfalama Kontrolleri */}
                 {tradeHistoryTotal > tradeHistoryLimit && (
                   <div className="flex justify-between items-center pt-4 border-t border-slate-700">
-                    <button
-                      onClick={() => setTradeHistoryPage(p => p - 1)}
-                      disabled={tradeHistoryPage <= 1 || historyLoading}
-                      className="px-4 py-2 text-xs font-bold rounded-lg bg-slate-700 text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-600">
-                      {lang === 'TR' ? '← Önceki' : '← Previous'}
-                    </button>
+                    <button onClick={() => setTradeHistoryPage(p => p - 1)} disabled={tradeHistoryPage <= 1 || historyLoading} className="px-4 py-2 text-xs font-bold rounded-lg bg-slate-700 text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-600">{lang === 'TR' ? '← Önceki' : '← Previous'}</button>
                     <span className="text-xs text-slate-500">{lang === 'TR' ? 'Sayfa' : 'Page'} {tradeHistoryPage} / {Math.ceil(tradeHistoryTotal / tradeHistoryLimit)}</span>
-                    <button
-                      onClick={() => setTradeHistoryPage(p => p + 1)}
-                      disabled={tradeHistoryPage * tradeHistoryLimit >= tradeHistoryTotal || historyLoading}
-                      className="px-4 py-2 text-xs font-bold rounded-lg bg-slate-700 text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-600">
-                      {lang === 'TR' ? 'Sonraki →' : 'Next →'}
-                    </button>
+                    <button onClick={() => setTradeHistoryPage(p => p + 1)} disabled={tradeHistoryPage * tradeHistoryLimit >= tradeHistoryTotal || historyLoading} className="px-4 py-2 text-xs font-bold rounded-lg bg-slate-700 text-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-600">{lang === 'TR' ? 'Sonraki →' : 'Next →'}</button>
                   </div>
                 )}
               </div>
@@ -1298,7 +1225,6 @@ function App() {
                <tr><td colSpan="5" className="p-8 text-center text-slate-400 animate-pulse">{lang === 'TR' ? 'Yükleniyor...' : 'Loading...'}</td></tr>
             ) : filteredOrders.length > 0 ? (
               filteredOrders.map((order) => {
-                // YENİ MİMARİ: Kullanıcının bu ilanı alma yetkisi var mı?
                 const effectiveUserTier = userReputation?.effectiveTier ?? 0;
                 const isMyOwnAd = address && order.makerFull?.toLowerCase() === address.toLowerCase();
                 const isTierLocked = isConnected && jwtToken && order.tier > effectiveUserTier;
@@ -1306,57 +1232,30 @@ function App() {
 
                 return (
                 <tr key={order.id} className={`transition ${canTakeOrder ? 'hover:bg-slate-700/30' : 'opacity-50'}`}>
-                  
-                  {/* YENİ UX: POPOVER ENTEGRE EDİLMİŞ SATICI SÜTUNU */}
                   <td className="p-4 relative">
-                    <div 
-                      className="flex items-center space-x-2 cursor-pointer group w-max"
-                      onClick={(e) => { e.stopPropagation(); setActivePopover(activePopover === order.id ? null : order.id); }}
-                    >
+                    <div className="flex items-center space-x-2 cursor-pointer group w-max" onClick={(e) => { e.stopPropagation(); setActivePopover(activePopover === order.id ? null : order.id); }}>
                       <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-xs border border-slate-700 shrink-0 text-emerald-400 transition-colors group-hover:border-emerald-500/50">👤</div>
-                      <div>
-                        <span className="font-mono text-white text-sm group-hover:text-emerald-400 transition">{order.maker}</span>
-                      </div>
+                      <div><span className="font-mono text-white text-sm group-hover:text-emerald-400 transition">{order.maker}</span></div>
                     </div>
-
-                    {/* POPOVER KARTI */}
                     {activePopover === order.id && (
                       <div className="absolute top-12 left-4 w-64 bg-slate-800/95 backdrop-blur-xl border border-slate-700 rounded-2xl p-4 shadow-2xl z-50 animate-fade-in-up">
                         <div className="flex justify-between items-start mb-3">
-                          <div>
-                            <p className="text-white font-bold font-mono">{order.maker}</p>
-                            <p className="text-xs text-slate-400">Araf Güven Skoru</p>
-                          </div>
+                          <div><p className="text-white font-bold font-mono">{order.maker}</p><p className="text-xs text-slate-400">Araf Güven Skoru</p></div>
                           <button onClick={(e) => { e.stopPropagation(); setActivePopover(null); }} className="text-slate-500 hover:text-white text-lg leading-none">&times;</button>
                         </div>
-                        
                         <div className="flex justify-between items-center bg-slate-900/50 p-3 rounded-xl border border-slate-700/50 mb-3">
-                          <div className="text-center w-1/2 border-r border-slate-700">
-                            <p className="text-2xl font-bold text-emerald-400">%{order.successRate}</p>
-                            <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-0.5">Güven</p>
-                          </div>
-                          <div className="text-center w-1/2">
-                            <p className="text-2xl font-bold text-white">T{order.tier}</p>
-                            <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-0.5">Tier</p>
-                          </div>
+                          <div className="text-center w-1/2 border-r border-slate-700"><p className="text-2xl font-bold text-emerald-400">%{order.successRate}</p><p className="text-[10px] text-slate-400 uppercase tracking-widest mt-0.5">Güven</p></div>
+                          <div className="text-center w-1/2"><p className="text-2xl font-bold text-white">T{order.tier}</p><p className="text-[10px] text-slate-400 uppercase tracking-widest mt-0.5">Tier</p></div>
                         </div>
-                        
-                        <div className="text-xs text-slate-400">
-                          <p className="flex justify-between mb-1"><span>Hacim:</span> <span className="text-white">— USDT</span></p>
-                          <p className="flex justify-between"><span>İşlem Sayısı:</span> <span className="text-white">—</span></p>
-                        </div>
+                        <div className="text-xs text-slate-400"><p className="flex justify-between mb-1"><span>Hacim:</span> <span className="text-white">— USDT</span></p><p className="flex justify-between"><span>İşlem Sayısı:</span> <span className="text-white">—</span></p></div>
                       </div>
                     )}
                   </td>
-                  
                   <td className="p-4"><div className="font-bold text-base">{order.rate} {order.fiat}</div><div className="text-xs text-slate-500">1 {order.crypto}</div></td>
                   <td className="p-4 text-slate-300 text-sm">{order.min} - {order.max} {order.fiat}</td>
                   <td className="p-4 text-xs font-bold text-emerald-400">{order.bond}</td>
                   <td className="p-4 text-right">
-                    <button
-                      onClick={() => handleStartTrade(order)}
-                      disabled={!canTakeOrder}
-                      className={`px-4 py-2 rounded-lg font-bold text-sm transition flex items-center justify-center space-x-1.5 ml-auto ${!canTakeOrder ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-slate-100 text-slate-900 hover:bg-white'}`}>
+                    <button onClick={() => handleStartTrade(order)} disabled={!canTakeOrder} className={`px-4 py-2 rounded-lg font-bold text-sm transition flex items-center justify-center space-x-1.5 ml-auto ${!canTakeOrder ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-slate-100 text-slate-900 hover:bg-white'}`}>
                       {!canTakeOrder && <span className="text-base">🔒</span>}
                       <span>{t.buyBtn}</span>
                     </button>
@@ -1379,18 +1278,14 @@ function App() {
   // --- 6. İŞLEM VE ARAF ODASI (TRADE ROOM) ---
   // ==========================================
   const renderTradeRoom = () => {
+    // AFS-003 Fix: useCountdown hook'ları buradan KALDIRILDI.
+    // Artık App() fonksiyonunun üst seviyesinde tanımlı:
+    //   gracePeriodTimer, bleedingTimer, principalProtectionTimer
+    // Bu değişkenler closure üzerinden bu fonksiyona erişilebilir.
+
     const isChallenged = tradeState === 'CHALLENGED';
     const bgTheme = isChallenged ? 'bg-red-950/20' : 'bg-slate-900';
     const borderTheme = isChallenged ? 'border-red-900/50' : 'border-slate-800';
-
-    // YENİ: Gerçek zamanlı zamanlayıcılar için hook kullanımı
-    const gracePeriodEndDate = activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000) : null;
-    const gracePeriodTimer = useCountdown(gracePeriodEndDate);
-
-    const bleedingEndDate = activeTrade?.challengedAt ? new Date(new Date(activeTrade.challengedAt).getTime() + 240 * 3600 * 1000) : null;
-    const bleedingTimer = useCountdown(bleedingEndDate);
-    const principalProtectionEndDate = activeTrade?.challengedAt ? new Date(new Date(activeTrade.challengedAt).getTime() + (48 + 96) * 3600 * 1000) : null;
-    const principalProtectionTimer = useCountdown(principalProtectionEndDate);
 
     const isTaker = userRole === 'taker';
     const isMaker = userRole === 'maker';
@@ -1433,13 +1328,7 @@ function App() {
                 <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 relative overflow-hidden">
                   <div className="absolute top-0 right-0 bg-blue-600 text-white text-[10px] font-bold px-2 py-1 rounded-bl-lg">End-to-End Encrypted</div>
                   <p className="text-slate-400 mb-2 uppercase text-[10px] tracking-widest font-bold">🛡️ {lang === 'TR' ? 'Güvenli PII Verisi' : 'Secure PII Data'}</p>
-                  
-                  <PIIDisplay 
-                    tradeId={activeTrade?.id || 'TEST'} 
-                    authToken={jwtToken} 
-                    lang={lang}
-                  />
-
+                  <PIIDisplay tradeId={activeTrade?.id || 'TEST'} authToken={jwtToken} lang={lang} />
                   <div className="mt-4 p-2 bg-slate-800 rounded-lg flex items-start space-x-2 border border-slate-600">
                     <span className="text-lg">🔒</span>
                     <p className="text-[10px] text-slate-300 leading-tight">Bu bilgiler blockchain'e kaydedilmez. Sadece bu işleme özel şifreli olarak iletilmiştir.</p>
@@ -1492,7 +1381,7 @@ function App() {
                     
                     {/* YENİ: pingMaker butonu ve durumu işlem odasına taşındı */}
                     {(() => {
-                      if (!activeTrade?.paidAt) return null; // Gerekli veri yoksa gösterme
+                      if (!activeTrade?.paidAt) return null;
 
                       if (activeTrade.pingedAt) {
                         const autoReleaseBecomesAvailableAt = new Date(new Date(activeTrade.pingedAt).getTime() + 24 * 3600 * 1000);
@@ -1532,39 +1421,18 @@ function App() {
                 ) : (
                   <div className="w-full max-w-md flex flex-col space-y-4">
                     <label className="flex items-start space-x-3 p-3 bg-red-950/30 border border-red-900/50 rounded-xl cursor-pointer text-left">
-                      <input 
-                        type="checkbox" 
-                        checked={chargebackAccepted} 
-                        onChange={(e) => handleChargebackAck(e.target.checked)}
-                        className="mt-1 w-4 h-4 accent-emerald-500 rounded bg-slate-800 border-slate-600 focus:ring-emerald-500 focus:ring-offset-slate-900"
-                      />
+                      <input type="checkbox" checked={chargebackAccepted} onChange={(e) => handleChargebackAck(e.target.checked)} className="mt-1 w-4 h-4 accent-emerald-500 rounded bg-slate-800 border-slate-600 focus:ring-emerald-500 focus:ring-offset-slate-900" />
                       <span className="text-xs text-slate-300">
                         <strong className="text-red-400">{lang === 'TR' ? 'UYARI:' : 'WARNING:'}</strong> {lang === 'TR' ? 'Paranın farklı isimli bir hesaptan gelmediğini ve Chargeback (Ters İbraz) riskini anladığımı kabul ediyorum.' : 'I confirm the funds came from the correct name and understand the Chargeback risk.'}
                       </span>
                     </label>
 
                     <div className="flex flex-col sm:flex-row justify-center gap-3">
-                      {/* FIX-11: isContractLoading ile buton disable + loading text */}
-                      <button 
-                        disabled={!chargebackAccepted || isContractLoading}
-                        onClick={handleRelease}
-                        className={`w-full sm:w-auto px-8 py-3 rounded-xl font-bold transition ${chargebackAccepted && !isContractLoading ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}>
-                        {isContractLoading
-                          ? (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')
-                          : (lang === 'TR' ? 'Serbest Bırak' : 'Release USDT')
-                        }
+                      <button disabled={!chargebackAccepted || isContractLoading} onClick={handleRelease} className={`w-full sm:w-auto px-8 py-3 rounded-xl font-bold transition ${chargebackAccepted && !isContractLoading ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}>
+                        {isContractLoading ? (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...') : (lang === 'TR' ? 'Serbest Bırak' : 'Release USDT')}
                       </button>
-                      {/* FIX-11: isContractLoading ile challenge butonu da disable */}
-                      <button
-                        onClick={handleChallenge}
-                        disabled={!cooldownPassed || isContractLoading}
-                        className={`w-full sm:w-auto px-6 py-3 rounded-xl font-bold transition ${cooldownPassed && !isContractLoading ? 'bg-red-500/10 text-red-500 border border-red-500/50 hover:bg-red-500 hover:text-white' : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'}`}>
-                        {isContractLoading
-                          ? (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')
-                          : cooldownPassed
-                            ? (lang === 'TR' ? 'İtiraz Et' : 'Challenge')
-                            : '⏳ Cooldown 59:12'
-                        }
+                      <button onClick={handleChallenge} disabled={!cooldownPassed || isContractLoading} className={`w-full sm:w-auto px-6 py-3 rounded-xl font-bold transition ${cooldownPassed && !isContractLoading ? 'bg-red-500/10 text-red-500 border border-red-500/50 hover:bg-red-500 hover:text-white' : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'}`}>
+                        {isContractLoading ? (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...') : cooldownPassed ? (lang === 'TR' ? 'İtiraz Et' : 'Challenge') : '⏳ Cooldown 59:12'}
                       </button>
                     </div>
                   </div>
@@ -1599,10 +1467,7 @@ function App() {
                   {cancelStatus === null && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {isMaker && (
-                        <button
-                          onClick={handleRelease}
-                          disabled={isContractLoading}
-                          className={`w-full bg-slate-800 border border-emerald-500/50 text-emerald-400 p-3 rounded-xl font-bold text-sm transition ${isContractLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500 hover:text-white'}`}>
+                        <button onClick={handleRelease} disabled={isContractLoading} className={`w-full bg-slate-800 border border-emerald-500/50 text-emerald-400 p-3 rounded-xl font-bold text-sm transition ${isContractLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500 hover:text-white'}`}>
                           {isContractLoading ? '⏳' : '🤝'} {lang === 'TR' ? 'Serbest Bırak' : 'Release'}
                         </button>
                       )}
@@ -1636,7 +1501,6 @@ function App() {
   // ==========================================
   // --- 7. ANA YAPI (ROUTER & NAVBAR) ---
   // ==========================================
-  // YENİ UX: Flex layout ile tam sayfa yapı + Minimalist Sidebar
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans flex overflow-hidden">
       <EnvWarningBanner />
@@ -1644,60 +1508,34 @@ function App() {
       {/* YENİ UX: MİNİMALİST SIDEBAR (Hover ile genişler) */}
       <aside 
         className="fixed left-0 top-0 h-screen w-16 hover:w-56 bg-slate-900 border-r border-slate-800 transition-all duration-300 z-[60] overflow-hidden group flex flex-col shadow-2xl"
-        onClick={(e) => setActivePopover(null)} // Tıklamayla popoverları kapat
+        onClick={() => setActivePopover(null)}
       >
         <div className="flex flex-col h-full p-3 pt-6">
-          {/* Logo */}
           <div className="flex items-center space-x-4 mb-10 pl-1 cursor-pointer" onClick={() => setCurrentView('landing')}>
             <div className="w-8 h-8 shrink-0 rounded bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center font-bold text-white shadow-lg">A</div>
             <span className="text-lg font-bold tracking-widest opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">ARAF</span>
           </div>
 
-          {/* Menü Elemanları */}
           <nav className="flex flex-col space-y-2">
-            <button 
-              onClick={() => setCurrentView('landing')} 
-              className={`flex items-center space-x-4 p-2.5 rounded-xl transition ${currentView === 'landing' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-            >
-              <span className="text-xl">🏠</span>
-              <span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Ana Sayfa</span>
+            <button onClick={() => setCurrentView('landing')} className={`flex items-center space-x-4 p-2.5 rounded-xl transition ${currentView === 'landing' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+              <span className="text-xl">🏠</span><span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Ana Sayfa</span>
             </button>
-            <button 
-              onClick={() => setCurrentView('dashboard')} 
-              className={`flex items-center space-x-4 p-2.5 rounded-xl transition ${currentView === 'dashboard' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-            >
-              <span className="text-xl">📊</span>
-              <span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Pazar Yeri</span>
+            <button onClick={() => setCurrentView('dashboard')} className={`flex items-center space-x-4 p-2.5 rounded-xl transition ${currentView === 'dashboard' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+              <span className="text-xl">📊</span><span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Pazar Yeri</span>
             </button>
-            <button 
-              onClick={() => setShowProfileModal(true)} 
-              className="flex items-center space-x-4 p-2.5 rounded-xl hover:bg-slate-800 transition text-slate-400 hover:text-white relative"
-            >
-              <span className="text-xl relative">
-                👤
-                {isBanned && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-slate-900"></span>}
-              </span>
+            <button onClick={() => setShowProfileModal(true)} className="flex items-center space-x-4 p-2.5 rounded-xl hover:bg-slate-800 transition text-slate-400 hover:text-white relative">
+              <span className="text-xl relative">👤{isBanned && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-slate-900"></span>}</span>
               <span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Profilim</span>
             </button>
           </nav>
 
-          {/* Alt Kısım (Dil, İlan Aç, Cüzdan) */}
           <div className="mt-auto flex flex-col space-y-2 mb-2">
-            
-            <button 
-              onClick={() => setLang(lang === 'TR' ? 'EN' : 'TR')} 
-              className="flex items-center space-x-4 p-2.5 rounded-xl hover:bg-slate-800 transition text-slate-400 hover:text-white"
-            >
-              <span className="text-xl">🌐</span>
-              <span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'English' : 'Türkçe'}</span>
+            <button onClick={() => setLang(lang === 'TR' ? 'EN' : 'TR')} className="flex items-center space-x-4 p-2.5 rounded-xl hover:bg-slate-800 transition text-slate-400 hover:text-white">
+              <span className="text-xl">🌐</span><span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'English' : 'Türkçe'}</span>
             </button>
             
-            <button 
-              onClick={handleOpenMakerModal} 
-              className="flex items-center space-x-4 p-2.5 rounded-xl bg-emerald-600/10 text-emerald-400 hover:bg-emerald-600 hover:text-white transition group-hover:justify-start justify-center"
-            >
-              <span className="text-xl font-bold">+</span>
-              <span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{t.createAd.replace('+', '').trim()}</span>
+            <button onClick={handleOpenMakerModal} className="flex items-center space-x-4 p-2.5 rounded-xl bg-emerald-600/10 text-emerald-400 hover:bg-emerald-600 hover:text-white transition group-hover:justify-start justify-center">
+              <span className="text-xl font-bold">+</span><span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{t.createAd.replace('+', '').trim()}</span>
             </button>
 
             <button 
@@ -1716,38 +1554,22 @@ function App() {
             >
               {isLoggingIn ? (
                 <>
-                  <svg className="animate-spin h-5 w-5 text-orange-200 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
+                  <svg className="animate-spin h-5 w-5 text-orange-200 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                   <span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'Bekle...' : 'Wait...'}</span>
                 </>
               ) : isConnected && jwtToken ? (
-                <>
-                  <span className="text-xl shrink-0">👛</span>
-                  <span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{formatAddress(address)}</span>
-                </>
+                <><span className="text-xl shrink-0">👛</span><span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{formatAddress(address)}</span></>
               ) : isConnected && !jwtToken ? (
-                <>
-                  <span className="text-xl shrink-0">✍️</span>
-                  <span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'İmzala' : 'Sign In'}</span>
-                </>
+                <><span className="text-xl shrink-0">✍️</span><span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'İmzala' : 'Sign In'}</span></>
               ) : (
-                <>
-                  <span className="text-xl shrink-0">🔌</span>
-                  <span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'Bağlan' : 'Connect'}</span>
-                </>
+                <><span className="text-xl shrink-0">🔌</span><span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'Bağlan' : 'Connect'}</span></>
               )}
             </button>
           </div>
         </div>
       </aside>
 
-      {/* YENİ UX: ANA İÇERİK ALANI (Sidebar genişliğini hesaba katarak pl-16 eklendi) */}
-      <div 
-        className="flex-1 ml-16 relative overflow-y-auto h-screen" 
-        onClick={() => setActivePopover(null)} // Boşluğa tıklanınca popoverları kapat
-      >
+      <div className="flex-1 ml-16 relative overflow-y-auto h-screen" onClick={() => setActivePopover(null)}>
         {toast && (
           <div key={toast.id} className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] animate-bounce-in w-[90%] md:w-auto">
             <div className={`flex items-center gap-3 text-white text-sm font-medium px-5 py-3 rounded-2xl shadow-xl border ${toast.type === 'error' ? 'bg-red-600 border-red-500' : toast.type === 'info' ? 'bg-blue-600 border-blue-500' : 'bg-emerald-600 border-emerald-500'}`}>
