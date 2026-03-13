@@ -47,12 +47,16 @@ function App() {
   // ==========================================
   // --- 1. EKRAN VE STATE YÖNETİMİ ---
   // ==========================================
-  const [currentView, setCurrentView] = useState('dashboard');
+  // YENİ UX: Başlangıç ekranı 'landing' yapıldı.
+  const [currentView, setCurrentView] = useState('landing');
   const [showMakerModal, setShowMakerModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [showWalletModal, setShowWalletModal] = useState(false); // Multi-wallet Seçim Modalı
   
+  // YENİ UX: Satıcı Popover kartı için state
+  const [activePopover, setActivePopover] = useState(null);
+
   // --- MİMARİ TEST STATE'LERİ ---
   const [tradeState, setTradeState] = useState('LOCKED');
   const [userRole, setUserRole] = useState('taker');
@@ -1194,6 +1198,70 @@ function App() {
   };
 
   // ==========================================
+  // --- YENİ UX: LANDING (ANA SAYFA) EKRANI ---
+  // ==========================================
+  const renderLanding = () => (
+    <main className="max-w-5xl mx-auto p-4 sm:p-8 pt-12 sm:pt-20 pb-24 relative">
+      <div className="text-center mb-16 animate-fade-in-up">
+        <h1 className="text-4xl sm:text-5xl md:text-6xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-600 mb-6 drop-shadow-lg">
+          {lang === 'TR' ? 'Güvenilmez Ortamlarda Tam Güven' : 'Trustless P2P Escrow'}
+        </h1>
+        <p className="text-base sm:text-lg text-slate-400 max-w-2xl mx-auto leading-relaxed">
+          {lang === 'TR' 
+            ? 'Merkeziyetsiz, hakemsiz ve otonom takas protokolü. Base ağı üzerinde akıllı kontratlar ve oyun teorisi ile korunan güvenli P2P işlemler.' 
+            : 'Decentralized, oracle-free P2P escrow board. Protected by smart contracts and game theory on the Base network.'}
+        </p>
+        <div className="mt-10 flex flex-col sm:flex-row justify-center gap-4 px-4">
+          <button onClick={() => setCurrentView('dashboard')} className="w-full sm:w-auto px-8 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold transition shadow-lg shadow-emerald-900/30">
+            {lang === 'TR' ? 'Pazar Yerine Git' : 'Enter Marketplace'}
+          </button>
+          <button onClick={handleOpenMakerModal} className="w-full sm:w-auto px-8 py-4 bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 rounded-xl font-bold transition">
+            {t.createAd}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 px-4">
+        <div className="bg-slate-800/60 border border-slate-700 p-5 rounded-2xl shadow-lg relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 text-emerald-500/10 text-6xl group-hover:scale-110 transition-transform">📈</div>
+          <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-2">{t.vol}</p>
+          {statsLoading ? <div className="h-8 w-24 bg-slate-700 rounded animate-pulse mt-1" /> : (
+            <div className="flex flex-col items-start">
+              <p className="text-3xl font-bold text-white">${((protocolStats?.total_volume_usdt ?? 0) / 1000).toFixed(1)}K</p>
+              <StatChange value={protocolStats?.changes_30d?.total_volume_usdt_pct} />
+            </div>
+          )}
+        </div>
+        <div className="bg-slate-800/60 border border-slate-700 p-5 rounded-2xl shadow-lg relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 text-blue-500/10 text-6xl group-hover:scale-110 transition-transform">🤝</div>
+          <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-2">{t.trades}</p>
+          {statsLoading ? <div className="h-8 w-20 bg-slate-700 rounded animate-pulse mt-1" /> : (
+            <div className="flex flex-col items-start">
+              <p className="text-3xl font-bold text-white">{(protocolStats?.completed_trades ?? 0).toLocaleString()}</p>
+              <StatChange value={protocolStats?.changes_30d?.completed_trades_pct} />
+            </div>
+          )}
+        </div>
+        <div className="bg-slate-800/60 border border-slate-700 p-5 rounded-2xl shadow-lg relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 text-yellow-500/10 text-6xl group-hover:scale-110 transition-transform">⚡</div>
+          <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-2">{lang === 'TR' ? 'Ort. Süre' : 'Avg. Time'}</p>
+          {statsLoading ? <div className="h-8 w-20 bg-slate-700 rounded animate-pulse mt-1" /> : protocolStats?.avg_trade_hours !== null ? <p className="text-3xl font-bold text-yellow-400">{protocolStats?.avg_trade_hours}s</p> : <p className="text-3xl font-bold text-slate-500">—</p>}
+        </div>
+        <div className="bg-red-950/30 border border-red-900/50 p-5 rounded-2xl shadow-lg relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 text-red-500/10 text-6xl group-hover:scale-110 transition-transform">🔥</div>
+          <p className="text-red-400/80 text-xs font-medium uppercase tracking-wider mb-2">{t.burn}</p>
+          {statsLoading ? <div className="h-8 w-20 bg-red-900/30 rounded animate-pulse mt-1" /> : (
+            <div className="flex flex-col items-start">
+              <p className="text-3xl font-bold text-red-400">${(protocolStats?.burned_bonds_usdt ?? 0).toFixed(0)}</p>
+              <StatChange value={protocolStats?.changes_30d?.burned_bonds_usdt_pct} />
+            </div>
+          )}
+        </div>
+      </div>
+    </main>
+  );
+
+  // ==========================================
   // --- 5. PAZAR YERİ EKRANI (DASHBOARD) ---
   // ==========================================
   const renderDashboard = () => (
@@ -1218,54 +1286,6 @@ function App() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-        <div className="bg-slate-800/60 border border-slate-700 p-4 rounded-2xl shadow-lg relative overflow-hidden group">
-          <div className="absolute -right-4 -top-4 text-emerald-500/10 text-6xl group-hover:scale-110 transition-transform">📈</div>
-          <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">{t.vol}</p>
-          {statsLoading ? <div className="h-8 w-24 bg-slate-700 rounded animate-pulse mt-1" /> : (
-            <div className="flex items-baseline space-x-2">
-              <p className="text-2xl font-bold text-white">${((protocolStats?.total_volume_usdt ?? 0) / 1000).toFixed(1)}K</p>
-              <StatChange value={protocolStats?.changes_30d?.total_volume_usdt_pct} />
-            </div>
-          )}
-        </div>
-        <div className="bg-slate-800/60 border border-slate-700 p-4 rounded-2xl shadow-lg relative overflow-hidden group">
-          <div className="absolute -right-4 -top-4 text-blue-500/10 text-6xl group-hover:scale-110 transition-transform">🤝</div>
-          <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">{t.trades}</p>
-          {statsLoading ? <div className="h-8 w-20 bg-slate-700 rounded animate-pulse mt-1" /> : (
-            <div className="flex items-baseline space-x-2">
-              <p className="text-2xl font-bold text-white">{(protocolStats?.completed_trades ?? 0).toLocaleString()}</p>
-              <StatChange value={protocolStats?.changes_30d?.completed_trades_pct} />
-            </div>
-          )}
-        </div>
-        <div className="bg-slate-800/60 border border-slate-700 p-4 rounded-2xl shadow-lg relative overflow-hidden group">
-          <div className="absolute -right-4 -top-4 text-purple-500/10 text-6xl group-hover:scale-110 transition-transform">📋</div>
-          <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">{lang === 'TR' ? 'Aktif İlan' : 'Active Listings'}</p>
-          {statsLoading ? <div className="h-8 w-16 bg-slate-700 rounded animate-pulse mt-1" /> : (
-             <div className="flex items-baseline space-x-2">
-              <p className="text-2xl font-bold text-white">{(protocolStats?.active_listings ?? 0).toLocaleString()}</p>
-              <StatChange value={protocolStats?.changes_30d?.active_listings_pct} />
-            </div>
-          )}
-        </div>
-        <div className="bg-slate-800/60 border border-slate-700 p-4 rounded-2xl shadow-lg relative overflow-hidden group">
-          <div className="absolute -right-4 -top-4 text-yellow-500/10 text-6xl group-hover:scale-110 transition-transform">⚡</div>
-          <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">{lang === 'TR' ? 'Ort. Süre' : 'Avg. Time'}</p>
-          {statsLoading ? <div className="h-8 w-20 bg-slate-700 rounded animate-pulse mt-1" /> : protocolStats?.avg_trade_hours !== null ? <p className="text-2xl font-bold text-yellow-400">{protocolStats?.avg_trade_hours}s</p> : <p className="text-2xl font-bold text-slate-500">—</p>}
-        </div>
-        <div className="bg-red-950/30 border border-red-900/50 p-4 rounded-2xl shadow-lg relative overflow-hidden group">
-          <div className="absolute -right-4 -top-4 text-red-500/10 text-6xl group-hover:scale-110 transition-transform">🔥</div>
-          <p className="text-red-400/80 text-xs font-medium uppercase tracking-wider mb-1">{t.burn}</p>
-          {statsLoading ? <div className="h-8 w-20 bg-red-900/30 rounded animate-pulse mt-1" /> : (
-            <div className="flex items-baseline space-x-2">
-              <p className="text-2xl font-bold text-red-400">${(protocolStats?.burned_bonds_usdt ?? 0).toFixed(0)}</p>
-              <StatChange value={protocolStats?.changes_30d?.burned_bonds_usdt_pct} />
-            </div>
-          )}
-        </div>
-      </div>
-
       <div className="overflow-x-auto bg-slate-800/50 rounded-2xl border border-slate-700 shadow-xl">
         <table className="w-full text-left border-collapse min-w-[620px]">
           <thead>
@@ -1273,7 +1293,7 @@ function App() {
               <th className="p-4 font-medium">{t.tableSeller}</th><th className="p-4 font-medium">{t.tableRate}</th><th className="p-4 font-medium">{t.tableLimit}</th><th className="p-4 font-medium">{t.tableBond}</th><th className="p-4 font-medium text-right">{t.tableAction}</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-700/50">
+          <tbody className="divide-y divide-slate-700/50 relative">
             {loading ? (
                <tr><td colSpan="5" className="p-8 text-center text-slate-400 animate-pulse">{lang === 'TR' ? 'Yükleniyor...' : 'Loading...'}</td></tr>
             ) : filteredOrders.length > 0 ? (
@@ -1286,17 +1306,49 @@ function App() {
 
                 return (
                 <tr key={order.id} className={`transition ${canTakeOrder ? 'hover:bg-slate-700/30' : 'opacity-50'}`}>
-                  <td className="p-4">
-                    <div className="flex items-center space-x-2">
-                      <div className="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center text-xs border border-slate-600 shrink-0">🛡️</div>
+                  
+                  {/* YENİ UX: POPOVER ENTEGRE EDİLMİŞ SATICI SÜTUNU */}
+                  <td className="p-4 relative">
+                    <div 
+                      className="flex items-center space-x-2 cursor-pointer group w-max"
+                      onClick={(e) => { e.stopPropagation(); setActivePopover(activePopover === order.id ? null : order.id); }}
+                    >
+                      <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-xs border border-slate-700 shrink-0 text-emerald-400 transition-colors group-hover:border-emerald-500/50">👤</div>
                       <div>
-                        <span className="font-mono text-emerald-400 text-sm">{order.maker}</span>
-                        <div className="flex items-center space-x-1 mt-0.5 text-xs">
-                          <span className={`${order.successRate === 100 ? 'text-emerald-400' : 'text-orange-400'}`}>%{order.successRate}</span><span className="text-slate-600">·</span><span className="text-slate-400">T{order.tier}</span>
-                        </div>
+                        <span className="font-mono text-white text-sm group-hover:text-emerald-400 transition">{order.maker}</span>
                       </div>
                     </div>
+
+                    {/* POPOVER KARTI */}
+                    {activePopover === order.id && (
+                      <div className="absolute top-12 left-4 w-64 bg-slate-800/95 backdrop-blur-xl border border-slate-700 rounded-2xl p-4 shadow-2xl z-50 animate-fade-in-up">
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <p className="text-white font-bold font-mono">{order.maker}</p>
+                            <p className="text-xs text-slate-400">Araf Güven Skoru</p>
+                          </div>
+                          <button onClick={(e) => { e.stopPropagation(); setActivePopover(null); }} className="text-slate-500 hover:text-white text-lg leading-none">&times;</button>
+                        </div>
+                        
+                        <div className="flex justify-between items-center bg-slate-900/50 p-3 rounded-xl border border-slate-700/50 mb-3">
+                          <div className="text-center w-1/2 border-r border-slate-700">
+                            <p className="text-2xl font-bold text-emerald-400">%{order.successRate}</p>
+                            <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-0.5">Güven</p>
+                          </div>
+                          <div className="text-center w-1/2">
+                            <p className="text-2xl font-bold text-white">T{order.tier}</p>
+                            <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-0.5">Tier</p>
+                          </div>
+                        </div>
+                        
+                        <div className="text-xs text-slate-400">
+                          <p className="flex justify-between mb-1"><span>Hacim:</span> <span className="text-white">— USDT</span></p>
+                          <p className="flex justify-between"><span>İşlem Sayısı:</span> <span className="text-white">—</span></p>
+                        </div>
+                      </div>
+                    )}
                   </td>
+                  
                   <td className="p-4"><div className="font-bold text-base">{order.rate} {order.fiat}</div><div className="text-xs text-slate-500">1 {order.crypto}</div></td>
                   <td className="p-4 text-slate-300 text-sm">{order.min} - {order.max} {order.fiat}</td>
                   <td className="p-4 text-xs font-bold text-emerald-400">{order.bond}</td>
@@ -1304,7 +1356,7 @@ function App() {
                     <button
                       onClick={() => handleStartTrade(order)}
                       disabled={!canTakeOrder}
-                      className={`px-4 py-2 rounded-lg font-bold text-sm transition flex items-center justify-center space-x-1.5 ${!canTakeOrder ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-slate-100 text-slate-900 hover:bg-white'}`}>
+                      className={`px-4 py-2 rounded-lg font-bold text-sm transition flex items-center justify-center space-x-1.5 ml-auto ${!canTakeOrder ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-slate-100 text-slate-900 hover:bg-white'}`}>
                       {!canTakeOrder && <span className="text-base">🔒</span>}
                       <span>{t.buyBtn}</span>
                     </button>
@@ -1584,85 +1636,139 @@ function App() {
   // ==========================================
   // --- 7. ANA YAPI (ROUTER & NAVBAR) ---
   // ==========================================
+  // YENİ UX: Flex layout ile tam sayfa yapı + Minimalist Sidebar
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans">
+    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans flex overflow-hidden">
       <EnvWarningBanner />
-      <nav className="flex justify-between items-center p-4 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md sticky top-0 z-40">
-        <div className="flex items-center space-x-2 cursor-pointer" onClick={() => setCurrentView('dashboard')}>
-          <div className="w-8 h-8 rounded bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center font-bold">A</div>
-          <span className="text-lg font-bold tracking-widest hidden sm:block">ARAF</span>
-        </div>
-        
-        {/* MOBİL UYUMLU VE SIWE ENTEGRELİ NAVBAR BUTONLARI */}
-        <div className="flex items-center space-x-2 sm:space-x-3">
-          <button onClick={() => setLang(lang === 'TR' ? 'EN' : 'TR')} className="bg-slate-800 border border-slate-700 px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold text-slate-300 hover:bg-slate-700 hover:text-white transition shadow-inner">
-            🌐 <span className="hidden xs:inline">{lang}</span>
-          </button>
-          
-          <button onClick={handleOpenMakerModal} className="hidden md:block text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-sm font-medium">{t.createAd}</button>
-          
-          <button 
-            onClick={() => {
-              // YENİ MANTIK: Bağlı değilse cüzdan aç, bağlı ama JWT yoksa SIWE yap, JWT varsa cüzdanı kopar
-              if (!isConnected) setShowWalletModal(true);
-              else if (!jwtToken) loginWithSIWE();
-              else disconnect();
-            }}
-            disabled={isLoggingIn}
-            className={`flex items-center justify-center space-x-2 px-3 sm:px-4 py-1.5 rounded-lg font-bold text-xs sm:text-sm transition-all ${
-              isLoggingIn
-              ? 'bg-orange-800 text-orange-200 cursor-not-allowed opacity-80' 
-              : isConnected && jwtToken
-              ? 'bg-slate-800 text-emerald-400 border border-emerald-500/20 hover:bg-red-950/20 hover:text-red-400' 
-              : isConnected && !jwtToken
-              ? 'bg-orange-600 hover:bg-orange-500 text-white shadow-lg shadow-orange-900/20 animate-pulse'
-              : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20'
-            }`}
-          >
-            {isLoggingIn ? (
-              <>
-                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-orange-200" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                {lang === 'TR' ? 'Bekleniyor...' : 'Pending...'}
-              </>
-            ) :
-              isConnected && jwtToken ? (
-              <>
-                <span className="hidden sm:inline">{formatAddress(address)}</span>
-                <span className="sm:hidden">0x..{address?.slice(-3)}</span>
-              </>
-            ) : isConnected && !jwtToken ? (
-              lang === 'TR' ? '✍️ İmzala' : '✍️ Sign In'
-            ) : (
-              lang === 'TR' ? 'Cüzdan' : 'Connect'
-            )}
-          </button>
+      
+      {/* YENİ UX: MİNİMALİST SIDEBAR (Hover ile genişler) */}
+      <aside 
+        className="fixed left-0 top-0 h-screen w-16 hover:w-56 bg-slate-900 border-r border-slate-800 transition-all duration-300 z-[60] overflow-hidden group flex flex-col shadow-2xl"
+        onClick={(e) => setActivePopover(null)} // Tıklamayla popoverları kapat
+      >
+        <div className="flex flex-col h-full p-3 pt-6">
+          {/* Logo */}
+          <div className="flex items-center space-x-4 mb-10 pl-1 cursor-pointer" onClick={() => setCurrentView('landing')}>
+            <div className="w-8 h-8 shrink-0 rounded bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center font-bold text-white shadow-lg">A</div>
+            <span className="text-lg font-bold tracking-widest opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">ARAF</span>
+          </div>
 
-          <button onClick={() => setShowProfileModal(true)} className="w-8 h-8 bg-slate-800 border border-slate-700 rounded-full flex items-center justify-center text-sm hover:bg-slate-700 relative shrink-0">
-            👤 {isBanned && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-slate-900"></span>}
-          </button>
-        </div>
-      </nav>
+          {/* Menü Elemanları */}
+          <nav className="flex flex-col space-y-2">
+            <button 
+              onClick={() => setCurrentView('landing')} 
+              className={`flex items-center space-x-4 p-2.5 rounded-xl transition ${currentView === 'landing' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+            >
+              <span className="text-xl">🏠</span>
+              <span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Ana Sayfa</span>
+            </button>
+            <button 
+              onClick={() => setCurrentView('dashboard')} 
+              className={`flex items-center space-x-4 p-2.5 rounded-xl transition ${currentView === 'dashboard' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+            >
+              <span className="text-xl">📊</span>
+              <span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Pazar Yeri</span>
+            </button>
+            <button 
+              onClick={() => setShowProfileModal(true)} 
+              className="flex items-center space-x-4 p-2.5 rounded-xl hover:bg-slate-800 transition text-slate-400 hover:text-white relative"
+            >
+              <span className="text-xl relative">
+                👤
+                {isBanned && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-slate-900"></span>}
+              </span>
+              <span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Profilim</span>
+            </button>
+          </nav>
 
-      {toast && (
-        <div key={toast.id} className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] animate-bounce-in w-[90%] md:w-auto">
-          <div className={`flex items-center gap-3 text-white text-sm font-medium px-5 py-3 rounded-2xl shadow-xl border ${toast.type === 'error' ? 'bg-red-600 border-red-500' : toast.type === 'info' ? 'bg-blue-600 border-blue-500' : 'bg-emerald-600 border-emerald-500'}`}>
-            <span className="text-base">{toast.type === 'error' ? '✖' : toast.type === 'info' ? 'ℹ' : '✓'}</span>{toast.message}
+          {/* Alt Kısım (Dil, İlan Aç, Cüzdan) */}
+          <div className="mt-auto flex flex-col space-y-2 mb-2">
+            
+            <button 
+              onClick={() => setLang(lang === 'TR' ? 'EN' : 'TR')} 
+              className="flex items-center space-x-4 p-2.5 rounded-xl hover:bg-slate-800 transition text-slate-400 hover:text-white"
+            >
+              <span className="text-xl">🌐</span>
+              <span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'English' : 'Türkçe'}</span>
+            </button>
+            
+            <button 
+              onClick={handleOpenMakerModal} 
+              className="flex items-center space-x-4 p-2.5 rounded-xl bg-emerald-600/10 text-emerald-400 hover:bg-emerald-600 hover:text-white transition group-hover:justify-start justify-center"
+            >
+              <span className="text-xl font-bold">+</span>
+              <span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{t.createAd.replace('+', '').trim()}</span>
+            </button>
+
+            <button 
+              onClick={() => {
+                if (!isConnected) setShowWalletModal(true);
+                else if (!jwtToken) loginWithSIWE();
+                else disconnect();
+              }}
+              disabled={isLoggingIn}
+              className={`flex items-center space-x-4 p-2.5 rounded-xl transition-all ${
+                isLoggingIn ? 'bg-orange-800 text-orange-200 cursor-not-allowed opacity-80' 
+                : isConnected && jwtToken ? 'bg-slate-800 text-emerald-400 border border-emerald-500/20 hover:bg-red-950/20 hover:text-red-400' 
+                : isConnected && !jwtToken ? 'bg-orange-600 hover:bg-orange-500 text-white shadow-lg shadow-orange-900/20 animate-pulse'
+                : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20'
+              }`}
+            >
+              {isLoggingIn ? (
+                <>
+                  <svg className="animate-spin h-5 w-5 text-orange-200 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'Bekle...' : 'Wait...'}</span>
+                </>
+              ) : isConnected && jwtToken ? (
+                <>
+                  <span className="text-xl shrink-0">👛</span>
+                  <span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{formatAddress(address)}</span>
+                </>
+              ) : isConnected && !jwtToken ? (
+                <>
+                  <span className="text-xl shrink-0">✍️</span>
+                  <span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'İmzala' : 'Sign In'}</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-xl shrink-0">🔌</span>
+                  <span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'Bağlan' : 'Connect'}</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
-      )}
+      </aside>
 
-      <button onClick={() => setShowFeedbackModal(true)} className="hidden md:flex fixed bottom-6 left-6 items-center space-x-2 bg-slate-800 border border-slate-700 hover:bg-slate-700 px-4 py-2 rounded-full text-slate-300 transition shadow-lg z-30 font-medium text-sm">
-        <span>💬</span> <span>{lang === 'TR' ? 'Geri Bildirim' : 'Feedback'}</span>
-      </button>
+      {/* YENİ UX: ANA İÇERİK ALANI (Sidebar genişliğini hesaba katarak pl-16 eklendi) */}
+      <div 
+        className="flex-1 ml-16 relative overflow-y-auto h-screen" 
+        onClick={() => setActivePopover(null)} // Boşluğa tıklanınca popoverları kapat
+      >
+        {toast && (
+          <div key={toast.id} className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] animate-bounce-in w-[90%] md:w-auto">
+            <div className={`flex items-center gap-3 text-white text-sm font-medium px-5 py-3 rounded-2xl shadow-xl border ${toast.type === 'error' ? 'bg-red-600 border-red-500' : toast.type === 'info' ? 'bg-blue-600 border-blue-500' : 'bg-emerald-600 border-emerald-500'}`}>
+              <span className="text-base">{toast.type === 'error' ? '✖' : toast.type === 'info' ? 'ℹ' : '✓'}</span>{toast.message}
+            </div>
+          </div>
+        )}
 
-      {renderWalletModal()}
-      {renderFeedbackModal()}
-      {renderMakerModal()}
-      {renderProfileModal()}
-      {currentView === 'dashboard' ? renderDashboard() : renderTradeRoom()}
+        {/* Feedback Butonu (Sağ Altta Sabit) */}
+        <button onClick={() => setShowFeedbackModal(true)} className="hidden md:flex fixed bottom-6 right-6 items-center space-x-2 bg-slate-800 border border-slate-700 hover:bg-slate-700 px-4 py-2 rounded-full text-slate-300 transition shadow-lg z-30 font-medium text-sm hover:text-white group">
+          <span className="group-hover:scale-110 transition-transform">💬</span> <span>{lang === 'TR' ? 'Geri Bildirim' : 'Feedback'}</span>
+        </button>
+
+        {renderWalletModal()}
+        {renderFeedbackModal()}
+        {renderMakerModal()}
+        {renderProfileModal()}
+        
+        {/* Router Yapısı */}
+        {currentView === 'landing' ? renderLanding() : currentView === 'dashboard' ? renderDashboard() : renderTradeRoom()}
+      </div>
     </div>
   );
 }
