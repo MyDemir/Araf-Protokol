@@ -5,18 +5,18 @@
  * frontend/src/abi/ArafEscrow.json'dan okunur.
  *
  * Desteklenen işlemler:
- *   - registerWallet / createEscrow / cancelOpenEscrow / lockEscrow
- *   - reportPayment / releaseFunds / challengeTrade / autoRelease / burnExpired
- *   - EIP-712 cancel: signCancelProposal → proposeOrApproveCancel
+ * - registerWallet / createEscrow / cancelOpenEscrow / lockEscrow
+ * - reportPayment / releaseFunds / challengeTrade / autoRelease / burnExpired
+ * - EIP-712 cancel: signCancelProposal → proposeOrApproveCancel
  *
  * Güvenlik Güncellemeleri:
- *   CON-02 Fix: VITE_ESCROW_ADDRESS tanımsızsa anlamlı hata mesajı
- *   CON-09 Fix: Chain ID doğrulaması — yanlış ağda işlem göndermeyi engeller
+ * CON-02 Fix: VITE_ESCROW_ADDRESS tanımsızsa anlamlı hata mesajı
+ * CON-09 Fix: Chain ID doğrulaması — yanlış ağda işlem göndermeyi engeller
  *
  * AUDIT FIX E-01: getReputation view fonksiyonunda ESCROW_ADDRESS guard eklendi.
  *
  * Kullanım (App.jsx'te):
- *   const { releaseFunds, signCancelProposal, proposeOrApproveCancel } = useArafContract();
+ * const { releaseFunds, signCancelProposal, proposeOrApproveCancel } = useArafContract();
  */
 
 import { useCallback } from 'react';
@@ -44,7 +44,8 @@ const ArafEscrowABI = parseAbi([
 
   // --- View Fonksiyonları (App.jsx'te kullanılanlar) ---
   'function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier)',
-  'function getTrade(uint256 _tradeId) view returns (tuple(uint256 id, address maker, address taker, address tokenAddress, uint256 cryptoAmount, uint256 makerBond, uint256 takerBond, uint8 tier, uint8 state, uint256 lockedAt, uint256 paidAt, uint256 challengedAt, string ipfsReceiptHash, bool cancelProposedByMaker, bool cancelProposedByTaker, uint256 pingedAt, bool pingedByTaker, uint256 challengePingedAt, bool challengePingedByMaker))',
+  // DÜZELTME BURADA YAPILDI: tuple() yerine (()) kullanıldı
+  'function getTrade(uint256 _tradeId) view returns ((uint256 id, address maker, address taker, address tokenAddress, uint256 cryptoAmount, uint256 makerBond, uint256 takerBond, uint8 tier, uint8 state, uint256 lockedAt, uint256 paidAt, uint256 challengedAt, string ipfsReceiptHash, bool cancelProposedByMaker, bool cancelProposedByTaker, uint256 pingedAt, bool pingedByTaker, uint256 challengePingedAt, bool challengePingedByMaker))',
 
   // --- EIP-712 için Gerekli View Fonksiyonları ---
   'function sigNonces(address) view returns (uint256)',
@@ -57,6 +58,7 @@ const ESCROW_ADDRESS = import.meta.env.VITE_ESCROW_ADDRESS;
 const SUPPORTED_CHAINS = {
   8453:  "Base Mainnet",
   84532: "Base Sepolia",
+  31337: "Hardhat Local", // Yerel test ağı da listeye eklendi
 };
 
 // AUDIT FIX E-01: Kontrat adresi geçerlilik kontrolü — hem write hem read fonksiyonları için
@@ -268,9 +270,9 @@ export function useArafContract() {
     /**
      * AUDIT FIX E-01: getReputation view fonksiyonunda ESCROW_ADDRESS guard eklendi.
      * ÖNCEKİ: ESCROW_ADDRESS undefined olduğunda getAddress(undefined) hata fırlatıyordu.
-     *   writeContract wrapper'ında guard vardı ama getReputation doğrudan export ediliyordu.
+     * writeContract wrapper'ında guard vardı ama getReputation doğrudan export ediliyordu.
      * ŞİMDİ: _isValidAddress kontrolü ile guard eklendi.
-     *   Adres geçersizse null döner — caller tarafında handle edilmeli.
+     * Adres geçersizse null döner — caller tarafında handle edilmeli.
      */
     getReputation: useCallback(
       async (address) => {
