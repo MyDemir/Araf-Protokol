@@ -76,18 +76,24 @@ function App() {
   const { signMessageAsync } = useSignMessage();
   const chainId = useChainId();
 
+  // [KRIT-05 Fix]: useArafContract tek seferinde çağrılmalı — çift instance React hook ihlalidir.
   const {
     releaseFunds,
     challengeTrade,
     autoRelease,
-    pingMaker, // YENİ: Hook'tan gelen fonksiyon
-    pingTakerForChallenge, // YENİ: Simetrik ping için hook'tan gelen fonksiyon
+    pingMaker,
+    pingTakerForChallenge,
     lockEscrow,
     cancelOpenEscrow,
     signCancelProposal,
     proposeOrApproveCancel,
+    getReputation,
+    getCurrentAmounts,
+    createEscrow,
+    registerWallet,
+    reportPayment,
+    burnExpired,
   } = useArafContract();
-  const { getReputation } = useArafContract(); // YENİ: İtibar verisini çekmek için
   
   const [jwtToken, setJwtToken] = useState(null);
   // CON-04 Fix: Refresh token state — JWT expire olduğunda otomatik yenileme için
@@ -127,6 +133,9 @@ function App() {
   // Protocol stats — /api/stats'tan çekilir, 1 saatte bir güncellenir
   const [protocolStats, setProtocolStats] = useState(null);
   const [statsLoading, setStatsLoading]   = useState(true);
+
+  // [H-03 Fix]: Bleeding Escrow gerçek decay değerleri — getCurrentAmounts() on-chain okuma
+  const [bleedingAmounts, setBleedingAmounts] = useState(null);
 
   // ==========================================
   // --- 2. CANLI VERİLER (API) ---
@@ -241,6 +250,21 @@ function App() {
     fetchStats();
   }, []); // Stats verisi dile bağlı değil, bir kere çekilmesi yeterli
 
+  // [H-03 Fix]: CHALLENGED state'inde Bleeding Escrow gerçek decay değerlerini 30 saniyede bir güncelle
+  useEffect(() => {
+    if (tradeState !== 'CHALLENGED' || !activeTrade?.onchainId || !getCurrentAmounts) {
+      setBleedingAmounts(null);
+      return;
+    }
+    const fetchAmounts = async () => {
+      const result = await getCurrentAmounts(activeTrade.onchainId);
+      if (result) setBleedingAmounts(result);
+    };
+    fetchAmounts();
+    const interval = setInterval(fetchAmounts, 30000);
+    return () => clearInterval(interval);
+  }, [tradeState, activeTrade?.onchainId, getCurrentAmounts]);
+
   // YENİ: Kullanıcının on-chain itibarını (ve efektif tier'ını) çek
   useEffect(() => {
     if (!isConnected || !address || !getReputation) {
@@ -266,56 +290,49 @@ function App() {
     fetchUserReputation();
   }, [isConnected, address, getReputation]); // Bağımlılıklar doğru
 
-  useEffect(() => {
+  // [H-01 Fix]: fetchMyTrades useCallback'e taşındı — hem ilk yüklemede hem polling'de kullanılabilir.
+  // Önceki hata: fonksiyon başka bir useEffect'in scope'undaydı, polling interval ReferenceError veriyordu.
+  const fetchMyTrades = React.useCallback(async () => {
     if (!jwtToken || !isConnected) {
       setActiveEscrows([]);
       return;
     }
-
-    const fetchMyTrades = async () => {
-      try {
-        // CON-04 Fix: fetch yerine authenticatedFetch kullanılıyor
-        const res = await authenticatedFetch(`${API_URL}/api/trades/my`);
-        const data = await res.json();
-        
-        if (data.trades) {
-          setActiveEscrows(data.trades.map(t => ({
-            id: `#${t.onchain_escrow_id}`,
-            role: t.maker_address.toLowerCase() === address?.toLowerCase() ? 'maker' : 'taker',
-            // FIX-06: taker_address null olabilir (OPEN state) — null guard eklendi
-            counterparty: formatAddress(
-              t.maker_address.toLowerCase() === address?.toLowerCase()
-                ? (t.taker_address || '')
-                : t.maker_address
-            ),
-            state: t.status,
-            paidAt: t.timers?.paid_at, // örn: "2026-03-07T..."
-            pingedAt: t.timers?.pinged_at, // örn: "2026-03-09T..."
-            amount: `${t.financials?.crypto_amount || 0} ${t.financials?.crypto_asset || 'USDT'}`,
-            action: t.status === 'PAID' ? (lang === 'TR' ? 'Onay Bekliyor' : 'Pending Approval') : (lang === 'TR' ? 'İşlemde' : 'In Progress')
-          })));
-        }
-      } catch (err) {
-        console.error("Trades fetch error:", err);
+    try {
+      const res = await authenticatedFetch(`${API_URL}/api/trades/my`);
+      const data = await res.json();
+      if (data.trades) {
+        setActiveEscrows(data.trades.map(t => ({
+          id: `#${t.onchain_escrow_id}`,
+          role: t.maker_address.toLowerCase() === address?.toLowerCase() ? 'maker' : 'taker',
+          counterparty: formatAddress(
+            t.maker_address.toLowerCase() === address?.toLowerCase()
+              ? (t.taker_address || '')
+              : t.maker_address
+          ),
+          state: t.status,
+          paidAt: t.timers?.paid_at,
+          pingedAt: t.timers?.pinged_at,
+          challengedAt: t.timers?.challenged_at,
+          onchainId: t.onchain_escrow_id,
+          amount: `${t.financials?.crypto_amount || 0} ${t.financials?.crypto_asset || 'USDT'}`,
+          action: t.status === 'PAID' ? (lang === 'TR' ? 'Onay Bekliyor' : 'Pending Approval') : (lang === 'TR' ? 'İşlemde' : 'In Progress')
+        })));
       }
-    };
-    fetchMyTrades();
-  }, [jwtToken, isConnected, address, lang, refreshTokenState, authenticatedFetch]); // authenticatedFetch eklendi
+    } catch (err) {
+      console.error("Trades fetch error:", err);
+    }
+  }, [jwtToken, isConnected, address, lang, authenticatedFetch]);
 
-  // YENİ: Aktif işlem verilerini periyodik olarak yeniden çek (polling)
-  // Bu, eventListener'ın DB'ye yazdığı güncellemelerin (ping, state değişimi vb.)
-  // arayüze yansımasını sağlar.
+  useEffect(() => {
+    fetchMyTrades();
+  }, [fetchMyTrades]);
+
+  // Aktif işlem verilerini periyodik olarak yeniden çek (polling)
   useEffect(() => {
     if (currentView !== 'tradeRoom' || !jwtToken) return;
-
-    const interval = setInterval(() => {
-      // `fetchMyTrades` fonksiyonu zaten `authenticatedFetch` kullanıyor.
-      // Bu fonksiyonu doğrudan çağırmak yeterli.
-      fetchMyTrades();
-    }, 15000); // 15 saniyede bir güncelle, `fetchMyTrades` zaten tanımlı
-
+    const interval = setInterval(fetchMyTrades, 15000);
     return () => clearInterval(interval);
-  }, [currentView, jwtToken, authenticatedFetch]);
+  }, [currentView, jwtToken, fetchMyTrades]);
 
   // YENİ: Profil modalı açıldığında mevcut PII verilerini çek ve formu doldur
   useEffect(() => {
@@ -683,7 +700,8 @@ function App() {
 
     try {
       setIsContractLoading(true);
-      const res = await authenticatedFetch(`${API_URL}/api/pii`, {
+      // [H-05 Fix]: Doğru endpoint /api/pii/my (PUT) — /api/pii 404 dönerdi.
+      const res = await authenticatedFetch(`${API_URL}/api/pii/my`, {
         method: 'PUT',
         body: JSON.stringify({
           bankOwner: piiBankOwner,
@@ -1198,17 +1216,20 @@ function App() {
   // ==========================================
   const renderDashboard = () => (
     <main className="max-w-6xl mx-auto p-4 md:p-6 pb-24 relative">
-      <div className="mb-8 p-3 bg-slate-800 rounded-xl border border-purple-500/50 flex flex-wrap gap-4 items-center text-sm shadow-lg shadow-purple-900/20">
-        <span className="text-purple-400 font-bold tracking-widest uppercase text-xs">🛠️ UX Paneli:</span>
-        <div className="flex items-center space-x-2">
-          <button onClick={() => setUserRole('taker')} className={`px-3 py-1.5 rounded-lg transition ${userRole === 'taker' ? 'bg-purple-600 text-white' : 'bg-slate-700'}`}>Taker</button>
-          <button onClick={() => setUserRole('maker')} className={`px-3 py-1.5 rounded-lg transition ${userRole === 'maker' ? 'bg-purple-600 text-white' : 'bg-slate-700'}`}>Maker</button>
+      {/* [H-07 Fix]: Dev/test paneli yalnızca development modunda görünür */}
+      {import.meta.env.DEV && (
+        <div className="mb-8 p-3 bg-slate-800 rounded-xl border border-purple-500/50 flex flex-wrap gap-4 items-center text-sm shadow-lg shadow-purple-900/20">
+          <span className="text-purple-400 font-bold tracking-widest uppercase text-xs">🛠️ UX Paneli (DEV):</span>
+          <div className="flex items-center space-x-2">
+            <button onClick={() => setUserRole('taker')} className={`px-3 py-1.5 rounded-lg transition ${userRole === 'taker' ? 'bg-purple-600 text-white' : 'bg-slate-700'}`}>Taker</button>
+            <button onClick={() => setUserRole('maker')} className={`px-3 py-1.5 rounded-lg transition ${userRole === 'maker' ? 'bg-purple-600 text-white' : 'bg-slate-700'}`}>Maker</button>
+          </div>
+          <div className="w-px h-6 bg-slate-600 hidden sm:block"></div>
+          <button onClick={() => setIsBanned(!isBanned)} className={`px-3 py-1.5 rounded-lg font-medium transition ${isBanned ? 'bg-red-600 text-white border border-red-500' : 'bg-slate-700 hover:bg-slate-600'}`}>
+            {isBanned ? '🔴 Ban Aktif' : '⚪ Ban Kapalı'}
+          </button>
         </div>
-        <div className="w-px h-6 bg-slate-600 hidden sm:block"></div>
-        <button onClick={() => setIsBanned(!isBanned)} className={`px-3 py-1.5 rounded-lg font-medium transition ${isBanned ? 'bg-red-600 text-white border border-red-500' : 'bg-slate-700 hover:bg-slate-600'}`}>
-          {isBanned ? '🔴 Ban Aktif' : '⚪ Ban Kapalı'}
-        </button>
-      </div>
+      )}
 
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 space-y-4 md:space-y-0">
         <div><h1 className="text-2xl md:text-3xl font-bold mb-1">{t.title}</h1><p className="text-sm text-slate-400">{t.subtitle}</p></div>
@@ -1345,17 +1366,21 @@ function App() {
 
     return (
       <main className={`max-w-6xl mx-auto p-4 md:p-6 mt-4 transition-colors duration-500 ${bgTheme} pb-24`}>
-        <div className="mb-4 p-2 bg-slate-800 rounded-xl border border-slate-700 flex flex-wrap gap-2 items-center text-xs">
-          <button onClick={() => setTradeState('LOCKED')} className={`px-3 py-1.5 rounded ${tradeState === 'LOCKED' ? 'bg-blue-600' : 'bg-slate-700'}`}>1. LOCKED</button>
-          <button onClick={() => { setTradeState('PAID'); setCooldownPassed(false); setChargebackAccepted(false); }} className={`px-3 py-1.5 rounded ${tradeState === 'PAID' ? 'bg-emerald-600' : 'bg-slate-700'}`}>2. PAID</button>
-          <button onClick={() => setTradeState('CHALLENGED')} className={`px-3 py-1.5 rounded ${tradeState === 'CHALLENGED' ? 'bg-red-600' : 'bg-slate-700'}`}>3. CHALLENGED</button>
-          {tradeState === 'PAID' && isMaker && (
-            <button onClick={() => setCooldownPassed(!cooldownPassed)} className="ml-auto bg-orange-600 px-3 py-1.5 rounded font-bold">⏱️ Simüle Et: 1 Saat {cooldownPassed ? 'Geri Al' : 'İleri Sar'}</button>
-          )}
-          {tradeState === 'CHALLENGED' && (
-             <button onClick={() => setCancelStatus('proposed_by_other')} className="ml-auto bg-slate-700 px-3 py-1.5 rounded text-orange-400 border border-orange-500/30">Simüle Et: Karşı Taraf İptal İstedi</button>
-          )}
-        </div>
+        {/* [H-07 Fix]: Trade Room state simulator yalnızca development modunda görünür */}
+        {import.meta.env.DEV && (
+          <div className="mb-4 p-2 bg-slate-800 rounded-xl border border-slate-700 flex flex-wrap gap-2 items-center text-xs">
+            <span className="text-purple-400 text-[10px] font-bold uppercase tracking-widest">DEV:</span>
+            <button onClick={() => setTradeState('LOCKED')} className={`px-3 py-1.5 rounded ${tradeState === 'LOCKED' ? 'bg-blue-600' : 'bg-slate-700'}`}>1. LOCKED</button>
+            <button onClick={() => { setTradeState('PAID'); setCooldownPassed(false); setChargebackAccepted(false); }} className={`px-3 py-1.5 rounded ${tradeState === 'PAID' ? 'bg-emerald-600' : 'bg-slate-700'}`}>2. PAID</button>
+            <button onClick={() => setTradeState('CHALLENGED')} className={`px-3 py-1.5 rounded ${tradeState === 'CHALLENGED' ? 'bg-red-600' : 'bg-slate-700'}`}>3. CHALLENGED</button>
+            {tradeState === 'PAID' && isMaker && (
+              <button onClick={() => setCooldownPassed(!cooldownPassed)} className="ml-auto bg-orange-600 px-3 py-1.5 rounded font-bold">⏱️ Simüle Et: 1 Saat {cooldownPassed ? 'Geri Al' : 'İleri Sar'}</button>
+            )}
+            {tradeState === 'CHALLENGED' && (
+              <button onClick={() => setCancelStatus('proposed_by_other')} className="ml-auto bg-slate-700 px-3 py-1.5 rounded text-orange-400 border border-orange-500/30">Simüle Et: Karşı Taraf İptal İstedi</button>
+            )}
+          </div>
+        )}
 
         <button onClick={() => setCurrentView('dashboard')} className="text-slate-400 hover:text-white mb-4 flex items-center text-sm font-medium">← {lang === 'TR' ? 'Geri Dön' : 'Go Back'}</button>
         
@@ -1524,15 +1549,59 @@ function App() {
               <div className="text-center py-2">
                 <div className="w-14 h-14 bg-red-500/20 text-red-500 rounded-full flex items-center justify-center mx-auto mb-3 text-2xl animate-pulse">⚠️</div>
                 <h2 className="text-2xl md:text-3xl font-bold text-red-500 mb-2">{lang === 'TR' ? 'ARAF FAZI' : 'PURGATORY PHASE'}</h2>
+                {/* [H-03 Fix]: Bleeding Escrow göstergesi artık getCurrentAmounts() on-chain verisini kullanıyor */}
                 <div className="w-full bg-red-950/40 border border-red-900/50 rounded-2xl p-4 mb-6 text-left">
-                  <div className="mb-4">
-                    <div className="flex justify-between text-xs mb-1"><span className="text-red-400 font-bold">{lang === 'TR' ? 'Senin Teminatın' : 'Your Bond'}</span><span className="text-white font-mono">-{isTaker ? '10.1' : '6.2'}% / Gün</span></div>
-                    <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-red-900/30"><div className="bg-red-600 h-2 rounded-full w-[20%]"></div></div>
-                  </div>
-                  <div className="mb-3">
-                    <div className="flex justify-between text-xs mb-1"><span className="text-orange-400">{lang === 'TR' ? 'Karşı Tarafın Teminatı' : 'Opponent Bond'}</span><span className="text-slate-300 font-mono">-{isTaker ? '6.2' : '10.1'}% / Gün</span></div>
-                    <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-orange-900/30"><div className="bg-orange-500/50 h-2 rounded-full w-[10%]"></div></div>
-                  </div>
+                  {(() => {
+                    // bleedingAmounts null ise yükleniyor göster
+                    const myBond = bleedingAmounts
+                      ? (isTaker ? Number(bleedingAmounts.takerBondRemaining) : Number(bleedingAmounts.makerBondRemaining))
+                      : null;
+                    const opponentBond = bleedingAmounts
+                      ? (isTaker ? Number(bleedingAmounts.makerBondRemaining) : Number(bleedingAmounts.takerBondRemaining))
+                      : null;
+                    // Orijinal bond değerleri activeTrade'den alınabilir (yoksa tahmin)
+                    const myBondOrig = myBond !== null ? Math.max(myBond, 1) : 1; // sıfıra bölünmeyi önle
+                    const opponentBondOrig = opponentBond !== null ? Math.max(opponentBond, 1) : 1;
+                    const myPct = myBond !== null ? Math.round((myBond / myBondOrig) * 100) : null;
+                    const opponentPct = opponentBond !== null ? Math.round((opponentBond / opponentBondOrig) * 100) : null;
+                    const decayedTotal = bleedingAmounts ? Number(bleedingAmounts.totalDecayed) : 0;
+
+                    return (
+                      <>
+                        <div className="mb-4">
+                          <div className="flex justify-between text-xs mb-1">
+                            <span className="text-red-400 font-bold">{lang === 'TR' ? 'Senin Teminatın' : 'Your Bond'}</span>
+                            <span className="text-white font-mono">
+                              {bleedingAmounts
+                                ? `${(myBond / 1e6).toFixed(2)} USDT`
+                                : <span className="animate-pulse text-slate-500">Yükleniyor...</span>}
+                            </span>
+                          </div>
+                          <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-red-900/30">
+                            <div className="bg-red-600 h-2 rounded-full transition-all duration-500" style={{ width: `${myPct ?? 20}%` }}></div>
+                          </div>
+                        </div>
+                        <div className="mb-3">
+                          <div className="flex justify-between text-xs mb-1">
+                            <span className="text-orange-400">{lang === 'TR' ? 'Karşı Tarafın Teminatı' : 'Opponent Bond'}</span>
+                            <span className="text-slate-300 font-mono">
+                              {bleedingAmounts
+                                ? `${(opponentBond / 1e6).toFixed(2)} USDT`
+                                : <span className="animate-pulse text-slate-500">Yükleniyor...</span>}
+                            </span>
+                          </div>
+                          <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-orange-900/30">
+                            <div className="bg-orange-500/50 h-2 rounded-full transition-all duration-500" style={{ width: `${opponentPct ?? 10}%` }}></div>
+                          </div>
+                        </div>
+                        {decayedTotal > 0 && (
+                          <div className="text-xs text-red-300 mt-2">
+                            🔥 {lang === 'TR' ? 'Toplam Eriyen:' : 'Total Decayed:'} {(decayedTotal / 1e6).toFixed(4)} USDT
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                   <div className="mt-4 pt-3 border-t border-red-900/30">
                     <p className="text-xs text-slate-400 font-medium flex items-center justify-between">
                       <span>🛡️ {lang === 'TR' ? 'Ana Para Koruma:' : 'Principal Protection:'}</span>

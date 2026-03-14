@@ -50,6 +50,10 @@ const ArafEscrowABI = parseAbi([
   // --- EIP-712 için Gerekli View Fonksiyonları ---
   'function sigNonces(address) view returns (uint256)',
   'function domainSeparator() view returns (bytes32)',
+
+  // [H-03 Fix]: getCurrentAmounts ABI'ye eklendi — Bleeding Escrow gerçek decay hesabı için.
+  // Önceki durum: fonksiyon ABI'de yoktu, UI hardcoded %10.1/%6.2 gösteriyordu.
+  'function getCurrentAmounts(uint256 _tradeId) view returns (uint256 cryptoRemaining, uint256 makerBondRemaining, uint256 takerBondRemaining, uint256 totalDecayed)',
 ]);
 
 const ESCROW_ADDRESS = import.meta.env.VITE_ESCROW_ADDRESS;
@@ -267,6 +271,24 @@ export function useArafContract() {
     // EIP-712 Cancel
     signCancelProposal,
     proposeOrApproveCancel,
+    // [H-03 Fix]: getCurrentAmounts — Bleeding Escrow fazında gerçek decay değerlerini okur.
+    getCurrentAmounts: useCallback(
+      async (tradeId) => {
+        if (!_isValidAddress) return null;
+        try {
+          return await publicClient.readContract({
+            address: getAddress(ESCROW_ADDRESS),
+            abi: ArafEscrowABI,
+            functionName: 'getCurrentAmounts',
+            args: [BigInt(tradeId)],
+          });
+        } catch (err) {
+          console.error('[ArafContract] getCurrentAmounts hatası:', err.message);
+          return null;
+        }
+      },
+      [publicClient]
+    ),
     /**
      * AUDIT FIX E-01: getReputation view fonksiyonunda ESCROW_ADDRESS guard eklendi.
      * ÖNCEKİ: ESCROW_ADDRESS undefined olduğunda getAddress(undefined) hata fırlatıyordu.
