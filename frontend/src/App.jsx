@@ -1,4 +1,3 @@
-İşte güncellenmiş App.jsx dosyasının tamamı:
 import React, { useState, useEffect, useCallback } from 'react'; // AFS-003 Fix: useCallback eklendi
 // --- WEB3 ENTEGRASYON KÜTÜPHANELERİ ---
 // H-01 Fix: useChainId eklendi — SIWE mesajındaki Chain ID artık hardcoded değil
