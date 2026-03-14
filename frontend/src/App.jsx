@@ -30,15 +30,22 @@ if (!import.meta.env.VITE_ESCROW_ADDRESS ||
 }
 
 // CON-02 Fix: Env değişkenleri eksikse kullanıcıya anlamlı uyarı göster
+// UX Güncelleme: Devasa tam ekran banner yerine küçük, kapatılabilir şerit
 const EnvWarningBanner = () => {
-  if (ENV_ERRORS.length === 0) return null;
+  const [visible, setVisible] = React.useState(true);
+  if (ENV_ERRORS.length === 0 || !visible) return null;
   return (
-    <div className="fixed top-0 left-0 right-0 z-50 bg-red-900 text-white p-4 text-center">
-      <p className="font-bold text-sm">⚠ Yapılandırma Hatası</p>
-      {ENV_ERRORS.map((err, i) => (
-        <p key={i} className="text-xs mt-1 text-red-200">{err}</p>
-      ))}
-      <p className="text-xs mt-2 text-red-300">Yönetici: .env dosyasını kontrol edin.</p>
+    <div className="fixed top-0 left-0 right-0 z-50 bg-red-950/95 border-b border-red-800/60 backdrop-blur-sm flex items-center justify-between px-4 py-1.5 shadow-lg">
+      <span className="text-red-400 text-[11px] font-mono flex items-center gap-2">
+        <span className="text-red-500">⚠</span>
+        {ENV_ERRORS.join(' · ')}
+      </span>
+      {/* Kapatma butonu — sadece uyarıyı gizler, sistemi değiştirmez */}
+      <button
+        onClick={() => setVisible(false)}
+        className="ml-4 text-red-500 hover:text-white transition text-sm leading-none shrink-0"
+        aria-label="Kapat"
+      >✕</button>
     </div>
   );
 };
@@ -52,7 +59,11 @@ function App() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [showWalletModal, setShowWalletModal] = useState(false); // Multi-wallet Seçim Modalı
-  
+  const [sidebarOpen, setSidebarOpen] = useState(false); // YENİ: Dinamik sidebar açık/kapalı (5sn otomatik kapanır)
+
+  // Sidebar 5sn otomatik kapanma zamanlayıcısı referansı
+  const sidebarTimerRef = React.useRef(null);
+
   // --- MİMARİ TEST STATE'LERİ ---
   const [tradeState, setTradeState] = useState('LOCKED');
   const [userRole, setUserRole] = useState('taker');
@@ -366,6 +377,22 @@ function App() {
           amount: `${t.financials?.crypto_amount || 0} ${t.financials?.crypto_asset || 'USDT'}`,
           action: t.status === 'PAID' ? (lang === 'TR' ? 'Onay Bekliyor' : 'Pending Approval') : (lang === 'TR' ? 'İşlemde' : 'In Progress')
         })));
+
+        // R-02 Fix: activeTrade'i her polling döngüsünde activeEscrows'daki eşleşen kayıttan güncelle.
+        // Önceki hata: activeTrade ayrı state'te kalıyordu — paidAt/challengedAt asla güncellenmiyordu,
+        // tüm zamanlayıcılar her zaman null döndürüyordu (timer daima 00:00:00).
+        setActiveTrade(prev => {
+          if (!prev) return prev;
+          const updated = data.trades.find(t => t.onchain_escrow_id === prev.onchainId);
+          if (!updated) return prev;
+          return {
+            ...prev,
+            state:        updated.status,
+            paidAt:       updated.timers?.paid_at       ?? prev.paidAt,
+            pingedAt:     updated.timers?.pinged_at     ?? prev.pingedAt,
+            challengedAt: updated.timers?.challenged_at ?? prev.challengedAt,
+          };
+        });
       }
     } catch (err) {
       console.error("Trades fetch error:", err);
@@ -389,8 +416,10 @@ function App() {
 
     const fetchMyPII = async () => {
       try {
+        // R-03 Not: /api/pii/my GET endpoint'i backend'de yok — form boş başlar, kullanıcı doldurur.
+        // Gelecekte GET /api/auth/profile eklendiğinde burası güncellenecek.
         const res = await authenticatedFetch(`${API_URL}/api/pii/my`);
-        if (!res.ok) return;
+        if (!res.ok) return; // 404 bekleniyor — sessizce atla
         const data = await res.json();
         if (data.pii) {
           setPiiBankOwner(data.pii.bankOwner || '');
@@ -452,11 +481,37 @@ function App() {
   };
 
   // ==========================================
+  // R-01 Fix: useCountdown çağrıları renderTradeRoom'dan App gövdesine taşındı.
+  // React kuralı: Hook'lar yalnızca component'in en üst seviyesinde çağrılabilir.
+  // renderTradeRoom normal bir arrow function olduğundan hook çağrısı "Invalid hook call" hatasına yol açıyordu.
+  // ==========================================
+  const gracePeriodEndDate = activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000) : null;
+  const gracePeriodTimer = useCountdown(gracePeriodEndDate);
+
+  const challengeUnlockDate = activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 1 * 3600 * 1000) : null;
+  const challengeCountdown = useCountdown(challengeUnlockDate);
+  // DEV modunda test için cooldownPassed state'i ile challenge kilidi açılabilir
+  const canChallenge = import.meta.env.DEV ? (cooldownPassed || challengeCountdown.isFinished) : challengeCountdown.isFinished;
+
+  const bleedingEndDate = activeTrade?.challengedAt ? new Date(new Date(activeTrade.challengedAt).getTime() + 240 * 3600 * 1000) : null;
+  const bleedingTimer = useCountdown(bleedingEndDate);
+
+  const principalProtectionEndDate = activeTrade?.challengedAt ? new Date(new Date(activeTrade.challengedAt).getTime() + (48 + 96) * 3600 * 1000) : null;
+  const principalProtectionTimer = useCountdown(principalProtectionEndDate);
+
+  // ==========================================
   // --- 3. YARDIMCI FONKSİYONLAR ---
   // ==========================================
   const showToast = (message, type = 'success') => {
     setToast({ id: Date.now(), message, type }); // Benzersiz ID eklemek daha robust
     setTimeout(() => setToast(null), 4000);
+  };
+
+  // YENİ: Sidebar 5sn otomatik kapanma — hover ile timer sıfırlanır
+  const openSidebar = () => {
+    setSidebarOpen(true);
+    if (sidebarTimerRef.current) clearTimeout(sidebarTimerRef.current);
+    sidebarTimerRef.current = setTimeout(() => setSidebarOpen(false), 5000);
   };
 
   // FIX-06: null/undefined adres için '—' döndür (önceki: boş string)
@@ -895,8 +950,9 @@ function App() {
 
     try {
       setIsContractLoading(true);
-      // [H-05 Fix]: Doğru endpoint /api/pii/my (PUT) — /api/pii 404 dönerdi.
-      const res = await authenticatedFetch(`${API_URL}/api/pii/my`, {
+      // R-03 Fix: Doğru endpoint /api/auth/profile — /api/pii/my backend'de hiç yok (404).
+      // Backend routes/auth.js → PUT /api/auth/profile ✓ mevcut ve aktif.
+      const res = await authenticatedFetch(`${API_URL}/api/auth/profile`, {
         method: 'PUT',
         body: JSON.stringify({
           bankOwner: piiBankOwner,
@@ -1429,8 +1485,10 @@ function App() {
         <div className="w-8 h-8 rounded bg-gradient-to-br from-white to-slate-400 flex items-center justify-center font-bold text-black mb-4 cursor-pointer" onClick={() => setCurrentView('dashboard')}>
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="square" strokeLinejoin="miter" strokeWidth="3" d="M4 4h4v4H4zm12 0h4v4h-4zM4 16h4v4H4zm12 0h4v4h-4zM10 10h4v4h-4z" /></svg>
         </div>
-        
+
         {/* Nav Icons */}
+        {/* YENİ: Sidebar tetikleyici — tıklayınca 5sn otomatik kapanan sidebar açılır */}
+        <button onClick={openSidebar} title={lang === 'TR' ? 'Filtreleri Göster' : 'Show Filters'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${sidebarOpen ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>☰</button>
         <button onClick={() => setCurrentView('dashboard')} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'dashboard' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🏠</button>
         <button onClick={() => setCurrentView('dashboard')} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'market' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🛒</button>
         <button onClick={() => setCurrentView('tradeRoom')} className={`w-10 h-10 flex items-center justify-center rounded-xl transition relative ${currentView === 'tradeRoom' ? 'bg-orange-600/20 text-orange-500' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>
@@ -1450,8 +1508,15 @@ function App() {
     </div>
   );
 
+  // YENİ: Dinamik sidebar — 5 saniye sonra otomatik kapanır, hover ile timer sıfırlanır
   const renderContextSidebar = () => (
-    <div className="w-[260px] bg-[#0c0c0e] border-r border-[#1a1a1a] p-5 flex flex-col z-40 shrink-0">
+    <div
+      className={`bg-[#0c0c0e] border-r border-[#1a1a1a] flex flex-col z-40 shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${sidebarOpen ? 'w-[260px] p-5 opacity-100' : 'w-0 p-0 opacity-0'}`}
+      onMouseEnter={openSidebar}
+      onMouseLeave={() => {
+        // Mouse ayrıldıktan 5sn sonra kapat (zaten açık timer devam eder)
+      }}
+    >
       <div className="relative mb-6">
         <span className="absolute left-3 top-2.5 text-slate-500 text-sm">🔍</span>
         <input type="number" value={searchAmount} onChange={e => setSearchAmount(e.target.value)} placeholder={lang === 'TR' ? 'Tutar Ara...' : 'Search...'} className="w-full bg-[#151518] text-white pl-9 pr-3 py-2.5 rounded-xl border border-[#2a2a2e] outline-none focus:border-emerald-500/50 text-sm transition" />
@@ -1609,19 +1674,10 @@ function App() {
   );
   const renderTradeRoom = () => {
     const isChallenged = tradeState === 'CHALLENGED';
-    
-    // YENİ: Gerçek zamanlı zamanlayıcılar için hook kullanımı (Mevcut mantık korundu)
-    const gracePeriodEndDate = activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000) : null;
-    const gracePeriodTimer = useCountdown(gracePeriodEndDate);
 
-    const challengeUnlockDate = activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 1 * 3600 * 1000) : null;
-    const challengeCountdown = useCountdown(challengeUnlockDate);
-    const canChallenge = import.meta.env.DEV ? (cooldownPassed || challengeCountdown.isFinished) : challengeCountdown.isFinished;
-
-    const bleedingEndDate = activeTrade?.challengedAt ? new Date(new Date(activeTrade.challengedAt).getTime() + 240 * 3600 * 1000) : null;
-    const bleedingTimer = useCountdown(bleedingEndDate);
-    const principalProtectionEndDate = activeTrade?.challengedAt ? new Date(new Date(activeTrade.challengedAt).getTime() + (48 + 96) * 3600 * 1000) : null;
-    const principalProtectionTimer = useCountdown(principalProtectionEndDate);
+    // R-01 Fix: Zamanlayıcı değişkenleri artık App gövdesinde tanımlanıyor (hook kuralı).
+    // gracePeriodTimer, challengeCountdown, canChallenge, bleedingTimer, principalProtectionTimer
+    // component scope'undan erişilebilir — burada yeniden tanımlanmıyor.
 
     const isTaker = userRole === 'taker';
     const isMaker = userRole === 'maker';
