@@ -1,44 +1,48 @@
 "use strict";
 
 /**
- * usePII — Güvenli IBAN Fetch Hook
+ * usePII — Güvenli IBAN + Telegram Fetch Hook
  *
- * H-03 Düzeltmesi:
+ * Güvenlik Özellikleri:
  *   - IBAN asla React state'te kalıcı olarak saklanmaz
- *   - 2-adımlı backend token akışını kullanır
- *   - Trade room unmount olduğunda IBAN otomatik temizlenir
+ *   - Trade room unmount olduğunda IBAN + Telegram otomatik temizlenir
  *   - Her gösterimde yeniden fetch yapılır (cache yok)
+ *   - Kısa ömürlü PII token ile 2 adımlı erişim
  *
- * AUDIT FIX F-01: authToken parametresi kaldırıldı.
- * ÖNCEKİ: Adım 1'de Authorization: Bearer {authToken} header'ı gönderiliyordu.
- *   Sorun: authToken React state'te saklanıyordu → XSS ile çalınabilirdi.
- * ŞİMDİ: Adım 1 (request-token) credentials:'include' ile httpOnly cookie kullanır.
- *   Adım 2 (fetch PII) hâlâ Bearer piiToken kullanır (trade-scoped, kısa ömürlü).
- *   PII token cookie'de SAKLANMAMALI — trade-scoped ve her seferinde yeniden alınır.
+ * Auth Stratejisi:
+ *   - authToken (JWT Bearer) mevcutsa → Authorization header olarak gönderilir
+ *   - authToken yoksa → credentials:'include' ile httpOnly cookie denenir
+ *   Bu iki mod, mevcut App.jsx JWT mimarisi ile uyumludur.
  *
  * Kullanım:
- *   const { pii, loading, error, fetchPII, clearPII } = usePII(tradeId);
+ *   const { pii, loading, error, fetchPII, clearPII } = usePII(tradeId, authToken);
  *   <button onClick={fetchPII}>IBAN'ı Göster</button>
  *   {pii && <p>{pii.iban}</p>}
+ *   {pii?.telegram && <a href={`https://t.me/${pii.telegram}`}>Telegram</a>}
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const API_BASE = import.meta.env.VITE_API_URL || (
+  import.meta.env.DEV ? 'http://localhost:4000' : ''
+);
 
-// AUDIT FIX F-01: authToken parametresi kaldırıldı — cookie otomatik gönderilir
-export function usePII(tradeId) {
-  const [pii, setPii]       = useState(null);   // { bankOwner, iban, telegram }
+/**
+ * @param {string}      tradeId    Backend trade ID (MongoDB _id veya onchain_escrow_id)
+ * @param {string|null} authToken  JWT Bearer token (App.jsx'ten geçirilir)
+ */
+export function usePII(tradeId, authToken = null) {
+  const [pii, setPii]         = useState(null);   // { bankOwner, iban, telegram }
   const [loading, setLoading] = useState(false);
-  const [error, setError]   = useState(null);
+  const [error, setError]     = useState(null);
   const mountedRef = useRef(true);
 
-  // Trade room'dan çıkınca otomatik temizle (H-03 core fix)
+  // Trade room'dan çıkınca veya tradeId değişince otomatik temizle
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      setPii(null);   // unmount → IBAN bellekten sil
+      setPii(null);   // unmount → IBAN + Telegram bellekten sil
     };
   }, [tradeId]);
 
@@ -52,38 +56,36 @@ export function usePII(tradeId) {
     setError(null);
 
     try {
-      // ADIM 1: httpOnly cookie ile kısa ömürlü PII token al
-      // AUDIT FIX F-01: Authorization header yerine credentials:'include' — cookie otomatik gönderilir
+      // ADIM 1: Kısa ömürlü PII erişim token'ı al
+      // Auth: JWT Bearer mevcut → header; değilse → httpOnly cookie fallback
+      const step1Headers = { 'Content-Type': 'application/json' };
+      if (authToken) step1Headers['Authorization'] = `Bearer ${authToken}`;
+
       const tokenRes = await fetch(`${API_BASE}/api/pii/request-token/${tradeId}`, {
         method: 'POST',
-        credentials: 'include', // AUDIT FIX F-01: httpOnly cookie
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        credentials: authToken ? 'same-origin' : 'include',
+        headers: step1Headers,
       });
 
       if (!tokenRes.ok) {
         const body = await tokenRes.json().catch(() => ({}));
-        throw new Error(body.error || `Token alınamadı (${tokenRes.status})`);
+        throw new Error(body.error || `PII erişimi reddedildi (${tokenRes.status})`);
       }
 
       const { piiToken } = await tokenRes.json();
 
-      // ADIM 2: PII token ile şifreli IBAN'ı çöz
-      // NOT: Bu adımda hâlâ Bearer token kullanılır — PII token trade-scoped ve kısa ömürlü.
-      // Cookie'de saklanması uygun değil çünkü her trade için farklı token gerekir.
+      // ADIM 2: Kısa ömürlü PII token ile şifreli veriyi çöz
       const piiRes = await fetch(`${API_BASE}/api/pii/${tradeId}`, {
         headers: { 'Authorization': `Bearer ${piiToken}` },
       });
 
       if (!piiRes.ok) {
         const body = await piiRes.json().catch(() => ({}));
-        throw new Error(body.error || `PII alınamadı (${piiRes.status})`);
+        throw new Error(body.error || `PII verisi alınamadı (${piiRes.status})`);
       }
 
       const data = await piiRes.json();
 
-      // Sadece component hâlâ mount'taysa state'e yaz
       if (mountedRef.current) {
         setPii({
           bankOwner: data.bankOwner || '—',
@@ -100,9 +102,8 @@ export function usePII(tradeId) {
         setLoading(false);
       }
     }
-  }, [tradeId]); // AUDIT FIX F-01: authToken dependency kaldırıldı
+  }, [tradeId, authToken]);
 
-  // Manuel temizle (örn. işlem tamamlandığında)
   const clearPII = useCallback(() => {
     setPii(null);
     setError(null);
