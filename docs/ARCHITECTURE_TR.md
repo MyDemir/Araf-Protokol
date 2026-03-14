@@ -1,6 +1,6 @@
 # 🌀 Araf Protokolü — Kanonik Mimari & Teknik Referans
 
-> **Versiyon:** 2.0 | **Ağ:** Base (Katman 2) | **Durum:** Mainnet Hazır | **Son Güncelleme:** Mart 2026
+> **Versiyon:** 2.1 | **Ağ:** Base (Katman 2) | **Durum:** Mainnet Hazır | **Son Güncelleme:** Mart 2026
 
 ---
 
@@ -15,6 +15,7 @@
 7. [Uyuşmazlık Sistemi — Bleeding Escrow](#7-uyuşmazlık-sistemi--bleeding-escrow)
 8. [İtibar ve Ceza Sistemi](#8-itibar-ve-ceza-sistemi)
 9. [Güvenlik Mimarisi](#9-güvenlik-mimarisi)
+   - 9.7 [Frontend Güvenlik Katmanı (F-01 – F-05)](#97-frontend-güvenlik-katmanı-f-01--f-05)
 10. [Veri Modelleri (MongoDB)](#10-veri-modelleri-mongodb)
 11. [Hazine Modeli](#11-hazine-modeli)
 12. [Saldırı Vektörleri ve Bilinen Sınırlamalar](#12-saldırı-vektörleri-ve-bilinen-sınırlamalar)
@@ -323,8 +324,10 @@ Taker, `pingMaker` fonksiyonunu çağırdıktan 24 saat sonra hala yanıt alamam
 | 1 | Frontend | `GET /api/auth/nonce` | Nonce Redis'te 5 dakika TTL ile saklanır |
 | 2 | Kullanıcı | Cüzdanda EIP-4361 SIWE mesajı imzalar | `siwe.SiweMessage` sınıfı ile standart format |
 | 3 | Frontend | `POST /api/auth/verify` — mesaj + imza | Nonce atomik olarak tüketilir (`getDel` — tekrar korumalı) |
-| 4 | Backend | SIWE imzasını doğrular, JWT yayınlar (HS256, 15 dk) | JWT'de `type: "auth"` talebi var, PII içermez |
-| 5 | Frontend | Tüm korumalı API çağrıları için Bearer token olarak JWT | Her rota `requireAuth` middleware'ini çağırır |
+| 4 | Backend | SIWE imzasını doğrular, JWT yayınlar (HS256, 15 dk) | JWT `Set-Cookie: HttpOnly; Secure; SameSite=Strict` olarak set edilir — yanıt gövdesinde döndürülmez |
+| 5 | Frontend | Tüm korumalı API çağrıları `credentials: 'include'` ile | Bearer header kullanılmaz — JWT httpOnly cookie olarak otomatik gönderilir; her rota `requireAuth` middleware'ini çağırır |
+
+> **F-01 Güvenlik Güncellemesi (Mart 2026):** JWT artık React state veya `localStorage`'da tutulmaz. Tarayıcının httpOnly cookie mekanizması kullanılarak XSS saldırılarına karşı token çalınması riski ortadan kaldırılmıştır. Frontend yalnızca `isAuthenticated: boolean` flag'ini tutar. Token yenileme işlemi arka planda `credentials: 'include'` ile `/api/auth/refresh` endpoint'i üzerinden otomatik yürütülür.
 
 ### 9.2 PII Şifreleme (Zarf Şifreleme)
 
@@ -389,6 +392,73 @@ IBAN ve banka sahibi adı yalnızca MongoDB'de, AES-256-GCM ile şifreli olarak 
 - **Ölü Mektup Kuyruğu (DLQ):** Tüm denemelerde başarısız olan olaylar Redis DLQ'ya yazılır
 - **DLQ Monitörü:** Her 60 saniyede çalışır — DLQ ≥ 5 girdide uyarı verir
 - **Yeniden Bağlanma:** RPC sağlayıcı arızasında otomatik yeniden bağlanır
+
+### 9.7 Frontend Güvenlik Katmanı (F-01 – F-05)
+
+Mart 2026 güvenlik denetimi sonucu `frontend/src/App.jsx` dosyasına uygulanan beş kritik düzeltme. Bu değişiklikler mevcut protokol mimarisini bozmaz; yalnızca istemci katmanındaki güvenlik ve sağlamlık açıklarını kapatır.
+
+#### F-01 — JWT'yi httpOnly Cookie'ye Taşıma (XSS Koruması)
+
+| Önceki Durum | Sonraki Durum |
+|---|---|
+| `jwtToken` React state'inde tutuluyordu | `isAuthenticated: boolean` flag'i tutulur; JWT içerik bilgisi tutulmaz |
+| `Authorization: Bearer <token>` header'ı manuel eklendi | `credentials: 'include'` — tarayıcı cookie'yi otomatik gönderir |
+| XSS payload ile `window.jwtToken` okunabilirdi | httpOnly cookie JavaScript erişimine kapalıdır |
+| `authToken` prop'u `PIIDisplay` bileşenine iletiliyordu | `PIIDisplay` kendi oturumunu cookie üzerinden yönetir |
+
+**Etkilenen Akışlar:**
+- `/api/auth/verify` — sunucu artık `Set-Cookie: HttpOnly` ile yanıt döner
+- `/api/auth/refresh` — `credentials: 'include'` ile çağrılır; yeni token cookie olarak set edilir
+- Tüm `authenticatedFetch` çağrıları — Bearer header kaldırıldı
+
+#### F-02 — Debug/UX Panelini Production'dan Gizleme
+
+```jsx
+{import.meta.env.DEV && (
+  <div className="ux-panel">...</div>
+)}
+```
+
+Taker/Maker rol simülasyonu ve ban toggle gibi test kontrolleri üretim ortamında artık render edilmez. Vite build sistemi `import.meta.env.DEV` false olan production bundle'larında bu bloku tamamen ağaçtan siler (tree-shake).
+
+#### F-03 — Eş Zamanlı 401 Yarış Durumu için Refresh Mutex
+
+```
+Senaryo (önceki durum):
+  istek-A → 401 → refresh başlatır
+  istek-B → 401 → paralel refresh başlatır → çift token rotasyonu → race condition
+
+Senaryo (F-03 sonrası):
+  istek-A → 401 → refreshPromiseRef.current = fetch('/refresh')
+  istek-B → 401 → refreshPromiseRef.current mevcut → aynı Promise'i bekler
+  Her ikisi de tek refresh tamamlandıktan sonra orijinal isteği tekrar eder
+```
+
+`refreshPromiseRef` bir `React.useRef` referansıdır; `authenticatedFetch` kapsamı boyunca kalıcıdır. `.finally()` bloğu ile refresh tamamlandığında `null`'a döndürülür.
+
+#### F-04 — BigInt Null/Zero Guard (Yanlış Trade Koruması)
+
+`BigInt(null)` JavaScript'te `0n` döndürür; bu değer yanlışlıkla `tradeId = 0` olan bir işleme karşı kontrat çağrısı gönderilmesine yol açabilir.
+
+```jsx
+// Tüm on-chain çağrıları öncesinde zorunlu kontrol:
+if (!onchainId || onchainId === 0) throw new Error('Invalid onchainId');
+await contractFn(BigInt(onchainId));
+```
+
+**Etkilenen fonksiyonlar:** `cancelOpenEscrow`, `releaseFunds`, `pingTakerForChallenge`, `challengeTrade`, `pingMaker`, `autoRelease` (6 lokasyon).
+
+#### F-05 — Maker Modal'da İtibar Yükleme Göstergesi
+
+`userReputation === null` durumunda (on-chain veri henüz yüklenmediyse) tier seçici skeleton/loading banner ile gösterilir. Kullanıcı verisi gelmeden önce yanlış tier'da ilan açmasını engeller.
+
+```jsx
+{isConnected && userReputation === null && (
+  <LoadingBanner text="İtibar verisi yükleniyor, tier seçenekleri güncelleniyor..." />
+)}
+```
+
+---
 
 ### 9.6 On-Chain Güvenlik Fonksiyonları
 
@@ -483,6 +553,10 @@ IBAN ve banka sahibi adı yalnızca MongoDB'de, AES-256-GCM ile şifreli olarak 
 | Backend anahtar hırsızlığı | Kritik | Sıfır özel anahtar mimarisi — yalnızca relayer | ✅ Giderildi |
 | JWT ele geçirme | Yüksek | 15 dakika geçerlilik + işlem kapsamlı PII tokenları | ✅ Giderildi |
 | PII veri sızıntısı | Kritik | AES-256-GCM + HKDF + hız sınırı (3 / 10 dk) | ✅ Giderildi |
+| **XSS ile JWT çalınması** | **Kritik** | **F-01: JWT artık httpOnly cookie — JS erişimine kapalı** | **✅ Giderildi** |
+| **Eş zamanlı 401 yarış durumu** | Orta | **F-03: `refreshPromiseRef` mutex — tek refresh promise paylaşımı** | **✅ Giderildi** |
+| **BigInt(null) sessiz taşması** | Yüksek | **F-04: Tüm on-chain çağrılarında explicit null ve sıfır kontrolü** | **✅ Giderildi** |
+| **Debug UI'nin production'da görünmesi** | Düşük | **F-02: `import.meta.env.DEV` guard — production bundle'da tamamen tree-shake** | **✅ Giderildi** |
 
 ---
 

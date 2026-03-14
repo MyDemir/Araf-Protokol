@@ -1,6 +1,6 @@
 # 🌀 Araf Protocol — Canonical Architecture & Technical Reference
 
-> **Version:** 2.0 | **Network:** Base (Layer 2) | **Status:** Mainnet Ready | **Last Updated:** March 2026
+> **Version:** 2.1 | **Network:** Base (Layer 2) | **Status:** Mainnet Ready | **Last Updated:** March 2026
 
 ---
 
@@ -15,6 +15,7 @@
 7. [Dispute System — Bleeding Escrow](#7-dispute-system--bleeding-escrow)
 8. [Reputation and Penalty System](#8-reputation-and-penalty-system)
 9. [Security Architecture](#9-security-architecture)
+   - 9.7 [Frontend Security Layer (F-01 – F-05)](#97-frontend-security-layer-f-01--f-05)
 10. [Data Models (MongoDB)](#10-data-models-mongodb)
 11. [Treasury Model](#11-treasury-model)
 12. [Attack Vectors and Known Limitations](#12-attack-vectors-and-known-limitations)
@@ -323,8 +324,10 @@ If the Taker receives no response 24 hours after calling the `pingMaker` functio
 | 1 | Frontend | `GET /api/auth/nonce` | Nonce is stored in Redis with a 5-minute TTL |
 | 2 | User | Signs EIP-4361 SIWE message in wallet | Standard format via `siwe.SiweMessage` class |
 | 3 | Frontend | `POST /api/auth/verify` — message + signature | Nonce is atomically consumed (`getDel` — replay protection) |
-| 4 | Backend | Verifies SIWE signature, issues JWT (HS256, 15 min) | JWT has a `type: "auth"` claim, contains no PII |
-| 5 | Frontend | Uses JWT as Bearer token for all protected API calls | Each route calls `requireAuth` middleware |
+| 4 | Backend | Verifies SIWE signature, issues JWT (HS256, 15 min) | JWT is set via `Set-Cookie: HttpOnly; Secure; SameSite=Strict` — never returned in response body |
+| 5 | Frontend | All protected API calls use `credentials: 'include'` | No Bearer header — JWT is sent automatically as an httpOnly cookie; each route calls `requireAuth` middleware |
+
+> **F-01 Security Update (March 2026):** JWT is no longer stored in React state or `localStorage`. By leveraging the browser's httpOnly cookie mechanism, the risk of token theft via XSS attacks is eliminated. The frontend only holds an `isAuthenticated: boolean` flag. Token refresh is handled transparently in the background via `/api/auth/refresh` with `credentials: 'include'`.
 
 ### 9.2 Mutual Cancel Flow (Gasless Agreement with EIP-712)
 
@@ -376,6 +379,73 @@ IBAN and bank owner names are only stored encrypted in MongoDB using AES-256-GCM
 - **Dead Letter Queue (DLQ):** Events that fail all retries are written to a Redis DLQ.
 - **DLQ Monitor:** Runs every 60 seconds — alerts if DLQ has ≥ 5 entries.
 - **Reconnect:** Automatically reconnects on RPC provider failure.
+
+### 9.7 Frontend Security Layer (F-01 – F-05)
+
+Five critical fixes applied to `frontend/src/App.jsx` as a result of the March 2026 security audit. These changes do not alter the underlying protocol architecture; they close security and robustness gaps at the client layer only.
+
+#### F-01 — Move JWT to httpOnly Cookie (XSS Protection)
+
+| Before | After |
+|---|---|
+| `jwtToken` was held in React state | Only `isAuthenticated: boolean` is stored; no token content in client memory |
+| `Authorization: Bearer <token>` header was manually added | `credentials: 'include'` — browser sends the cookie automatically |
+| XSS payload could read `window.jwtToken` | httpOnly cookie is inaccessible to JavaScript |
+| `authToken` prop was passed down to `PIIDisplay` | `PIIDisplay` manages its own session via the cookie |
+
+**Affected Flows:**
+- `/api/auth/verify` — server now responds with `Set-Cookie: HttpOnly`
+- `/api/auth/refresh` — called with `credentials: 'include'`; new token is set as a cookie
+- All `authenticatedFetch` calls — Bearer header removed
+
+#### F-02 — Hide Debug/UX Panel in Production
+
+```jsx
+{import.meta.env.DEV && (
+  <div className="ux-panel">...</div>
+)}
+```
+
+Test controls such as Taker/Maker role simulation and ban toggle are no longer rendered in the production environment. The Vite build system fully tree-shakes this block in production bundles where `import.meta.env.DEV` is `false`.
+
+#### F-03 — Refresh Mutex for Concurrent 401 Race Condition
+
+```
+Scenario (before):
+  request-A → 401 → starts refresh
+  request-B → 401 → starts parallel refresh → double token rotation → race condition
+
+Scenario (after F-03):
+  request-A → 401 → refreshPromiseRef.current = fetch('/refresh')
+  request-B → 401 → refreshPromiseRef.current exists → awaits the same Promise
+  Both retry their original request after the single refresh completes
+```
+
+`refreshPromiseRef` is a `React.useRef` reference; it persists for the lifetime of `authenticatedFetch`. A `.finally()` block resets it to `null` when the refresh completes.
+
+#### F-04 — BigInt Null/Zero Guard (Wrong Trade Protection)
+
+`BigInt(null)` returns `0n` in JavaScript; this value can silently cause a contract call to be sent against `tradeId = 0`, potentially targeting the wrong trade.
+
+```jsx
+// Mandatory check before all on-chain calls:
+if (!onchainId || onchainId === 0) throw new Error('Invalid onchainId');
+await contractFn(BigInt(onchainId));
+```
+
+**Affected functions:** `cancelOpenEscrow`, `releaseFunds`, `pingTakerForChallenge`, `challengeTrade`, `pingMaker`, `autoRelease` (6 locations).
+
+#### F-05 — Reputation Loading State in Maker Modal
+
+When `userReputation === null` (on-chain data not yet loaded), the tier selector is shown with a skeleton/loading banner. This prevents a user from accidentally creating a listing at the wrong tier before their on-chain data has arrived.
+
+```jsx
+{isConnected && userReputation === null && (
+  <LoadingBanner text="Loading reputation data, tier options updating..." />
+)}
+```
+
+---
 
 ### 9.6 On-Chain Security Functions
 
@@ -470,6 +540,10 @@ IBAN and bank owner names are only stored encrypted in MongoDB using AES-256-GCM
 | Backend key theft | Critical | Zero private key architecture — relayer only | ✅ Mitigated |
 | JWT hijacking | High | 15-minute validity + trade-scoped PII tokens | ✅ Mitigated |
 | PII data leak | Critical | AES-256-GCM + HKDF + rate limit (3 / 10 min) | ✅ Mitigated |
+| **XSS JWT theft** | **Critical** | **F-01: JWT stored as httpOnly cookie — inaccessible to JavaScript** | **✅ Mitigated** |
+| **Concurrent 401 race condition** | Medium | **F-03: `refreshPromiseRef` mutex — single shared refresh Promise** | **✅ Mitigated** |
+| **BigInt(null) silent overflow** | High | **F-04: Explicit null and zero guard before all on-chain calls** | **✅ Mitigated** |
+| **Debug UI exposed in production** | Low | **F-02: `import.meta.env.DEV` guard — fully tree-shaken in production build** | **✅ Mitigated** |
 
 ---
 
