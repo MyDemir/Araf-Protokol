@@ -1,3 +1,4 @@
+İşte güncellenmiş App.jsx dosyasının tamamı:
 import React, { useState, useEffect, useCallback } from 'react'; // AFS-003 Fix: useCallback eklendi
 // --- WEB3 ENTEGRASYON KÜTÜPHANELERİ ---
 // H-01 Fix: useChainId eklendi — SIWE mesajındaki Chain ID artık hardcoded değil
@@ -93,8 +94,11 @@ function App() {
     getReputation, // YENİ: İtibar verisini çekmek için
   } = useArafContract();
   
-  const [jwtToken, setJwtToken] = useState(null);
+  // F-01 Fix: JWT artık React state'te saklanmıyor — httpOnly cookie üzerinden taşınıyor.
+  // XSS saldırılarında token çalınmasını önler. isAuthenticated sadece oturum varlığını izler.
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   // CON-04 Fix: Refresh token state — JWT expire olduğunda otomatik yenileme için
+  // F-01 Fix: Refresh token da httpOnly cookie'de — burada saklanmıyor, sadece flag tutuluyor.
   const [refreshTokenState, setRefreshTokenState] = useState(null);
 
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -166,46 +170,49 @@ function App() {
   /**
    * CON-04 Fix: API çağrıları için wrapper — 401 geldiğinde otomatik token yeniler.
    */
+  // F-03 Fix: Eş zamanlı 401 yarış durumunu önlemek için refresh mutex.
+  // Birden fazla istek aynı anda 401 alırsa hepsi aynı refresh promise'i paylaşır.
+  const refreshPromiseRef = React.useRef(null);
+
   const authenticatedFetch = useCallback(async (url, options = {}) => {
+    // F-01 Fix: Bearer header kaldırıldı — JWT httpOnly cookie olarak otomatik gönderilir.
     const res = await fetch(url, {
       ...options,
+      credentials: 'include',
       headers: {
         ...options.headers,
-        'Authorization': `Bearer ${jwtToken}`,
         'Content-Type': 'application/json',
       },
     });
 
-    if (res.status !== 401 || !refreshTokenState) return res;
+    if (res.status !== 401) return res;
 
     // CON-04 Fix: JWT expired — refresh token ile yenile
+    // F-03 Fix: Mutex — tek bir refresh isteği uçuşta olabilir
     try {
-      const refreshRes = await fetch(`${API_URL}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          wallet: address?.toLowerCase(),
-          refreshToken: refreshTokenState,
-        }),
-      });
+      if (!refreshPromiseRef.current) {
+        refreshPromiseRef.current = fetch(`${API_URL}/api/auth/refresh`, {
+          method: 'POST',
+          credentials: 'include', // F-01 Fix: Refresh token httpOnly cookie'den okunur
+          headers: { 'Content-Type': 'application/json' },
+        }).finally(() => { refreshPromiseRef.current = null; });
+      }
+      const refreshRes = await refreshPromiseRef.current;
 
       if (!refreshRes.ok) {
         console.warn('[Auth] Refresh token expired — re-login required');
-        setJwtToken(null);
+        setIsAuthenticated(false);
         setRefreshTokenState(null);
         return res; // Orijinal 401 response'u dön
       }
 
-      const refreshData = await refreshRes.json();
-      setJwtToken(refreshData.token);
-      setRefreshTokenState(refreshData.refreshToken);
-
-      // Orijinal isteği yeni JWT ile tekrarla
+      // F-01 Fix: Yeni token cookie'ye yazıldı — state güncellemesi gerekmez
+      // Orijinal isteği httpOnly cookie ile tekrarla
       return fetch(url, {
         ...options,
+        credentials: 'include',
         headers: {
           ...options.headers,
-          'Authorization': `Bearer ${refreshData.token}`,
           'Content-Type': 'application/json',
         },
       });
@@ -213,7 +220,7 @@ function App() {
       console.error('[Auth] Refresh failed:', err);
       return res;
     }
-  }, [jwtToken, refreshTokenState, address]);
+  }, [isAuthenticated, address]);
 
   // ==========================================
   // AFS-015 Fix: fetchMyTrades useCallback ile üst seviyede tanımlandı.
@@ -223,7 +230,7 @@ function App() {
   // useEffect'lerinden güvenli şekilde çağrılabilir.
   // ==========================================
   const fetchMyTrades = useCallback(async () => {
-    if (!jwtToken || !isConnected) {
+    if (!isAuthenticated || !isConnected) {
       setActiveEscrows([]);
       return;
     }
@@ -254,7 +261,7 @@ function App() {
     } catch (err) {
       console.error("Trades fetch error:", err);
     }
-  }, [jwtToken, isConnected, address, lang, authenticatedFetch]);
+  }, [isAuthenticated, isConnected, address, lang, authenticatedFetch]);
 
   // 1. Pazar Yeri İlanlarını Çek (Public)
   // AFS-025 Fix: lang dependency kaldırıldı — lang sadece UI metinlerini etkiler, API çağrısı gereksizdi
@@ -344,27 +351,27 @@ function App() {
   // ÖNCEKİ: fetchMyTrades() — tanımsız referans, ReferenceError
   // ŞİMDİ: fetchMyTrades useCallback'ten geliyor, dependency array'de
   useEffect(() => {
-    if (currentView !== 'tradeRoom' || !jwtToken) return;
+    if (currentView !== 'tradeRoom' || !isAuthenticated) return;
     const interval = setInterval(fetchMyTrades, 15000); // 15 saniyede bir güncelle
     return () => clearInterval(interval);
-  }, [currentView, jwtToken, fetchMyTrades]);
+  }, [currentView, isAuthenticated, fetchMyTrades]);
 
   // YENİ: Profil modalı açıldığında mevcut PII verilerini çek ve formu doldur
   // AFS-016 Not: GET /api/pii/my endpoint'i backend'de henüz mevcut değil.
   // Şimdilik form boş başlar. Backend'e GET endpoint eklendikten sonra güncellenecek.
   useEffect(() => {
-    if (!showProfileModal || !jwtToken) return;
+    if (!showProfileModal || !isAuthenticated) return;
     if (profileTab === 'ayarlar') {
       setPiiBankOwner('');
       setPiiIban('');
       setPiiTelegram('');
     }
-  }, [showProfileModal, profileTab, jwtToken]);
+  }, [showProfileModal, profileTab, isAuthenticated]);
 
   // YENİ: Kullanıcının işlem geçmişini çek
   useEffect(() => {
     // Sadece geçmiş sekmesi aktifken ve JWT varken çalışsın
-    if (profileTab !== 'gecmis' || !jwtToken) return;
+    if (profileTab !== 'gecmis' || !isAuthenticated) return;
 
     const fetchHistory = async (page) => {
       try {
@@ -387,7 +394,7 @@ function App() {
     };
 
     fetchHistory(tradeHistoryPage);
-  }, [showProfileModal, profileTab, jwtToken, tradeHistoryPage, authenticatedFetch]);
+  }, [showProfileModal, profileTab, isAuthenticated, tradeHistoryPage, authenticatedFetch]);
 
   const filteredOrders = orders.filter(order => {
     const amountMatch = searchAmount === '' || (Number(searchAmount) >= order.min && Number(searchAmount) <= order.max);
@@ -441,16 +448,19 @@ function App() {
 
       const signature = await signMessageAsync({ message });
 
+      // F-01 Fix: credentials:'include' ile sunucu httpOnly cookie'yi set eder
       const verifyRes = await fetch(`${API_URL}/api/auth/verify`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message, signature }),
       });
 
       const data = await verifyRes.json();
 
-      if (data.token) {
-        setJwtToken(data.token);
+      // F-01 Fix: Token'ı state'e kaydetme — cookie'de saklı. Sadece auth flag'i set et.
+      if (data.success || data.token) {
+        setIsAuthenticated(true);
         setRefreshTokenState(data.refreshToken); // CON-04 Fix: Refresh token kaydet
         showToast(lang === 'TR' ? 'Sisteme başarıyla giriş yapıldı! 🚀' : 'Successfully signed in! 🚀', 'success');
       } else {
@@ -470,7 +480,7 @@ function App() {
 
   useEffect(() => {
     if (!isConnected) {
-      setJwtToken(null);
+      setIsAuthenticated(false); // F-01 Fix: jwtToken → isAuthenticated
       setRefreshTokenState(null);
     }
   }, [isConnected, address]); // Bağımlılık doğru
@@ -504,6 +514,8 @@ function App() {
       showToast(lang === 'TR' ? 'İlan iptal ediliyor, lütfen cüzdanınızdan onaylayın...' : 'Cancelling listing, please confirm in wallet...', 'info');
       
       // 1. Önce on-chain iptali gerçekleştir
+      // F-04 Fix: BigInt(null) = 0n — yanlış trade'e müdahale riskini önlemek için explicit guard
+      if (!order.onchainId || order.onchainId === 0) throw new Error('Invalid onchainId');
       await cancelOpenEscrow(BigInt(order.onchainId));
 
       // 3. Arayüzü güncelle
@@ -526,7 +538,7 @@ function App() {
   // FIX-01: `text` → `comment` (backend Joi şeması `comment` bekliyor)
   // FIX-04: JWT guard eklendi — auth olmadan feedback gönderilemez
   const submitFeedback = async () => {
-    if (!jwtToken) {
+    if (!isAuthenticated) {
       showToast(lang === 'TR' ? 'Geri bildirim göndermek için giriş yapmalısınız.' : 'Please sign in to send feedback.', 'error');
       return; // JWT yoksa çık
     }
@@ -554,7 +566,7 @@ function App() {
 
   const handleChargebackAck = async (checked) => {
     setChargebackAccepted(checked);
-    if (!checked || !activeTrade?.id || !jwtToken) return;
+    if (!checked || !activeTrade?.id || !isAuthenticated) return;
     try {
       // CON-04 Fix: fetch yerine authenticatedFetch kullanılıyor
       await authenticatedFetch(`${API_URL}/api/trades/${activeTrade.id}/chargeback-ack`, {
@@ -576,6 +588,8 @@ function App() {
     try {
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'İşlem cüzdanınıza gönderildi, onaylayın...' : 'Transaction sent to wallet, please confirm...', 'info');
+      // F-04 Fix: BigInt(null) = 0n riski — explicit null & zero guard
+      if (!activeTrade.onchainId || activeTrade.onchainId === 0) throw new Error('Invalid onchainId');
       await releaseFunds(BigInt(activeTrade.onchainId));
       setTradeState('RESOLVED');
       setCurrentView('dashboard');
@@ -606,6 +620,8 @@ function App() {
       try {
         setIsContractLoading(true);
         showToast(lang === 'TR' ? 'Alıcıya uyarı gönderiliyor...' : 'Pinging taker...', 'info');
+        // F-04 Fix: BigInt(null) = 0n riski — explicit null & zero guard
+        if (!activeTrade.onchainId || activeTrade.onchainId === 0) throw new Error('Invalid onchainId');
         await pingTakerForChallenge(BigInt(activeTrade.onchainId));
         showToast(lang === 'TR' ? 'Alıcı uyarıldı. İtiraz için 24 saat beklemeniz gerekiyor.' : 'Taker pinged. You must wait 24h to challenge.', 'success');
         // Arayüz polling ile güncellenecek
@@ -623,6 +639,8 @@ function App() {
     try {
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'İtiraz işlemi cüzdanınıza gönderildi...' : 'Challenge transaction sent to wallet...', 'info');
+      // F-04 Fix: BigInt(null) = 0n riski — explicit null & zero guard
+      if (!activeTrade.onchainId || activeTrade.onchainId === 0) throw new Error('Invalid onchainId');
       await challengeTrade(BigInt(activeTrade.onchainId));
       setTradeState('CHALLENGED');
       showToast(lang === 'TR' ? 'İtiraz başlatıldı. Bleeding Escrow aktif.' : 'Challenge opened. Bleeding Escrow active.', 'success');
@@ -643,6 +661,8 @@ function App() {
     try {
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'Uyarı işlemi cüzdanınıza gönderiliyor...' : 'Pinging maker, please confirm in wallet...', 'info');
+      // F-04 Fix: BigInt(null) = 0n riski — explicit null & zero guard
+      if (!tradeId || tradeId === 0) throw new Error('Invalid tradeId');
       await pingMaker(BigInt(tradeId));
       showToast(lang === 'TR' ? 'Satıcı uyarıldı. Yanıt için 24 saati var.' : 'Maker has been pinged. They have 24h to respond.', 'success');
     } catch (err) {
@@ -665,6 +685,8 @@ function App() {
     try {
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'Otomatik serbest bırakma işlemi cüzdanınıza gönderiliyor...' : 'Auto-release transaction sent to wallet...', 'info');
+      // F-04 Fix: BigInt(null) = 0n riski — explicit null & zero guard
+      if (!tradeId || tradeId === 0) throw new Error('Invalid tradeId');
       await autoRelease(BigInt(tradeId));
       setTradeState('RESOLVED');
       setCurrentView('dashboard');
@@ -687,7 +709,7 @@ function App() {
   // Backend'deki doğru endpoint: PUT /api/auth/profile (auth.js route'u)
   const handleUpdatePII = async (e) => {
     e.preventDefault();
-    if (!jwtToken) return;
+    if (!isAuthenticated) return;
     if (isContractLoading) return;
 
     try {
@@ -715,7 +737,7 @@ function App() {
   };
 
   const handleOpenMakerModal = () => {
-    if (!isConnected || !jwtToken) {
+    if (!isConnected || !isAuthenticated) {
       showToast(lang === 'TR' ? 'İlan açmak için önce cüzdanınızı bağlayıp imzalamalısınız.' : 'Please connect and sign in to create an ad.', 'error');
       return;
     }
@@ -855,6 +877,13 @@ function App() {
             <h2 className="text-xl font-bold text-white">{t.createAd}</h2>
             <button onClick={() => setShowMakerModal(false)} className="text-slate-400 hover:text-white text-2xl">&times;</button>
           </div>
+          {/* F-05 Fix: userReputation henüz yüklenmediyse tier selector'ı loading state'de göster */}
+          {isConnected && userReputation === null && (
+            <div className="mb-4 p-3 bg-slate-700/50 border border-slate-600 rounded-xl flex items-center space-x-2 text-sm text-slate-400 animate-pulse">
+              <svg className="animate-spin h-4 w-4 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              <span>{lang === 'TR' ? 'İtibar verisi yükleniyor, tier seçenekleri güncelleniyor...' : 'Loading reputation data, tier options updating...'}</span>
+            </div>
+          )}
           <div className="space-y-4">
             <div className="flex space-x-2">
               <div className="w-1/2">
@@ -1193,17 +1222,20 @@ function App() {
   // ==========================================
   const renderDashboard = () => (
     <main className="max-w-6xl mx-auto p-4 md:p-6 pb-24 relative">
-      <div className="mb-8 p-3 bg-slate-800 rounded-xl border border-purple-500/50 flex flex-wrap gap-4 items-center text-sm shadow-lg shadow-purple-900/20">
-        <span className="text-purple-400 font-bold tracking-widest uppercase text-xs">🛠️ UX Paneli:</span>
-        <div className="flex items-center space-x-2">
-          <button onClick={() => setUserRole('taker')} className={`px-3 py-1.5 rounded-lg transition ${userRole === 'taker' ? 'bg-purple-600 text-white' : 'bg-slate-700'}`}>Taker</button>
-          <button onClick={() => setUserRole('maker')} className={`px-3 py-1.5 rounded-lg transition ${userRole === 'maker' ? 'bg-purple-600 text-white' : 'bg-slate-700'}`}>Maker</button>
+      {/* F-02 Fix: Debug/UX paneli yalnızca geliştirme ortamında görünür — production'da gizlenir */}
+      {import.meta.env.DEV && (
+        <div className="mb-8 p-3 bg-slate-800 rounded-xl border border-purple-500/50 flex flex-wrap gap-4 items-center text-sm shadow-lg shadow-purple-900/20">
+          <span className="text-purple-400 font-bold tracking-widest uppercase text-xs">🛠️ UX Paneli:</span>
+          <div className="flex items-center space-x-2">
+            <button onClick={() => setUserRole('taker')} className={`px-3 py-1.5 rounded-lg transition ${userRole === 'taker' ? 'bg-purple-600 text-white' : 'bg-slate-700'}`}>Taker</button>
+            <button onClick={() => setUserRole('maker')} className={`px-3 py-1.5 rounded-lg transition ${userRole === 'maker' ? 'bg-purple-600 text-white' : 'bg-slate-700'}`}>Maker</button>
+          </div>
+          <div className="w-px h-6 bg-slate-600 hidden sm:block"></div>
+          <button onClick={() => setIsBanned(!isBanned)} className={`px-3 py-1.5 rounded-lg font-medium transition ${isBanned ? 'bg-red-600 text-white border border-red-500' : 'bg-slate-700 hover:bg-slate-600'}`}>
+            {isBanned ? '🔴 Ban Aktif' : '⚪ Ban Kapalı'}
+          </button>
         </div>
-        <div className="w-px h-6 bg-slate-600 hidden sm:block"></div>
-        <button onClick={() => setIsBanned(!isBanned)} className={`px-3 py-1.5 rounded-lg font-medium transition ${isBanned ? 'bg-red-600 text-white border border-red-500' : 'bg-slate-700 hover:bg-slate-600'}`}>
-          {isBanned ? '🔴 Ban Aktif' : '⚪ Ban Kapalı'}
-        </button>
-      </div>
+      )}
 
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 space-y-4 md:space-y-0">
         <div><h1 className="text-2xl md:text-3xl font-bold mb-1">{t.title}</h1><p className="text-sm text-slate-400">{t.subtitle}</p></div>
@@ -1227,8 +1259,8 @@ function App() {
               filteredOrders.map((order) => {
                 const effectiveUserTier = userReputation?.effectiveTier ?? 0;
                 const isMyOwnAd = address && order.makerFull?.toLowerCase() === address.toLowerCase();
-                const isTierLocked = isConnected && jwtToken && order.tier > effectiveUserTier;
-                const canTakeOrder = isConnected && jwtToken && !isMyOwnAd && !isTierLocked;
+                const isTierLocked = isConnected && isAuthenticated && order.tier > effectiveUserTier;
+                const canTakeOrder = isConnected && isAuthenticated && !isMyOwnAd && !isTierLocked;
 
                 return (
                 <tr key={order.id} className={`transition ${canTakeOrder ? 'hover:bg-slate-700/30' : 'opacity-50'}`}>
@@ -1328,7 +1360,8 @@ function App() {
                 <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 relative overflow-hidden">
                   <div className="absolute top-0 right-0 bg-blue-600 text-white text-[10px] font-bold px-2 py-1 rounded-bl-lg">End-to-End Encrypted</div>
                   <p className="text-slate-400 mb-2 uppercase text-[10px] tracking-widest font-bold">🛡️ {lang === 'TR' ? 'Güvenli PII Verisi' : 'Secure PII Data'}</p>
-                  <PIIDisplay tradeId={activeTrade?.id || 'TEST'} authToken={jwtToken} lang={lang} />
+                  {/* F-01 Fix: authToken prop kaldırıldı — PIIDisplay artık httpOnly cookie kullanıyor */}
+                  <PIIDisplay tradeId={activeTrade?.id || 'TEST'} lang={lang} />
                   <div className="mt-4 p-2 bg-slate-800 rounded-lg flex items-start space-x-2 border border-slate-600">
                     <span className="text-lg">🔒</span>
                     <p className="text-[10px] text-slate-300 leading-tight">Bu bilgiler blockchain'e kaydedilmez. Sadece bu işleme özel şifreli olarak iletilmiştir.</p>
@@ -1482,117 +1515,4 @@ function App() {
                   )}
                   {cancelStatus === 'proposed_by_other' && (
                     <div className="animate-pulse-slow">
-                      <p className="text-orange-400 font-bold text-sm mb-3">⚠️ {lang === 'TR' ? 'Karşı taraf iptal teklif etti.' : 'Opponent proposed cancellation.'}</p>
-                      <div className="grid grid-cols-2 gap-3">
-                        <button onClick={() => { setCancelStatus(null); setTradeState('LOCKED'); setCurrentView('dashboard'); showToast(lang === 'TR' ? 'İptal onaylandı.' : 'Cancel approved.', 'success'); }} className="w-full bg-orange-600 hover:bg-orange-500 text-white p-3 rounded-xl font-bold text-sm">{lang === 'TR' ? 'Onayla' : 'Approve'}</button>
-                        <button onClick={() => setCancelStatus(null)} className="w-full bg-slate-700 hover:bg-slate-600 text-white p-3 rounded-xl font-bold text-sm">{lang === 'TR' ? 'Reddet' : 'Reject'}</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </main>
-    );
-  };
-
-  // ==========================================
-  // --- 7. ANA YAPI (ROUTER & NAVBAR) ---
-  // ==========================================
-  return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans flex overflow-hidden">
-      <EnvWarningBanner />
-      
-      {/* YENİ UX: MİNİMALİST SIDEBAR (Hover ile genişler) */}
-      <aside 
-        className="fixed left-0 top-0 h-screen w-16 hover:w-56 bg-slate-900 border-r border-slate-800 transition-all duration-300 z-[60] overflow-hidden group flex flex-col shadow-2xl"
-        onClick={() => setActivePopover(null)}
-      >
-        <div className="flex flex-col h-full p-3 pt-6">
-          <div className="flex items-center space-x-4 mb-10 pl-1 cursor-pointer" onClick={() => setCurrentView('landing')}>
-            <div className="w-8 h-8 shrink-0 rounded bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center font-bold text-white shadow-lg">A</div>
-            <span className="text-lg font-bold tracking-widest opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">ARAF</span>
-          </div>
-
-          <nav className="flex flex-col space-y-2">
-            <button onClick={() => setCurrentView('landing')} className={`flex items-center space-x-4 p-2.5 rounded-xl transition ${currentView === 'landing' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-              <span className="text-xl">🏠</span><span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Ana Sayfa</span>
-            </button>
-            <button onClick={() => setCurrentView('dashboard')} className={`flex items-center space-x-4 p-2.5 rounded-xl transition ${currentView === 'dashboard' ? 'bg-slate-800 text-emerald-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-              <span className="text-xl">📊</span><span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Pazar Yeri</span>
-            </button>
-            <button onClick={() => setShowProfileModal(true)} className="flex items-center space-x-4 p-2.5 rounded-xl hover:bg-slate-800 transition text-slate-400 hover:text-white relative">
-              <span className="text-xl relative">👤{isBanned && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-slate-900"></span>}</span>
-              <span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Profilim</span>
-            </button>
-          </nav>
-
-          <div className="mt-auto flex flex-col space-y-2 mb-2">
-            <button onClick={() => setLang(lang === 'TR' ? 'EN' : 'TR')} className="flex items-center space-x-4 p-2.5 rounded-xl hover:bg-slate-800 transition text-slate-400 hover:text-white">
-              <span className="text-xl">🌐</span><span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'English' : 'Türkçe'}</span>
-            </button>
-            
-            <button onClick={handleOpenMakerModal} className="flex items-center space-x-4 p-2.5 rounded-xl bg-emerald-600/10 text-emerald-400 hover:bg-emerald-600 hover:text-white transition group-hover:justify-start justify-center">
-              <span className="text-xl font-bold">+</span><span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{t.createAd.replace('+', '').trim()}</span>
-            </button>
-
-            <button 
-              onClick={() => {
-                if (!isConnected) setShowWalletModal(true);
-                else if (!jwtToken) loginWithSIWE();
-                else disconnect();
-              }}
-              disabled={isLoggingIn}
-              className={`flex items-center space-x-4 p-2.5 rounded-xl transition-all ${
-                isLoggingIn ? 'bg-orange-800 text-orange-200 cursor-not-allowed opacity-80' 
-                : isConnected && jwtToken ? 'bg-slate-800 text-emerald-400 border border-emerald-500/20 hover:bg-red-950/20 hover:text-red-400' 
-                : isConnected && !jwtToken ? 'bg-orange-600 hover:bg-orange-500 text-white shadow-lg shadow-orange-900/20 animate-pulse'
-                : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20'
-              }`}
-            >
-              {isLoggingIn ? (
-                <>
-                  <svg className="animate-spin h-5 w-5 text-orange-200 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                  <span className="text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'Bekle...' : 'Wait...'}</span>
-                </>
-              ) : isConnected && jwtToken ? (
-                <><span className="text-xl shrink-0">👛</span><span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{formatAddress(address)}</span></>
-              ) : isConnected && !jwtToken ? (
-                <><span className="text-xl shrink-0">✍️</span><span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'İmzala' : 'Sign In'}</span></>
-              ) : (
-                <><span className="text-xl shrink-0">🔌</span><span className="text-sm font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">{lang === 'TR' ? 'Bağlan' : 'Connect'}</span></>
-              )}
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      <div className="flex-1 ml-16 relative overflow-y-auto h-screen" onClick={() => setActivePopover(null)}>
-        {toast && (
-          <div key={toast.id} className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] animate-bounce-in w-[90%] md:w-auto">
-            <div className={`flex items-center gap-3 text-white text-sm font-medium px-5 py-3 rounded-2xl shadow-xl border ${toast.type === 'error' ? 'bg-red-600 border-red-500' : toast.type === 'info' ? 'bg-blue-600 border-blue-500' : 'bg-emerald-600 border-emerald-500'}`}>
-              <span className="text-base">{toast.type === 'error' ? '✖' : toast.type === 'info' ? 'ℹ' : '✓'}</span>{toast.message}
-            </div>
-          </div>
-        )}
-
-        {/* Feedback Butonu (Sağ Altta Sabit) */}
-        <button onClick={() => setShowFeedbackModal(true)} className="hidden md:flex fixed bottom-6 right-6 items-center space-x-2 bg-slate-800 border border-slate-700 hover:bg-slate-700 px-4 py-2 rounded-full text-slate-300 transition shadow-lg z-30 font-medium text-sm hover:text-white group">
-          <span className="group-hover:scale-110 transition-transform">💬</span> <span>{lang === 'TR' ? 'Geri Bildirim' : 'Feedback'}</span>
-        </button>
-
-        {renderWalletModal()}
-        {renderFeedbackModal()}
-        {renderMakerModal()}
-        {renderProfileModal()}
-        
-        {/* Router Yapısı */}
-        {currentView === 'landing' ? renderLanding() : currentView === 'dashboard' ? renderDashboard() : renderTradeRoom()}
-      </div>
-    </div>
-  );
-}
-
-export default App;
+                      <p className="text-orange-400 font-bold text-sm mb-3">⚠️ {lang === '
