@@ -1,71 +1,68 @@
 /**
- * PIIDisplay — Güvenli IBAN Görüntüleme Bileşeni
+ * PIIDisplay — Şifreli IBAN + Telegram Görüntüleme Bileşeni
  *
- * H-03 Düzeltmesi:
- *   - IBAN varsayılan olarak GİZLİ gelir, kullanıcı butona basınca fetch edilir
- *   - usePII hook'u aracılığıyla backend'den her seferinde yeniden çekilir
- *   - Component unmount olduğunda IBAN otomatik olarak bellekten silinir
- *   - Ekran görüntüsü koruması için copy-only mod (göster/gizle toggle)
- *
- * AUDIT FIX F-01: authToken prop kaldırıldı — auth artık httpOnly cookie ile sağlanır.
- * AUDIT FIX E-03: lang prop küçük harfe normalize ediliyor.
+ * Güvenlik Özellikleri:
+ *   - IBAN varsayılan olarak GİZLİ gelir; kullanıcı onay verince fetch edilir
+ *   - usePII hook'u aracılığıyla 2 adımlı şifreli kanaldan alınır
+ *   - Bileşen unmount olduğunda IBAN + Telegram otomatik bellekten silinir
+ *   - Telegram aynı şifreli kanaldan gelir — statik state kullanılmaz
+ *   - authToken prop: App.jsx'teki JWT Bearer token'ı, backend ile kimlik doğrulama için
  *
  * Kullanım (App.jsx'te):
- *   import PIIDisplay from './PIIDisplay';
- *   <PIIDisplay tradeId={activeTrade.id} lang="tr" />
+ *   <PIIDisplay tradeId={activeTrade.id} authToken={jwtToken} lang={lang} />
  */
 
 import React, { useState } from 'react';
 import { usePII } from '../hooks/usePII';
 
-// Arayüz metinleri — lang prop'una göre seçilir
 const LABELS = {
   tr: {
-    sectionTitle:  'Satıcı Banka Bilgileri',
-    lockedTitle:   'IBAN şifrelenmiş',
-    lockedSub:     'Görmek için kimliğini doğrula',
-    revealBtn:     '🔓 IBAN\'ı Güvenli Göster',
+    sectionTitle:     'Satıcı Banka & İletişim Bilgileri',
+    lockedTitle:      'IBAN şifrelenmiş & korunuyor',
+    lockedSub:        'Güvenli görmek için kimliğini doğrula',
+    revealBtn:        '🔓 IBAN & Telegram\'ı Güvenli Göster',
     revealBtnLoading: 'Doğrulanıyor...',
-    copyBtn:       '📋 IBAN Kopyala',
-    copiedBtn:     '✓ Kopyalandı',
-    hideBtn:       '🙈 Gizle',
-    contactLabel:  'ile iletişim kur',
-    disclaimer:    'Backend API üzerinden şifreli kanal — ekran görüntüsüne dikkat',
-    notice:        'Bu bilgiler blockchain\'e kaydedilmez. Sadece bu işleme özel şifreli olarak iletilmiştir. İşlem tamamlandıktan sonra kaydetme.',
-    loading:       'Yükleniyor...',
+    copyIban:         '📋 IBAN Kopyala',
+    copied:           '✓ Kopyalandı',
+    hideBtn:          '🙈 Gizle',
+    telegramBtn:      'Telegram\'dan Mesaj At',
+    disclaimer:       '🔒 Şifreli kanal — ekran görüntüsüne dikkat et',
+    notice:           'Bu bilgiler blockchain\'e kaydedilmez. Sadece bu işleme özel şifreli olarak iletildi. İşlem tamamlandıktan sonra kaydetme.',
+    loading:          'Yükleniyor...',
+    noTelegram:       'Telegram bilgisi eklenmemiş',
   },
   en: {
-    sectionTitle:  'Seller Bank Details',
-    lockedTitle:   'IBAN is encrypted',
-    lockedSub:     'Verify your identity to view',
-    revealBtn:     '🔓 Securely Reveal IBAN',
+    sectionTitle:     'Seller Bank & Contact Details',
+    lockedTitle:      'IBAN is encrypted & protected',
+    lockedSub:        'Verify your identity to view securely',
+    revealBtn:        '🔓 Securely Reveal IBAN & Telegram',
     revealBtnLoading: 'Verifying...',
-    copyBtn:       '📋 Copy IBAN',
-    copiedBtn:     '✓ Copied',
-    hideBtn:       '🙈 Hide',
-    contactLabel:  'contact via',
-    disclaimer:    'Encrypted channel via Backend API — beware of screenshots',
-    notice:        'This information is not stored on-chain. It is transmitted encrypted for this trade only. Do not save after trade completes.',
-    loading:       'Loading...',
+    copyIban:         '📋 Copy IBAN',
+    copied:           '✓ Copied',
+    hideBtn:          '🙈 Hide',
+    telegramBtn:      'Message on Telegram',
+    disclaimer:       '🔒 Encrypted channel — beware of screenshots',
+    notice:           'This information is not stored on-chain. Transmitted encrypted for this trade only. Do not save after completion.',
+    loading:          'Loading...',
+    noTelegram:       'No Telegram info provided',
   },
 };
 
-// AUDIT FIX F-01: authToken prop kaldırıldı — usePII artık cookie-based
-export default function PIIDisplay({ tradeId, lang = 'tr' }) {
-  // AUDIT FIX F-01: authToken parametresi artık gerekmiyor
-  const { pii, loading, error, fetchPII, clearPII } = usePII(tradeId);
-  const [revealed, setRevealed] = useState(false);
-  const [copied, setCopied]     = useState(false);
-
-  // H-03 Fix: Desteklenmeyen lang değeri için TR'ye düş
-  // AUDIT FIX E-03: lang prop büyük/küçük harf normalize ediliyor
+/**
+ * @param {string}      tradeId    Backend trade ID
+ * @param {string|null} authToken  JWT Bearer token (App.jsx'ten geçirilir)
+ * @param {string}      lang       'TR' veya 'EN' (büyük/küçük harf fark etmez)
+ */
+export default function PIIDisplay({ tradeId, authToken = null, lang = 'tr' }) {
   const normalizedLang = (lang || 'tr').toLowerCase();
   const t = LABELS[normalizedLang] || LABELS['tr'];
 
+  const { pii, loading, error, fetchPII, clearPII } = usePII(tradeId, authToken);
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied]     = useState(false);
+
   const handleReveal = async () => {
-    if (!pii) {
-      await fetchPII();
-    }
+    if (!pii) await fetchPII();
     setRevealed(true);
   };
 
@@ -74,25 +71,29 @@ export default function PIIDisplay({ tradeId, lang = 'tr' }) {
     clearPII();
   };
 
-  const handleCopy = () => {
+  const handleCopyIban = () => {
     if (!pii?.iban) return;
     navigator.clipboard.writeText(pii.iban.replace(/\s/g, ''));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // ── Henüz gösterilmemiş ───────────────────────────────────────────────────
+  // Telegram URL'si XSS-güvenli şekilde oluşturulur
+  const getTelegramUrl = (handle) =>
+    handle ? `https://t.me/${handle.replace(/[^a-zA-Z0-9_]/g, '')}` : null;
+
+  // ── Henüz açılmamış (kilitli) görünüm ────────────────────────────────────
   if (!revealed) {
     return (
       <div className="bg-slate-900 p-4 rounded-xl border border-slate-700">
-        <p className="text-slate-400 text-xs mb-3">{t.sectionTitle}</p>
+        <p className="text-slate-400 text-xs mb-3 font-medium uppercase tracking-widest">
+          🛡️ {t.sectionTitle}
+        </p>
         <div className="bg-slate-800 rounded-lg p-3 mb-3 flex items-center space-x-3">
           <span className="text-2xl">🔒</span>
           <div>
             <p className="text-white font-medium text-sm">{t.lockedTitle}</p>
-            <p className="text-slate-500 text-xs mt-0.5">
-              {t.lockedSub}
-            </p>
+            <p className="text-slate-500 text-xs mt-0.5">{t.lockedSub}</p>
           </div>
         </div>
 
@@ -121,14 +122,12 @@ export default function PIIDisplay({ tradeId, lang = 'tr' }) {
           )}
         </button>
 
-        <p className="text-center text-[10px] text-slate-500 mt-2">
-          {t.disclaimer}
-        </p>
+        <p className="text-center text-[10px] text-slate-500 mt-2">{t.disclaimer}</p>
       </div>
     );
   }
 
-  // ── Gösterilmiş ───────────────────────────────────────────────────────────
+  // ── Açılmış (revealed) görünüm — IBAN + Telegram birlikte ────────────────
   return (
     <div className="bg-slate-900 p-4 rounded-xl border border-blue-500/40 relative overflow-hidden">
       {/* Şifreli kanal rozeti */}
@@ -136,21 +135,29 @@ export default function PIIDisplay({ tradeId, lang = 'tr' }) {
         End-to-End Encrypted
       </div>
 
-      <p className="text-slate-400 text-xs mb-3">{t.sectionTitle}</p>
+      <p className="text-slate-400 text-xs mb-3 font-medium uppercase tracking-widest">
+        🛡️ {t.sectionTitle}
+      </p>
 
       {pii ? (
         <>
-          <p className="font-bold text-white text-base">{pii.bankOwner}</p>
-          <p className="font-mono text-emerald-400 mt-1 break-all text-sm tracking-wider">
+          {/* Banka Sahibi */}
+          <p className="text-slate-400 text-[10px] mb-0.5 uppercase tracking-widest">Ad Soyad</p>
+          <p className="font-bold text-white text-base mb-3">{pii.bankOwner}</p>
+
+          {/* IBAN */}
+          <p className="text-slate-400 text-[10px] mb-0.5 uppercase tracking-widest">IBAN</p>
+          <p className="font-mono text-emerald-400 mb-3 break-all text-sm tracking-wider">
             {pii.iban}
           </p>
 
-          <div className="flex space-x-2 mt-3">
+          {/* Aksiyon butonları */}
+          <div className="flex space-x-2 mb-3">
             <button
-              onClick={handleCopy}
+              onClick={handleCopyIban}
               className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium py-2 rounded-lg transition border border-slate-600"
             >
-              {copied ? t.copiedBtn : t.copyBtn}
+              {copied ? t.copied : t.copyIban}
             </button>
             <button
               onClick={handleHide}
@@ -160,23 +167,28 @@ export default function PIIDisplay({ tradeId, lang = 'tr' }) {
             </button>
           </div>
 
-          {pii.telegram && (
+          {/* Telegram — şifreli kanaldan gelen, statik state değil */}
+          {pii.telegram ? (
             <a
-              href={`https://t.me/${pii.telegram.replace(/[^a-zA-Z0-9_]/g, '')}`}
+              href={getTelegramUrl(pii.telegram)}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center space-x-1 mt-2 text-blue-400 hover:text-blue-300 text-xs py-2 rounded-lg bg-blue-500/10 border border-blue-500/20 transition"
+              className="flex items-center justify-center space-x-2 w-full py-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 text-sm font-medium transition mb-3"
             >
               <span>💬</span>
-              <span>@{pii.telegram} {t.contactLabel}</span>
+              <span>@{pii.telegram} — {t.telegramBtn}</span>
             </a>
+          ) : (
+            <div className="flex items-center justify-center space-x-2 w-full py-2 rounded-xl bg-slate-800/50 border border-slate-700 text-slate-500 text-xs mb-3">
+              <span>💬</span>
+              <span>{t.noTelegram}</span>
+            </div>
           )}
 
-          <div className="mt-3 p-2 bg-slate-800 rounded-lg flex items-start space-x-2 border border-slate-700">
-            <span className="text-sm">🛡️</span>
-            <p className="text-[10px] text-slate-400 leading-tight">
-              {t.notice}
-            </p>
+          {/* Güvenlik notu */}
+          <div className="p-2 bg-slate-800 rounded-lg flex items-start space-x-2 border border-slate-700">
+            <span className="text-sm shrink-0">🛡️</span>
+            <p className="text-[10px] text-slate-400 leading-tight">{t.notice}</p>
           </div>
         </>
       ) : (

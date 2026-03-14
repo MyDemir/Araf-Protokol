@@ -51,8 +51,15 @@ const ArafEscrowABI = parseAbi([
   'function domainSeparator() view returns (bytes32)',
 
   // [H-03 Fix]: getCurrentAmounts ABI'ye eklendi — Bleeding Escrow gerçek decay hesabı için.
-  // Önceki durum: fonksiyon ABI'de yoktu, UI hardcoded %10.1/%6.2 gösteriyordu.
   'function getCurrentAmounts(uint256 _tradeId) view returns (uint256 cryptoRemaining, uint256 makerBondRemaining, uint256 takerBondRemaining, uint256 totalDecayed)',
+]);
+
+// [KRIT-01/02 Fix]: ERC-20 approve ABI — createEscrow ve lockEscrow öncesi safeTransferFrom için zorunlu.
+// Escrow kontratına izin vermeden transferFrom çağrısı revert eder.
+const ERC20_ABI = parseAbi([
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function decimals() view returns (uint8)',
 ]);
 
 const ESCROW_ADDRESS = import.meta.env.VITE_ESCROW_ADDRESS;
@@ -167,13 +174,57 @@ export function useArafContract() {
   const burnExpired = useCallback((tradeId) =>
     writeContract("burnExpired", [tradeId]), [writeContract]);
 
-  // EKSİK FONKSİYON: App.jsx'in ihtiyaç duyduğu pingMaker fonksiyonu.
   const pingMaker = useCallback((tradeId) =>
     writeContract("pingMaker", [tradeId]), [writeContract]);
 
-  // YENİ: Simetrik ping mekanizması - Maker'ın itiraz öncesi Taker'ı uyarması için
   const pingTakerForChallenge = useCallback((tradeId) =>
     writeContract("pingTakerForChallenge", [tradeId]), [writeContract]);
+
+  // ── ERC-20 Token Onayı ───────────────────────────────────────────────────
+
+  /**
+   * [KRIT-01/02 Fix]: ERC-20 approve — createEscrow ve lockEscrow öncesi zorunlu.
+   *
+   * Kontrat safeTransferFrom kullanır; bu işlem için önce token sahibinin
+   * ESCROW_ADDRESS'e yeterli allowance vermesi gerekir.
+   *
+   * @param {string}  tokenAddress   USDT/USDC adresi
+   * @param {bigint}  amount         Onaylanacak miktar (token decimals cinsinden)
+   * @returns {Promise<Receipt>}
+   */
+  const approveToken = useCallback(async (tokenAddress, amount) => {
+    if (!walletClient) throw new Error("Cüzdan bağlı değil.");
+    _validateChain();
+    if (!_isValidAddress) throw new Error("VITE_ESCROW_ADDRESS tanımlı değil.");
+
+    const hash = await walletClient.writeContract({
+      address: getAddress(tokenAddress),
+      abi: ERC20_ABI,
+      functionName: 'approve',
+      args: [getAddress(ESCROW_ADDRESS), amount],
+    });
+    return await publicClient.waitForTransactionReceipt({ hash });
+  }, [walletClient, publicClient, _validateChain]);
+
+  /**
+   * Mevcut allowance'ı okur — approve gerekip gerekmediğini anlamak için.
+   * @param {string} tokenAddress
+   * @param {string} ownerAddress
+   * @returns {Promise<bigint>}
+   */
+  const getAllowance = useCallback(async (tokenAddress, ownerAddress) => {
+    if (!_isValidAddress) return BigInt(0);
+    try {
+      return await publicClient.readContract({
+        address: getAddress(tokenAddress),
+        abi: ERC20_ABI,
+        functionName: 'allowance',
+        args: [getAddress(ownerAddress), getAddress(ESCROW_ADDRESS)],
+      });
+    } catch {
+      return BigInt(0);
+    }
+  }, [publicClient]);
 
   // ── EIP-712 Cancel İmzalama ───────────────────────────────────────────────
 
@@ -310,6 +361,27 @@ export function useArafContract() {
           });
         } catch (err) {
           console.error("[ArafContract] getReputation hatası:", err.message);
+          return null;
+        }
+      },
+      [publicClient]
+    ),
+    // [KRIT-01/02 Fix]: Token onayı — createEscrow ve lockEscrow öncesi zorunlu
+    approveToken,
+    getAllowance,
+    // [M-03]: getTrade on-chain okuma — backend bağımlılığını azaltır
+    getTrade: useCallback(
+      async (tradeId) => {
+        if (!_isValidAddress) return null;
+        try {
+          return await publicClient.readContract({
+            address: getAddress(ESCROW_ADDRESS),
+            abi: ArafEscrowABI,
+            functionName: 'getTrade',
+            args: [BigInt(tradeId)],
+          });
+        } catch (err) {
+          console.error('[ArafContract] getTrade hatası:', err.message);
           return null;
         }
       },

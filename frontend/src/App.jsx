@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 // --- WEB3 ENTEGRASYON KÜTÜPHANELERİ ---
 // H-01 Fix: useChainId eklendi — SIWE mesajındaki Chain ID artık hardcoded değil
-import { useAccount, useConnect, useDisconnect, useSignMessage, useChainId } from 'wagmi';
+import { useAccount, useConnect, useDisconnect, useSignMessage, useChainId, usePublicClient } from 'wagmi';
 import { injected } from 'wagmi/connectors';
 
 // H-05 Fix: SIWE mesajı resmi EIP-4361 formatında oluşturmak için siwe paketi kullanılıyor.
@@ -62,12 +62,18 @@ function App() {
   const [chargebackAccepted, setChargebackAccepted] = useState(false);
 
   // M-02 Fix: Maker modal için reaktif state'ler
-  const [makerTier, setMakerTier]     = useState(1);
-  const [makerAmount, setMakerAmount] = useState('');
-  // YENİ: Maker modal için eksik state'ler
-  const [makerRate, setMakerRate] = useState('');
+  const [makerTier, setMakerTier]         = useState(1);
+  const [makerAmount, setMakerAmount]     = useState('');
+  const [makerRate, setMakerRate]         = useState('');
   const [makerMinLimit, setMakerMinLimit] = useState('');
   const [makerMaxLimit, setMakerMaxLimit] = useState('');
+  // [KRIT-01 Fix]: Token seçimi state'i — kontrat onaylı token adresleri
+  // Base Sepolia test adresleri; mainnet için .env üzerinden yönetilmeli
+  const SUPPORTED_TOKEN_ADDRESSES = {
+    USDT: import.meta.env.VITE_USDT_ADDRESS || '',
+    USDC: import.meta.env.VITE_USDC_ADDRESS || '',
+  };
+  const [makerToken, setMakerToken] = useState('USDT');
 
   // --- WEB3 DURUM YÖNETİMİ ---
   const { address, isConnected } = useAccount();
@@ -75,6 +81,8 @@ function App() {
   const { disconnect } = useDisconnect();
   const { signMessageAsync } = useSignMessage();
   const chainId = useChainId();
+  // [KRIT-04 Fix]: walletRegisteredAt on-chain kontrolü için publicClient
+  const publicClient = usePublicClient();
 
   // [KRIT-05 Fix]: useArafContract tek seferinde çağrılmalı — çift instance React hook ihlalidir.
   const {
@@ -93,11 +101,17 @@ function App() {
     registerWallet,
     reportPayment,
     burnExpired,
+    approveToken,
+    getAllowance,
+    getTrade,
   } = useArafContract();
   
   const [jwtToken, setJwtToken] = useState(null);
   // CON-04 Fix: Refresh token state — JWT expire olduğunda otomatik yenileme için
   const [refreshTokenState, setRefreshTokenState] = useState(null);
+  // [KRIT-04 Fix]: Cüzdan kayıt durumu — registerWallet() on-chain çağrısı için
+  const [isWalletRegistered, setIsWalletRegistered] = useState(null); // null=bilinmiyor, true/false
+  const [isRegisteringWallet, setIsRegisteringWallet] = useState(false);
 
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   // FIX-11: Contract işlemleri için loading state — çift tıklama ve kötü UX'i önler
@@ -121,9 +135,10 @@ function App() {
   const [tradeHistoryTotal, setTradeHistoryTotal] = useState(0);
   const [tradeHistoryLimit, setTradeHistoryLimit] = useState(10);
 
-  // NOT: bankOwner ve bankIBAN statik değişkenleri PII entegrasyonu ile artık dinamikleşti.
-  const [telegramHandle, setTelegramHandle] = useState('ahmet_tr'); 
+  // [H-04 Fix]: telegramHandle static state kaldırıldı — PIIDisplay şifreli kanaldan gösteriyor.
   const [activeTrade, setActiveTrade] = useState(null);
+  // [KRIT-03 Fix]: reportPayment için IPFS hash state'i
+  const [paymentIpfsHash, setPaymentIpfsHash] = useState('');
 
   const [feedbackText, setFeedbackText] = useState('');
   const [feedbackRating, setFeedbackRating] = useState(0);
@@ -264,6 +279,36 @@ function App() {
     const interval = setInterval(fetchAmounts, 30000);
     return () => clearInterval(interval);
   }, [tradeState, activeTrade?.onchainId, getCurrentAmounts]);
+
+  // [KRIT-04 Fix]: Cüzdan bağlandığında walletRegisteredAt on-chain kontrolü.
+  // walletRegisteredAt[address] == 0 ise kayıt yok → kullanıcıya registerWallet adımı göster.
+  useEffect(() => {
+    if (!isConnected || !address || !publicClient) {
+      setIsWalletRegistered(null);
+      return;
+    }
+    const ESCROW_ADDR = import.meta.env.VITE_ESCROW_ADDRESS;
+    if (!ESCROW_ADDR || ESCROW_ADDR === '0x0000000000000000000000000000000000000000') {
+      setIsWalletRegistered(null);
+      return;
+    }
+    const checkRegistration = async () => {
+      try {
+        const { getAddress, parseAbi: _parseAbi } = await import('viem');
+        const regAbi = _parseAbi(['function walletRegisteredAt(address) view returns (uint256)']);
+        const regAt = await publicClient.readContract({
+          address: getAddress(ESCROW_ADDR),
+          abi: regAbi,
+          functionName: 'walletRegisteredAt',
+          args: [getAddress(address)],
+        });
+        setIsWalletRegistered(regAt > 0n);
+      } catch {
+        setIsWalletRegistered(null); // kontrat erişim hatası → belirsiz
+      }
+    };
+    checkRegistration();
+  }, [isConnected, address, publicClient]);
 
   // YENİ: Kullanıcının on-chain itibarını (ve efektif tier'ını) çek
   useEffect(() => {
@@ -475,18 +520,79 @@ function App() {
     }
   }, [isConnected, address]); // Bağımlılık doğru
 
-  const handleStartTrade = (order) => {
+  /**
+   * [KRIT-02 Fix]: Taker "Satın Al" akışı — approve() + lockEscrow() tam bağlantısı.
+   *
+   * Adım 1: Taker bond miktarını hesapla
+   * Adım 2: Token allowance kontrol et; yetersizse approve() gönder
+   * Adım 3: lockEscrow(onchainId) — cüzdan onayı
+   * Başarıda Trade Room'a geç
+   */
+  const handleStartTrade = async (order) => {
     if (isBanned) {
-      // FIX-05: Hardcoded "30 gün" kaldırıldı — consecutive ban 30/60/120/365 gün olabilir
       showToast(lang === 'TR' ? '🚫 Taker kısıtlamanız aktif. Süre için on-chain kaydınızı kontrol edin.' : '🚫 Taker restriction active. Check on-chain record for duration.', 'error');
       return;
     }
-    setActiveTrade(order);
-    setTradeState('LOCKED');
-    setCancelStatus(null);
-    setCooldownPassed(false);
-    setChargebackAccepted(false);
-    setCurrentView('tradeRoom');
+    if (!order.onchainId) {
+      showToast(lang === 'TR' ? 'Bu ilanın on-chain ID\'si henüz yok. Lütfen daha sonra tekrar deneyin.' : 'This listing has no on-chain ID yet. Please try again later.', 'error');
+      return;
+    }
+    if (isContractLoading) return;
+
+    try {
+      setIsContractLoading(true);
+
+      // Token adresi — order.crypto (USDT/USDC) → adres
+      const tokenAddress = SUPPORTED_TOKEN_ADDRESSES[order.crypto || 'USDT'];
+      if (!tokenAddress) {
+        showToast(lang === 'TR' ? `${order.crypto} token adresi .env dosyasında tanımlı değil.` : `${order.crypto} token address not configured.`, 'error');
+        return;
+      }
+
+      // Taker bond hesabı (kontratla aynı mantık, 6 decimal)
+      const TAKER_BOND_BPS = { 0: 0n, 1: 1000n, 2: 800n, 3: 500n, 4: 200n };
+      const tier = order.tier ?? 1;
+      const cryptoAmtRaw = BigInt(Math.round((parseFloat(order.max) || 0) * 1e6));
+      const takerBondBps = TAKER_BOND_BPS[tier] ?? 1000n;
+      const takerBond = (cryptoAmtRaw * takerBondBps) / 10000n;
+
+      if (takerBond > 0n) {
+        const currentAllowance = await getAllowance(tokenAddress, address);
+        if (currentAllowance < takerBond) {
+          showToast(
+            lang === 'TR'
+              ? `Adım 1/2: ${order.crypto} teminat izni veriliyor... Cüzdanınızdan onaylayın.`
+              : `Step 1/2: Approving ${order.crypto} bond... Confirm in your wallet.`,
+            'info'
+          );
+          await approveToken(tokenAddress, takerBond);
+        }
+      }
+
+      showToast(
+        lang === 'TR' ? 'Adım 2/2: İşlem kilitleniyor... Cüzdanınızdan onaylayın.' : 'Step 2/2: Locking trade... Confirm in wallet.',
+        'info'
+      );
+      await lockEscrow(BigInt(order.onchainId));
+
+      // Başarı — Trade Room'a geç
+      setActiveTrade({ ...order, onchainId: order.onchainId });
+      setTradeState('LOCKED');
+      setCancelStatus(null);
+      setCooldownPassed(false);
+      setChargebackAccepted(false);
+      setCurrentView('tradeRoom');
+      showToast(lang === 'TR' ? '🔒 İşlem başarıyla kilitlendi!' : '🔒 Trade locked successfully!', 'success');
+    } catch (err) {
+      console.error('handleStartTrade error:', err);
+      if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+        showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
+      } else {
+        showToast(err.message || (lang === 'TR' ? 'İşlem kilitlenemedi.' : 'Failed to lock trade.'), 'error');
+      }
+    } finally {
+      setIsContractLoading(false);
+    }
   };
 
   // YENİ: Hem on-chain hem off-chain iptali yöneten güncellenmiş fonksiyon
@@ -523,9 +629,100 @@ function App() {
     }
   };
 
-  const handleProposeCancel = () => {
-    setCancelStatus('proposed_by_me');
-    showToast(lang === 'TR' ? 'İptal teklifi gönderildi. Onay bekleniyor...' : 'Cancel proposal sent. Waiting for approval...', 'info');
+  /**
+   * [KRIT-03 Fix]: Taker ödeme yaptığını bildiriyor — reportPayment(tradeId, ipfsHash).
+   *
+   * ipfsHash: Taker'ın ödeme kanıtı (dekont). Kontrata kaydedilir.
+   * Boş IPFS hash kontrat tarafında EmptyIpfsHash hatasıyla reddedilir.
+   * Testnet'te "https://example.com/receipt" gibi geçici bir URL kabul edilebilir;
+   * production'da gerçek IPFS hash (Qm...) veya HTTPS URL kullanılmalı.
+   */
+  const handleReportPayment = async () => {
+    if (!activeTrade?.onchainId) {
+      showToast(lang === 'TR' ? 'On-chain işlem ID bulunamadı.' : 'On-chain trade ID not found.', 'error');
+      return;
+    }
+    if (!paymentIpfsHash.trim()) {
+      showToast(lang === 'TR' ? 'Ödeme kanıtı (IPFS hash veya URL) giriniz.' : 'Enter payment proof (IPFS hash or URL).', 'error');
+      return;
+    }
+    if (isContractLoading) return;
+    try {
+      setIsContractLoading(true);
+      showToast(lang === 'TR' ? 'Ödeme bildirimi gönderiliyor... Cüzdanınızdan onaylayın.' : 'Reporting payment... Confirm in wallet.', 'info');
+      await reportPayment(BigInt(activeTrade.onchainId), paymentIpfsHash.trim());
+      setTradeState('PAID');
+      setCooldownPassed(false);
+      setPaymentIpfsHash('');
+      showToast(lang === 'TR' ? '✅ Ödeme bildirildi! 48 saatlik grace period başladı.' : '✅ Payment reported! 48h grace period started.', 'success');
+    } catch (err) {
+      console.error('handleReportPayment error:', err);
+      if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+        showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
+      } else {
+        showToast(err.message || (lang === 'TR' ? 'Ödeme bildirimi başarısız.' : 'Payment report failed.'), 'error');
+      }
+    } finally {
+      setIsContractLoading(false);
+    }
+  };
+
+  /**
+   * [H-02 Fix]: Mutual cancel — gerçek EIP-712 imzası + proposeOrApproveCancel() kontrat çağrısı.
+   *
+   * Akış:
+   * 1. sigNonces[address] on-chain'den okunur (replay koruması)
+   * 2. EIP-712 CancelProposal imzası oluşturulur (1 saatlik deadline)
+   * 3. proposeOrApproveCancel(tradeId, deadline, sig) kontrata gönderilir
+   * 4. Her iki taraf da çağırdığında kontrat iptal eder
+   */
+  const handleProposeCancel = async () => {
+    if (!activeTrade?.onchainId) {
+      showToast(lang === 'TR' ? 'On-chain işlem ID bulunamadı.' : 'On-chain trade ID not found.', 'error');
+      return;
+    }
+    if (isContractLoading) return;
+    try {
+      setIsContractLoading(true);
+      showToast(lang === 'TR' ? 'İptal imzası oluşturuluyor...' : 'Creating cancel signature...', 'info');
+
+      // sigNonces on-chain'den oku
+      const ESCROW_ADDR = import.meta.env.VITE_ESCROW_ADDRESS;
+      const { getAddress, parseAbi: _parseAbi } = await import('viem');
+      const nonceAbi = _parseAbi(['function sigNonces(address) view returns (uint256)']);
+      const nonce = await publicClient.readContract({
+        address: getAddress(ESCROW_ADDR),
+        abi: nonceAbi,
+        functionName: 'sigNonces',
+        args: [getAddress(address)],
+      });
+
+      // EIP-712 imzası oluştur
+      const { signature, deadline } = await signCancelProposal(
+        activeTrade.onchainId,
+        nonce
+      );
+
+      showToast(lang === 'TR' ? 'İptal teklifini kontrata gönderiliyor...' : 'Sending cancel proposal to contract...', 'info');
+      await proposeOrApproveCancel(BigInt(activeTrade.onchainId), deadline, signature);
+
+      setCancelStatus('proposed_by_me');
+      showToast(
+        lang === 'TR'
+          ? '✅ İptal teklifi gönderildi. Karşı taraf onayladığında iptal gerçekleşir.'
+          : '✅ Cancel proposal sent. Trade cancels when counterparty approves.',
+        'success'
+      );
+    } catch (err) {
+      console.error('handleProposeCancel error:', err);
+      if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+        showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
+      } else {
+        showToast(err.message || (lang === 'TR' ? 'İptal teklifi başarısız.' : 'Cancel proposal failed.'), 'error');
+      }
+    } finally {
+      setIsContractLoading(false);
+    }
   };
 
   // FIX-01: `text` → `comment` (backend Joi şeması `comment` bekliyor)
@@ -557,18 +754,12 @@ function App() {
     return `https://t.me/${safeHandle}`;
   };
 
-  const handleChargebackAck = async (checked) => {
+  // [BACKEND-HAKEM Fix]: Backend chargeback-ack çağrısı kaldırıldı.
+  // Backend sadece istatistik amaçlıdır — ticari kararlar kontrat tarafından verilir.
+  // Onay UI state'te kalır; asıl karar on-chain releaseFunds() ile gerçekleşir.
+  const handleChargebackAck = (checked) => {
     setChargebackAccepted(checked);
-    if (!checked || !activeTrade?.id || !jwtToken) return;
-    try {
-      // CON-04 Fix: fetch yerine authenticatedFetch kullanılıyor
-      await authenticatedFetch(`${API_URL}/api/trades/${activeTrade.id}/chargeback-ack`, {
-        method: 'POST',
-      });
-    } catch (err) {
-      console.error("Chargeback ack error:", err);
-    }
-  }; // Bu fonksiyonu çağıran useEffect'e eklenmeli
+  };
 
   // FIX-11: isContractLoading guard + finally block eklendi
   const handleRelease = async () => {
@@ -722,12 +913,126 @@ function App() {
     }
   }; // Bu fonksiyonu çağıran useEffect'e eklenmeli
 
+  /**
+   * [KRIT-04 Fix]: Yeni cüzdanı on-chain kaydeder — 7 günlük yaşlanma sayacını başlatır.
+   * Taker olmak için zorunludur (lockEscrow WalletTooYoung hatası verir).
+   */
+  const handleRegisterWallet = async () => {
+    if (isRegisteringWallet || isWalletRegistered) return;
+    try {
+      setIsRegisteringWallet(true);
+      showToast(lang === 'TR' ? 'Cüzdan kaydediliyor... Cüzdanınızdan onaylayın.' : 'Registering wallet... Confirm in wallet.', 'info');
+      await registerWallet();
+      setIsWalletRegistered(true);
+      showToast(
+        lang === 'TR'
+          ? '✅ Cüzdan kaydedildi! 7 gün sonra Taker olarak işlem başlatabilirsiniz.'
+          : '✅ Wallet registered! You can start as Taker after 7 days.',
+        'success'
+      );
+    } catch (err) {
+      console.error('handleRegisterWallet error:', err);
+      if (err.message?.includes('AlreadyRegistered')) {
+        setIsWalletRegistered(true);
+        showToast(lang === 'TR' ? 'Cüzdan zaten kayıtlı.' : 'Wallet already registered.', 'info');
+      } else if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+        showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
+      } else {
+        showToast(err.message || (lang === 'TR' ? 'Kayıt başarısız.' : 'Registration failed.'), 'error');
+      }
+    } finally {
+      setIsRegisteringWallet(false);
+    }
+  };
+
   const handleOpenMakerModal = () => {
     if (!isConnected || !jwtToken) {
       showToast(lang === 'TR' ? 'İlan açmak için önce cüzdanınızı bağlayıp imzalamalısınız.' : 'Please connect and sign in to create an ad.', 'error');
       return;
     }
-    setShowMakerModal(true); // Bu fonksiyonu çağıran useEffect'e eklenmeli
+    setShowMakerModal(true);
+  };
+
+  /**
+   * [KRIT-01 Fix]: Maker escrow oluşturma — approve() + createEscrow() tam akışı.
+   *
+   * Adım 1: Token allowance kontrol et
+   * Adım 2: Yetersizse approve() gönder → cüzdan onayı
+   * Adım 3: createEscrow() → cüzdan onayı
+   * Tüm adımlar kullanıcıya toast ile bildirilir.
+   */
+  const handleCreateEscrow = async () => {
+    const tokenAddress = SUPPORTED_TOKEN_ADDRESSES[makerToken];
+    if (!tokenAddress) {
+      showToast(lang === 'TR' ? `${makerToken} token adresi .env dosyasında tanımlı değil (VITE_${makerToken}_ADDRESS).` : `${makerToken} token address not configured in .env (VITE_${makerToken}_ADDRESS).`, 'error');
+      return;
+    }
+    const cryptoAmt = parseFloat(makerAmount);
+    if (!cryptoAmt || cryptoAmt <= 0) {
+      showToast(lang === 'TR' ? 'Geçerli bir miktar girin.' : 'Enter a valid amount.', 'error');
+      return;
+    }
+    if (!makerRate || parseFloat(makerRate) <= 0) {
+      showToast(lang === 'TR' ? 'Kur fiyatı girilmeli.' : 'Enter an exchange rate.', 'error');
+      return;
+    }
+    if (isContractLoading) return;
+
+    try {
+      setIsContractLoading(true);
+
+      // USDT/USDC her ikisi de 6 decimal
+      const decimals = BigInt(6);
+      const cryptoAmountRaw = BigInt(Math.round(cryptoAmt * 10 ** Number(decimals)));
+
+      // Bond hesabı (kontratla aynı mantık)
+      const MAKER_BOND_BPS = { 0: 0n, 1: 800n, 2: 600n, 3: 500n, 4: 200n };
+      const bondBps = MAKER_BOND_BPS[makerTier] ?? 0n;
+      const makerBondRaw = (cryptoAmountRaw * bondBps) / 10000n;
+      const totalLock = cryptoAmountRaw + makerBondRaw;
+
+      // Adım 1: Mevcut allowance kontrol et
+      const currentAllowance = await getAllowance(tokenAddress, address);
+
+      if (currentAllowance < totalLock) {
+        showToast(
+          lang === 'TR'
+            ? `Adım 1/2: ${makerToken} harcama izni veriliyor... Cüzdanınızdan onaylayın.`
+            : `Step 1/2: Approving ${makerToken} spend... Confirm in your wallet.`,
+          'info'
+        );
+        await approveToken(tokenAddress, totalLock);
+        showToast(lang === 'TR' ? 'İzin verildi. Şimdi escrow oluşturuluyor...' : 'Approved. Creating escrow now...', 'info');
+      }
+
+      // Adım 2: Escrow oluştur
+      showToast(
+        lang === 'TR'
+          ? 'Adım 2/2: Escrow oluşturuluyor... Cüzdanınızdan onaylayın.'
+          : 'Step 2/2: Creating escrow... Confirm in your wallet.',
+        'info'
+      );
+      await createEscrow(tokenAddress, cryptoAmountRaw, makerTier);
+
+      showToast(
+        lang === 'TR' ? '✅ İlan başarıyla oluşturuldu! Fonlar kilitlendi.' : '✅ Listing created! Funds locked.',
+        'success'
+      );
+      setShowMakerModal(false);
+      setMakerAmount('');
+      setMakerRate('');
+      setMakerMinLimit('');
+      setMakerMaxLimit('');
+    } catch (err) {
+      console.error('handleCreateEscrow error:', err);
+      if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+        showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
+      } else {
+        showToast(err.message || (lang === 'TR' ? 'Escrow oluşturulamadı.' : 'Failed to create escrow.'), 'error');
+      }
+    } finally {
+      setIsContractLoading(false);
+    }
   };
 
   // --- ÇEVİRİ SÖZLÜĞÜ ---
@@ -867,7 +1172,11 @@ function App() {
             <div className="flex space-x-2">
               <div className="w-1/2">
                 <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Satılacak Kripto' : 'Crypto to Sell'}</label>
-                <select className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none"><option>USDT</option><option>USDC</option></select>
+                {/* [KRIT-01 Fix]: makerToken state'e bağlandı — kontrat approve akışı için token adresi gerekli */}
+                <select value={makerToken} onChange={e => setMakerToken(e.target.value)} className="w-full bg-slate-900 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none">
+                  <option value="USDT">USDT</option>
+                  <option value="USDC">USDC</option>
+                </select>
               </div>
               <div className="w-1/2">
                 <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'İstenecek İtibari Para' : 'Fiat Currency'}</label>
@@ -937,7 +1246,19 @@ function App() {
                 <span>{totalLock > 0 ? `${totalLock} Kripto` : '—'}</span>
               </div>
             </div>
-            <button className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-xl font-bold mt-2 shadow-lg shadow-emerald-900/20">{lang === 'TR' ? 'Varlığı ve Teminatı Kilitle' : 'Lock Asset & Bond'}</button>
+            {/* [KRIT-01 Fix]: handleCreateEscrow bağlandı — approve() + createEscrow() tam akışı */}
+            <button
+              onClick={handleCreateEscrow}
+              disabled={isContractLoading || !makerAmount || !makerRate}
+              className={`w-full py-3 rounded-xl font-bold mt-2 shadow-lg transition ${
+                isContractLoading || !makerAmount || !makerRate
+                  ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/20'
+              }`}>
+              {isContractLoading
+                ? (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')
+                : (lang === 'TR' ? '🔒 Onayla ve Kilitle' : '🔒 Approve & Lock')}
+            </button>
           </div>
         </div>
       </div>
@@ -1356,6 +1677,16 @@ function App() {
     const gracePeriodEndDate = activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000) : null;
     const gracePeriodTimer = useCountdown(gracePeriodEndDate);
 
+    // [H-06 Fix]: Challenge cooldown — paidAt + 1 saat gerçek timestamp hesabı
+    const challengeUnlockDate = activeTrade?.paidAt
+      ? new Date(new Date(activeTrade.paidAt).getTime() + 1 * 3600 * 1000)
+      : null;
+    const challengeCountdown = useCountdown(challengeUnlockDate);
+    // DEV modunda simülatör override'ı desteklenir; prod'da yalnızca gerçek zaman kullanılır
+    const canChallenge = import.meta.env.DEV
+      ? (cooldownPassed || challengeCountdown.isFinished)
+      : challengeCountdown.isFinished;
+
     const bleedingEndDate = activeTrade?.challengedAt ? new Date(new Date(activeTrade.challengedAt).getTime() + 240 * 3600 * 1000) : null;
     const bleedingTimer = useCountdown(bleedingEndDate);
     const principalProtectionEndDate = activeTrade?.challengedAt ? new Date(new Date(activeTrade.challengedAt).getTime() + (48 + 96) * 3600 * 1000) : null;
@@ -1403,35 +1734,22 @@ function App() {
               </div>
 
               {isTaker ? (
-                <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 bg-blue-600 text-white text-[10px] font-bold px-2 py-1 rounded-bl-lg">End-to-End Encrypted</div>
-                  <p className="text-slate-400 mb-2 uppercase text-[10px] tracking-widest font-bold">🛡️ {lang === 'TR' ? 'Güvenli PII Verisi' : 'Secure PII Data'}</p>
-                  
-                  <PIIDisplay 
-                    tradeId={activeTrade?.id || 'TEST'} 
-                    authToken={jwtToken} 
-                    lang={lang}
-                  />
-
-                  <div className="mt-4 p-2 bg-slate-800 rounded-lg flex items-start space-x-2 border border-slate-600">
-                    <span className="text-lg">🔒</span>
-                    <p className="text-[10px] text-slate-300 leading-tight">Bu bilgiler blockchain'e kaydedilmez. Sadece bu işleme özel şifreli olarak iletilmiştir.</p>
-                  </div>
-                </div>
+                // [H-04 Fix + Telegram Fix]: PIIDisplay şimdi IBAN + Telegram'ı birlikte şifreli gösterir.
+                // Statik telegramHandle state'i kaldırıldı — tüm iletişim bilgisi şifreli kanaldan gelir.
+                // authToken prop geçirildi — JWT Bearer ile backend kimlik doğrulaması çalışır.
+                <PIIDisplay
+                  tradeId={activeTrade?.id}
+                  authToken={jwtToken}
+                  lang={lang}
+                />
               ) : (
+                // Maker görünümü: Taker'ın ödeme yapmasını bekle
                 <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 text-center">
                   <div className="text-3xl mb-2">🏦</div>
                   <p className="text-slate-300 font-medium text-sm">{lang === 'TR' ? 'Banka hesabınıza ödeme bekleniyor.' : 'Waiting for fiat payment.'}</p>
+                  <p className="text-xs text-slate-500 mt-2">{lang === 'TR' ? 'Alıcı IBAN\'ınızı şifreli kanaldan aldı.' : 'Buyer received your IBAN via encrypted channel.'}</p>
                 </div>
               )}
-
-              {/* GÜVENLİ XSS KORUMALI TELEGRAM BUTONU */}
-              <div className="bg-slate-900 p-3 rounded-xl border border-slate-700 flex justify-between items-center">
-                <span className="text-slate-400">{lang === 'TR' ? 'Karşı Taraf:' : 'Counterparty:'}</span>
-                <a href={getSafeTelegramUrl(telegramHandle)} target="_blank" rel="noopener noreferrer" className="flex items-center space-x-1 text-blue-400 hover:text-blue-300 transition bg-blue-500/10 px-3 py-1.5 rounded-lg border border-blue-500/30">
-                  <span>💬</span><span className="font-bold text-xs">{lang === 'TR' ? 'Mesaj At' : 'Message'}</span>
-                </a>
-              </div>
             </div>
           </div>
 
@@ -1441,9 +1759,35 @@ function App() {
                 <div className="w-14 h-14 bg-blue-500/20 text-blue-400 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">🔒</div>
                 <h2 className="text-xl md:text-2xl font-bold text-white mb-2">{lang === 'TR' ? 'USDT Kilitlendi' : 'USDT Locked'}</h2>
                 {isTaker ? (
-                  <button onClick={() => { setTradeState('PAID'); setCooldownPassed(false); }} className="bg-blue-600 hover:bg-blue-500 text-white w-full sm:w-auto px-8 py-3 rounded-xl font-bold mt-4">
-                    {lang === 'TR' ? 'Ödemeyi Yaptım' : 'I have paid'}
-                  </button>
+                  // [KRIT-03 Fix]: reportPayment(tradeId, ipfsHash) bağlandı.
+                  // Taker ödeme kanıtını girer → on-chain kaydedilir → 48h grace başlar.
+                  <div className="w-full max-w-sm mt-4 space-y-3">
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1 text-left">
+                        {lang === 'TR' ? '📎 Ödeme Kanıtı (IPFS hash veya URL)' : '📎 Payment Proof (IPFS hash or URL)'}
+                      </label>
+                      <input
+                        type="text"
+                        value={paymentIpfsHash}
+                        onChange={e => setPaymentIpfsHash(e.target.value)}
+                        placeholder="Qm... veya https://..."
+                        className="w-full bg-slate-800 text-white px-3 py-2 rounded-xl border border-slate-700 outline-none text-sm font-mono"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1 text-left">
+                        {lang === 'TR' ? 'Dekont/screenshot IPFS hash veya URL. Kontrata kaydedilir — itiraz durumunda delil olarak kullanılır.' : 'Receipt/screenshot IPFS hash or URL. Saved on-chain as dispute evidence.'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleReportPayment}
+                      disabled={isContractLoading || !paymentIpfsHash.trim()}
+                      className={`w-full py-3 rounded-xl font-bold transition ${
+                        isContractLoading || !paymentIpfsHash.trim()
+                          ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                          : 'bg-blue-600 hover:bg-blue-500 text-white'
+                      }`}>
+                      {isContractLoading ? '⏳...' : (lang === 'TR' ? '✅ Ödemeyi Bildirdim' : '✅ Report Payment')}
+                    </button>
+                  </div>
                 ) : (
                   <p className="text-slate-400 mb-6 text-sm animate-pulse">{lang === 'TR' ? 'Alıcının transferi bekleniyor...' : 'Waiting for buyer transfer...'}</p>
                 )}
@@ -1527,16 +1871,18 @@ function App() {
                           : (lang === 'TR' ? 'Serbest Bırak' : 'Release USDT')
                         }
                       </button>
-                      {/* FIX-11: isContractLoading ile challenge butonu da disable */}
+                      {/* [H-06 Fix]: Challenge butonu artık gerçek cooldown timestamp'e bağlı */}
                       <button
                         onClick={handleChallenge}
-                        disabled={!cooldownPassed || isContractLoading}
-                        className={`w-full sm:w-auto px-6 py-3 rounded-xl font-bold transition ${cooldownPassed && !isContractLoading ? 'bg-red-500/10 text-red-500 border border-red-500/50 hover:bg-red-500 hover:text-white' : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'}`}>
+                        disabled={!canChallenge || isContractLoading}
+                        className={`w-full sm:w-auto px-6 py-3 rounded-xl font-bold transition ${canChallenge && !isContractLoading ? 'bg-red-500/10 text-red-500 border border-red-500/50 hover:bg-red-500 hover:text-white' : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'}`}>
                         {isContractLoading
                           ? (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')
-                          : cooldownPassed
+                          : canChallenge
                             ? (lang === 'TR' ? 'İtiraz Et' : 'Challenge')
-                            : '⏳ Cooldown 59:12'
+                            : challengeCountdown.isFinished
+                              ? (lang === 'TR' ? 'İtiraz Et' : 'Challenge')
+                              : `⏳ ${String(challengeCountdown.minutes).padStart(2, '0')}:${String(challengeCountdown.seconds).padStart(2, '0')}`
                         }
                       </button>
                     </div>
@@ -1656,7 +2002,37 @@ function App() {
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans">
       <EnvWarningBanner />
-      <nav className="flex justify-between items-center p-4 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md sticky top-0 z-40">
+
+      {/* [KRIT-04 Fix]: Cüzdan kayıt banner'ı — bağlı ama henüz on-chain kayıt yok */}
+      {isConnected && isWalletRegistered === false && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-amber-900/95 backdrop-blur border-b border-amber-700 px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex items-start space-x-3">
+            <span className="text-xl shrink-0">⚠️</span>
+            <div>
+              <p className="font-bold text-amber-200 text-sm">
+                {lang === 'TR' ? 'Cüzdan On-Chain Kayıtlı Değil' : 'Wallet Not Registered On-Chain'}
+              </p>
+              <p className="text-amber-300/80 text-xs mt-0.5">
+                {lang === 'TR'
+                  ? 'Taker olarak işlem başlatmak için cüzdanınızı kaydetmelisiniz. (Anti-Sybil: 7 günlük bekleme başlar)'
+                  : 'Register your wallet to start trades as Taker. (Anti-Sybil: 7-day wait begins)'}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleRegisterWallet}
+            disabled={isRegisteringWallet}
+            className={`shrink-0 px-5 py-2 rounded-xl font-bold text-sm transition ${
+              isRegisteringWallet
+                ? 'bg-amber-800 text-amber-400 cursor-not-allowed'
+                : 'bg-amber-500 hover:bg-amber-400 text-slate-900'
+            }`}>
+            {isRegisteringWallet ? '⏳...' : (lang === 'TR' ? '📝 Cüzdanı Kaydet' : '📝 Register Wallet')}
+          </button>
+        </div>
+      )}
+
+      <nav className={`flex justify-between items-center p-4 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md sticky z-40 ${isConnected && isWalletRegistered === false ? 'top-[72px] sm:top-[60px]' : 'top-0'}`}>
         <div className="flex items-center space-x-2 cursor-pointer" onClick={() => setCurrentView('dashboard')}>
           <div className="w-8 h-8 rounded bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center font-bold">A</div>
           <span className="text-lg font-bold tracking-widest hidden sm:block">ARAF</span>
