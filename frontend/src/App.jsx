@@ -1366,15 +1366,28 @@ function App() {
             
             {profileTab === 'itibar' && (
                <div className="space-y-3 text-sm">
-                  {/* Orijinal İtibar Sekmesi Yapısı Korundu, Yalnızca Renkler Güncellendi */}
+                  <p className="text-xs text-slate-500 mb-4 text-center italic">{lang === 'TR' ? 'Bu veriler doğrudan on-chain akıllı kontrattan okunur ve değiştirilemez.' : 'This data is read directly from the on-chain smart contract and cannot be altered.'}</p>
                   {!userReputation ? (
                     <div className="text-center text-slate-500 animate-pulse">{lang === 'TR' ? 'İtibar verisi yükleniyor...' : 'Loading reputation data...'}</div>
                   ) : (() => {
                     const { successful, failed, effectiveTier, bannedUntil, consecutiveBans } = userReputation;
                     const totalTrades = successful + failed;
                     const successRate = totalTrades > 0 ? Math.round((successful / totalTrades) * 100) : 100;
+
+                    // Tier ilerlemesi için gereksinimler — kontrat mantığıyla senkron
+                    const TIER_REQUIREMENTS = {
+                      1: { trades: 15, failed: 0 },
+                      2: { trades: 50, failed: 1 },
+                      3: { trades: 100, failed: 1 },
+                      4: { trades: 200, failed: 0 },
+                    };
+                    const nextTier = effectiveTier + 1;
+                    const nextTierReq = TIER_REQUIREMENTS[nextTier];
+                    const progress = nextTierReq ? Math.min(100, (successful / nextTierReq.trades) * 100) : 100;
+
                     return (
                       <div className="space-y-4">
+                        {/* Başarı Oranı */}
                         <div className="bg-[#151518] p-4 rounded-xl border border-[#2a2a2e]">
                           <div className="flex justify-between items-center text-xs text-slate-400 mb-2">
                             <span>{lang === 'TR' ? 'Başarı Oranı' : 'Success Rate'}</span>
@@ -1385,6 +1398,26 @@ function App() {
                           </div>
                           <p className="text-right text-lg font-bold text-emerald-400 mt-2">{successRate}%</p>
                         </div>
+
+                        {/* Tier İlerlemesi — Bir Sonraki Tier'a Kalan İşlem */}
+                        {nextTier <= 4 && (
+                          <div className="bg-[#151518] p-4 rounded-xl border border-[#2a2a2e]">
+                            <div className="flex justify-between items-center text-xs text-slate-400 mb-2">
+                              <span>{lang === 'TR' ? `Tier ${nextTier} için İlerleme` : `Progress to Tier ${nextTier}`}</span>
+                              <span className="font-mono">{successful} / {nextTierReq.trades}</span>
+                            </div>
+                            <div className="w-full bg-[#0c0c0e] rounded-full h-2.5 border border-[#222]">
+                              <div className="bg-gradient-to-r from-purple-600 to-indigo-500 h-2.5 rounded-full transition-all duration-500" style={{ width: `${progress}%` }}></div>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-2">
+                              {lang === 'TR'
+                                ? `Tier ${nextTier}'e ulaşmak için ${Math.max(0, nextTierReq.trades - successful)} başarılı işlem daha yapın.`
+                                : `Complete ${Math.max(0, nextTierReq.trades - successful)} more successful trades to reach Tier ${nextTier}.`}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Detaylı İstatistik Kartları */}
                         <div className="grid grid-cols-2 gap-3">
                           <div className="bg-[#151518] p-3 rounded-xl border border-[#2a2a2e] text-center">
                             <p className="text-slate-500 text-[10px] font-bold tracking-widest">{lang === 'TR' ? 'EFEKTİF TIER' : 'EFFECTIVE TIER'}</p>
@@ -1394,7 +1427,36 @@ function App() {
                             <p className="text-slate-500 text-[10px] font-bold tracking-widest">{lang === 'TR' ? 'BAŞARILI' : 'SUCCESSFUL'}</p>
                             <p className="text-2xl font-bold text-emerald-400 mt-1">{successful}</p>
                           </div>
+                          <div className="bg-[#151518] p-3 rounded-xl border border-[#2a2a2e] text-center">
+                            <p className="text-slate-500 text-[10px] font-bold tracking-widest">{lang === 'TR' ? 'BAŞARISIZ' : 'FAILED'}</p>
+                            <p className="text-2xl font-bold text-red-400 mt-1">{failed}</p>
+                          </div>
+                          <div className="bg-[#151518] p-3 rounded-xl border border-[#2a2a2e] text-center">
+                            <p className="text-slate-500 text-[10px] font-bold tracking-widest">{lang === 'TR' ? 'ARDIŞIK YASAK' : 'CONSEC. BANS'}</p>
+                            <p className="text-2xl font-bold text-white mt-1">{consecutiveBans}</p>
+                          </div>
                         </div>
+
+                        {/* Yasak Bitiş Tarihi — Aktif yasak varsa göster */}
+                        {bannedUntil > 0 && new Date(bannedUntil * 1000) > new Date() && (
+                          <div className="bg-red-950/30 p-3 rounded-xl border border-red-900/50">
+                            <p className="text-red-400 text-xs font-medium">{lang === 'TR' ? 'Yasak Bitiş Tarihi' : 'Ban Ends On'}</p>
+                            <p className="text-sm font-bold text-white mt-1">
+                              {new Date(bannedUntil * 1000).toLocaleString(lang === 'TR' ? 'tr-TR' : 'en-US')}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Temiz Sayfa Kuralı — Ardışık yasak varsa bilgi ver */}
+                        {consecutiveBans > 0 && (
+                          <div className="bg-blue-950/20 p-3 rounded-xl border border-blue-900/40 text-center">
+                            <p className="text-blue-400 text-xs">
+                              💡 {lang === 'TR'
+                                ? `Son yasağınız bittikten 180 gün sonra "Ardışık Yasak" sayacınız otomatik olarak sıfırlanacaktır.`
+                                : `Your "Consecutive Bans" counter will automatically reset 180 days after your last ban expires.`}
+                            </p>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}
@@ -1819,13 +1881,47 @@ function App() {
               </div>
             )}
 
-            {/* CHALLENGED Aksiyonları */}
-            {isChallenged && cancelStatus === null && (
-               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-6">
-                  {isMaker && <button onClick={handleRelease} disabled={isContractLoading} className={`w-full bg-[#0a0a0c] border border-emerald-500/30 text-emerald-500 p-3 rounded-xl font-bold text-sm transition ${isContractLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500 hover:text-white'}`}>🤝 {lang === 'TR' ? 'Serbest Bırak' : 'Release'}</button>}
-                  <button onClick={handleProposeCancel} className="w-full bg-[#0a0a0c] border border-orange-500/30 text-orange-500 p-3 rounded-xl font-bold text-sm hover:bg-orange-500 hover:text-white transition">↩️ {lang === 'TR' ? 'İptal Teklif Et' : 'Propose Cancel'}</button>
-               </div>
-            )}
+            {/* CHALLENGED Aksiyonları — Üç Durum: null / proposed_by_me / proposed_by_other */}
+            <div className="mt-6 bg-[#0c0c0e] border border-[#222] rounded-xl p-4">
+              {/* Durum 1: Henüz iptal teklifi yok — Serbest Bırak veya İptal Teklif Et */}
+              {isChallenged && cancelStatus === null && (
+                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {isMaker && <button onClick={handleRelease} disabled={isContractLoading} className={`w-full bg-[#0a0a0c] border border-emerald-500/30 text-emerald-500 p-3 rounded-xl font-bold text-sm transition ${isContractLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500 hover:text-white'}`}>🤝 {lang === 'TR' ? 'Serbest Bırak' : 'Release'}</button>}
+                    <button onClick={handleProposeCancel} className="w-full bg-[#0a0a0c] border border-orange-500/30 text-orange-500 p-3 rounded-xl font-bold text-sm hover:bg-orange-500 hover:text-white transition">↩️ {lang === 'TR' ? 'İptal Teklif Et' : 'Propose Cancel'}</button>
+                 </div>
+              )}
+
+              {/* Durum 2: Sen iptal teklif ettin — karşı tarafın onayı bekleniyor */}
+              {cancelStatus === 'proposed_by_me' && (
+                <div className="py-3 px-4 bg-orange-900/10 border border-orange-500/20 rounded-xl flex items-center justify-center gap-3">
+                  <div className="w-4 h-4 border-2 border-orange-400 border-t-transparent rounded-full animate-spin shrink-0"></div>
+                  <span className="text-orange-400 font-bold text-sm">
+                    {lang === 'TR' ? 'İptal teklifiniz gönderildi. Karşı tarafın onayı bekleniyor...' : 'Cancel proposal sent. Awaiting counterparty approval...'}
+                  </span>
+                </div>
+              )}
+
+              {/* Durum 3: Karşı taraf iptal teklif etti — Onayla veya Reddet */}
+              {cancelStatus === 'proposed_by_other' && (
+                <div>
+                  <p className="text-orange-400 font-bold text-sm mb-3">
+                    ⚠️ {lang === 'TR' ? 'Karşı taraf iptal teklif etti.' : 'Opponent proposed cancellation.'}
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() => { setCancelStatus(null); setTradeState('LOCKED'); setCurrentView('dashboard'); showToast(lang === 'TR' ? 'İptal onaylandı.' : 'Cancel approved.', 'success'); }}
+                      className="w-full bg-orange-600 hover:bg-orange-500 text-white p-3 rounded-xl font-bold text-sm transition">
+                      {lang === 'TR' ? 'Onayla' : 'Approve'}
+                    </button>
+                    <button
+                      onClick={() => setCancelStatus(null)}
+                      className="w-full bg-[#1a1a1f] border border-[#2a2a2e] hover:bg-[#222] text-white p-3 rounded-xl font-bold text-sm transition">
+                      {lang === 'TR' ? 'Reddet' : 'Reject'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* PII Verileri (Mevcut Mantık, Koyu Tema) */}
             {isTaker && tradeState !== 'RESOLVED' && (
@@ -1838,6 +1934,48 @@ function App() {
                 <p className="text-xs text-slate-500 mt-2">{lang === 'TR' ? 'Alıcı IBAN\'ınızı şifreli kanaldan aldı.' : 'Buyer received your IBAN via encrypted channel.'}</p>
               </div>
             )}
+
+            {/* Sprint 1, Madde 5: burnExpired — 10 günden fazla geçmişse yakma butonu */}
+            {/* İşlem kilitlenme tarihinden 10 gün geçtiyse ve hâlâ LOCKED/PAID durumundaysa göster */}
+            {activeTrade?.onchainId && tradeState !== 'RESOLVED' && (() => {
+              const lockDate = activeTrade.paidAt || activeTrade.lockedAt;
+              if (!lockDate) return null;
+              const tenDaysMs = 10 * 24 * 3600 * 1000;
+              const isExpired = new Date() - new Date(lockDate) > tenDaysMs;
+              if (!isExpired) return null;
+              return (
+                <div className="mt-6 bg-[#1a0505] border border-red-950 rounded-xl p-4 text-center">
+                  <p className="text-red-500 text-xs font-bold mb-2">
+                    🔥 {lang === 'TR' ? '10 Gün Süresi Doldu — Sözleşme Artık Yakılabilir' : '10-Day Deadline Passed — Contract Can Now Be Burned'}
+                  </p>
+                  <p className="text-slate-500 text-[11px] mb-3">
+                    {lang === 'TR' ? 'Yanmayan taraf tazminat kaybeder. Maker bond protokole gönderilir.' : 'Non-responding party loses compensation. Maker bond is sent to protocol.'}
+                  </p>
+                  <button
+                    onClick={async () => {
+                      if (isContractLoading) return;
+                      try {
+                        setIsContractLoading(true);
+                        showToast(lang === 'TR' ? 'Yakma işlemi gönderiliyor... Cüzdanınızdan onaylayın.' : 'Burn transaction sent... Confirm in wallet.', 'info');
+                        await burnExpired(BigInt(activeTrade.onchainId));
+                        setTradeState('RESOLVED');
+                        setCurrentView('dashboard');
+                        showToast(lang === 'TR' ? '🔥 İşlem yakıldı. Maker bond protokole aktarıldı.' : '🔥 Trade burned. Maker bond transferred to protocol.', 'success');
+                      } catch (err) {
+                        console.error('burnExpired error:', err);
+                        const reason = err.reason || err.message || (lang === 'TR' ? 'Yakma işlemi başarısız.' : 'Burn failed.');
+                        showToast(reason, 'error');
+                      } finally {
+                        setIsContractLoading(false);
+                      }
+                    }}
+                    disabled={isContractLoading}
+                    className={`px-6 py-2.5 rounded-xl font-bold text-sm transition ${isContractLoading ? 'bg-[#1a1a1f] text-slate-500 cursor-not-allowed border border-[#2a2a2e]' : 'bg-red-900/30 text-red-400 border border-red-800/50 hover:bg-red-600 hover:text-white'}`}>
+                    {isContractLoading ? '⏳...' : (lang === 'TR' ? '🔥 Süresi Dolan İşlemi Yak' : '🔥 Burn Expired Trade')}
+                  </button>
+                </div>
+              );
+            })()}
 
           </div>
         </div>
