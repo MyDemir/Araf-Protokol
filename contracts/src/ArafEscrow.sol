@@ -51,7 +51,7 @@ error DeadlineTooFar(); // AFS-017 Fix: Cancel deadline üst limiti
 // aynı işlemde ikinci bir ping yolunun açılmasını engeller.
 error ConflictingPingPath();
 
-contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix: Pausable eklendi
+contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     using SafeERC20 for IERC20;
 
     // ═══════════════════════════════════════════════════
@@ -86,10 +86,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         bool    cancelProposedByMaker;
         bool    cancelProposedByTaker;
         // GÜVENLİK GÜNCELLEMESİ: autoRelease istismarını önlemek için ping mekanizması
-        uint256 pingedAt;              // Taker'ın Maker'a "hayatta mısın?" sinyali gönderdiği zaman
-        bool    pingedByTaker;         // Ping'in gönderilip gönderilmediğini işaretler
+        uint256 pingedAt;           // Taker'ın Maker'a "hayatta mısın?" sinyali gönderdiği zaman
+        bool    pingedByTaker;      // Ping'in gönderilip gönderilmediğini işaretler
         // YENİ: Simetrik Ping Modeli - Maker'ın itiraz öncesi uyarısı
-        uint256 challengePingedAt;     // Maker'ın Taker'a "ödeme gelmedi" uyarısı gönderdiği zaman
+        uint256 challengePingedAt;  // Maker'ın Taker'a "ödeme gelmedi" uyarısı gönderdiği zaman
         bool    challengePingedByMaker; // Maker'ın uyarısının gönderilip gönderilmediğini işaretler
     }
 
@@ -108,11 +108,11 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
     // TRY limitleri off-chain (backend) tarafindan zorunlu tutulur.
     // On-chain: tier numarasina gore bond BPS hesaplanir.
     //
-    // Tier 0 |  250 - 5.000 TRY  | Maker %0 | Taker %0  | Yeni kullanici tesviki
-    // Tier 1 | 5.001-50.000 TRY  | Maker %8 | Taker %10 | 1:1.25 asimetri
-    // Tier 2 | 50K - 250K TRY    | Maker %6 | Taker %8  | 1:1.33 asimetri
-    // Tier 3 | 250K - 1M TRY     | Maker %5 | Taker %5  | 1:1 (esit, guven artar)
-    // Tier 4 | 1M+ TRY           | Maker %2 | Taker %2  | 1:1 (premium, dusuk yuk)
+    // Tier 0 | 250 - 5.000 TRY  | Maker %0 | Taker %0  | Yeni kullanici tesviki
+    // Tier 1 | 5.001-50.000 TRY | Maker %8 | Taker %10 | 1:1.25 asimetri
+    // Tier 2 | 50K - 250K TRY   | Maker %6 | Taker %8  | 1:1.33 asimetri
+    // Tier 3 | 250K - 1M TRY    | Maker %5 | Taker %5  | 1:1 (esit, guven artar)
+    // Tier 4 | 1M+ TRY          | Maker %2 | Taker %2  | 1:1 (premium, dusuk yuk)
     //
     // Tier 0: bond yoktur — sadece kilitli crypto erimeye tabidir.
     // Tasarim notu: Tier 0, yeni kullanici cekmek icin dusuk miktarlarla sinirlandirilmistir.
@@ -155,8 +155,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
     uint256 public constant WALLET_AGE_MIN       =   7 days;
     uint256 public constant TIER0_TRADE_COOLDOWN =  4 hours;
     uint256 public constant TIER1_TRADE_COOLDOWN =  4 hours;
-    // AFS-017 Fix: Cancel imzası için maksimum deadline süresi
-    uint256 public constant MAX_CANCEL_DEADLINE  =   7 days;
+    uint256 public constant MAX_CANCEL_DEADLINE  =   7 days;  // AFS-017 Fix: Cancel imzası için maksimum deadline süresi
 
     // AUDIT FIX C-04: Wash trading caydırıcı — Tier 1+ erişimi için minimum aktif süre.
     // 24h cooldown ile en hızlı 15 işlem = 15 gün. 30 gün zorunluluğu,
@@ -167,7 +166,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
     // tarafın teminatından kesilen "ihmal cezası". Bu, Taker'ın da süreci
     // zorla sonlandırmasının küçük bir maliyeti olmasını sağlar.
     // GÜVENLİK GÜNCELLEMESİ: autoRelease için karşılıklı kesinti
-    uint256 public constant AUTO_RELEASE_PENALTY_BPS = 500; // 5%
+    // GÖREV 3b: Ceza %5'ten %2'ye düşürüldü
+    uint256 public constant AUTO_RELEASE_PENALTY_BPS = 200; // 2%
 
     // ── Saatlik Decay (Hourly BPS) ────────────────────────────────────────────
     // Efektif bleeding: MAX_BLEEDING(240h) - GRACE(48h) = 192h
@@ -209,10 +209,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
 
     mapping(uint256 => Trade) public trades;
     mapping(address => Reputation) public reputation;
-
     // Anti-Sybil: wallet registration timestamp (first interaction)
     mapping(address => uint256) public walletRegisteredAt;
-
     // Anti-Sybil: last trade timestamp for Tier 1 cooldown
     mapping(address => uint256) public lastTradeAt;
 
@@ -314,7 +312,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         if (!supportedTokens[_token]) revert TokenNotSupported();
         if (_cryptoAmount == 0) revert ZeroAmount();
         if (_tier > 4) revert InvalidTier();
-        
+
         // YENİ MİMARİ: Kullanıcının itibarına göre izin verilen en yüksek tier'ı kontrol et.
         uint8 effectiveTier = _getEffectiveTier(msg.sender);
         if (_tier > effectiveTier) revert TierNotAllowed();
@@ -482,6 +480,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         nonReentrant
     {
         Trade storage t = trades[_tradeId];
+
         if (t.state != TradeState.PAID && t.state != TradeState.CHALLENGED) revert CannotReleaseInState();
         if (msg.sender != t.maker) revert OnlyMaker();
 
@@ -545,6 +544,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         inState(_tradeId, TradeState.PAID)
     {
         Trade storage t = trades[_tradeId];
+
         if (msg.sender != t.maker) revert OnlyMaker();
         if (block.timestamp < t.paidAt + 24 hours) {
             revert PingCooldownNotElapsed(t.paidAt + 24 hours);
@@ -576,6 +576,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         inState(_tradeId, TradeState.PAID)
     {
         Trade storage t = trades[_tradeId];
+
         if (msg.sender != t.maker) revert OnlyMaker();
 
         if (!t.challengePingedByMaker) revert MustPingFirst();
@@ -606,6 +607,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         bytes calldata _sig
     ) external nonReentrant {
         Trade storage t = trades[_tradeId];
+
         if (t.state != TradeState.LOCKED && t.state != TradeState.PAID && t.state != TradeState.CHALLENGED) revert CannotReleaseInState();
         if (block.timestamp > _deadline) revert SignatureExpired();
         if (msg.sender != t.maker && msg.sender != t.taker) revert NotTradeParty();
@@ -621,6 +623,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
             sigNonces[msg.sender],
             _deadline
         ));
+
         bytes32 digest = _hashTypedDataV4(structHash);
         address recovered = ECDSA.recover(digest, _sig);
         if (recovered != msg.sender) revert InvalidSignature();
@@ -640,11 +643,13 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
     }
 
     /**
-     * @dev Internal cancel execution. Refunds both parties (minus decay if CHALLENGED).
-     * Cancel'da fee kesilmez — tam iade.
+     * @dev Internal cancel execution.
+     * Refunds both parties (minus decay if CHALLENGED).
+     * GÖREV 4 FIX: İptal LOCKED durumundaysa %0 kesinti, PAID durumundaysa %0.2 kesinti uygulanır.
      */
     function _executeCancel(uint256 _tradeId) internal {
         Trade storage t = trades[_tradeId];
+        TradeState currentState = t.state; // Mevcut durumu kaydet (LOCKED mi, PAID mi?)
 
         (uint256 currentCrypto, uint256 currentMakerBond, uint256 currentTakerBond, uint256 decayed) =
             _calculateCurrentAmounts(_tradeId);
@@ -657,9 +662,15 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
             emit BleedingDecayed(_tradeId, decayed, block.timestamp);
         }
 
-        // 2. YENİ MANTIK: Kalan tutarlar üzerinden standart protokol ücretlerini hesapla
-        uint256 takerFee = (currentCrypto * TAKER_FEE_BPS) / BPS_DENOMINATOR;
-        uint256 makerFee = (currentCrypto * MAKER_FEE_BPS) / BPS_DENOMINATOR;
+        uint256 takerFee = 0;
+        uint256 makerFee = 0;
+
+        // 2. YENİ MANTIK: SADECE ödeme bildirildiyse sistemi meşgul ettikleri için fee kesilir
+        if (currentState == TradeState.PAID || currentState == TradeState.CHALLENGED) {
+            takerFee = (currentCrypto * TAKER_FEE_BPS) / BPS_DENOMINATOR;
+            makerFee = (currentCrypto * MAKER_FEE_BPS) / BPS_DENOMINATOR;
+        }
+
         uint256 totalFeeToTreasury = 0;
 
         // 3. Net iadeleri hesapla
@@ -671,7 +682,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
             makerRefund = currentCrypto + (currentMakerBond - makerFee);
             totalFeeToTreasury += makerFee;
         } else {
-            makerRefund = currentCrypto; // Teminat yetersizse tamamını al
+            makerRefund = currentCrypto;
+            // Teminat yetersizse tamamını al
             totalFeeToTreasury += currentMakerBond;
         }
 
@@ -680,7 +692,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
             takerRefund = currentTakerBond - takerFee;
             totalFeeToTreasury += takerFee;
         } else {
-            takerRefund = 0; // Teminat yetersizse tamamını al
+            takerRefund = 0;
+            // Teminat yetersizse tamamını al
             totalFeeToTreasury += currentTakerBond;
         }
 
@@ -713,6 +726,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         inState(_tradeId, TradeState.CHALLENGED)
     {
         Trade storage t = trades[_tradeId];
+
         if (block.timestamp < t.challengedAt + MAX_BLEEDING) revert BurnPeriodNotReached();
 
         (uint256 currentCrypto, uint256 currentMakerBond, uint256 currentTakerBond,) =
@@ -748,6 +762,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         inState(_tradeId, TradeState.PAID)
     {
         Trade storage t = trades[_tradeId];
+
         if (msg.sender != t.taker) revert OnlyTaker();
         
         // GÜVENLİK YAMASI: Taker, Maker'ı uyarmak için tam 48 saatlik (GRACE_PERIOD) sürenin bitmesini beklemek ZORUNDADIR.
@@ -778,6 +793,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         inState(_tradeId, TradeState.PAID)
     {
         Trade storage t = trades[_tradeId];
+
         if (msg.sender != t.taker) revert OnlyTaker();
 
         if (!t.pingedByTaker) revert MustPingFirst();
@@ -820,17 +836,17 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
      *
      * AUDIT FIX C-01: Saniye bazlı lineer decay hesaplaması.
      * ÖNCEKİ: hoursElapsed = bleedingElapsed / 3600 (integer bölme → step-function)
-     *   Sorun: İlk 3599 saniyede decay = 0. Küçük miktarlarda saatlik decay sıfıra
-     *   yuvarlanıyordu ve fonlar hiç erimeye başlamıyordu.
+     * Sorun: İlk 3599 saniyede decay = 0. Küçük miktarlarda saatlik decay sıfıra
+     * yuvarlanıyordu ve fonlar hiç erimeye başlamıyordu.
      * ŞİMDİ: decayed = (original * rateBpsH * elapsedSeconds) / (BPS_DENOM * 3600)
-     *   Aynı saatlik oran, saniye cinsinde uygulanır. Step-function yerine sürekli
-     *   ve pürüzsüz (smooth) decay sağlar.
+     * Aynı saatlik oran, saniye cinsinde uygulanır. Step-function yerine sürekli
+     * ve pürüzsüz (smooth) decay sağlar.
      *
      * Overflow analizi (uint256 güvenli):
-     *   Max cryptoAmount: ~10^12 (1B USDT, 6 decimal)
-     *   Max rate * 2: 68
-     *   Max elapsedSeconds: 691200 (192h)
-     *   Çarpım: 10^12 * 68 * 691200 = 4.7 * 10^19 ≪ 2^256
+     * Max cryptoAmount: ~10^12 (1B USDT, 6 decimal)
+     * Max rate * 2: 68
+     * Max elapsedSeconds: 691200 (192h)
+     * Çarpım: 10^12 * 68 * 691200 = 4.7 * 10^19 ≪ 2^256
      *
      * @return currentCrypto    Remaining USDT after USDT decay
      * @return currentMakerBond Remaining maker bond after bond decay
@@ -945,6 +961,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
      */
     function _updateReputation(address _wallet, bool _failed) internal {
         Reputation storage rep = reputation[_wallet];
+
         if (_failed) {
             rep.failedDisputes++;
 
@@ -953,6 +970,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
 
                 uint256 banDays = 30 days * (2 ** (rep.consecutiveBans - 1));
                 if (banDays > 365 days) banDays = 365 days;
+
                 rep.bannedUntil = block.timestamp + banDays;
 
                 // AFS-002 Fix: Tier demosyon — hasTierPenalty bayrağı ile ilk ceza 4'ten başlar
@@ -962,6 +980,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
                         hasTierPenalty[_wallet] = true;
                         maxAllowedTier[_wallet] = 4;
                     }
+
                     // Tier 0'ın altına düşemez
                     if (maxAllowedTier[_wallet] > 0) {
                         maxAllowedTier[_wallet] = maxAllowedTier[_wallet] - 1;
@@ -972,7 +991,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
             }
         } else {
             rep.successfulTrades++;
-
+            
             // AUDIT FIX C-04: İlk başarılı işlem zamanını kaydet (wash trading caydırıcı).
             // Bu değer bir kez set edilir ve değişmez — ilk kez başarılı işlem yapıldığında.
             if (firstSuccessfulTradeAt[_wallet] == 0) {
@@ -1088,6 +1107,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         )
     {
         Reputation storage rep = reputation[_wallet];
+
         return (
             rep.successfulTrades,
             rep.failedDisputes,
@@ -1097,11 +1117,20 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
         );
     }
 
+    // GÖREV 3a FIX: firstSuccessfulTradeAt okuma fonksiyonu eklendi
+    /**
+     * @notice Returns the timestamp of the wallet's first successful trade.
+     * @dev Used by frontend to calculate MIN_ACTIVE_PERIOD countdown.
+     */
+    function getFirstSuccessfulTradeAt(address _wallet) external view returns (uint256) {
+        return firstSuccessfulTradeAt[_wallet];
+    }
+
     /**
      * AFS-004 Fix: getTrade — explicit view fonksiyonu.
      * @notice Returns full trade details.
      * @dev    Solidity auto-getter struct için tuple döndürür ve named field erişimi
-     *         vermez. Bu fonksiyon frontend ve test entegrasyonu için gereklidir.
+     * vermez. Bu fonksiyon frontend ve test entegrasyonu için gereklidir.
      */
     function getTrade(uint256 _tradeId) external view returns (Trade memory) {
         return trades[_tradeId];
@@ -1110,10 +1139,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
     /**
      * AFS-005 Fix: getCurrentAmounts — external view wrapper.
      * @notice Bir uyuşmazlık durumunda, Bleeding Escrow mekanizması sonrası
-     *         anlık olarak kalan kripto ve teminat miktarlarını hesaplar.
+     * anlık olarak kalan kripto ve teminat miktarlarını hesaplar.
      * @dev    ARCHITECTURE dokümanında public view olarak belgelenmişti ancak
-     *         sadece internal tanımlıydı. Frontend ve üçüncü taraflar bu fonksiyonu
-     *         çağırarak decay miktarını on-chain'den okuyabilir.
+     * sadece internal tanımlıydı. Frontend ve üçüncü taraflar bu fonksiyonu
+     * çağırarak decay miktarını on-chain'den okuyabilir.
      */
     function getCurrentAmounts(uint256 _tradeId)
         external
@@ -1138,7 +1167,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable { // C-03 Fix:
     {
         aged = walletRegisteredAt[_wallet] != 0 &&
                block.timestamp >= walletRegisteredAt[_wallet] + WALLET_AGE_MIN;
+
         funded = _wallet.balance >= DUST_LIMIT;
+
         cooldownOk = lastTradeAt[_wallet] == 0 ||
                      block.timestamp >= lastTradeAt[_wallet] + TIER0_TRADE_COOLDOWN;
     }
