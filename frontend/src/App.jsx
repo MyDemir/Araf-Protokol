@@ -126,6 +126,7 @@ function App() {
     getPaused,
     decayReputation,
     antiSybilCheck,
+    mintToken,
   } = useArafContract();
   
   const [jwtToken, setJwtToken] = useState(null);
@@ -136,9 +137,10 @@ function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   // FIX-11: Contract işlemleri için loading state — çift tıklama ve kötü UX'i önler
   const [isContractLoading, setIsContractLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState(''); // UX-5: İki aşamalı işlemler için metin
 
   // --- KULLANICI VE VERİ STATE'LERİ ---
-  const [lang, setLang] = useState('TR'); 
+  const [lang, setLang] = useState('EN'); // UX-1: Varsayılan dil EN yapıldı
   const [filterTier1, setFilterTier1] = useState(false);
   const [filterToken, setFilterToken] = useState('ALL'); // YENİ: Sidebar için token filtresi
   const [activeTradesFilter, setActiveTradesFilter] = useState('ALL'); // YENİ: Aktif işlemler için statü filtresi
@@ -709,6 +711,29 @@ function App() {
     }
   };
 
+  // Faucet Minting İşlemi
+  const handleMint = async (tokenName) => {
+    if (!isConnected) {
+      showToast(lang === 'TR' ? 'Önce cüzdanınızı bağlayın.' : 'Please connect your wallet first.', 'error');
+      return;
+    }
+    try {
+      setIsContractLoading(true);
+      setLoadingText(lang === 'TR' ? `${tokenName} alınıyor...` : `Minting ${tokenName}...`);
+      const address = import.meta.env[`VITE_MOCK_${tokenName}_ADDRESS`];
+      if (!address) throw new Error(lang === 'TR' ? `Test ${tokenName} adresi tanımlı değil.` : `Test ${tokenName} address not defined.`);
+      
+      await mintToken(address);
+      showToast(lang === 'TR' ? `✅ Test ${tokenName} başarıyla alındı!` : `✅ Test ${tokenName} minted successfully!`, 'success');
+    } catch (err) {
+      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'İşlem başarısız.' : 'Transaction failed.');
+      showToast(errorMessage, 'error');
+    } finally {
+      setIsContractLoading(false);
+      setLoadingText('');
+    }
+  };
+
   useEffect(() => {
     if (!isConnected) {
       setJwtToken(null);
@@ -754,20 +779,12 @@ function App() {
       if (takerBond > 0n) {
         const currentAllowance = await getAllowance(tokenAddress, address);
         if (currentAllowance < takerBond) {
-          showToast(
-            lang === 'TR'
-              ? `Adım 1/2: ${order.crypto} teminat izni veriliyor... Cüzdanınızdan onaylayın.`
-              : `Step 1/2: Approving ${order.crypto} bond... Confirm in your wallet.`,
-            'info'
-          );
+          setLoadingText(lang === 'TR' ? `Adım 1/2: ${order.crypto} izni veriliyor...` : `Step 1/2: Approving ${order.crypto}...`);
           await approveToken(tokenAddress, takerBond);
         }
       }
 
-      showToast(
-        lang === 'TR' ? 'Adım 2/2: İşlem kilitleniyor... Cüzdanınızdan onaylayın.' : 'Step 2/2: Locking trade... Confirm in wallet.',
-        'info'
-      );
+      setLoadingText(lang === 'TR' ? 'Adım 2/2: İşlem kilitleniyor...' : 'Step 2/2: Locking trade...');
       await lockEscrow(BigInt(order.onchainId));
 
       // Başarı — Trade Room'a geç
@@ -780,13 +797,15 @@ function App() {
       showToast(lang === 'TR' ? '🔒 İşlem başarıyla kilitlendi!' : '🔒 Trade locked successfully!', 'success');
     } catch (err) {
       console.error('handleStartTrade error:', err);
-      if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'İşlem kilitlenemedi.' : 'Failed to lock trade.');
+      if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
         showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
       } else {
-        showToast(err.message || (lang === 'TR' ? 'İşlem kilitlenemedi.' : 'Failed to lock trade.'), 'error');
+        showToast(errorMessage, 'error');
       }
     } finally {
       setIsContractLoading(false);
+      setLoadingText('');
     }
   };
 
@@ -813,7 +832,8 @@ function App() {
       showToast(lang === 'TR' ? 'İlan iptal edildi ve fonlar iade edildi.' : 'Listing cancelled and funds returned.', 'success');
     } catch (err) {
       console.error("cancelOpenEscrow error:", err);
-      showToast(lang === 'TR' ? 'On-chain iptal başarısız oldu.' : 'On-chain cancellation failed.', 'error');
+      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'On-chain iptal başarısız oldu.' : 'On-chain cancellation failed.');
+      showToast(errorMessage, 'error');
     } finally {
       setIsContractLoading(false);
     }
@@ -877,10 +897,11 @@ function App() {
       showToast(lang === 'TR' ? '✅ Ödeme bildirildi! 48 saatlik grace period başladı.' : '✅ Payment reported! 48h grace period started.', 'success');
     } catch (err) {
       console.error('handleReportPayment error:', err);
-      if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Ödeme bildirimi başarısız.' : 'Payment report failed.');
+      if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
         showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
       } else {
-        showToast(err.message || (lang === 'TR' ? 'Ödeme bildirimi başarısız.' : 'Payment report failed.'), 'error');
+        showToast(errorMessage, 'error');
       }
     } finally {
       setIsContractLoading(false);
@@ -935,10 +956,11 @@ function App() {
       );
     } catch (err) {
       console.error('handleProposeCancel error:', err);
-      if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'İptal teklifi başarısız.' : 'Cancel proposal failed.');
+      if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
         showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
       } else {
-        showToast(err.message || (lang === 'TR' ? 'İptal teklifi başarısız.' : 'Cancel proposal failed.'), 'error');
+        showToast(errorMessage, 'error');
       }
     } finally {
       setIsContractLoading(false);
@@ -1003,10 +1025,11 @@ function App() {
       showToast(lang === 'TR' ? 'USDT başarıyla serbest bırakıldı! ✅' : 'USDT successfully released! ✅', 'success');
     } catch (err) {
       console.error("releaseFunds error:", err);
-      if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Kontrat işlemi başarısız oldu.' : 'Contract transaction failed.');
+      if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
         showToast(lang === 'TR' ? 'İşlem sizin tarafınızdan iptal edildi.' : 'Transaction cancelled by you.', 'error');
       } else {
-        showToast(lang === 'TR' ? 'Kontrat işlemi başarısız oldu.' : 'Contract transaction failed.', 'error');
+        showToast(errorMessage, 'error');
       }
     } finally {
       setIsContractLoading(false);
@@ -1035,8 +1058,8 @@ function App() {
         setActiveTrade(prev => ({ ...prev, challengePingedAt: new Date().toISOString() }));
       } catch (err) {
         console.error("pingTakerForChallenge error:", err);
-        const reason = err.reason || (lang === 'TR' ? 'Uyarı gönderilemedi.' : 'Failed to send ping.');
-        showToast(reason, 'error');
+        const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Uyarı gönderilemedi.' : 'Failed to send ping.');
+        showToast(errorMessage, 'error');
       } finally {
         setIsContractLoading(false);
       }
@@ -1052,9 +1075,8 @@ function App() {
       showToast(lang === 'TR' ? 'İtiraz başlatıldı. Bleeding Escrow aktif.' : 'Challenge opened. Bleeding Escrow active.', 'success');
     } catch (err) {
       console.error("challengeTrade error:", err);
-      // Kontrat revert mesajını göstermek daha faydalı
-      const reason = err.reason || (lang === 'TR' ? 'İtiraz işlemi başarısız.' : 'Challenge failed.');
-      showToast(reason, 'error');
+      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'İtiraz işlemi başarısız.' : 'Challenge failed.');
+      showToast(errorMessage, 'error');
     } finally {
       setIsContractLoading(false);
     }
@@ -1074,12 +1096,11 @@ function App() {
       setActiveTrade(prev => ({ ...prev, pingedAt: new Date().toISOString() }));
     } catch (err) {
       console.error("pingMaker error:", err);
-      if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Ping işlemi başarısız oldu.' : 'Ping failed.');
+      if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
         showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
       } else {
-        // Kontrat revert mesajını göstermek daha faydalı olabilir
-        const reason = err.reason || 'Ping işlemi başarısız oldu.';
-        showToast(reason, 'error');
+        showToast(errorMessage, 'error');
       }
     } finally {
       setIsContractLoading(false);
@@ -1099,12 +1120,11 @@ function App() {
       showToast(lang === 'TR' ? 'İşlem başarıyla sonlandırıldı. Fonlar cüzdanınıza aktarıldı.' : 'Trade successfully resolved. Funds transferred to your wallet.', 'success');
     } catch (err) {
       console.error("autoRelease error:", err);
-      if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Otomatik serbest bırakma başarısız oldu.' : 'Auto-release failed.');
+      if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
         showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
       } else {
-        // Kontrat revert mesajını göstermek daha faydalı olabilir
-        const reason = err.reason || 'Otomatik serbest bırakma başarısız oldu.';
-        showToast(reason, 'error');
+        showToast(errorMessage, 'error');
       }
     } finally {
       setIsContractLoading(false);
@@ -1167,13 +1187,14 @@ function App() {
       );
     } catch (err) {
       console.error('handleRegisterWallet error:', err);
-      if (err.message?.includes('AlreadyRegistered')) {
+      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Kayıt başarısız.' : 'Registration failed.');
+      if (errorMessage.includes('AlreadyRegistered')) {
         setIsWalletRegistered(true);
         showToast(lang === 'TR' ? 'Cüzdan zaten kayıtlı.' : 'Wallet already registered.', 'info');
-      } else if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+      } else if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
         showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
       } else {
-        showToast(err.message || (lang === 'TR' ? 'Kayıt başarısız.' : 'Registration failed.'), 'error');
+        showToast(errorMessage, 'error');
       }
     } finally {
       setIsRegisteringWallet(false);
@@ -1250,23 +1271,12 @@ function App() {
       const currentAllowance = await getAllowance(tokenAddress, address);
 
       if (currentAllowance < totalLock) {
-        showToast(
-          lang === 'TR'
-            ? `Adım 1/2: ${makerToken} harcama izni veriliyor... Cüzdanınızdan onaylayın.`
-            : `Step 1/2: Approving ${makerToken} spend... Confirm in your wallet.`,
-          'info'
-        );
+        setLoadingText(lang === 'TR' ? `Adım 1/2: ${makerToken} izni veriliyor...` : `Step 1/2: Approving ${makerToken}...`);
         await approveToken(tokenAddress, totalLock);
-        showToast(lang === 'TR' ? 'İzin verildi. Şimdi escrow oluşturuluyor...' : 'Approved. Creating escrow now...', 'info');
       }
 
       // Adım 2: Escrow oluştur
-      showToast(
-        lang === 'TR'
-          ? 'Adım 2/2: Escrow oluşturuluyor... Cüzdanınızdan onaylayın.'
-          : 'Step 2/2: Creating escrow... Confirm in your wallet.',
-        'info'
-      );
+      setLoadingText(lang === 'TR' ? 'Adım 2/2: Escrow oluşturuluyor...' : 'Step 2/2: Creating escrow...');
       await createEscrow(tokenAddress, cryptoAmountRaw, makerTier);
 
       showToast(
@@ -1281,13 +1291,15 @@ function App() {
       setMakerFiat('TRY');
     } catch (err) {
       console.error('handleCreateEscrow error:', err);
-      if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Escrow oluşturulamadı.' : 'Failed to create escrow.');
+      if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
         showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
       } else {
-        showToast(err.message || (lang === 'TR' ? 'Escrow oluşturulamadı.' : 'Failed to create escrow.'), 'error');
+        showToast(errorMessage, 'error');
       }
     } finally {
       setIsContractLoading(false);
+      setLoadingText('');
     }
   };
 
@@ -1511,7 +1523,7 @@ function App() {
                   ? 'bg-[#151518] text-slate-500 border border-[#2a2a2e] cursor-not-allowed'
                   : 'bg-white hover:bg-slate-200 text-black shadow-white/10'
               }`}>
-              {isContractLoading ? (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...') : (lang === 'TR' ? '🔒 Onayla ve Kilitle' : '🔒 Approve & Lock')}
+              {isContractLoading ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : (lang === 'TR' ? '🔒 Onayla ve Kilitle' : '🔒 Approve & Lock')}
             </button>
           </div>
         </div>
@@ -1525,7 +1537,7 @@ function App() {
 
     return (
       <div className="fixed inset-0 bg-[#060608]/90 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 z-[100]">
-        <div className="bg-[#111113] border-t sm:border border-[#222] rounded-t-3xl sm:rounded-2xl w-full max-w-2xl shadow-2xl h-[85vh] sm:h-auto sm:max-h-[90vh] flex flex-col">
+        <div className="bg-[#111113] border-t sm:border border-[#222] rounded-t-3xl sm:rounded-2xl w-full max-w-2xl shadow-2xl h-[85vh] sm:h-auto sm:max-h-[90vh] flex flex-col pb-16 sm:pb-0">
           <div className="flex justify-between items-center p-5 sm:p-6 border-b border-[#222] shrink-0">
             <h2 className="text-2xl font-bold text-white">{lang === 'TR' ? 'Profil Merkezi' : 'Profile Center'}</h2>
             <button onClick={() => setShowProfileModal(false)} className="text-slate-400 hover:text-white text-2xl leading-none">&times;</button>
@@ -1582,6 +1594,12 @@ function App() {
                     🔒 {lang === 'TR' ? 'IBAN ve Telegram bilgileriniz AES-256 ile şifrelenir ve asla on-chain kaydedilmez.' : 'Your IBAN and Telegram are AES-256 encrypted and never saved on-chain.'}
                   </p>
                 </form>
+
+                <button 
+                  onClick={() => { disconnect(); setJwtToken(null); setShowProfileModal(false); }} 
+                  className="w-full mt-4 py-2.5 rounded-xl font-bold text-sm bg-red-950/40 text-red-500 border border-red-900/50 hover:bg-red-900/80 hover:text-white transition">
+                  {lang === 'TR' ? '🚪 Çıkış Yap / Cüzdanı Ayır' : '🚪 Disconnect / Logout'}
+                </button>
               </div>
             )}
             
@@ -2043,8 +2061,16 @@ function App() {
 
   const renderMarket = () => (
     <div className="p-4 md:p-8 max-w-[1200px] w-full">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <h2 className="text-xl font-bold text-white">{lang === 'TR' ? 'Pazar Yeri' : 'Marketplace'}</h2>
+        <div className="flex gap-3 w-full md:w-auto">
+          <button onClick={() => handleMint('USDT')} disabled={isContractLoading} className="flex-1 md:flex-none px-4 py-2 bg-[#111113] border border-[#222] hover:bg-[#1a1a1f] rounded-xl text-xs sm:text-sm font-bold text-emerald-400 transition shadow-lg flex items-center justify-center gap-2">
+            {isContractLoading && loadingText.includes('USDT') ? '⏳' : '🚰'} {lang === 'TR' ? 'Test USDT Al' : 'Get Test USDT'}
+          </button>
+          <button onClick={() => handleMint('USDC')} disabled={isContractLoading} className="flex-1 md:flex-none px-4 py-2 bg-[#111113] border border-[#222] hover:bg-[#1a1a1f] rounded-xl text-xs sm:text-sm font-bold text-blue-400 transition shadow-lg flex items-center justify-center gap-2">
+            {isContractLoading && loadingText.includes('USDC') ? '⏳' : '🚰'} {lang === 'TR' ? 'Test USDC Al' : 'Get Test USDC'}
+          </button>
+        </div>
       </div>
 
       <div className="space-y-3">
@@ -2101,12 +2127,12 @@ function App() {
                 </div>
 
                 <div className="w-full md:w-1/3 flex flex-col items-start md:items-end justify-center relative">
-                   <button onClick={() => handleStartTrade(order)} disabled={!finalCanTakeOrder} className={`w-full md:w-auto px-6 py-2.5 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${!finalCanTakeOrder ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-white text-black hover:bg-slate-200 shadow-[0_0_15px_rgba(255,255,255,0.1)]'}`}>
+                   <button onClick={() => handleStartTrade(order)} disabled={!finalCanTakeOrder || isContractLoading} className={`w-full md:w-auto px-6 py-2.5 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${!finalCanTakeOrder ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-white text-black hover:bg-slate-200 shadow-[0_0_15px_rgba(255,255,255,0.1)]'}`}>
                     {isPaused ? <><span>⏸️</span> {lang === 'TR' ? 'Bakımda' : 'Paused'}</> :
                      !canTakeOrder ? <><span>🔒</span> {lang === 'TR' ? 'Kilitli' : 'Locked'}</> : 
                      !isFunded ? <><span>⚠️</span> {lang === 'TR' ? 'Bakiye Yetersiz' : 'Low Balance'}</> :
                      !isCooldownOk ? <><span>⏳</span> {lang === 'TR' ? `Bekleme (${Math.ceil(cooldownRemaining/3600)}s)` : `Cooldown (${Math.ceil(cooldownRemaining/3600)}h)`}</> :
-                     (lang === 'TR' ? 'Satın Al' : 'Buy')}
+                     (isContractLoading ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : (lang === 'TR' ? 'Satın Al' : 'Buy'))}
                   </button>
                   {!isFunded && isConnected && canTakeOrder && !isPaused && (
                     <p className="text-[10px] text-red-500 mt-2 text-center md:text-right w-full leading-tight">
@@ -2505,6 +2531,12 @@ function App() {
       {isPaused && (
         <div className="absolute top-0 left-0 right-0 z-[70] bg-red-950/90 backdrop-blur border-b border-red-800 px-6 py-2 flex justify-center items-center shadow-xl">
           <span className="text-sm font-bold text-red-200">⚠️ {lang === 'TR' ? 'Sistem şu an bakım modundadır. Yeni işlem açılamaz.' : 'System is currently in maintenance mode. New trades cannot be opened.'}</span>
+        </div>
+      )}
+
+      {isConnected && chainId !== 84532 && (
+        <div className="absolute top-0 left-0 right-0 z-[80] bg-red-950/95 backdrop-blur border-b border-red-800 px-6 py-2 flex justify-center items-center shadow-xl">
+          <span className="text-sm font-bold text-red-200">⚠️ {lang === 'TR' ? 'Yanlış Ağ! Lütfen cüzdanınızdan Base Sepolia ağına geçin.' : 'Wrong Network! Please switch to Base Sepolia in your wallet.'}</span>
         </div>
       )}
 
