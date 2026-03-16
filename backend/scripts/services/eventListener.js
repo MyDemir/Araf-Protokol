@@ -222,8 +222,8 @@ class EventWorker {
   /**
    * AUDIT FIX B-04: Checkpoint'i sadece mevcut değerden büyükse günceller.
    * ÖNCEKİ: redis.set(CHECKPOINT_KEY, blockNumber) — koşulsuz yazma.
-   *   Sorun: Geç işlenen event'ler checkpoint'i geri alabiliyordu. Restart sonrası
-   *   aradaki event'ler tekrar replay edilir (idempotent olmalı ama gereksiz yük).
+   * Sorun: Geç işlenen event'ler checkpoint'i geri alabiliyordu. Restart sonrası
+   * aradaki event'ler tekrar replay edilir (idempotent olmalı ama gereksiz yük).
    * ŞİMDİ: Sadece monoton artan güncelleme — checkpoint asla geri gitmez.
    */
   async _updateCheckpointIfHigher(blockNumber) {
@@ -493,15 +493,30 @@ class EventWorker {
     );
   }
 
+  // GÖREV 2: _onMakerPinged Düzeltmesi
   async _onMakerPinged(event) {
-    const { tradeId } = event.args;
+    const { tradeId, pinger } = event.args;
+
+    const trade = await Trade.findOne({
+      onchain_escrow_id: Number(tradeId)
+    }).lean();
+    if (!trade) return;
+
+    const isTakerPing = pinger.toLowerCase() === trade.taker_address?.toLowerCase();
+
+    const updateFields = isTakerPing
+      ? {
+          "timers.pinged_at": new Date(),
+          "pinged_by_taker": true
+        }
+      : {
+          "timers.challenge_pinged_at": new Date(),
+          "challenge_pinged_by_maker": true
+        };
+
     await Trade.findOneAndUpdate(
       { onchain_escrow_id: Number(tradeId) },
-      { $set: {
-          "timers.pinged_at": new Date(),
-          "pinged_by_taker": true,
-        }
-      },
+      { $set: updateFields }
     );
   }
 
@@ -513,10 +528,10 @@ class EventWorker {
    *
    * AUDIT FIX B-03: $set: { "reputation_cache": {...} } kaldırıldı.
    * ÖNCEKİ: Tüm reputation_cache objesini yeni bir obje ile DEĞİŞTİRİYORDU.
-   *   Sorun: failure_score alanı bu güncellemede yer almadığı için her
-   *   ReputationUpdated event'inde 0'a sıfırlanıyordu → ölü alan.
+   * Sorun: failure_score alanı bu güncellemede yer almadığı için her
+   * ReputationUpdated event'inde 0'a sıfırlanıyordu → ölü alan.
    * ŞİMDİ: Dot notation ile sadece değişen alanlar güncellenir.
-   *   failure_score ve reputation_history korunur.
+   * failure_score ve reputation_history korunur.
    */
   async _onReputationUpdated(event) {
     const { wallet, successful, failed, bannedUntil, effectiveTier } = event.args;
