@@ -1,7 +1,6 @@
 /**
- * ArafEscrow Deploy Script
+ * ArafEscrow Deploy Script (Güncellenmiş Testnet Sürümü)
  *
- * L-01 Güvenlik Düzeltmesi:
  * Deploy ve test token ayarları tamamlandıktan hemen sonra ownership, TREASURY_ADDRESS'e devredilir.
  * Bu sayede DEPLOYER_PRIVATE_KEY sızsa bile kontrat üzerinde hiçbir yetkisi kalmaz.
  *
@@ -13,23 +12,22 @@ const path = require("path");
 
 async function main() {
   const [deployer] = await ethers.getSigners();
-  console.log("Deploy eden cüzdan:", deployer.address);
+  console.log("🚀 Deploy eden cüzdan:", deployer.address);
 
   const balance = await ethers.provider.getBalance(deployer.address);
-  console.log("Bakiye:", ethers.formatEther(balance), "ETH");
+  console.log("💰 Bakiye:", ethers.formatEther(balance), "ETH\n");
 
   // ── Treasury & Owner ──────────────────────────────────────────────────────
   const treasury = process.env.TREASURY_ADDRESS;
   if (!treasury || treasury === "0x0000000000000000000000000000000000000000") {
-    throw new Error("TREASURY_ADDRESS .env'de set edilmeli! (deploy eden cüzdan değil, ana cüzdan)");
+    throw new Error("❌ TREASURY_ADDRESS .env'de set edilmeli! (deploy eden cüzdan değil, hazine cüzdanı)");
   }
 
-  // ethers v6 Fix: resolveName hatası için getAddress kullan
   const treasuryAddress = ethers.getAddress(treasury);
-  console.log("Treasury & Owner adresi:", treasuryAddress);
+  console.log("🏦 Treasury & Son Owner adresi:", treasuryAddress);
 
-  // ── Kontrat Deploy ────────────────────────────────────────────────────────
-  console.log("\nArafEscrow deploy ediliyor...");
+  // ── 1. Escrow Kontratı Deploy ─────────────────────────────────────────────
+  console.log("\n⏳ ArafEscrow deploy ediliyor...");
   const ArafEscrow = await ethers.getContractFactory("ArafEscrow");
   const escrow = await ArafEscrow.deploy(treasuryAddress);
   await escrow.waitForDeployment();
@@ -37,8 +35,7 @@ async function main() {
   const address = await escrow.getAddress();
   console.log("✅ ArafEscrow deploy edildi:", address);
 
-  // H-07 Fix: ABI'ı frontend'e kopyala — useArafContract hook'u bu dosyayı kullanır
-  // Deploy sonrası ABI otomatik olarak frontend/src/abi/ArafEscrow.json'a yazılır
+  // ── ABI Kopyalama ─────────────────────────────────────────────────────────
   try {
     const artifactPath = path.resolve(__dirname, "../artifacts/src/ArafEscrow.sol/ArafEscrow.json");
     const artifact     = JSON.parse(fs.readFileSync(artifactPath, "utf8"));
@@ -47,46 +44,55 @@ async function main() {
 
     fs.mkdirSync(abiDestDir, { recursive: true });
     fs.writeFileSync(abiDestPath, JSON.stringify(artifact.abi, null, 2));
-    console.log("✅ ABI frontend'e kopyalandı:", abiDestPath);
+    console.log("✅ ABI frontend'e kopyalandı.");
   } catch (err) {
-    console.warn("⚠ ABI kopyalanamadı (frontend klasörü bulunamadı):", err.message);
+    console.warn("⚠ ABI kopyalanamadı (Önemli Değil, Hardcoded ABI kullanıyoruz):", err.message);
   }
 
-  // ── Testnet: MockERC20 Deploy ve Desteklenen Token Ekleme ──────────────────
+  // ── 2. Testnet: MockERC20 Deploy ve Desteklenen Token Ekleme ──────────────
+  let usdtAddress = "";
+  let usdcAddress = "";
+
   if (process.env.NODE_ENV !== "production") {
-    console.log("\nMockERC20 (test USDT) deploy ediliyor...");
+    console.log("\n⏳ MockERC20 (USDT ve USDC) deploy ediliyor...");
     const MockERC20 = await ethers.getContractFactory("MockERC20");
+    
+    // USDT
     const usdt = await MockERC20.deploy("Mock USDT", "USDT", 6);
     await usdt.waitForDeployment();
-    const usdtAddress = await usdt.getAddress();
+    usdtAddress = await usdt.getAddress();
     console.log("✅ MockUSDT deploy edildi:", usdtAddress);
 
-    // DÜZELTME: Henüz ownership devredilmediği için deployer bunu başarıyla yapabilir
+    // USDC
+    const usdc = await MockERC20.deploy("Mock USDC", "USDC", 6);
+    await usdc.waitForDeployment();
+    usdcAddress = await usdc.getAddress();
+    console.log("✅ MockUSDC deploy edildi:", usdcAddress);
+
+    // Yetkilendirmeler (Henüz Ownership bizdeyken yapıyoruz)
     await escrow.setSupportedToken(usdtAddress, true);
     console.log("✅ USDT desteklenen token listesine eklendi");
-
-    console.log("\n─────────────────────────────────────");
-    console.log("Backend .env dosyana şunu ekle:");
-    console.log(`ARAF_ESCROW_ADDRESS=${address}`);
-    console.log(`USDT_ADDRESS=${usdtAddress}`);
-    console.log("─────────────────────────────────────");
+    
+    await escrow.setSupportedToken(usdcAddress, true);
+    console.log("✅ USDC desteklenen token listesine eklendi");
   }
 
-  // ── L-01: Ownership Devri (EN SONA ALINDI) ────────────────────────────────
-  console.log("\nOwnership devrediliyor →", treasuryAddress);
+  // ── 3. Ownership Devri (EN SONA ALINDI) ───────────────────────────────────
+  console.log("\n🔒 Ownership devrediliyor →", treasuryAddress);
   const tx = await escrow.transferOwnership(treasuryAddress);
   await tx.wait();
-  console.log("✅ Ownership devredildi:", treasuryAddress);
-  console.log("   DEPLOYER_PRIVATE_KEY artık .env'den silinebilir.");
+  console.log("✅ Ownership başarıyla devredildi!");
 
-  // ── Mainnet Hatırlatması ──────────────────────────────────────────────────
-  if (process.env.NODE_ENV === "production") {
-    console.log("\n─────────────────────────────────────────────────────────");
-    console.log("MAINNET DEPLOY TAMAMLANDI");
-    console.log(`Kontrat adresi : ${address}`);
-    console.log(`Owner & Treasury: ${treasuryAddress}`);
-    console.log("─────────────────────────────────────────────────────────");
+  // ── 4. Sonuçlar ve .env Çıktıları ─────────────────────────────────────────
+  console.log("\n🎉 BÜTÜN İŞLEMLER TAMAMLANDI! 🎉");
+  console.log("Lütfen aşağıdaki verileri Frontend (.env) veya Vercel'e yapıştırın:");
+  console.log("--------------------------------------------------");
+  console.log(`VITE_ESCROW_ADDRESS="${address}"`);
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`VITE_USDT_ADDRESS="${usdtAddress}"`);
+    console.log(`VITE_USDC_ADDRESS="${usdcAddress}"`);
   }
+  console.log("--------------------------------------------------");
 }
 
 main()
