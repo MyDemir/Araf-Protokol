@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 /**
  * @title MockERC20 (Araf Testnet Faucet)
  * @dev Mock ERC20 (USDT / USDC) for local Hardhat and Testnet testing.
- * Includes a 4-hour faucet with a strict 1000 token limit.
+ * Includes a 1-hour faucet with a strict 1000 token limit.
  */
 contract MockERC20 is ERC20 {
     uint8 private _dec;
@@ -26,13 +26,13 @@ contract MockERC20 is ERC20 {
 
     /**
      * @notice Testnet Faucet (Musluk)
-     * Her cüzdan 4 saatte bir sadece 1000 token basabilir.
+     * Her cüzdan 1 saatte bir sadece 1000 token basabilir.
      */
     function mint() external {
-        // 1. Kural: 4 saatlik bekleme süresi dolmuş mu?
+        // 1. Kural: 1 saatlik bekleme süresi dolmuş mu?
         require(
-            block.timestamp >= lastMintTime[msg.sender] + 4 hours, 
-            "MockERC20: You can only mint 1000 tokens every 4 hours"
+            block.timestamp >= lastMintTime[msg.sender] + 1 hours, 
+            "MockERC20: You can only mint 1000 tokens every 1 hour"
         );
 
         // 2. Kural: Zamanlayıcıyı sıfırla
