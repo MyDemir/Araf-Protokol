@@ -14,12 +14,11 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/Pausable.sol"; // C-03 Fix: Emergency pause mekanizması
+import "@openzeppelin/contracts/utils/Pausable.sol"; //Emergency pause mekanizması
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-// GAZ OPTİMİZASYONU: require() string'leri yerine Custom Error'lar kullanmak,
-// hem deploy maliyetini hem de runtime'da revert maliyetini düşürür.
+// GAZ OPTİMİZASYONU: require() string'leri yerine Custom Error'lar kullanmak, hem deploy maliyetini hem de runtime'da revert maliyetini düşürür.
 error NotTradeParty();
 error InvalidState();
 error TakerBanActive();
@@ -46,9 +45,7 @@ error BurnPeriodNotReached();
 error NoPriorBanHistory();
 error CleanPeriodNotElapsed();
 error NoBansToReset();
-error DeadlineTooFar(); // AFS-017 Fix: Cancel deadline üst limiti
-// AUDIT FIX C-02: Karşı taraf zaten alternatif çözüm yolu başlattığında
-// aynı işlemde ikinci bir ping yolunun açılmasını engeller.
+error DeadlineTooFar(); //Cancel deadline üst limiti Karşı taraf zaten alternatif çözüm yolu başlattığında aynı işlemde ikinci bir ping yolunun açılmasını engeller.
 error ConflictingPingPath();
 
 contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
@@ -78,7 +75,6 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint256 takerBond;      // Taker's bond in token (0 for Tier 0)
         uint8   tier;           // 0, 1, 2, 3 or 4
         TradeState state;
-        // AFS-020 Fix: uint48 cast kaldırıldı — struct alanları uint256, cast tutarsızdı
         uint256 lockedAt;
         uint256 paidAt;
         uint256 challengedAt;
@@ -157,7 +153,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     uint256 public constant TIER1_TRADE_COOLDOWN =  4 hours;
     uint256 public constant MAX_CANCEL_DEADLINE  =   7 days;  // AFS-017 Fix: Cancel imzası için maksimum deadline süresi
 
-    // AUDIT FIX C-04: Wash trading caydırıcı — Tier 1+ erişimi için minimum aktif süre.
+    // Wash trading caydırıcı — Tier 1+ erişimi için minimum aktif süre.
     // 24h cooldown ile en hızlı 15 işlem = 15 gün. 30 gün zorunluluğu,
     // Sybil hesaplarının hızlı tier atlamasını ekonomik olarak caydırır.
     uint256 public constant MIN_ACTIVE_PERIOD    =  15 days;
