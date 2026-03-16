@@ -19,7 +19,6 @@ const router  = express.Router();
 
 const { requireAuth }                                = require("../middleware/auth");
 const { listingsReadLimiter, listingsWriteLimiter }  = require("../middleware/rateLimiter");
-// AFS-013 Fix: Trade import eklendi — önceki: sadece { Listing } import edilmişti
 const { Listing, Trade }                             = require("../models/Trade");
 const logger                                         = require("../utils/logger");
 const { getConfig }                                  = require("../services/protocolConfig");
@@ -30,32 +29,36 @@ const REPUTATION_ABI = [
   "function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier)",
 ];
 
+// GÖREV 13: RPC Provider Cache Mekanizması
+let _cachedListingsProvider = null;
+function _getListingsProvider() {
+  if (!_cachedListingsProvider) {
+    _cachedListingsProvider = new ethers.JsonRpcProvider(process.env.BASE_RPC_URL);
+  }
+  return _cachedListingsProvider;
+}
+
 /**
- * AUDIT FIX B-07: Kullanıcının on-chain efektif tier'ını sorgular.
+ * Kullanıcının on-chain efektif tier'ını sorgular.
  * Kontrat view fonksiyonu çağrısı — gas ücreti yok.
- *
- * @param {string} walletAddress
- * @returns {Promise<number>} effectiveTier (0-4)
  */
 async function _getOnChainEffectiveTier(walletAddress) {
-  const rpcUrl          = process.env.BASE_RPC_URL;
   const contractAddress = process.env.ARAF_ESCROW_ADDRESS;
 
-  if (!rpcUrl || !contractAddress || contractAddress === "0x0000000000000000000000000000000000000000") {
+  if (!process.env.BASE_RPC_URL || !contractAddress || contractAddress === "0x0000000000000000000000000000000000000000") {
     // Development'ta kontrat yoksa → tier kontrolü atla, 4 (en yüksek) döndür
     logger.warn("[Listings] On-chain tier kontrolü atlanıyor — kontrat adresi tanımsız (development).");
     return 4;
   }
 
   try {
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const provider = _getListingsProvider(); // Cache kullanılıyor
     const contract = new ethers.Contract(contractAddress, REPUTATION_ABI, provider);
     const rep = await contract.getReputation(walletAddress);
     return Number(rep.effectiveTier);
   } catch (err) {
     logger.error(`[Listings] On-chain tier sorgusu başarısız: ${err.message}. Güvenli varsayılan (0) kullanılıyor.`);
-    // Hata durumunda en kısıtlayıcı değeri döndür — güvenlik öncelikli
-    return 0;
+    return 0; // Hata durumunda en kısıtlayıcı değeri döndür — güvenlik öncelikli
   }
 }
 
@@ -117,8 +120,6 @@ router.post("/", requireAuth, listingsWriteLimiter, async (req, res, next) => {
     }
 
     // AUDIT FIX B-07: Kontratın view fonksiyonuyla kullanıcının efektif tier'ını doğrula.
-    // Bu, kontrat createEscrow'da revert etmesini beklemek yerine erken doğrulama sağlar.
-    // Geçersiz listing'ler veritabanına bile yazılmaz.
     const effectiveTier = await _getOnChainEffectiveTier(req.wallet);
     if (value.tier > effectiveTier) {
       logger.warn(`[Listings] Tier reddedildi: wallet=${req.wallet} istenen=${value.tier} efektif=${effectiveTier}`);
@@ -165,7 +166,6 @@ router.delete("/:id", requireAuth, async (req, res, next) => {
       return res.status(403).json({ error: "Bu ilan sana ait değil" });
     }
 
-    // AFS-013 Fix: Trade artık import edildiği için bu kontrol çalışır
     if (listing.onchain_escrow_id) {
       const activeTrade = await Trade.findOne({ onchain_escrow_id: listing.onchain_escrow_id });
       if (activeTrade && activeTrade.status !== "OPEN") {
