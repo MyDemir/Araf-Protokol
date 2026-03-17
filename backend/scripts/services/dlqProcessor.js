@@ -3,7 +3,7 @@
 /**
  * DLQ Processor — Dead Letter Queue Monitor
  *
- * H-06 Fix: Başarısız event'ler eventListener tarafından Redis DLQ'ya yazılır.
+ * Başarısız event'ler eventListener tarafından Redis DLQ'ya yazılır.
  * Bu servis periyodik olarak DLQ'yu kontrol eder, birikmiş entry'leri loglar
  * ve eşik aşıldığında uyarı verir.
  *
@@ -11,10 +11,6 @@
  *
  * Gelecek: Slack/PagerDuty webhook entegrasyonu için ALERT_WEBHOOK_URL .env'e eklenebilir.
  *
- * AUDIT FIX B-02: DLQ artık sınırsız büyümez.
- * ÖNCEKİ: Entry'ler okunur ama ASLA silinmezdi → Redis OOM riski.
- *   Alert threshold her 60 saniyede tetiklenirdi → log flooding.
- * ŞİMDİ:
  *   - İşlenen entry'ler LTRIM ile kırpılır (max 100 entry tutulur)
  *   - Alert cooldown: Aynı uyarı 10 dakikada bir kez gönderilir
  *   - Eski entry'ler archive key'ine taşınır (inceleme için)
@@ -29,12 +25,12 @@ const ALERT_THRESHOLD   = 5;    // Bu sayının üzerinde entry varsa uyarı ver
 const MAX_DLQ_SIZE      = 100;  // AUDIT FIX B-02: DLQ'da tutulan max entry
 const ALERT_COOLDOWN_MS = 10 * 60 * 1000; // AUDIT FIX B-02: Alert cooldown (10 dk)
 
-// AUDIT FIX B-02: Son alert zamanı — cooldown için bellekte tutulur
+//son alert zamanı — cooldown için bellekte tutulur
 let _lastAlertTimestamp = 0;
 
 /**
- * AUDIT FIX B-02: DLQ'yu kontrol eder, loglar, arşivler ve gerekirse kırpar.
- *
+ * DLQ'yu kontrol eder, loglar, arşivler ve gerekirse kırpar.
+ 
  * Yeni akış:
  * 1. DLQ uzunluğunu kontrol et
  * 2. MAX_DLQ_SIZE'dan fazlaysa eski entry'leri arşive taşı ve LTRIM ile kırp
@@ -53,7 +49,7 @@ async function processDLQ() {
 
     logger.warn(`[DLQ] ${length} işlenemeyen event bulundu.`);
 
-    // AUDIT FIX B-02: DLQ boyutu aşıldıysa eski entry'leri arşive taşı
+    // DLQ boyutu aşıldıysa eski entry'leri arşive taşı
     if (length > MAX_DLQ_SIZE) {
       const overflow = length - MAX_DLQ_SIZE;
       // En eski entry'leri oku (listenin sonundan — lPush ile eklendiği için son = en eski)
@@ -87,8 +83,12 @@ async function processDLQ() {
         logger.error(`[DLQ] Ham entry parse edilemedi: ${raw}`);
       }
     }
+    if (entries.length > 0) {
+      await redis.lTrim(DLQ_KEY, entries.length, -1);
+      logger.info(`[DLQ] ${entries.length} entry loglandı ve DLQ'dan kaldırıldı.`);
+    }
 
-    // AUDIT FIX B-02: Alert cooldown — aynı uyarı 10 dakikada bir kez
+    // Alert cooldown — aynı uyarı 10 dakikada bir kez
     if (length >= ALERT_THRESHOLD) {
       const now = Date.now();
       if (now - _lastAlertTimestamp >= ALERT_COOLDOWN_MS) {
