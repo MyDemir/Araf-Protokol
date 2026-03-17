@@ -15,6 +15,11 @@
  *
  * AUDIT FIX E-01: getReputation view fonksiyonunda ESCROW_ADDRESS guard eklendi.
  *
+ * K-03 Fix: ABI uyumsuzlukları giderildi.
+ *   - getReputation: 6 değer → 5 değer (firstSuccessfulTradeAt kaldırıldı)
+ *   - antiSybilCheck: 4 değer → 3 değer (cooldownRemaining kaldırıldı, parametre adları düzeltildi)
+ *   - getFirstSuccessfulTradeAt: ayrı kontrat fonksiyonu olarak eklendi
+ *
  * Kullanım (App.jsx'te):
  * const { releaseFunds, signCancelProposal, proposeOrApproveCancel } = useArafContract();
  */
@@ -44,8 +49,12 @@ const ArafEscrowABI = parseAbi([
   'function decayReputation(address _wallet)',
 
   // --- View Fonksiyonları (App.jsx'te kullanılanlar) ---
-  'function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier, uint256 firstSuccessfulTradeAt)',
-  'function antiSybilCheck(address _wallet) view returns (bool ageOk, bool balanceOk, bool cooldownOk, uint256 cooldownRemaining)',
+  // K-03 Fix: 5 return value — önceki ABI'de olmayan firstSuccessfulTradeAt kaldırıldı
+  'function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier)',
+  // K-03 Fix: 3 return value — önceki ABI'de olmayan cooldownRemaining kaldırıldı, parametre adları kontratla eşleştirildi
+  'function antiSybilCheck(address _wallet) view returns (bool aged, bool funded, bool cooldownOk)',
+  // K-03 Fix: firstSuccessfulTradeAt artık ayrı kontrat fonksiyonundan okunur
+  'function getFirstSuccessfulTradeAt(address _wallet) view returns (uint256)',
   // DÜZELTME BURADA YAPILDI: tuple() yerine (()) kullanıldı
   'function getTrade(uint256 _tradeId) view returns ((uint256 id, address maker, address taker, address tokenAddress, uint256 cryptoAmount, uint256 makerBond, uint256 takerBond, uint8 tier, uint8 state, uint256 lockedAt, uint256 paidAt, uint256 challengedAt, string ipfsReceiptHash, bool cancelProposedByMaker, bool cancelProposedByTaker, uint256 pingedAt, bool pingedByTaker, uint256 challengePingedAt, bool challengePingedByMaker))',
 
@@ -378,6 +387,7 @@ export function useArafContract() {
       },
       [publicClient]
     ),
+    // K-03 Fix: antiSybilCheck artık 3 değer döndürüyor (aged, funded, cooldownOk)
     antiSybilCheck: useCallback(
       async (address) => {
         if (!_isValidAddress) return null;
@@ -401,6 +411,8 @@ export function useArafContract() {
      * writeContract wrapper'ında guard vardı ama getReputation doğrudan export ediliyordu.
      * ŞİMDİ: _isValidAddress kontrolü ile guard eklendi.
      * Adres geçersizse null döner — caller tarafında handle edilmeli.
+     *
+     * K-03 Fix: 5 return value — önceki ABI'de yanlışlıkla eklenen firstSuccessfulTradeAt kaldırıldı.
      */
     getReputation: useCallback(
       async (address) => {
@@ -419,6 +431,28 @@ export function useArafContract() {
         } catch (err) {
           console.error("[ArafContract] getReputation hatası:", err.message);
           return null;
+        }
+      },
+      [publicClient]
+    ),
+    /**
+     * K-03 Fix: firstSuccessfulTradeAt artık ayrı kontrat fonksiyonundan okunur.
+     * Önceki ABI getReputation'a yanlışlıkla 6. parametre olarak eklemişti —
+     * bu kontrat ile uyumsuzluk yaratıp tüm reputation fetch'ini null döndürüyordu.
+     */
+    getFirstSuccessfulTradeAt: useCallback(
+      async (address) => {
+        if (!_isValidAddress) return 0n;
+        try {
+          return await publicClient.readContract({
+            address: getAddress(ESCROW_ADDRESS),
+            abi: ArafEscrowABI,
+            functionName: 'getFirstSuccessfulTradeAt',
+            args: [getAddress(address)],
+          });
+        } catch (err) {
+          console.error("[ArafContract] getFirstSuccessfulTradeAt hatası:", err.message);
+          return 0n;
         }
       },
       [publicClient]
