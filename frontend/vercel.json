@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://<SENIN_FLY_IO_BACKEND_URL>.fly.dev/api/$1"
+      "destination": "https://araf-protocol-backend.fly.dev/api/$1"
     },
     {
       "source": "/(.*)",
