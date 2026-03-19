@@ -738,27 +738,25 @@ useEffect(() => {
   };
 
   // Faucet Minting İşlemi
-  const handleMint = async (tokenName) => {
-    if (!isConnected) {
-      showToast(lang === 'TR' ? 'Önce cüzdanınızı bağlayın.' : 'Please connect your wallet first.', 'error');
-      return;
-    }
-    try {
-      setIsContractLoading(true);
-      setLoadingText(lang === 'TR' ? `${tokenName} alınıyor...` : `Minting ${tokenName}...`);
-      const address = import.meta.env[`VITE_MOCK_${tokenName}_ADDRESS`];
-      if (!address) throw new Error(lang === 'TR' ? `Test ${tokenName} adresi tanımlı değil.` : `Test ${tokenName} address not defined.`);
-      
-      await mintToken(address);
-      showToast(lang === 'TR' ? `✅ Test ${tokenName} başarıyla alındı!` : `✅ Test ${tokenName} minted successfully!`, 'success');
-    } catch (err) {
-      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'İşlem başarısız.' : 'Transaction failed.');
-      showToast(errorMessage, 'error');
-    } finally {
-      setIsContractLoading(false);
-      setLoadingText('');
-    }
-  };
+const handleMint = async (tokenName) => {
+  if (!isConnected) return showToast(lang === 'TR' ? 'Cüzdan bağlı değil.' : 'Wallet not connected.', 'error');
+  
+  try {
+    setIsContractLoading(true);
+    setLoadingText(lang === 'TR' ? `${tokenName} alınıyor...` : `Minting ${tokenName}...`);
+    
+    const tokenAddr = SUPPORTED_TOKEN_ADDRESSES[tokenName]; //
+    if (!tokenAddr) throw new Error('Invalid token address');
+    
+    await mintToken(tokenAddr); //
+    showToast(lang === 'TR' ? 'İşlem başarılı' : 'Success', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    setIsContractLoading(false);
+    setLoadingText('');
+  }
+};
 
   useEffect(() => {
     if (!isConnected) {
