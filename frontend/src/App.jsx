@@ -2101,7 +2101,7 @@ useEffect(() => {
         <div className="col-span-2 md:col-span-5 text-center py-4 text-slate-500 text-xs">
           {lang === 'TR' ? 'İstatistik verisi alınamadı.' : 'Failed to load stats.'}
           <button
-            onClick={() => { setStatsError(false); fetchStats(); }}
+            onClick={fetchStats}
             className="ml-2 text-emerald-400 hover:underline"
           >
             {lang === 'TR' ? 'Tekrar dene' : 'Retry'}
@@ -2473,7 +2473,7 @@ useEffect(() => {
                       {isContractLoading ? '...' : (lang === 'TR' ? 'Onayla ve İptal Et' : 'Approve Cancel')}
                       </button>
                       <button
-                        onClick={() => handleProposeCancel()}
+                        onClick={() => setCancelStatus(null)}
                         className="w-full bg-[#1a1a1f] border border-[#2a2a2e] hover:bg-[#222] text-white p-3 rounded-xl font-bold text-sm transition">
                         {lang === 'TR' ? 'Reddet' : 'Reject'}
                       </button>
