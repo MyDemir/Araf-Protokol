@@ -53,6 +53,20 @@ async function _getOnChainEffectiveTier(walletAddress) {
   }
 }
 
+// ─── GET /api/listings/config ─────────────────────────────────────────────────
+// FELSEFE İHLALİ ÇÖZÜMÜ (F-05): Frontend bond oranlarını buradan okur.
+router.get("/config", async (req, res, next) => {
+  try {
+    const config = getConfig();
+    return res.json({ bondMap: config.bondMap });
+  } catch (err) {
+    if (err.code === 'CONFIG_UNAVAILABLE') {
+      return res.status(503).json({ error: err.message });
+    }
+    next(err);
+  }
+});
+
 // ─── GET /api/listings ────────────────────────────────────────────────────────
 router.get("/", listingsReadLimiter, async (req, res, next) => {
   try {
