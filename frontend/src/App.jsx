@@ -181,8 +181,20 @@ function App() {
   const [protocolStats, setProtocolStats] = useState(null);
   const [statsLoading, setStatsLoading]   = useState(true);
   const [statsError, setStatsError] = useState(false);
+  
+  // PROTOKOL YAPILANDIRMASi
+  const [onchainBondMap, setOnchainBondMap] = useState(null);
 
-  // [H-03 Fix]: Bleeding Escrow gerçek decay değerleri — getCurrentAmounts() on-chain okuma
+  useEffect(() => {
+    fetch(`${API_URL}/api/listings/config`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(data => { 
+        if (data.bondMap) setOnchainBondMap(data.bondMap); 
+      })
+      .catch(err => console.error('[ProtocolConfig] fetch failed:', err));
+  }, []);
+  
+  // Bleeding Escrow gerçek decay değerleri — getCurrentAmounts() on-chain okuma
   const [bleedingAmounts, setBleedingAmounts] = useState(null);
 
   // Statik diziler silindi, yerini state aldı.
