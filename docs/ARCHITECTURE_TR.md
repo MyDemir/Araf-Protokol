@@ -1,6 +1,6 @@
 # 🌀 Araf Protokolü — Kanonik Mimari & Teknik Referans
 
-> **Versiyon:** 2.0 | **Ağ:** Base (Katman 2) | **Durum:** Mainnet Hazır | **Son Güncelleme:** Mart 2026
+> **Versiyon:** 2.0 | **Ağ:** Base (Katman 2) | **Durum:** Testnete Hazır | **Son Güncelleme:** Mart 2026
 
 ---
 
@@ -190,7 +190,7 @@ Maker createEscrow() çağırır
 | `LOCKED` (Kilitli) | Taker `lockEscrow()` | Anti-Sybil geçti. Taker teminatı on-chain kilitli. |
 | `PAID` (Ödendi) | Taker `reportPayment()` | IPFS makbuz hash'i on-chain kaydedildi. 48 saatlik zamanlayıcı başladı. |
 | `RESOLVED` (Çözüldü) | Maker `releaseFunds()` | %0.2 ücret alındı. USDT → Taker. Teminatlar iade edildi. |
-| `CANCELED` (İptal) | 2/2 EIP-712 imzası | Kalan tutar üzerinden standart protokol ücreti alınır. Teminatlar iade edildi. |
+| `CANCELED` (İptal) | 2/2 EIP-712 imzası | **LOCKED durumunda:** Ücret yok, tam iade. **PAID veya CHALLENGED durumunda:** Kalan miktarlar üzerinden %0.2 protokol ücreti kesilir, net tutar iade edilir. Her iki durumda itibar cezası uygulanmaz. |
 | `BURNED` (Yakıldı) | 240 saattan sonra `burnExpired()` | Tüm kalan fonlar → Hazine. |
 
 ### Ücret Modeli
