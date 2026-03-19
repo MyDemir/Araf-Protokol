@@ -1,4 +1,10 @@
-// SPDX-License-Identifier: MIT
+/*
+ * Copyright 2026 Araf Protocol
+ *
+ * Licensed under the Apache License, Version 2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
+ */
+
 pragma solidity ^0.8.24;
 
 /**
