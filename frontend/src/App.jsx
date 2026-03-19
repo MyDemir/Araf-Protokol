@@ -797,11 +797,15 @@ useEffect(() => {
         return;
       }
 
-      // Taker bond hesabı (kontratla aynı mantık, 6 decimal)
-      const TAKER_BOND_BPS = { 0: 0n, 1: 1000n, 2: 800n, 3: 500n, 4: 200n };
+            // Taker bond hesabı (Kontrattan dinamik)
+      if (!onchainBondMap) {
+        showToast(lang === 'TR' ? 'Protokol ayarları yükleniyor...' : 'Loading protocol config...', 'info');
+        setIsContractLoading(false);
+        return;
+      }
       const tier = order.tier ?? 1;
       const cryptoAmtRaw = BigInt(Math.round((parseFloat(order.max) || 0) * 1e6));
-      const takerBondBps = TAKER_BOND_BPS[tier] ?? 1000n;
+      const takerBondBps = BigInt(onchainBondMap[tier]?.takerBps ?? 0);
       const takerBond = (cryptoAmtRaw * takerBondBps) / 10000n;
 
       if (takerBond > 0n) {
