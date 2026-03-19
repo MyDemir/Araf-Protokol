@@ -127,9 +127,11 @@ function App() {
     decayReputation,
     antiSybilCheck,
     mintToken,
+    getFirstSuccessfulTradeAt,
   } = useArafContract();
   
-  const [jwtToken, setJwtToken] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
   // [KRIT-04 Fix]: Cüzdan kayıt durumu — registerWallet() on-chain çağrısı için
   const [isWalletRegistered, setIsWalletRegistered] = useState(null); // null=bilinmiyor, true/false
   const [isRegisteringWallet, setIsRegisteringWallet] = useState(false);
@@ -178,6 +180,7 @@ function App() {
   // Protocol stats — /api/stats'tan çekilir, 1 saatte bir güncellenir
   const [protocolStats, setProtocolStats] = useState(null);
   const [statsLoading, setStatsLoading]   = useState(true);
+  const [statsError, setStatsError] = useState(false);
 
   // [H-03 Fix]: Bleeding Escrow gerçek decay değerleri — getCurrentAmounts() on-chain okuma
   const [bleedingAmounts, setBleedingAmounts] = useState(null);
@@ -221,7 +224,8 @@ function App() {
 
       if (!refreshRes.ok) {
         console.warn('[Auth] Refresh token expired — re-login required');
-        setJwtToken(null);
+        setIsAuthenticated(false);
+        showToast(lang === 'TR' ? 'Oturumunuz sona erdi. Lütfen tekrar imzalayın.' : 'Session expired. Please sign in again.', 'error');
         return res;
       }
 
@@ -238,20 +242,25 @@ function App() {
       console.error('[Auth] Refresh failed:', err);
       return res;
     }
-  }, [address]);
+  }, [address, lang]);
 
   // Session check on load
   useEffect(() => {
-    if (isConnected && address) {
-      fetch(`${API_URL}/api/auth/me`, { credentials: 'include' })
-        .then(res => {
-          if (res.ok) setJwtToken('cookie-active');
-          else setJwtToken(null);
-        })
-        .catch(() => setJwtToken(null));
-    } else {
-      setJwtToken(null);
+    if (!isConnected || !address) {
+      setIsAuthenticated(false);
+      setAuthChecked(true);
+      return;
     }
+
+    fetch(`${API_URL}/api/auth/me`, { credentials: 'include' })
+      .then(res => {
+        setIsAuthenticated(res.ok);
+        setAuthChecked(true);
+      })
+      .catch(() => {
+        setIsAuthenticated(false);
+        setAuthChecked(true);
+      });
   }, [isConnected, address]);
 
   // 1. Pazar Yeri İlanlarını Çek (Public)
@@ -300,6 +309,7 @@ function App() {
         if (data.stats) setProtocolStats(data.stats);
       } catch (err) {
         console.error("Stats fetch error:", err);
+        setStatsError(true);
       } finally {
         setStatsLoading(false);
       }
@@ -369,7 +379,8 @@ function App() {
         const bannedUntil = typeof repData.bannedUntil !== 'undefined' ? repData.bannedUntil : repData[2];
         const consecutiveBans = typeof repData.consecutiveBans !== 'undefined' ? repData.consecutiveBans : repData[3];
         const effectiveTier = typeof repData.effectiveTier !== 'undefined' ? repData.effectiveTier : repData[4];
-        const firstSuccessfulTradeAt = typeof repData.firstSuccessfulTradeAt !== 'undefined' ? repData.firstSuccessfulTradeAt : repData[5] || 0;
+        
+        const firstTradeAt = getFirstSuccessfulTradeAt ? await getFirstSuccessfulTradeAt(address) : 0n;
         
         setUserReputation({
           successful: Number(successful),
@@ -377,7 +388,7 @@ function App() {
           bannedUntil: Number(bannedUntil),
           consecutiveBans: Number(consecutiveBans),
           effectiveTier: Number(effectiveTier),
-          firstSuccessfulTradeAt: Number(firstSuccessfulTradeAt),
+          firstSuccessfulTradeAt: Number(firstTradeAt),
         });
 
         // 3. Yasaklı Kullanıcı (Banned) State'inin on-chain'e göre güncellenmesi
@@ -399,7 +410,7 @@ function App() {
         setSybilStatus({
               funded: typeof res.balanceOk !== 'undefined' ? res.balanceOk : (typeof res.funded !== 'undefined' ? res.funded : res[1]),
               cooldownOk: typeof res.cooldownOk !== 'undefined' ? res.cooldownOk : res[2],
-              cooldownRemaining: Number(typeof res.cooldownRemaining !== 'undefined' ? res.cooldownRemaining : res[3] || 0),
+              cooldownRemaining: 0,
         });
       }
     };
@@ -426,18 +437,18 @@ function App() {
 
   // YENİ: Triangulation Fraud Prevention için Taker Name'i Çek
   useEffect(() => {
-    if (currentView === 'tradeRoom' && tradeState === 'LOCKED' && userRole === 'maker' && activeTrade?.id && jwtToken) {
+    if (currentView === 'tradeRoom' && tradeState === 'LOCKED' && userRole === 'maker' && activeTrade?.id && isAuthenticated) {
        authenticatedFetch(`${API_URL}/api/pii/taker-name/${activeTrade.onchainId}`)
          .then(res => res.json())
          .then(data => { if (data.bankOwner) setTakerName(data.bankOwner); })
          .catch(err => console.error("Taker name fetch error", err));
     }
-  }, [currentView, tradeState, userRole, activeTrade?.onchainId, jwtToken, authenticatedFetch]);
+  }, [currentView, tradeState, userRole, activeTrade?.onchainId, isAuthenticated, authenticatedFetch]);
 
   // [H-01 Fix]: fetchMyTrades useCallback'e taşındı — hem ilk yüklemede hem polling'de kullanılabilir.
   // Önceki hata: fonksiyon başka bir useEffect'in scope'undaydı, polling interval ReferenceError veriyordu.
   const fetchMyTrades = React.useCallback(async () => {
-    if (!jwtToken || !isConnected) {
+    if (!isAuthenticated || !isConnected) {
       setActiveEscrows([]);
       return;
     }
@@ -510,7 +521,7 @@ function App() {
     } catch (err) {
       console.error("Trades fetch error:", err);
     }
-  }, [jwtToken, isConnected, address, lang, authenticatedFetch]);
+  }, [isAuthenticated, isConnected, address, lang, authenticatedFetch]);
 
   // LINTER FIX: cancelStatus senkronizasyonu artık doğrudan activeEscrows üzerinden reaktif çalışıyor.
   // Bu sayede fetchMyTrades hook'u "exhaustive-deps" hatasından kurtuldu.
@@ -531,14 +542,14 @@ function App() {
 
   // Aktif işlem verilerini periyodik olarak yeniden çek (polling)
   useEffect(() => {
-    if (currentView !== 'tradeRoom' || !jwtToken) return;
+    if (currentView !== 'tradeRoom' || !isAuthenticated) return;
     const interval = setInterval(fetchMyTrades, 15000);
     return () => clearInterval(interval);
-  }, [currentView, jwtToken, fetchMyTrades]);
+  }, [currentView, isAuthenticated, fetchMyTrades]);
 
   // YENİ: Profil modalı açıldığında mevcut PII verilerini çek ve formu doldur
   useEffect(() => {
-    if (!showProfileModal || !jwtToken) return;
+    if (!showProfileModal || !isAuthenticated) return;
 
     const fetchMyPII = async () => {
       try {
@@ -561,12 +572,12 @@ function App() {
     if (profileTab === 'ayarlar') {
       fetchMyPII();
     }
-  }, [showProfileModal, profileTab, jwtToken, authenticatedFetch]); // authenticatedFetch eklendi
+  }, [showProfileModal, profileTab, isAuthenticated, authenticatedFetch]);
 
   // YENİ: Kullanıcının işlem geçmişini çek
   useEffect(() => {
     // Sadece geçmiş sekmesi aktifken ve JWT varken çalışsın
-    if (profileTab !== 'gecmis' || !jwtToken) return;
+    if (profileTab !== 'gecmis' || !isAuthenticated) return;
 
     const fetchHistory = async (page) => {
       try {
@@ -590,7 +601,7 @@ function App() {
     };
 
     fetchHistory(tradeHistoryPage);
-  }, [showProfileModal, profileTab, jwtToken, tradeHistoryPage, authenticatedFetch]); // authenticatedFetch eklendi
+  }, [showProfileModal, profileTab, isAuthenticated, tradeHistoryPage, authenticatedFetch]);
 
   // YENİ UI GÜNCELLEMESİ: Sidebar'dan gelen filterToken desteği eklendi
   const filteredOrders = orders.filter(order => {
@@ -615,7 +626,7 @@ function App() {
   const gracePeriodTimer = useCountdown(gracePeriodEndDate);
 
   const challengeUnlockDate = activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 1 * 3600 * 1000) : null;
-  const challengeCountdown = useCountdown(challengeUnlockDate);
+  const challengeCountdown = useCountdown(activeTrade?.challengePingedAt ? new Date(new Date(activeTrade.challengePingedAt).getTime() + 24 * 3600 * 1000) : null);
   // DEV modunda test için cooldownPassed state'i ile challenge kilidi açılabilir
   const canChallenge = import.meta.env.DEV ? (cooldownPassed || challengeCountdown.isFinished) : challengeCountdown.isFinished;
 
@@ -693,7 +704,7 @@ function App() {
       });
 
       if (verifyRes.ok) {
-        setJwtToken('cookie-active');
+        setIsAuthenticated(true);
         showToast(lang === 'TR' ? 'Sisteme başarıyla giriş yapıldı! 🚀' : 'Successfully signed in! 🚀', 'success');
       } else {
         const data = await verifyRes.json().catch(() => ({}));
@@ -736,7 +747,7 @@ function App() {
 
   useEffect(() => {
     if (!isConnected) {
-      setJwtToken(null);
+      setIsAuthenticated(false);
     }
   }, [isConnected, address]); // Bağımlılık doğru
 
@@ -749,6 +760,8 @@ function App() {
    * Başarıda Trade Room'a geç
    */
   const handleStartTrade = async (order) => {
+    if (!window.confirm(lang === 'TR' ? 'İşlemi onaylıyor musunuz?' : 'Do you confirm the transaction?')) return;
+
     if (isBanned) {
       showToast(lang === 'TR' ? '🚫 Taker kısıtlamanız aktif. Süre için on-chain kaydınızı kontrol edin.' : '🚫 Taker restriction active. Check on-chain record for duration.', 'error');
       return;
@@ -787,8 +800,16 @@ function App() {
       setLoadingText(lang === 'TR' ? 'Adım 2/2: İşlem kilitleniyor...' : 'Step 2/2: Locking trade...');
       await lockEscrow(BigInt(order.onchainId));
 
+      let realTradeId = null;
+      try {
+        const tradeRes = await authenticatedFetch(`${API_URL}/api/trades/my`);
+        const tradeData = await tradeRes.json();
+        const matchedTrade = tradeData.trades?.find(t => t.onchain_escrow_id === order.onchainId);
+        if (matchedTrade) realTradeId = matchedTrade._id;
+      } catch (_) { /* fallback */ }
+
       // Başarı — Trade Room'a geç
-      setActiveTrade({ ...order, onchainId: order.onchainId });
+      setActiveTrade({ ...order, id: realTradeId || order.id, onchainId: order.onchainId });
       setTradeState('LOCKED');
       setCancelStatus(null);
       setCooldownPassed(false);
@@ -944,16 +965,31 @@ function App() {
         nonce
       );
 
-      showToast(lang === 'TR' ? 'İptal teklifini kontrata gönderiliyor...' : 'Sending cancel proposal to contract...', 'info');
-      await proposeOrApproveCancel(BigInt(activeTrade.onchainId), deadline, signature);
-
-      setCancelStatus('proposed_by_me');
-      showToast(
-        lang === 'TR'
-          ? '✅ İptal teklifi gönderildi. Karşı taraf onayladığında iptal gerçekleşir.'
-          : '✅ Cancel proposal sent. Trade cancels when counterparty approves.',
-        'success'
-      );
+      // RELAY YOLU (birincil)
+      try {
+        const relayRes = await authenticatedFetch(`${API_URL}/api/trades/propose-cancel`, {
+          method: 'POST',
+          body: JSON.stringify({ tradeId: activeTrade.id, signature, deadline }),
+        });
+        const relayData = await relayRes.json();
+        if (relayData.bothSigned) {
+          showToast(lang === 'TR' ? 'Her iki taraf imzaladı. Kontrata gönderiliyor...' : 'Both signed. Sending to contract...', 'info');
+          await proposeOrApproveCancel(BigInt(activeTrade.onchainId), deadline, signature);
+          setCancelStatus(null);
+          setTradeState('CANCELED');
+          setCurrentView('home');
+          showToast(lang === 'TR' ? '✅ İşlem iptal edildi.' : '✅ Trade cancelled.', 'success');
+        } else {
+          setCancelStatus('proposed_by_me');
+          showToast(lang === 'TR' ? '✅ İptal teklifi gönderildi. Karşı tarafın onayı bekleniyor.' : '✅ Cancel proposal sent. Awaiting counterparty.', 'success');
+        }
+      } catch (relayErr) {
+        console.warn('[Cancel] Backend relay başarısız, direkt on-chain fallback:', relayErr.message);
+        showToast(lang === 'TR' ? 'Backend erişilemez. Kontrata direkt gönderiliyor...' : 'Backend unreachable. Sending directly to contract...', 'info');
+        await proposeOrApproveCancel(BigInt(activeTrade.onchainId), deadline, signature);
+        setCancelStatus('proposed_by_me');
+        showToast(lang === 'TR' ? '✅ İptal teklifi kontrata gönderildi (direkt).' : '✅ Cancel proposal sent directly to contract.', 'success');
+      }
     } catch (err) {
       console.error('handleProposeCancel error:', err);
       const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'İptal teklifi başarısız.' : 'Cancel proposal failed.');
@@ -970,7 +1006,7 @@ function App() {
   // FIX-01: `text` → `comment` (backend Joi şeması `comment` bekliyor)
   // FIX-04: JWT guard eklendi — auth olmadan feedback gönderilemez
   const submitFeedback = async () => {
-    if (!jwtToken) {
+    if (!isAuthenticated) {
       showToast(lang === 'TR' ? 'Geri bildirim göndermek için giriş yapmalısınız.' : 'Please sign in to send feedback.', 'error');
       return; // JWT yoksa çık
     }
@@ -1072,6 +1108,7 @@ function App() {
       showToast(lang === 'TR' ? 'İtiraz işlemi cüzdanınıza gönderildi...' : 'Challenge transaction sent to wallet...', 'info');
       await challengeTrade(BigInt(activeTrade.onchainId));
       setTradeState('CHALLENGED');
+      setActiveTrade(prev => ({ ...prev, challengedAt: new Date().toISOString() }));
       showToast(lang === 'TR' ? 'İtiraz başlatıldı. Bleeding Escrow aktif.' : 'Challenge opened. Bleeding Escrow active.', 'success');
     } catch (err) {
       console.error("challengeTrade error:", err);
@@ -1134,7 +1171,7 @@ function App() {
   // YENİ: PII verilerini güncelleyen handler
   const handleUpdatePII = async (e) => {
     e.preventDefault();
-    if (!jwtToken) return;
+    if (!isAuthenticated) return;
     if (isContractLoading) return;
     try {
       setIsContractLoading(true);
@@ -1206,7 +1243,7 @@ function App() {
        showToast(lang === 'TR' ? 'Sistem şu an bakım modundadır. Yeni ilan açılamaz.' : 'System is paused. Cannot create ad.', 'error');
        return;
     }
-    if (!isConnected || !jwtToken) {
+    if (!isConnected || !isAuthenticated) {
       showToast(lang === 'TR' ? 'İlan açmak için önce cüzdanınızı bağlayıp imzalamalısınız.' : 'Please connect and sign in to create an ad.', 'error');
       return;
     }
@@ -1305,7 +1342,7 @@ function App() {
 
   const handleAuthAction = () => {
     if (!isConnected) setShowWalletModal(true);
-    else if (!jwtToken) loginWithSIWE();
+    else if (!isAuthenticated) loginWithSIWE();
     else { setProfileTab('ayarlar'); setShowProfileModal(true); }
   };
 
@@ -1596,7 +1633,7 @@ function App() {
                 </form>
 
                 <button 
-                  onClick={() => { disconnect(); setJwtToken(null); setShowProfileModal(false); }} 
+                  onClick={() => { disconnect(); setIsAuthenticated(false); setShowProfileModal(false); }} 
                   className="w-full mt-4 py-2.5 rounded-xl font-bold text-sm bg-red-950/40 text-red-500 border border-red-900/50 hover:bg-red-900/80 hover:text-white transition">
                   {lang === 'TR' ? '🚪 Çıkış Yap / Cüzdanı Ayır' : '🚪 Disconnect / Logout'}
                 </button>
@@ -1897,8 +1934,8 @@ function App() {
         <button onClick={() => setLang(lang === 'TR' ? 'EN' : 'TR')} title={lang === 'TR' ? 'Dili Değiştir' : 'Change Language'} className="text-xs font-bold text-slate-400 hover:text-white mb-1">
           {lang}
         </button>
-        <button onClick={handleAuthAction} title={isConnected && jwtToken ? (lang === 'TR' ? 'Profil Merkezi' : 'Profile Center') : (lang === 'TR' ? 'Cüzdan Bağla' : 'Connect Wallet')} className={`w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all shadow-lg mx-auto ${isConnected && jwtToken ? 'border-emerald-500 bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/40 shadow-[0_0_10px_rgba(16,185,129,0.2)]' : 'border-[#2a2a2e] bg-[#111113] text-slate-400 hover:text-white hover:border-emerald-500/50 hover:bg-[#1a1a1f]'}`}>
-          {isLoggingIn ? <span className="text-xs animate-spin">⚙️</span> : (isConnected && jwtToken ? <span className="text-base drop-shadow-[0_0_5px_rgba(16,185,129,0.8)]">👤</span> : <span className="text-base drop-shadow-[0_0_5px_rgba(255,255,255,0.5)]">👛</span>)}
+        <button onClick={handleAuthAction} title={isConnected && isAuthenticated ? (lang === 'TR' ? 'Profil Merkezi' : 'Profile Center') : (lang === 'TR' ? 'Cüzdan Bağla' : 'Connect Wallet')} className={`w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all shadow-lg mx-auto ${isConnected && isAuthenticated ? 'border-emerald-500 bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/40 shadow-[0_0_10px_rgba(16,185,129,0.2)]' : 'border-[#2a2a2e] bg-[#111113] text-slate-400 hover:text-white hover:border-emerald-500/50 hover:bg-[#1a1a1f]'}`}>
+          {isLoggingIn || !authChecked ? <span className="text-xs animate-spin">⚙️</span> : (isConnected && isAuthenticated ? <span className="text-base drop-shadow-[0_0_5px_rgba(16,185,129,0.8)]">👤</span> : <span className="text-base drop-shadow-[0_0_5px_rgba(255,255,255,0.5)]">👛</span>)}
         </button>
       </div>
     </div>
@@ -2056,6 +2093,17 @@ function App() {
         </div>
       </div>
 
+      {statsError && (
+        <div className="col-span-2 md:col-span-5 text-center py-4 text-slate-500 text-xs">
+          {lang === 'TR' ? 'İstatistik verisi alınamadı.' : 'Failed to load stats.'}
+          <button
+            onClick={() => { setStatsError(false); fetchStats(); }}
+            className="ml-2 text-emerald-400 hover:underline"
+          >
+            {lang === 'TR' ? 'Tekrar dene' : 'Retry'}
+          </button>
+        </div>
+      )}
     </div>
   );
 
@@ -2080,13 +2128,17 @@ function App() {
           filteredOrders.map((order) => {
             const effectiveUserTier = userReputation?.effectiveTier ?? 0;
             const isMyOwnAd = address && order.makerFull?.toLowerCase() === address.toLowerCase();
-            const isTierLocked = isConnected && jwtToken && order.tier > effectiveUserTier;
-            const canTakeOrder = isConnected && jwtToken && !isMyOwnAd && !isTierLocked && !isPaused;
+            const isTierLocked = isConnected && isAuthenticated && order.tier > effectiveUserTier;
+            const canTakeOrder = isConnected && isAuthenticated && !isMyOwnAd && !isTierLocked && !isPaused;
             
+            const tokenAddr = SUPPORTED_TOKEN_ADDRESSES[order.crypto || 'USDT'];
+            const isTokenConfigured = Boolean(tokenAddr);
+            const isCorrectChain = [8453, 84532, 31337].includes(chainId);
+
             const isFunded = sybilStatus ? sybilStatus.funded : true;
             const isCooldownOk = sybilStatus ? sybilStatus.cooldownOk : true;
             const cooldownRemaining = sybilStatus ? sybilStatus.cooldownRemaining : 0;
-            const finalCanTakeOrder = canTakeOrder && isCooldownOk && isFunded && !isPaused;
+            const finalCanTakeOrder = canTakeOrder && isCooldownOk && isFunded && !isPaused && isTokenConfigured && isCorrectChain;
 
             return (
               <div key={order.id} className="bg-[#111113] hover:bg-[#151518] border border-[#222] p-4 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between transition-colors group relative gap-4 md:gap-0">
@@ -2129,6 +2181,8 @@ function App() {
                 <div className="w-full md:w-1/3 flex flex-col items-start md:items-end justify-center relative">
                    <button onClick={() => handleStartTrade(order)} disabled={!finalCanTakeOrder || isContractLoading} className={`w-full md:w-auto px-6 py-2.5 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${!finalCanTakeOrder ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-white text-black hover:bg-slate-200 shadow-[0_0_15px_rgba(255,255,255,0.1)]'}`}>
                     {isPaused ? <><span>⏸️</span> {lang === 'TR' ? 'Bakımda' : 'Paused'}</> :
+                     !isCorrectChain ? <><span>⛓️</span> {lang === 'TR' ? 'Yanlış Ağ' : 'Wrong Network'}</> :
+                     !isTokenConfigured ? <><span>⚙️</span> {lang === 'TR' ? 'Token Ayarlanmadı' : 'Token Not Set'}</> :
                      !canTakeOrder ? <><span>🔒</span> {lang === 'TR' ? 'Kilitli' : 'Locked'}</> : 
                      !isFunded ? <><span>⚠️</span> {lang === 'TR' ? 'Bakiye Yetersiz' : 'Low Balance'}</> :
                      !isCooldownOk ? <><span>⏳</span> {lang === 'TR' ? `Bekleme (${Math.ceil(cooldownRemaining/3600)}s)` : `Cooldown (${Math.ceil(cooldownRemaining/3600)}h)`}</> :
@@ -2304,7 +2358,7 @@ function App() {
                           return (
                             <div className="w-full mt-2 flex flex-col items-center">
                               <p className="text-[11px] text-red-400 font-bold mb-1 text-center leading-tight">
-                                {lang === 'TR' ? 'Dikkat: Bu işlem, sistemi meşgul etme ve ihmal cezası olarak Taker teminatınızdan %5 kesinti yapacaktır.' : 'Warning: This action will deduct a 5% penalty from your Taker bond.'}
+                                {lang === 'TR' ? 'Dikkat: Satıcı pasif kaldığı için her iki tarafın teminatından %2 ihmal cezası kesilecektir (Maker: %2, Taker: %2).' : 'Warning: Due to maker inaction, a 2% negligence penalty will be deducted from both parties\' bonds (Maker: 2%, Taker: 2%).'}
                               </p>
                               <button onClick={() => handleAutoRelease(activeTrade.onchainId)} disabled={isContractLoading} className="w-full text-sm font-bold py-3 rounded-xl transition bg-emerald-600/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500 hover:text-white shadow-lg">
                                 {isContractLoading ? '...' : (lang === 'TR' ? '✅ Fonları Otomatik Serbest Bırak' : '✅ Auto-Release Funds')}
@@ -2374,7 +2428,11 @@ function App() {
                           </button>
                         )}
                         <button onClick={() => {
-                          if (window.confirm(lang === 'TR' ? 'Karşılıklı iptal durumunda standart protokol ücreti kesilecektir. Onaylıyor musunuz?' : 'Standard protocol fees will be deducted upon mutual cancellation. Confirm?')) {
+                          const cancelConfirmMsg = tradeState === 'LOCKED'
+                            ? (lang === 'TR' ? 'LOCKED aşamasında (henüz ödeme bildirilmeden) iptaller kesintisizdir. Onaylıyor musunuz?' : 'Cancel in LOCKED state has zero fees. Confirm?')
+                            : (lang === 'TR' ? 'Karşılıklı iptal durumunda standart protokol ücreti kesilecektir. Onaylıyor musunuz?' : 'Standard protocol fees will be deducted upon mutual cancellation. Confirm?');
+                          
+                          if (window.confirm(cancelConfirmMsg)) {
                             handleProposeCancel();
                           }
                         }} className={`w-full bg-[#0a0a0c] border border-orange-500/30 text-orange-500 p-3 rounded-xl font-bold text-sm hover:bg-orange-500 hover:text-white transition ${!(isChallenged && isMaker) ? 'sm:col-span-2' : ''}`}>
@@ -2402,14 +2460,16 @@ function App() {
                       ⚠️ {lang === 'TR' ? 'Karşı taraf iptal teklif etti.' : 'Opponent proposed cancellation.'}
                     </p>
                     <p className="text-[11px] text-slate-400 mb-3">
-                      {lang === 'TR' ? 'Onaylarsanız standart protokol ücreti kesilecek ve kalan fonlar iade edilecektir.' : 'If you approve, standard protocol fee will be deducted and remaining funds returned.'}
+                      {tradeState === 'LOCKED'
+                        ? (lang === 'TR' ? 'İşlem LOCKED aşamasında olduğu için herhangi bir kesinti yapılmayacaktır.' : 'Since trade is in LOCKED state, no fees will be deducted.')
+                        : (lang === 'TR' ? 'Onaylarsanız standart protokol ücreti kesilecek ve kalan fonlar iade edilecektir.' : 'If you approve, standard protocol fee will be deducted and remaining funds returned.')}
                     </p>
                     <div className="grid grid-cols-2 gap-3">
                     <button onClick={handleProposeCancel} disabled={isContractLoading} className="w-full bg-orange-600 hover:bg-orange-500 text-white p-3 rounded-xl font-bold text-sm transition">
                       {isContractLoading ? '...' : (lang === 'TR' ? 'Onayla ve İptal Et' : 'Approve Cancel')}
                       </button>
                       <button
-                        onClick={() => setCancelStatus(null)}
+                        onClick={() => handleProposeCancel()}
                         className="w-full bg-[#1a1a1f] border border-[#2a2a2e] hover:bg-[#222] text-white p-3 rounded-xl font-bold text-sm transition">
                         {lang === 'TR' ? 'Reddet' : 'Reject'}
                       </button>
@@ -2491,15 +2551,15 @@ function App() {
         💼{activeEscrows.length > 0 && <span className="absolute top-2 right-1 w-2.5 h-2.5 bg-orange-500 border border-[#060608] rounded-full animate-pulse"></span>}
       </button>
       <button onClick={openSidebar} className={`p-2 text-xl transition-all ${sidebarOpen ? 'text-white -translate-y-1' : 'text-slate-600'}`}>☰</button>
-      <button onClick={handleAuthAction} className={`p-2 text-xl transition-all ${isConnected && jwtToken ? 'text-emerald-500 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] -translate-y-1' : 'text-slate-600'}`}>
-        {isConnected && jwtToken ? '👤' : '👛'}
+      <button onClick={handleAuthAction} className={`p-2 text-xl transition-all ${isConnected && isAuthenticated ? 'text-emerald-500 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] -translate-y-1' : 'text-slate-600'}`}>
+        {isConnected && isAuthenticated ? '👤' : '👛'}
       </button>
     </div>
   );
 
   // YENİ: İlk Kullanım Sözleşmesi Modalı
   const renderTermsModal = () => {
-    if (termsAccepted || (!isConnected && !jwtToken)) return null;
+    if (termsAccepted || (!isConnected && !isAuthenticated)) return null;
     return (
       <div className="fixed inset-0 bg-[#060608]/95 backdrop-blur-xl flex items-center justify-center p-4 z-[200]">
         <div className="bg-[#111113] border border-[#222] rounded-2xl p-6 w-full max-w-lg shadow-2xl flex flex-col">
