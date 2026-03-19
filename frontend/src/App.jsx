@@ -1572,8 +1572,13 @@ useEffect(() => {
   };
 
   const renderProfileModal = () => {
-    if (!showProfileModal) return null;
-    const myOrders = address ? orders.filter(o => o.makerFull?.toLowerCase() === address.toLowerCase()) : [];
+  if (!showProfileModal) return null;
+  // Guard: cüzdan bağlı ve oturum açık değilse modal gösterilmez
+  if (!isConnected || !isAuthenticated) {
+    setShowProfileModal(false);
+    return null;
+  }
+  const myOrders = address ? orders.filter(o => o.makerFull?.toLowerCase() === address.toLowerCase()) : [];
 
     return (
       <div className="fixed inset-0 bg-[#060608]/90 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 z-[100]">
