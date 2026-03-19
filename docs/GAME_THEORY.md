@@ -6,9 +6,10 @@ This document visually explains the core game theory of the Araf Protocol using 
 
 ## Bleeding Escrow Sequence Diagram
 
-This diagram illustrates the flow of events after a Taker reports a payment (`PAID` state) and the Maker disputes it, triggering the Purgatory phase.
+This diagram illustrates all possible resolution paths from the `PAID` state — mutual release, Taker auto-release, or Maker challenge.
 
 > **Security note:** A `ConflictingPingPath` guard prevents both ping paths from being open simultaneously. If the Maker has called `pingTakerForChallenge`, the Taker cannot call `pingMaker` (autoRelease path), and vice versa. This prevents MEV/transaction ordering manipulation.
+
 ```mermaid
 sequenceDiagram
     actor Taker
@@ -18,7 +19,7 @@ sequenceDiagram
 
     Taker->>Contract: reportPayment()
     Contract-->>Taker: Event: PaymentReported
-    note over Contract: State: PAID. 48h Grace Period timer starts.
+    note over Contract: State: PAID. Taker can call pingMaker() after 48h.
 
     par Maker Actions
         Maker->>Contract: releaseFunds()
@@ -71,4 +72,3 @@ sequenceDiagram
         note over Contract: Outcome: BURNED 💀 (Both parties lose — +1 failedDisputes each)
 
     end
-```
