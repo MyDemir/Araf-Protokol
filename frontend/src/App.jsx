@@ -300,23 +300,27 @@ function App() {
     fetchListings();
   }, [lang]); // Dil değiştiğinde buton metinleri için yeniden render gerekebilir
 
-  // Stats Çek
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const res  = await fetch(`${API_URL}/api/stats`, { credentials: 'include' });
-        const data = await res.json();
-        if (data.stats) setProtocolStats(data.stats);
-      } catch (err) {
-        console.error("Stats fetch error:", err);
-        setStatsError(true);
-      } finally {
-        setStatsLoading(false);
-      }
-    };
-    fetchStats();
-  }, []); // Stats verisi dile bağlı değil, bir kere çekilmesi yeterli
+// Stats Çek — useCallback ile dışarı çıkarıldı, retry butonu erişebilsin
+const fetchStats = React.useCallback(async () => {
+  try {
+    setStatsError(false);
+    setStatsLoading(true);
+    const res  = await fetch(`${API_URL}/api/stats`, { credentials: 'include' });
+    const data = await res.json();
+    if (data.stats) setProtocolStats(data.stats);
+    else setStatsError(true);
+  } catch (err) {
+    console.error("Stats fetch error:", err);
+    setStatsError(true);
+  } finally {
+    setStatsLoading(false);
+  }
+}, []);
 
+useEffect(() => {
+  fetchStats();
+}, [fetchStats]);
+  
   // [H-03 Fix]: CHALLENGED state'inde Bleeding Escrow gerçek decay değerlerini 30 saniyede bir güncelle
   useEffect(() => {
     if (tradeState !== 'CHALLENGED' || !activeTrade?.onchainId || !getCurrentAmounts) {
