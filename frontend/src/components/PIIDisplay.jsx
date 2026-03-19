@@ -6,10 +6,13 @@
  *   - usePII hook'u aracılığıyla 2 adımlı şifreli kanaldan alınır
  *   - Bileşen unmount olduğunda IBAN + Telegram otomatik bellekten silinir
  *   - Telegram aynı şifreli kanaldan gelir — statik state kullanılmaz
- *   - authToken prop: App.jsx'teki JWT Bearer token'ı, backend ile kimlik doğrulama için
+ *
+ * GÖREV 12 Fix: authToken prop kaldırıldı.
+ *   ÖNCEKİ: usePII(tradeId, authToken) — Authorization: Bearer cookie-active header'ı gönderiyordu.
+ *   ŞİMDİ: usePII(tradeId) — tüm auth httpOnly cookie üzerinden yürütülür (credentials: include).
  *
  * Kullanım (App.jsx'te):
- *   <PIIDisplay tradeId={activeTrade.id} authToken={jwtToken} lang={lang} />
+ *   <PIIDisplay tradeId={activeTrade.id} lang={lang} getSafeTelegramUrl={getSafeTelegramUrl} />
  */
 
 import React, { useState } from 'react';
@@ -49,15 +52,19 @@ const LABELS = {
 };
 
 /**
- * @param {string}      tradeId    Backend trade ID
- * @param {string|null} authToken  JWT Bearer token (App.jsx'ten geçirilir)
- * @param {string}      lang       'TR' veya 'EN' (büyük/küçük harf fark etmez)
+ * @param {string}   tradeId          Backend trade ID (Trade koleksiyonunun MongoDB _id'si)
+ * @param {string}   lang             'TR' veya 'EN' (büyük/küçük harf fark etmez)
+ * @param {Function} getSafeTelegramUrl  App.jsx'ten gelen memoize edilmiş güvenli URL yardımcısı
+ *
+ * NOT: authToken prop'u GÖREV 12 kapsamında kaldırıldı.
+ * Auth işlemleri httpOnly cookie üzerinden otomatik yürütülür.
  */
-export default function PIIDisplay({ tradeId, authToken = null, lang = 'tr', getSafeTelegramUrl }) {
+export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl }) {
   const normalizedLang = (lang || 'tr').toLowerCase();
   const t = LABELS[normalizedLang] || LABELS['tr'];
 
-  const { pii, loading, error, fetchPII, clearPII } = usePII(tradeId, authToken);
+  // GÖREV 12 Fix: authToken parametresi kaldırıldı — usePII artık cookie-only
+  const { pii, loading, error, fetchPII, clearPII } = usePII(tradeId);
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied]     = useState(false);
 
@@ -171,7 +178,7 @@ export default function PIIDisplay({ tradeId, authToken = null, lang = 'tr', get
 
           {/* Telegram — şifreli kanaldan gelen, statik state değil */}
           {pii.telegram ? (
-            <a
+            
               href={buildTelegramUrl(pii.telegram)}
               target="_blank"
               rel="noopener noreferrer"
