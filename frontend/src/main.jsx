@@ -11,10 +11,23 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 // L-05 Fix: Global hata sınırı — render hatalarında uygulamanın tamamen çökmesini önler
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 
+// Codespaces URL'sini otomatik olarak Hardhat RPC URL'sine dönüştüren yardımcı fonksiyon
+const getCodespacesRPC = (port) => {
+  try {
+    const host = window.location.hostname;
+    // Eğer localhost'taysan doğrudan döndür, Codespaces'teysen portu dinamik değiştir
+    if (host === 'localhost' || host === '127.0.0.1') return `http://127.0.0.1:${port}`;
+    return `https://${host.replace('-5173', `-${port}`)}`;
+  } catch (e) {
+    return `http://127.0.0.1:${port}`;
+  }
+};
+
 const config = createConfig({
-  chains: process.env.NODE_ENV === 'production'
+  // KRİTİK: Hardhat en başa alındı, böylece uygulama varsayılan olarak yerel ağa bağlanır
+  chains: import.meta.env.PROD
     ? [base, baseSepolia]
-    : [base, baseSepolia, hardhat],
+    : [hardhat, baseSepolia, base],
   connectors: [
     injected(), // MetaMask, Rabby vb. yerel cüzdanlar
     coinbaseWallet({ appName: 'Araf Protocol' }),
@@ -24,7 +37,8 @@ const config = createConfig({
   transports: {
     [base.id]:       http(),
     [baseSepolia.id]: http(),
-    [hardhat.id]:    http('http://127.0.0.1:8545'),
+    // Hibrit Transport: Geliştirmede dinamik Codespaces URL, üretimde varsayılan
+    [hardhat.id]:    http(import.meta.env.PROD ? undefined : getCodespacesRPC(8545)),
   },
 })
 
