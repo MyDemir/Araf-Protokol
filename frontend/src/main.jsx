@@ -4,7 +4,7 @@ import App from './App.jsx'
 import './index.css'
 
 import { WagmiProvider, createConfig, http } from 'wagmi'
-import { base, baseSepolia } from 'wagmi/chains'
+import { base, baseSepolia, hardhat } from 'wagmi/chains'
 import { coinbaseWallet, injected, walletConnect } from 'wagmi/connectors'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -12,7 +12,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 
 const config = createConfig({
-  chains: [base, baseSepolia],
+  chains: process.env.NODE_ENV === 'production'
+    ? [base, baseSepolia]
+    : [base, baseSepolia, hardhat],
   connectors: [
     injected(), // MetaMask, Rabby vb. yerel cüzdanlar
     coinbaseWallet({ appName: 'Araf Protocol' }),
@@ -20,8 +22,9 @@ const config = createConfig({
     // walletConnect({ projectId: '3fcc6b444f67d32e656910629a888c34' }),
   ],
   transports: {
-    [base.id]: http(),
+    [base.id]:       http(),
     [baseSepolia.id]: http(),
+    [hardhat.id]:    http('http://127.0.0.1:8545'),
   },
 })
 
