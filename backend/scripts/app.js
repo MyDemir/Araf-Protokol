@@ -14,7 +14,7 @@ const { connectDB }    = require("./config/db");
 const { connectRedis } = require("./config/redis");
 const logger           = require("./utils/logger");
 
-// [TR] On-chain event'leri MongoDB'ye yansıtan servis
+// [TR] On-chain event'lerini MongoDB'ye yansıtan servis
 // [EN] Service that mirrors on-chain events to MongoDB
 const worker = require("./services/eventListener");
 
@@ -22,7 +22,7 @@ const worker = require("./services/eventListener");
 // [EN] Loads contract public constants from on-chain at startup
 const { loadProtocolConfig } = require("./services/protocolConfig");
 
-// [TR] Başarısız event'leri izleyen ve uyaran Dead Letter Queue monitörü
+// [TR] Başarısız event'lerini izleyen ve uyaran Dead Letter Queue monitörü
 // [EN] Dead Letter Queue monitor that tracks and alerts on failed events
 const { processDLQ } = require("./services/dlqProcessor");
 
@@ -151,16 +151,21 @@ async function bootstrap() {
 
     // [TR] Rotalar DB ve Redis hazır olduktan sonra yüklenir
     // [EN] Routes loaded after DB and Redis are ready
+    
+    // [TR] Frontend Senkronize Log Rotası (Yük bindirmeyen yapı)
+    const logRoutes      = require("./routes/logs");
+    
     const authRoutes     = require("./routes/auth");
     const listingRoutes  = require("./routes/listings");
     const tradeRoutes    = require("./routes/trades");
     const piiRoutes      = require("./routes/pii");
     const feedbackRoutes = require("./routes/feedback");
     const statsRoutes    = require("./routes/stats");
-    // [TR] Şifreli dekont yükleme — AES-256-GCM ile şifreler, SHA-256 hash döner
-    // [EN] Encrypted receipt upload — AES-256-GCM encrypt, returns SHA-256 hash
     const receiptRoutes  = require("./routes/receipts");
 
+    // [TR] Log rotası en üstte tanımlanır
+    app.use("/api/logs",     logRoutes);
+    
     app.use("/api/auth",     authRoutes);
     app.use("/api/listings", listingRoutes);
     app.use("/api/trades",   tradeRoutes);
@@ -189,9 +194,6 @@ async function bootstrap() {
     });
 
     // [TR] Graceful shutdown — clearMasterKeyCache ile plaintext key bellekten sıfırlanır.
-    //      Tüm interval'lar ve timeout'lar temizlenir, bağlantılar kapatılır.
-    // [EN] Graceful shutdown — clearMasterKeyCache zeroes plaintext key from RAM.
-    //      All intervals and timeouts cleared, connections closed.
     const shutdown = async (signal) => {
       logger.info(`${signal} alındı. Graceful shutdown başlıyor...`);
       clearMasterKeyCache();
