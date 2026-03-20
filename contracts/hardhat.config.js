@@ -4,7 +4,7 @@ require("dotenv").config();
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
   solidity: {
-    version: "0.8.24", // 🔴 KRİTİK: OpenZeppelin v5 uyumu için yükseltildi
+    version: "0.8.24", // OpenZeppelin v5 uyumu için yukseltildi
     settings: {
       optimizer: { enabled: true, runs: 200 },
       viaIR: true, // Karmaşık kontratların derlenmesini kolaylaştırır
