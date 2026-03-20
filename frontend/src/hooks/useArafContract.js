@@ -265,7 +265,7 @@ export function useArafContract() {
    *
    * SEC-08 Fix: Deadline artık maksimum 7 gün ile sınırlandırıldı.
    * Saldırgan sonsuz deadline ile imza oluşturmasını engeller.
-   * Kontrat tarafında juga bu kontrolün yapılması önerilir.
+   * Kontrat tarafında da bu kontrolün yapılması önerilir.
    *
    * @param {number} tradeId   - On-chain trade ID
    * @param {number} nonce     - Signer's current sigNonces value
@@ -387,16 +387,16 @@ export function useArafContract() {
       },
       [publicClient]
     ),
-    // [GÜNCELLEME]: 'address' parametresi artık okunacak kontrat adresi olarak değil, argüman olarak kullanılıyor.
+    // K-03 Fix: antiSybilCheck artık 3 değer döndürüyor (aged, funded, cooldownOk)
     antiSybilCheck: useCallback(
-      async (addressArg) => {
+      async (address) => {
         if (!_isValidAddress) return null;
         try {
           return await publicClient.readContract({
-            address: getAddress(ESCROW_ADDRESS), // KRİTİK DÜZELTME: Burası ESCROW_ADDRESS olmalıydı!
+            address: getAddress(ESCROW_ADDRESS),
             abi: ArafEscrowABI,
             functionName: 'antiSybilCheck',
-            args: [getAddress(addressArg)],
+            args: [getAddress(address)],
           });
         } catch (err) {
           console.error("[ArafContract] antiSybilCheck hatası:", err.message);
@@ -407,9 +407,16 @@ export function useArafContract() {
     ),
     /**
      * AUDIT FIX E-01: getReputation view fonksiyonunda ESCROW_ADDRESS guard eklendi.
+     * ÖNCEKİ: ESCROW_ADDRESS undefined olduğunda getAddress(undefined) hata fırlatıyordu.
+     * writeContract wrapper'ında guard vardı ama getReputation doğrudan export ediliyordu.
+     * ŞİMDİ: _isValidAddress kontrolü ile guard eklendi.
+     * Adres geçersizse null döner — caller tarafında handle edilmeli.
+     *
+     * K-03 Fix: 5 return value — önceki ABI'de yanlışlıkla eklenen firstSuccessfulTradeAt kaldırıldı.
      */
     getReputation: useCallback(
-      async (addressArg) => {
+      async (address) => {
+        // AUDIT FIX E-01: Guard — ESCROW_ADDRESS tanımsızsa null döndür
         if (!_isValidAddress) {
           console.warn("[ArafContract] getReputation: ESCROW_ADDRESS tanımsız, null döndürülüyor.");
           return null;
@@ -419,7 +426,7 @@ export function useArafContract() {
             address: getAddress(ESCROW_ADDRESS),
             abi: ArafEscrowABI,
             functionName: 'getReputation',
-            args: [getAddress(addressArg)],
+            args: [getAddress(address)],
           });
         } catch (err) {
           console.error("[ArafContract] getReputation hatası:", err.message);
@@ -430,16 +437,18 @@ export function useArafContract() {
     ),
     /**
      * K-03 Fix: firstSuccessfulTradeAt artık ayrı kontrat fonksiyonundan okunur.
+     * Önceki ABI getReputation'a yanlışlıkla 6. parametre olarak eklemişti —
+     * bu kontrat ile uyumsuzluk yaratıp tüm reputation fetch'ini null döndürüyordu.
      */
     getFirstSuccessfulTradeAt: useCallback(
-      async (addressArg) => {
+      async (address) => {
         if (!_isValidAddress) return 0n;
         try {
           return await publicClient.readContract({
             address: getAddress(ESCROW_ADDRESS),
             abi: ArafEscrowABI,
             functionName: 'getFirstSuccessfulTradeAt',
-            args: [getAddress(addressArg)],
+            args: [getAddress(address)],
           });
         } catch (err) {
           console.error("[ArafContract] getFirstSuccessfulTradeAt hatası:", err.message);
