@@ -2565,7 +2565,7 @@ function App() {
         </div>
       )}
 
-      {isConnected && chainId !== 84532 && (
+      {isConnected && ![8453, 84532, 31337].includes(chainId) && (
         <div className="absolute top-0 left-0 right-0 z-[80] bg-red-950/95 backdrop-blur border-b border-red-800 px-6 py-2 flex justify-center items-center shadow-xl">
           <span className="text-sm font-bold text-red-200">⚠️ {lang === 'TR' ? 'Yanlış Ağ! Lütfen cüzdanınızdan Base Sepolia ağına geçin.' : 'Wrong Network! Please switch to Base Sepolia in your wallet.'}</span>
         </div>
