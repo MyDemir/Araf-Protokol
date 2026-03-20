@@ -519,8 +519,13 @@ class EventWorker {
   //      $set: { "reputation_cache": {...} } tüm objeyi değiştirip failure_score'u sıfırlar.
   // [EN] Dot notation used — preserves failure_score and reputation_history.
   //      $set: { "reputation_cache": {...} } would overwrite object and zero out failure_score.
+  //
+  // H-1 Fix: bannedUntil artık MongoDB'ye yazılıyor — ban state on-chain ile senkronize.
+  // ReputationUpdated event 5 parametre taşır: wallet, successful, failed, bannedUntil, effectiveTier.
+  // consecutiveBans ve maxAllowedTier bu event'te YOK — o alanlar buradan güncellenmez,
+  // aksi hâlde NaN yazılır ve reputationDecay.js sorgusunu bozar.
   async _onReputationUpdated(event) {
-    const { wallet, successful, failed, bannedUntil, consecutiveBans, effectiveTier } = event.args;
+    const { wallet, successful, failed, bannedUntil, effectiveTier } = event.args;
 
     const totalTrades = Number(successful) + Number(failed);
     const successRate = totalTrades > 0
@@ -540,10 +545,10 @@ class EventWorker {
           "reputation_cache.total_trades":    totalTrades,
           "reputation_cache.failed_disputes": Number(failed),
           // H-1 Fix: ban state on-chain ile senkronize ediliyor
-          "is_banned":         isBanned,
-          "banned_until":      isBanned ? new Date(banTimestamp * 1000) : null,
-          "consecutive_bans":  Number(consecutiveBans),
-          "max_allowed_tier":  Number(effectiveTier),
+          "is_banned":    isBanned,
+          "banned_until": isBanned ? new Date(banTimestamp * 1000) : null,
+          // consecutive_bans ve max_allowed_tier bu event'te yok —
+          // yanlış değer yazılmasın. Bu alanlar ayrı on-chain okuma gerektirir.
         },
       },
       { upsert: true }
