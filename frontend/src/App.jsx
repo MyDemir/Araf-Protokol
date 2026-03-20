@@ -1085,7 +1085,7 @@ function App() {
     try {
       setIsContractLoading(true);
       try {
-        await authenticatedFetch(`${API_URL}/api/trades/${activeTrade.onchainId}/chargeback-ack`, { method: 'POST' });
+        await authenticatedFetch(`${API_URL}/api/trades/${activeTrade.id}/chargeback-ack`, { method: 'POST' });
       } catch (err) {
         console.error('Backend chargeback-ack log hatası:', err);
       }
