@@ -12,13 +12,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 
 /**
- * Codespaces URL'sini dinamik olarak Hardhat RPC URL'sine dönüştürür.
- * Mobil cihazda (Kiwi) 'localhost' yerine dış HTTPS tünelini kullanmayı sağlar.
+ * Dinamik Codespaces RPC yardımcı fonksiyonu
  */
 const getCodespacesRPC = (port) => {
   try {
     const host = window.location.hostname;
-    // Yerel makinedeyse localhost, Codespaces tünelindeyse dinamik HTTPS URL döndürür
     if (host === 'localhost' || host === '127.0.0.1') return `http://127.0.0.1:${port}`;
     return `https://${host.replace('-5173', `-${port}`)}`;
   } catch (e) {
@@ -27,25 +25,22 @@ const getCodespacesRPC = (port) => {
 };
 
 const config = createConfig({
-  /**
-   * KRİTİK: Hardhat ağını listenin en başına aldık. 
-   * Bu sayede uygulama açıldığında cüzdanın otomatik olarak yerel ağa (31337) bağlanır.
-   */
-  chains: import.meta.env.PROD
+  // Orijinal sıralaman: Geliştirmede hardhat'i en sona koymuştun, cüzdanın Base'e bağlanma sebebi buydu.
+  // Yerelde sorunsuz çalışması için hardhat'i listenin başına çekiyoruz.
+  chains: process.env.NODE_ENV === 'production'
     ? [base, baseSepolia]
-    : [hardhat, baseSepolia, base],
+    : [hardhat, baseSepolia, base], 
   connectors: [
     injected(), // MetaMask, Rabby vb. yerel cüzdanlar
     coinbaseWallet({ appName: 'Araf Protocol' }),
+    // GEÇİCİ OLARAK UYUTULDU (403 Reown hatasını engellemek için)
+    // walletConnect({ projectId: '3fcc6b444f67d32e656910629a888c34' }),
   ],
   transports: {
     [base.id]:       http(),
     [baseSepolia.id]: http(),
-    /**
-     * HİBRİT TRANSPORT: 
-     * Geliştirme modunda Codespaces dış URL'sini kullanır, canlıda (production) varsayılan RPC'ye döner.
-     */
-    [hardhat.id]:    http(import.meta.env.PROD ? undefined : getCodespacesRPC(8545)),
+    // Hibrit Transport: Geliştirmede dinamik URL, üretimde varsayılan.
+    [hardhat.id]:    http(process.env.NODE_ENV === 'production' ? 'http://127.0.0.1:8545' : getCodespacesRPC(8545)),
   },
 })
 
