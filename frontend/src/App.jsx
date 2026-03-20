@@ -903,15 +903,26 @@ function App() {
     }
   };
 
-  // [TR] Dekont dosyasını backend'e yükler, dönen hash'i paymentIpfsHash state'ine kaydeder
-  // [EN] Uploads receipt file to backend, saves returned hash to paymentIpfsHash state
+  // [TR] Dekont dosyasını backend'e yükler, dönen SHA-256 hash'ini paymentIpfsHash state'ine kaydeder.
+  //      activeTrade.onchainId zorunlu — backend hangi trade'e ait olduğunu belirler.
+  //      "ipfsHash" adı tarihsel; gerçekte AES-256-GCM şifreli verinin SHA-256 hash'idir.
+  // [EN] Uploads receipt to backend, saves returned SHA-256 hash to paymentIpfsHash state.
+  //      activeTrade.onchainId required — backend identifies which trade it belongs to.
+  //      "ipfsHash" name is historical; actually SHA-256 of AES-256-GCM encrypted data.
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    if (!activeTrade?.onchainId) {
+      showToast(lang === 'TR' ? 'Aktif işlem bulunamadı.' : 'No active trade found.', 'error');
+      return;
+    }
     try {
       setIsContractLoading(true);
       const formData = new FormData();
       formData.append('receipt', file);
+      // [TR] Backend'in doğru trade'i bulması için on-chain ID'yi gönder
+      // [EN] Send on-chain ID so backend can identify the correct trade
+      formData.append('onchainEscrowId', String(activeTrade.onchainId));
       const res = await fetch(`${API_URL}/api/receipts/upload`, {
         method: 'POST',
         body: formData,
