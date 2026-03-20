@@ -124,6 +124,16 @@ router.post("/", requireAuth, listingsWriteLimiter, async (req, res, next) => {
       return res.status(400).json({ error: "limits.max, limits.min'den büyük olmalı" });
     }
 
+    // Kaynak: ArafEscrow.sol sabitleri (TIER_MAX_AMOUNT_TIER0..3)
+    const TIER_MAX_CRYPTO = { 0: 150, 1: 1500, 2: 7500, 3: 30000 };
+    const tierMax = TIER_MAX_CRYPTO[value.tier];
+    if (tierMax !== undefined && value.limits.max > tierMax) {
+      return res.status(400).json({
+        error: `Tier ${value.tier} için maksimum kripto limiti ${tierMax} USDT/USDC. ` +
+               `İstenen: ${value.limits.max}`,
+      });
+    }
+
     //  Kontratın view fonksiyonuyla kullanıcının efektif tier'ını doğrula.
     const effectiveTier = await _getOnChainEffectiveTier(req.wallet);
     if (value.tier > effectiveTier) {
