@@ -61,12 +61,7 @@ const listingSchema = new mongoose.Schema(
   }
 );
 
-listingSchema.index({
-  status:        1,
-  fiat_currency: 1,
-  "limits.min":  1,
-  "limits.max":  1,
-});
+listingSchema.index({ status: 1, fiat_currency: 1, "limits.min": 1, "limits.max": 1 });
 listingSchema.index({ maker_address: 1, status: 1 });
 listingSchema.index({ "tier_rules.required_tier": 1, status: 1 });
 
@@ -133,13 +128,35 @@ const tradeSchema = new mongoose.Schema(
       challenge_pinged_at: { type: Date, default: null },
     },
 
-    // YENİ EKLENEN PING BAYRAKLARI (K-01 Fix)
     pinged_by_taker:           { type: Boolean, default: false },
     challenge_pinged_by_maker: { type: Boolean, default: false },
 
     evidence: {
+      // [TR] Kontrata giden hash: SHA-256(encrypted_data).
+      //      "ipfs" prefix'i tarihsel — gerçek IPFS kullanılmıyor.
+      //      Dekont public IPFS'e yüklenmez; backend'de AES-256-GCM ile şifrelenir.
+      // [EN] Hash sent to contract: SHA-256(encrypted_data).
+      //      "ipfs" prefix is historical — real IPFS is not used.
+      //      Receipt is NOT on public IPFS; encrypted AES-256-GCM on backend.
       ipfs_receipt_hash: { type: String, default: null },
-      receipt_timestamp: { type: Date,   default: null },
+
+      // [TR] AES-256-GCM şifreli dekont verisi (base64 → encryptField → hex).
+      //      encryption.js encryptField() ile taker wallet DEK'i kullanılarak şifrelenir.
+      //      RESOLVED/CANCELED → 24 saat, CHALLENGED/BURNED → 30 gün sonra null'a çekilir.
+      // [EN] AES-256-GCM encrypted receipt data (base64 → encryptField → hex).
+      //      Encrypted via encryption.js encryptField() using taker wallet DEK.
+      //      Set to null 24h after RESOLVED/CANCELED, 30d after CHALLENGED/BURNED.
+      receipt_encrypted: { type: String, default: null },
+
+      receipt_timestamp: { type: Date, default: null },
+
+      // [TR] Şifreli verinin silineceği tarih.
+      //      eventListener, trade sonuçlandığında bu alanı set eder.
+      //      Silinme: cleanupReceipts job'u bu alana göre receipt_encrypted'ı null'lar.
+      // [EN] Date when encrypted data must be deleted.
+      //      Set by eventListener when trade concludes.
+      //      Cleanup: cleanupReceipts job nulls receipt_encrypted based on this field.
+      receipt_delete_at: { type: Date, default: null },
     },
 
     cancel_proposal: {
@@ -170,22 +187,32 @@ const tradeSchema = new mongoose.Schema(
 tradeSchema.index({ maker_address: 1, status: 1 });
 tradeSchema.index({ taker_address: 1, status: 1 });
 tradeSchema.index({ onchain_escrow_id: 1 });
+
+// [TR] Trade'leri 1 yıl sonra sil — GDPR uyumu
+// [EN] Delete trades after 1 year — GDPR compliance
 tradeSchema.index(
   { "timers.resolved_at": 1 },
-  { expireAfterSeconds: 365 * 24 * 3600, partialFilterExpression: { status: { $in: ["RESOLVED", "CANCELED", "BURNED"] } } }
+  {
+    expireAfterSeconds: 365 * 24 * 3600,
+    partialFilterExpression: { status: { $in: ["RESOLVED", "CANCELED", "BURNED"] } },
+  }
 );
 
-// ── Virtual: is in bleeding phase? ───────────────────────────────────────────
+// [TR] receipt_delete_at dolunca temizlenecek trade'leri bulmak için sparse index.
+//      MongoDB TTL dokümanı siler, field'ı değil — cleanup job bu index'i kullanır.
+// [EN] Sparse index to find trades with expired receipts for cleanup.
+//      MongoDB TTL deletes documents, not fields — cleanup job uses this index.
+tradeSchema.index({ "evidence.receipt_delete_at": 1 }, { sparse: true });
+
+// ── Virtuals ─────────────────────────────────────────────────────────────────
 tradeSchema.virtual("isInGracePeriod").get(function () {
   if (this.status !== "CHALLENGED" || !this.timers.challenged_at) return false;
-  const elapsed = Date.now() - this.timers.challenged_at.getTime();
-  return elapsed < 48 * 3600 * 1000;
+  return Date.now() - this.timers.challenged_at.getTime() < 48 * 3600 * 1000;
 });
 
 tradeSchema.virtual("isInBleedingPhase").get(function () {
   if (this.status !== "CHALLENGED" || !this.timers.challenged_at) return false;
-  const elapsed = Date.now() - this.timers.challenged_at.getTime();
-  return elapsed >= 48 * 3600 * 1000;
+  return Date.now() - this.timers.challenged_at.getTime() >= 48 * 3600 * 1000;
 });
 
 module.exports = {
