@@ -520,12 +520,17 @@ class EventWorker {
   // [EN] Dot notation used — preserves failure_score and reputation_history.
   //      $set: { "reputation_cache": {...} } would overwrite object and zero out failure_score.
   async _onReputationUpdated(event) {
-    const { wallet, successful, failed } = event.args;
+    const { wallet, successful, failed, bannedUntil, consecutiveBans, effectiveTier } = event.args;
 
     const totalTrades = Number(successful) + Number(failed);
     const successRate = totalTrades > 0
       ? Math.round((Number(successful) / totalTrades) * 100)
       : 100;
+
+    // [TR] Unix timestamp karşılaştırması — bannedUntil 0 ise yasak yok
+    // [EN] Unix timestamp comparison — bannedUntil 0 means no ban
+    const banTimestamp = Number(bannedUntil);
+    const isBanned = banTimestamp > Math.floor(Date.now() / 1000);
 
     await User.findOneAndUpdate(
       { wallet_address: wallet.toLowerCase() },
@@ -534,6 +539,11 @@ class EventWorker {
           "reputation_cache.success_rate":    successRate,
           "reputation_cache.total_trades":    totalTrades,
           "reputation_cache.failed_disputes": Number(failed),
+          // H-1 Fix: ban state on-chain ile senkronize ediliyor
+          "is_banned":         isBanned,
+          "banned_until":      isBanned ? new Date(banTimestamp * 1000) : null,
+          "consecutive_bans":  Number(consecutiveBans),
+          "max_allowed_tier":  Number(effectiveTier),
         },
       },
       { upsert: true }
