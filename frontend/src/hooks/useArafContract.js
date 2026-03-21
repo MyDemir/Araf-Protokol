@@ -151,9 +151,23 @@ export function useArafContract() {
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       return receipt;
     } catch (error) {
-      // Hataları daha kullanıcı dostu bir şekilde yakalayıp yeniden fırlatabiliriz
-      // veya bir bildirim sistemine gönderebiliriz.
-      console.error(`[ArafContract] ${functionName} işlemi başarısız:`, error.message);
+      // DÜZELTME: Revert hatalarını daha okunabilir hale getir
+      const errorMessage = error.shortMessage || error.reason || error.message || "Bilinmeyen Kontrat Hatası";
+      
+      // [TR] Hatayı sessizce backend log dosyasına gönder (Kullanıcı arayüzünü dondurmaz)
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+      fetch(`${apiUrl}/logs/client-error`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          level: "ERROR",
+          message: `[CONTRACT-REVERT] ${functionName}: ${errorMessage}`,
+          url: window.location.href,
+          wallet: walletClient?.account?.address
+        })
+      }).catch(() => {}); // Log atılamazsa sessiz kal, döngüye girme
+
+      console.error(`[ArafContract] ${functionName} işlemi başarısız:`, errorMessage);
       throw error; // Hatanın üst katmanlara da iletilmesi için
     }
   }, [walletClient, publicClient, _validateChain]); // Sabitler dependency array'den kaldırıldı.
@@ -214,13 +228,30 @@ export function useArafContract() {
     _validateChain();
     if (!_isValidAddress) throw new Error("VITE_ESCROW_ADDRESS tanımlı değil.");
 
-    const hash = await walletClient.writeContract({
-      address: getAddress(tokenAddress),
-      abi: ERC20_ABI,
-      functionName: 'approve',
-      args: [getAddress(ESCROW_ADDRESS), amount],
-    });
-    return await publicClient.waitForTransactionReceipt({ hash });
+    try {
+      const hash = await walletClient.writeContract({
+        address: getAddress(tokenAddress),
+        abi: ERC20_ABI,
+        functionName: 'approve',
+        args: [getAddress(ESCROW_ADDRESS), amount],
+      });
+      return await publicClient.waitForTransactionReceipt({ hash });
+    } catch (error) {
+      // DÜZELTME: Token Onayı iptallerini backend'e logla
+      const errorMessage = error.shortMessage || error.message || "Bilinmeyen Onay Hatası";
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+      fetch(`${apiUrl}/logs/client-error`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          level: "ERROR",
+          message: `[TOKEN-APPROVE-REVERT] ${errorMessage}`,
+          url: window.location.href,
+          wallet: walletClient.account.address
+        })
+      }).catch(() => {});
+      throw error;
+    }
   }, [walletClient, publicClient, _validateChain]);
 
   /**
@@ -230,12 +261,29 @@ export function useArafContract() {
     if (!walletClient) throw new Error("Cüzdan bağlı değil.");
     _validateChain();
     
-    const hash = await walletClient.writeContract({
-      address: getAddress(tokenAddress),
-      abi: parseAbi(['function mint()']), // Sabit parametresiz mint işlemi
-      functionName: 'mint',
-    });
-    return await publicClient.waitForTransactionReceipt({ hash });
+    try {
+      const hash = await walletClient.writeContract({
+        address: getAddress(tokenAddress),
+        abi: parseAbi(['function mint()']), // Sabit parametresiz mint işlemi
+        functionName: 'mint',
+      });
+      return await publicClient.waitForTransactionReceipt({ hash });
+    } catch (error) {
+       // DÜZELTME: Faucet iptallerini backend'e logla
+       const errorMessage = error.shortMessage || error.message || "Bilinmeyen Faucet Hatası";
+       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+       fetch(`${apiUrl}/logs/client-error`, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           level: "ERROR",
+           message: `[FAUCET-REVERT] ${errorMessage}`,
+           url: window.location.href,
+           wallet: walletClient.account.address
+         })
+       }).catch(() => {});
+       throw error;
+    }
   }, [walletClient, publicClient, _validateChain]);
 
   /**
