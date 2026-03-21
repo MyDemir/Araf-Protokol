@@ -11,9 +11,9 @@
  *
  * Gelecek: Slack/PagerDuty webhook entegrasyonu için ALERT_WEBHOOK_URL .env'e eklenebilir.
  *
- *   - İşlenen entry'ler LTRIM ile kırpılır (max 100 entry tutulur)
- *   - Alert cooldown: Aynı uyarı 10 dakikada bir kez gönderilir
- *   - Eski entry'ler archive key'ine taşınır (inceleme için)
+ * - İşlenen entry'ler LTRIM ile kırpılır (max 100 entry tutulur)
+ * - Alert cooldown: Aynı uyarı 10 dakikada bir kez gönderilir
+ * - Eski entry'ler archive key'ine taşınır (inceleme için)
  */
 
 const { getRedisClient } = require("../config/redis");
@@ -99,7 +99,8 @@ async function processDLQ() {
       }
     }
   } catch (err) {
-    logger.error(`[DLQ] Processor hatası: ${err.message}`);
+    // DÜZELTME: Sadece hata mesajını değil, tam yığın izini (stack trace) de dosyaya yazdır.
+    logger.error(`[DLQ] Processor hatası: ${err.message}`, { stack: err.stack });
   }
 }
 
