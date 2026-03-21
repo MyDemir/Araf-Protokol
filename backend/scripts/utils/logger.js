@@ -35,7 +35,7 @@ const logger = createLogger({
     new transports.File({ 
       filename: logFilePath,
       level: "debug", // En ince detaya kadar (kontrat eventleri dahil) kaydeder
-      maxsize: 5242880, // 5MB dolunca yeni dosyaya geçer (dosya şişmesini önler)
+      maxsize: 26214400, // 25MB dolunca yeni dosyaya geçer (dosya şişmesini önler)
       maxFiles: 5,
     }),
   ],
