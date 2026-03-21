@@ -14,6 +14,15 @@ const { connectDB }    = require("./config/db");
 const { connectRedis } = require("./config/redis");
 const logger           = require("./utils/logger");
 
+// [TR] Ethers.js vb. kütüphane içi gizli çökmeleri sisteme yük bindirmeden dosyaya yazar
+// [EN] Catches library-internal hidden crashes without adding load to the system
+process.on("uncaughtException", (err) => {
+  logger.error("[CRITICAL-EXCEPTION] Beklenmedik Çökme (Sistem Durdu):", { message: err.message, stack: err.stack });
+});
+process.on("unhandledRejection", (reason) => {
+  logger.error("[CRITICAL-REJECTION] Yakalanmamış Promise (Sahipsiz Hata):", { reason });
+});
+
 // [TR] On-chain event'lerini MongoDB'ye yansıtan servis
 // [EN] Service that mirrors on-chain events to MongoDB
 const worker = require("./services/eventListener");
