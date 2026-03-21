@@ -9,9 +9,10 @@
 ## İçindekiler
 
 1. [Yerel Geliştirme (Local)](#1-yerel-geliştirme)
-2. [Public Testnet — Base Sepolia](#2-public-testnet--base-sepolia)
-3. [Mainnet — Base](#3-mainnet--base)
-4. [Ortam Farkları Özeti](#4-ortam-farkları-özeti)
+2. [Sık Karşılaşılan Yerel Sorunlar (Troubleshooting)](#2-sık-karşılaşılan-yerel-sorunlar-troubleshooting)
+3. [Public Testnet — Base Sepolia](#3-public-testnet--base-sepolia)
+4. [Mainnet — Base](#4-mainnet--base)
+5. [Ortam Farkları Özeti](#5-ortam-farkları-özeti)
 
 ---
 
@@ -19,11 +20,22 @@
 
 ### Ön Gereksinimler
 - Node.js `v18+`
-- MongoDB (yerel veya Atlas free tier)
-- Redis (yerel veya Upstash free tier)
+- Docker Desktop (MongoDB ve Redis için en kolay yöntem)
 - MetaMask — Hardhat ağı eklenecek
 
-### Adım 1 — Bağımlılıkları Kur
+### Adım 1 — Veritabanı ve Önbellek (Docker İle Kurulum)
+Backend'in çalışabilmesi için MongoDB ve Redis'in ayakta olması şarttır. Docker yüklüyse terminalde şu komutları çalıştırarak arka planda başlatabilirsiniz:
+
+```bash
+# MongoDB'yi başlat
+docker run -d --name araf-mongo -p 27017:27017 mongo:latest
+
+# Redis'i başlat
+docker run -d --name araf-redis -p 6379:6379 redis:latest
+```
+*(Durdurmak için: `docker stop araf-mongo araf-redis`)*
+
+### Adım 2 — Bağımlılıkları Kur
 
 ```bash
 # Proje kök dizininde
@@ -32,7 +44,7 @@ cd backend  && npm install && cd ..
 cd frontend && npm install && cd ..
 ```
 
-### Adım 2 — Terminal 1: Hardhat Node
+### Adım 3 — Terminal 1: Hardhat Node
 
 ```bash
 cd contracts
@@ -41,7 +53,7 @@ npx hardhat node
 
 Çıktıda 20 test cüzdanı ve private key'leri listelenir. `Account #0` deployer, `Account #1` treasury olarak kullanılacak.
 
-### Adım 3 — Terminal 2: Kontratları Deploy Et
+### Adım 4 — Terminal 2: Kontratları Deploy Et
 
 ```bash
 # contracts/.env dosyası oluştur
@@ -56,13 +68,13 @@ npx hardhat run scripts/deploy.js --network hardhat
 ```
 
 Çıktıdan şu değerleri not al:
-```
+```text
 VITE_ESCROW_ADDRESS="0x..."
 VITE_USDT_ADDRESS="0x..."
 VITE_USDC_ADDRESS="0x..."
 ```
 
-### Adım 4 — Terminal 2: Backend Konfigürasyonu
+### Adım 5 — Terminal 2: Backend Konfigürasyonu
 
 ```bash
 # backend/.env dosyası oluştur
@@ -75,15 +87,15 @@ REDIS_URL=redis://127.0.0.1:6379
 
 # Minimum 64 karakter üret:
 # node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
-JWT_SECRET=<64_karakter_hex>
+JWT_SECRET=bunu_kendin_olustur_64_karakter
 JWT_EXPIRES_IN=15m
 PII_TOKEN_EXPIRES_IN=15m
 
 KMS_PROVIDER=env
 # node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-MASTER_ENCRYPTION_KEY=<32_byte_hex>
+MASTER_ENCRYPTION_KEY=bunu_kendin_olustur_32_byte
 
-BASE_RPC_URL=http://127.0.0.1:8545
+BASE_RPC_URL=[http://127.0.0.1:8545](http://127.0.0.1:8545)
 ARAF_ESCROW_ADDRESS=<deploy_ciktisindaki_adres>
 CHAIN_ID=31337
 
@@ -99,7 +111,7 @@ EOF
 cd backend && npm run dev
 ```
 
-### Adım 5 — Terminal 3: Frontend Konfigürasyonu
+### Adım 6 — Terminal 3: Frontend Konfigürasyonu
 
 ```bash
 # frontend/.env.development dosyası oluştur
@@ -110,14 +122,10 @@ VITE_USDT_ADDRESS=<deploy_ciktisindaki_usdt_adresi>
 VITE_USDC_ADDRESS=<deploy_ciktisindaki_usdc_adresi>
 EOF
 
-# main.jsx'te Hardhat chain'i ekle (Y-02 Fix)
-# chains: [base, baseSepolia, hardhat] — hardhat: import { hardhat } from 'wagmi/chains'
-# transports: { [hardhat.id]: http('http://localhost:8545') }
-
 cd frontend && npm run dev
 ```
 
-### Adım 6 — MetaMask Hardhat Ağı Ekle
+### Adım 7 — MetaMask Hardhat Ağı Ekle
 
 | Alan | Değer |
 |------|-------|
@@ -128,7 +136,7 @@ cd frontend && npm run dev
 
 MetaMask'a Hardhat'in verdiği test private key'lerini import et.
 
-### Adım 7 — Testleri Çalıştır
+### Adım 8 — Testleri Çalıştır
 
 ```bash
 cd contracts
@@ -152,7 +160,55 @@ npx hardhat coverage
 
 ---
 
-## 2. Public Testnet — Base Sepolia
+## 2. Sık Karşılaşılan Yerel Sorunlar (Troubleshooting)
+
+Yerel ortamda (veya Codespace'te) geliştirme yaparken en sık karşılaşılan sorunlar ve çözümleri:
+
+### ❌ Port Zaten Kullanımda (EADDRINUSE)
+Backend (`4000`) veya Frontend (`5173`) başlatılırken bu hatayı alırsanız, arka planda açık kalmış ve "zombi" olmuş bir Node.js süreci vardır. 
+
+**Çözüm (Portu Serbest Bırakmak):**
+```bash
+# Mac ve Linux için (Tüm node süreçlerini sonlandırır):
+killall -9 node
+
+# Windows için (PowerShell):
+taskkill /F /IM node.exe
+```
+Eğer sadece belirli bir portu (örneğin 4000) öldürmek isterseniz:
+```bash
+# Mac/Linux:
+lsof -i :4000
+kill -9 <PID_NUMARASI>
+```
+
+### ❌ MetaMask Nonce Hatası (İşlem Askıda Kalıyor)
+Hardhat node'unu (Terminal 1) kapatıp tekrar açtığınızda blockchain "sıfırlanır". Ancak MetaMask cüzdanınız eski işlemlerin sırasını (Nonce) hatırlar. Bu yüzden yeni işlem göndermek istediğinizde cüzdan kilitlenir.
+
+**Çözüm (Cüzdanı Sıfırlamak):**
+1. MetaMask uzantısını açın.
+2. Sağ üstteki üç noktadan (veya profil resminden) **Ayarlar**'a girin.
+3. **Gelişmiş** sekmesine tıklayın.
+4. **"Hesap Etkinliğini Temizle"** (Clear Activity Data) butonuna basın. (Bu işlem bakiyenizi veya hesaplarınızı silmez, sadece işlem geçmişini sıfırlar).
+
+### ❌ Codespaces Kaynak Limitleri (Resource Pressure)
+GitHub Codespaces (Ücretsiz sürüm), MongoDB, Redis, Hardhat, Backend ve Frontend'i aynı anda çalıştırırken RAM (Bellek) sınırlarını hızla zorlayabilir. Codespace kilitlenir veya terminal donarsa:
+
+**Çözüm:**
+1. Geçici Olarak Docker'ları Durdurun: Eğer sadece Frontend tasarlıyorsanız backend/veritabanı ikilisini kapatın: `docker stop araf-mongo araf-redis`.
+2. Projeyi Bilgisayarınıza Alın (Önerilen): Eğer tam entegrasyon testleri yapacaksanız, projeyi `git clone` ile doğrudan kendi bilgisayarınıza çekip (Docker Desktop ile) kısıtlama olmadan çalışın.
+
+### 🔎 Hataları Merkezi Olarak İzlemek
+Oluşturduğumuz hata yakalama sistemi sayesinde, (UI çökmeleri, kontrat iptalleri, API retleri dahil) tüm sistem olayları tek bir dosyada birikir. Geliştirme yaparken her zaman bir terminal sekmesinde bu logu açık tutun:
+
+```bash
+# Kök dizinde (veya backend dizininde)
+tail -f araf_full_stack.log.txt
+```
+
+---
+
+## 3. Public Testnet — Base Sepolia
 
 ### Ön Gereksinimler
 - Metamask'ta Base Sepolia ağı
@@ -171,7 +227,7 @@ npx hardhat coverage
 cat > contracts/.env << 'EOF'
 DEPLOYER_PRIVATE_KEY=0x<testnet_deployer_private_key>
 TREASURY_ADDRESS=0x<testnet_treasury_wallet>
-BASE_SEPOLIA_RPC_URL=https://base-sepolia.g.alchemy.com/v2/<API_KEY>
+BASE_SEPOLIA_RPC_URL=[https://base-sepolia.g.alchemy.com/v2/](https://base-sepolia.g.alchemy.com/v2/)<API_KEY>
 BASESCAN_API_KEY=<basescan_api_key>
 REPORT_GAS=true
 EOF
@@ -186,7 +242,7 @@ npx hardhat run scripts/deploy.js --network base-sepolia
 ```
 
 Çıktıdan not alınacaklar:
-```
+```text
 ✅ ArafEscrow deploy edildi: 0x...
 ✅ MockUSDT deploy edildi:    0x...
 ✅ MockUSDC deploy edildi:    0x...
@@ -218,7 +274,7 @@ npx hardhat verify --network base-sepolia \
 
 ```bash
 # Fly.io CLI kur (macOS/Linux)
-curl -L https://fly.io/install.sh | sh
+curl -L [https://fly.io/install.sh](https://fly.io/install.sh) | sh
 
 # Giriş yap
 fly auth login
@@ -239,14 +295,14 @@ fly secrets set \
   PII_TOKEN_EXPIRES_IN="15m" \
   KMS_PROVIDER="env" \
   MASTER_ENCRYPTION_KEY="<32_byte_hex>" \
-  BASE_RPC_URL="https://base-sepolia.g.alchemy.com/v2/<API_KEY>" \
-  BASE_WS_RPC_URL="wss://base-sepolia.g.alchemy.com/v2/<API_KEY>" \
+  BASE_RPC_URL="[https://base-sepolia.g.alchemy.com/v2/](https://base-sepolia.g.alchemy.com/v2/)<API_KEY>" \
+  BASE_WS_RPC_URL="wss://[base-sepolia.g.alchemy.com/v2/](https://base-sepolia.g.alchemy.com/v2/)<API_KEY>" \
   ARAF_ESCROW_ADDRESS="<DEPLOY_ADRES>" \
   CHAIN_ID="84532" \
   TREASURY_ADDRESS="<TREASURY_WALLET>" \
   RELAYER_PRIVATE_KEY="0x<relayer_private_key>" \
   SIWE_DOMAIN="araf-protocol-backend.fly.dev" \
-  ALLOWED_ORIGINS="https://araf-protocol.vercel.app"
+  ALLOWED_ORIGINS="[https://araf-protocol.vercel.app](https://araf-protocol.vercel.app)"
 
 # Deploy et
 fly deploy
@@ -267,11 +323,11 @@ npm install -g vercel
 cd frontend
 
 # vercel.json'daki proxy URL'ini güncelle
-# "destination" → "https://araf-protocol-backend.fly.dev/api/$1"
+# "destination" → "[https://araf-protocol-backend.fly.dev/api/$1](https://araf-protocol-backend.fly.dev/api/$1)"
 
 # Production env dosyası oluştur
 cat > .env.production << 'EOF'
-VITE_API_URL=https://araf-protocol-backend.fly.dev
+VITE_API_URL=[https://araf-protocol-backend.fly.dev](https://araf-protocol-backend.fly.dev)
 VITE_ESCROW_ADDRESS=<DEPLOY_ADRES>
 VITE_USDT_ADDRESS=<USDT_ADRES>
 VITE_USDC_ADDRESS=<USDC_ADRES>
@@ -294,8 +350,6 @@ Backend deploy URL'i belli olduktan sonra:
 # Backend'de SIWE_DOMAIN'i frontend domain'i yap
 fly secrets set SIWE_DOMAIN="araf-protocol.vercel.app"
 ```
-
-`frontend/src/App.jsx`'te nonce fetch ederken `siweDomain` backend'den geliyor — değişiklik gerekmez.
 
 ### Adım 6 — main.jsx Hardhat Chain'i Kaldır
 
@@ -327,7 +381,7 @@ const config = createConfig({
 
 ---
 
-## 3. Mainnet — Base
+## 4. Mainnet — Base
 
 > ⚠️ **Mainnet öncesi zorunlu:** Profesyonel akıllı kontrat güvenlik denetimi (audit) tamamlanmış olmalıdır.
 
@@ -375,7 +429,7 @@ aws kms generate-data-key \
 cat > contracts/.env << 'EOF'
 DEPLOYER_PRIVATE_KEY=0x<mainnet_deployer_private_key>
 TREASURY_ADDRESS=0x<gnosis_safe_address>
-BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/<API_KEY>
+BASE_RPC_URL=[https://base-mainnet.g.alchemy.com/v2/](https://base-mainnet.g.alchemy.com/v2/)<API_KEY>
 BASESCAN_API_KEY=<basescan_api_key>
 EOF
 
@@ -396,13 +450,13 @@ fly secrets set \
   AWS_KMS_KEY_ARN="arn:aws:kms:eu-west-1:...:key/..." \
   AWS_ENCRYPTED_DATA_KEY="<base64_CiphertextBlob>" \
   AWS_REGION="eu-west-1" \
-  BASE_RPC_URL="https://base-mainnet.g.alchemy.com/v2/<API_KEY>" \
-  BASE_WS_RPC_URL="wss://base-mainnet.g.alchemy.com/v2/<API_KEY>" \
+  BASE_RPC_URL="[https://base-mainnet.g.alchemy.com/v2/](https://base-mainnet.g.alchemy.com/v2/)<API_KEY>" \
+  BASE_WS_RPC_URL="wss://[base-mainnet.g.alchemy.com/v2/](https://base-mainnet.g.alchemy.com/v2/)<API_KEY>" \
   CHAIN_ID="8453" \
   ARAF_ESCROW_ADDRESS="<MAINNET_ESCROW>" \
   TREASURY_ADDRESS="<GNOSIS_SAFE>" \
   SIWE_DOMAIN="app.araf.xyz" \
-  ALLOWED_ORIGINS="https://app.araf.xyz"
+  ALLOWED_ORIGINS="[https://app.araf.xyz](https://app.araf.xyz)"
   # RELAYER_PRIVATE_KEY → Mainnet'te Gelato Automation kullan
 
 fly deploy
@@ -413,10 +467,9 @@ fly deploy
 ```bash
 # main.jsx — sadece mainnet
 import { base } from 'wagmi/chains'
-# baseSepolia ve hardhat kaldırıldı
 
 # .env.production
-VITE_API_URL=https://api.araf.xyz
+VITE_API_URL=[https://api.araf.xyz](https://api.araf.xyz)
 VITE_ESCROW_ADDRESS=<MAINNET_ESCROW>
 # VITE_USDT_ADDRESS ve VITE_USDC_ADDRESS → gerçek Base USDT/USDC adresleri
 # Base USDT: 0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2
@@ -443,7 +496,7 @@ vercel --prod
 
 ---
 
-## 4. Ortam Farkları Özeti
+## 5. Ortam Farkları Özeti
 
 | Parametre | Local | Testnet | Mainnet |
 |-----------|-------|---------|---------|
