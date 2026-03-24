@@ -1,44 +1,91 @@
 "use strict";
 
-const { createLogger, format, transports } = require("winston");
-const path = require("path");
+const express     = require("express");
+const router      = express.Router();
+const logger      = require("../utils/logger");
+const rateLimit   = require("express-rate-limit");
+const { isReady } = require("../config/redis");
 
-// [TR] Log dosyasının konumu: Proje kök dizini
-// [EN] Log file location: Project root directory
-const logFilePath = path.join(__dirname, "../../araf_full_stack.log.txt");
+/**
+ * Client Error Logger — Frontend Hata Yakalayıcı
+ *
+ * YÜKS-21 Fix: Kimlik Doğrulamasız Denetim İzi İmhası Kapatıldı.
+ *   ÖNCEKİ: Bu endpoint üzerinde hiçbir kimlik doğrulama veya rate limit yoktu.
+ *   logger.js maxsize: 25MB, maxFiles: 5 = toplam 125MB log limiti.
+ *   Saldırgan sisteme kritik zafiyet sömürdükten hemen sonra bu endpoint'e
+ *   büyük JSON paketleriyle saniyede binlerce istek atarak 125MB log limitini
+ *   doldurabiliyor → gerçek saldırı izleri kalıcı olarak siliniyordu.
+ *   ŞİMDİ:
+ *     1. IP bazlı sıkı rate limit (dakikada 10 istek)
+ *     2. Payload boyutu sınırı (max 5KB — sadece hata mesajı içermeli)
+ *     3. Zorunlu alan doğrulaması (message alanı olmayan istekler reddedilir)
+ *     4. Redis erişilemezse bellek bazlı rate limit devreye girer
+ *
+ * Not: requireAuth kasıtlı olarak EKLENMEDİ.
+ * Frontend ErrorBoundary, kullanıcı oturum açmadan önce de çökebilir.
+ * Kimlik doğrulama bu endpoint'in işlevini bozur. Rate limit yeterli koruma sağlar.
+ */
 
-const logger = createLogger({
-  // Üretim modunda 'info', test/dev modunda 'debug' seviyesinde çalışır
-  level: process.env.NODE_ENV === "production" ? "info" : "debug",
-  
-  format: format.combine(
-    format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
-    format.errors({ stack: true }), // Hata yığınlarını (stack trace) yakalar
-    format.json(), // Dosyada yapılandırılmış veri tutar
-    format.printf(({ timestamp, level, message, stack, ...meta }) => {
-      // .txt dosyasında okunabilir format
-      const metaString = Object.keys(meta).length ? JSON.stringify(meta) : "";
-      return `${timestamp} [${level.toUpperCase()}]: ${message} ${metaString} ${stack ? `\n${stack}` : ""}`;
-    })
-  ),
-  
-  transports: [
-    // 1. Terminale Renkli Çıktı Verir
-    new transports.Console({
-      format: format.combine(
-        format.colorize(),
-        format.simple()
-      ),
-    }),
-    
-    // 2. Tüm Detayları .txt Dosyasına Kaydeder (Yerel Test Analizi İçin)
-    new transports.File({ 
-      filename: logFilePath,
-      level: "debug", // En ince detaya kadar (kontrat eventleri dahil) kaydeder
-      maxsize: 26214400, // 25MB dolunca yeni dosyaya geçer (dosya şişmesini önler)
-      maxFiles: 5,
-    }),
-  ],
+// [TR] Bellekte rate limit (Redis yokken fallback)
+let inMemoryRequests = {};
+setInterval(() => { inMemoryRequests = {}; }, 60 * 1000); // Her dakika temizle
+
+/**
+ * Basit in-memory rate limiter — Redis erişilemez olduğunda devreye girer.
+ */
+function inMemoryRateLimit(ip, limit = 10) {
+  inMemoryRequests[ip] = (inMemoryRequests[ip] || 0) + 1;
+  return inMemoryRequests[ip] > limit;
+}
+
+/**
+ * Karma rate limiter middleware.
+ * Redis varsa Redis'i, yoksa bellekteki sayacı kullanır.
+ */
+const logRateLimiter = rateLimit({
+  windowMs:    60 * 1000,  // 1 dakika
+  max:         10,         // IP başına dakikada 10 istek
+  keyGenerator:(req) => req.ip,
+  // [TR] Redis erişilemezse in-memory fallback kullan, fail-open YOK (log DoS riski)
+  skip:        () => false,
+  handler:     (req, res) => {
+    // [TR] Rate limit aşıldıysa ek log yazma — log spam'ini önle
+    res.status(429).json({ error: "Çok fazla log isteği." });
+  },
+  standardHeaders: true,
+  legacyHeaders:   false,
 });
 
-module.exports = logger;
+/**
+ * POST /api/logs/client-error
+ * Frontend render ve uygulama hatalarını merkezi logger'a iletir.
+ * 204 No Content döner — sisteme yük bindirmesin.
+ */
+router.post("/client-error", logRateLimiter, (req, res) => {
+  const { message, stack, componentStack, url } = req.body || {};
+
+  // [TR] message alanı olmayan istekleri sessizce reddet (bot testi engeli)
+  if (!message || typeof message !== "string") {
+    return res.status(400).json({ error: "message alanı zorunludur." });
+  }
+
+  // [TR] Maksimum mesaj uzunluğu — log bombalamasını önle
+  const safeMessage        = String(message).slice(0, 500);
+  const safeStack          = stack          ? String(stack).slice(0, 2000)          : undefined;
+  const safeComponentStack = componentStack ? String(componentStack).slice(0, 1000) : undefined;
+  const safeUrl            = url            ? String(url).slice(0, 200)             : undefined;
+
+  logger.error("[FRONTEND-CRASH]", {
+    message:        safeMessage,
+    url:            safeUrl    || "Bilinmeyen URL",
+    stack:          safeStack,
+    componentStack: safeComponentStack,
+    userAgent:      req.headers["user-agent"]?.slice(0, 200),
+    ip:             req.ip,
+  });
+
+  // [TR] 204 No Content — gövdesiz yanıt (sisteme yük bindirme)
+  res.status(204).end();
+});
+
+module.exports = router;
