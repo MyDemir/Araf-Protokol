@@ -995,10 +995,12 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (rep.consecutiveBans == 0) revert NoBansToReset();
 
         rep.consecutiveBans = 0;
-        // [TR] maxAllowedTier ve hasTierPenalty sıfırlanmaz — kaybedilen tier'lar
-        //      yeniden başarılı işlemler yapılarak _getEffectiveTier üzerinden kazanılır.
-        // [EN] maxAllowedTier and hasTierPenalty are NOT reset — lost tiers must be
-        //      re-earned through successful trades via _getEffectiveTier.
+        // [TR] 180 günlük temiz dönem sonrası tier-ceza tavanı kaldırılır.
+        //      Kullanıcı tekrar yalnızca performansa dayalı efektif tier'a döner.
+        // [EN] After 180 clean days, remove tier-penalty ceiling so the user
+        //      returns to performance-only effective tiering.
+        hasTierPenalty[_wallet] = false;
+        maxAllowedTier[_wallet] = 4;
 
         emit ReputationUpdated(
             _wallet,

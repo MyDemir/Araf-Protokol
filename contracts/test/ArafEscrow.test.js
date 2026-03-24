@@ -981,5 +981,30 @@ describe("ArafEscrow", function () {
       await expect(escrow.decayReputation(maker.address))
         .to.be.revertedWithCustomError(escrow, "NoBansToReset");
     });
+
+    it("removes tier penalty ceiling after clean-slate decay", async () => {
+      // 2. ban seviyesine gelerek maxAllowedTier=3 tavanını uygula
+      for (let i = 0; i < 3; i++) {
+        const tradeId = await setupTrade(0);
+        await escrow.connect(taker).lockEscrow(tradeId);
+        await escrow.connect(taker).reportPayment(tradeId, `QmDecay${i}`);
+        await time.increase(FORTY_EIGHT_H + 1);
+        await escrow.connect(taker).pingMaker(tradeId);
+        await time.increase(TWENTY_FOUR_H + 1);
+        await escrow.connect(taker).autoRelease(tradeId);
+      }
+
+      let [,, bannedUntil,, effectiveTierBefore] = await escrow.getReputation(maker.address);
+      expect(effectiveTierBefore).to.equal(3);
+
+      await time.increase(
+        (bannedUntil - BigInt(await time.latest())) + BigInt(180 * 24 * 3600) + 3601n
+      );
+
+      await escrow.decayReputation(maker.address);
+
+      const [,,,, effectiveTierAfter] = await escrow.getReputation(maker.address);
+      expect(effectiveTierAfter).to.equal(4);
+    });
   });
 });

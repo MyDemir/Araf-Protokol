@@ -41,7 +41,7 @@ const listingSchema = new mongoose.Schema(
     },
     status: {
       type:    String,
-      enum:    ["OPEN", "PAUSED", "COMPLETED", "DELETED"],
+      enum:    ["PENDING", "OPEN", "PAUSED", "COMPLETED", "DELETED"],
       default: "OPEN",
       index:   true,
     },
@@ -157,6 +157,18 @@ const tradeSchema = new mongoose.Schema(
       //      Set by eventListener when trade concludes.
       //      Cleanup: cleanupReceipts job nulls receipt_encrypted based on this field.
       receipt_delete_at: { type: Date, default: null },
+    },
+
+    // [TR] LOCKED anında yakalanan PII snapshot (bait-and-switch koruması)
+    //      Kullanıcı sonradan profilini değiştirse bile trade sırasında görülen veri sabit kalır.
+    // [EN] PII snapshot captured at LOCKED (bait-and-switch protection)
+    //      Trade-facing data remains stable even if profile changes later.
+    pii_snapshot: {
+      maker_bankOwner_enc: { type: String, default: null },
+      maker_iban_enc:      { type: String, default: null },
+      taker_bankOwner_enc: { type: String, default: null },
+      captured_at:         { type: Date,   default: null },
+      snapshot_delete_at:  { type: Date,   default: null },
     },
 
     cancel_proposal: {

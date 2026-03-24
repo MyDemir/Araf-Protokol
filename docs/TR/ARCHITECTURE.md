@@ -20,6 +20,7 @@
 12. [Saldırı Vektörleri ve Bilinen Sınırlamalar](#12-saldırı-vektörleri-ve-bilinen-sınırlamalar)
 13. [Kesinleşmiş Protokol Parametreleri](#13-kesinleşmiş-protokol-parametreleri)
 14. [Gelecek Evrim Yolu](#14-gelecek-evrim-yolu)
+15. [Frontend UX Koruma Katmanı (Mart 2026)](#15-frontend-ux-koruma-katmanı-mart-2026)
 
 ---
 
@@ -543,6 +544,41 @@ Araf Protokolü'nün gelişimi, teknik olgunluk ve ekosistem büyümesine parale
 | **Faz 2** | **Mainnet & UX** | • Base Mainnet Resmi Lansman<br>• Base Smart Wallet (Passkey) Desteği<br>• Paymaster (Gasless) Uygulaması<br>• PWA Mobil Arayüz |
 | **Faz 3** | **Genişleme & Likidite** | • Order Book & Subgraph İndeksleme<br>• Multi-Asset Swap (ETH, cbBTC vb.)<br>• Retroactive Staking & Ödül Mekanizması<br>• Kurumsal Maker API Desteği |
 | **Faz 4** | **Gizlilik & Vizyon** | • ZK-Proof ile Anonim IBAN Doğrulama<br>• OP Superchain Cross-Chain Escrow<br>• Küresel Fiat-Kripto Likidite Katmanı |
+
+---
+
+
+## 15. Frontend UX Koruma Katmanı (Mart 2026)
+
+Bu sürümde UI katmanı; **hakemlik yapmadan**, kullanıcıyı yüksek maliyetli hata akışlarından uzaklaştıracak biçimde güncellenmiştir. Kritik ilke korunur: **karar mercii daima kontrattır**, frontend yalnızca yönlendirir.
+
+### 15.1 Geri Bildirim Akışı (TR/EN)
+
+- Geri bildirim modalı iki dilde daha açıklayıcı hale getirildi.
+- Kategori + yıldız zorunluluğu korunurken minimum açıklama uzunluğu (12 karakter) eklendi.
+- Amaç: yüzeysel raporları azaltıp gerçek TX/revert kök nedenlerini daha hızlı yakalamak.
+- Başarısız API çağrılarında artık yanlışlıkla “başarılı” toast gösterilmez; hata kullanıcıya net biçimde yansıtılır.
+
+### 15.2 Ana Sayfa Bilgilendirme Katmanı
+
+- Responsive bir **"P2P Nasıl Çalışır?"** bölümü eklendi.
+- Uyuşmazlık çözümünün backend veya insan hakem değil, on-chain oyun teorisi ile yürüdüğü açık biçimde anlatıldı.
+- Buna ek olarak FAQ bloğu ile sık sorulan sorulara kısa, iki dilli açıklamalar eklendi.
+
+### 15.3 Footer ve Kamusal Yönlendirme
+
+- Tüm görünümlerde modern bir footer standardı tanımlandı: `Araf © 2026`.
+- GitHub / Twitter / Farcaster yönlendirmeleri tek satırda sunularak protokolün kamusal varlığı görünür kılındı.
+- Linkler env değişkenleri ile (`VITE_SOCIAL_*`) override edilebilir; bu yaklaşım farklı dağıtımlarda kod değişimi gerektirmez.
+
+### 15.4 Mimari Sonuç
+
+Bu katman, protokol güvenlik modelini değiştirmez; yalnızca kullanıcı hatalarını ve gereksiz işlem maliyetini azaltır:
+
+- ✅ On-chain state machine değişmedi.
+- ✅ Hakemlik ve backend takdiri eklenmedi.
+- ✅ Revert'e yol açan eksik kullanıcı girdileri önceden yakalanıyor.
+- ✅ UX iyileştirmesi = daha düşük operasyonel sürtünme, daha az destek yükü.
 
 ---
 

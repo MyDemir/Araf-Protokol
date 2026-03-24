@@ -36,7 +36,10 @@ const ArafEscrowABI = parseAbi([
   // View Fonksiyonları (App.jsx'te kullanılanlar) 
   'function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier)',
   'function antiSybilCheck(address _wallet) view returns (bool aged, bool funded, bool cooldownOk)',
-  'firstSuccessfulTradeAt artık ayrı kontrat fonksiyonundan okunur
+  'function getCooldownRemaining(address _wallet) view returns (uint256)',
+  'function walletRegisteredAt(address _wallet) view returns (uint256)',
+  'function TAKER_FEE_BPS() view returns (uint256)',
+  // [TR] firstSuccessfulTradeAt artık ayrı kontrat fonksiyonundan okunur
   'function getFirstSuccessfulTradeAt(address _wallet) view returns (uint256)',
   'function getTrade(uint256 _tradeId) view returns ((uint256 id, address maker, address taker, address tokenAddress, uint256 cryptoAmount, uint256 makerBond, uint256 takerBond, uint8 tier, uint8 state, uint256 lockedAt, uint256 paidAt, uint256 challengedAt, string ipfsReceiptHash, bool cancelProposedByMaker, bool cancelProposedByTaker, uint256 pingedAt, bool pingedByTaker, uint256 challengePingedAt, bool challengePingedByMaker))',
 
@@ -118,8 +121,23 @@ export function useArafContract() {
         args,
       });
 
+      // [TR] Pending tx hash'ini sakla — sayfa yenilense bile işlem izi kaybolmasın
+      // [EN] Persist pending tx hash so refresh does not lose transaction trace
+      if (typeof window !== "undefined") {
+        localStorage.setItem("araf_pending_tx", JSON.stringify({
+          hash,
+          functionName,
+          createdAt: Date.now(),
+          chainId,
+          escrow: getAddress(ESCROW_ADDRESS),
+        }));
+      }
+
       // İşlem onayını bekle
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("araf_pending_tx");
+      }
       return receipt;
     } catch (error) {
       //Revert hatalarını daha okunabilir hale getir
@@ -141,7 +159,7 @@ export function useArafContract() {
       console.error(`[ArafContract] ${functionName} işlemi başarısız:`, errorMessage);
       throw error; // Hatanın üst katmanlara da iletilmesi için
     }
-  }, [walletClient, publicClient, _validateChain]); // Sabitler dependency array'den kaldırıldı.
+  }, [walletClient, publicClient, _validateChain, chainId]); // Sabitler dependency array'den kaldırıldı.
 
   // ── Kontrat Fonksiyonları ─────────────────────────────────────────────────
 
@@ -272,6 +290,27 @@ export function useArafContract() {
       });
     } catch {
       return BigInt(0);
+    }
+  }, [publicClient]);
+
+  /**
+   * Token decimals değerini on-chain okur.
+   * Okunamazsa güvenli varsayılan olarak 6 döner (USDT/USDC uyumu).
+   *
+   * @param {string} tokenAddress
+   * @returns {Promise<number>}
+   */
+  const getTokenDecimals = useCallback(async (tokenAddress) => {
+    if (!_isValidAddress) return 6;
+    try {
+      const decimals = await publicClient.readContract({
+        address: getAddress(tokenAddress),
+        abi: ERC20_ABI,
+        functionName: 'decimals',
+      });
+      return Number(decimals);
+    } catch {
+      return 6;
     }
   }, [publicClient]);
 
@@ -419,6 +458,53 @@ export function useArafContract() {
       },
       [publicClient]
     ),
+    getCooldownRemaining: useCallback(
+      async (address) => {
+        if (!_isValidAddress) return 0n;
+        try {
+          return await publicClient.readContract({
+            address: getAddress(ESCROW_ADDRESS),
+            abi: ArafEscrowABI,
+            functionName: 'getCooldownRemaining',
+            args: [getAddress(address)],
+          });
+        } catch {
+          return 0n;
+        }
+      },
+      [publicClient]
+    ),
+    getWalletRegisteredAt: useCallback(
+      async (address) => {
+        if (!_isValidAddress) return 0n;
+        try {
+          return await publicClient.readContract({
+            address: getAddress(ESCROW_ADDRESS),
+            abi: ArafEscrowABI,
+            functionName: 'walletRegisteredAt',
+            args: [getAddress(address)],
+          });
+        } catch {
+          return 0n;
+        }
+      },
+      [publicClient]
+    ),
+    getTakerFeeBps: useCallback(
+      async () => {
+        if (!_isValidAddress) return 10n;
+        try {
+          return await publicClient.readContract({
+            address: getAddress(ESCROW_ADDRESS),
+            abi: ArafEscrowABI,
+            functionName: 'TAKER_FEE_BPS',
+          });
+        } catch {
+          return 10n;
+        }
+      },
+      [publicClient]
+    ),
     /**
      * Adres geçersizse null döner — caller tarafında handle edilmeli.
      */
@@ -465,6 +551,7 @@ export function useArafContract() {
     mintToken,
     approveToken,
     getAllowance,
+    getTokenDecimals,
     //getTrade on-chain okuma — backend bağımlılığını azaltır
     getTrade: useCallback(
       async (tradeId) => {

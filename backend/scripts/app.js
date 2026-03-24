@@ -42,6 +42,7 @@ const { runReputationDecay } = require("./jobs/reputationDecay");
 // [TR] Günlük protokol istatistiklerini MongoDB'ye kaydeden periyodik görev
 // [EN] Periodic job that saves daily protocol stats to MongoDB
 const { runStatsSnapshot } = require("./jobs/statsSnapshot");
+const { runPendingListingCleanup } = require("./jobs/cleanupPendingListings");
 
 // [TR] Global Express hata yakalayıcı
 // [EN] Global Express error handler
@@ -53,11 +54,9 @@ const { clearMasterKeyCache } = require("./services/encryption");
 
 const app = express();
 
-// [TR] Fly.io / Vercel proxy arkasında gerçek IP için trust proxy
-// [EN] Trust proxy for real client IP behind Fly.io / Vercel
-if (process.env.NODE_ENV === "production") {
-  app.set("trust proxy", 1);
-}
+// [TR] Proxy arkasında gerçek client IP'yi her ortamda doğru almak için koşulsuz trust proxy.
+// [EN] Unconditional trust proxy so real client IP is preserved behind reverse proxies.
+app.set("trust proxy", 1);
 
 // ─Güvenlik Middleware / Security Middleware ─
 
@@ -158,6 +157,14 @@ async function bootstrap() {
     }, 60_000);
     const statsSnapshotInterval = setInterval(runStatsSnapshot, 24 * 60 * 60 * 1000);
 
+    // [TR] PENDING listing cleanup — her saat stale kayıtları temizler
+    // [EN] PENDING listing cleanup — purges stale records hourly
+    const pendingCleanupDelay = setTimeout(() => {
+      runPendingListingCleanup();
+      logger.info("Periyodik PENDING listing temizlik görevi zamanlandı (her 1 saatte bir).");
+    }, 90_000);
+    const pendingCleanupInterval = setInterval(runPendingListingCleanup, 60 * 60 * 1000);
+
     // [TR] Rotalar DB ve Redis hazır olduktan sonra yüklenir
     // [EN] Routes loaded after DB and Redis are ready
     
@@ -211,6 +218,8 @@ async function bootstrap() {
       clearInterval(reputationDecayInterval);
       clearTimeout(statsSnapshotDelay);
       clearInterval(statsSnapshotInterval);
+      clearTimeout(pendingCleanupDelay);
+      clearInterval(pendingCleanupInterval);
       server.close(async () => {
         await worker.stop();
         await mongoose.connection.close();
