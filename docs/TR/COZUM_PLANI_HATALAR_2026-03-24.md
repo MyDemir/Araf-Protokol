@@ -5,6 +5,19 @@
 
 ---
 
+## 0) Tek Sürüm / Tek Kaynak Kararı (Karışıklığı Bitirme)
+
+"4 farklı sürüm" karışıklığını kapatmak için bu doküman **tek resmi yol haritası (single source of truth)** olarak kabul edilir.
+
+- Resmi plan dosyası: `docs/TR/COZUM_PLANI_HATALAR_2026-03-24.md`
+- Durum yönetimi: Bu dosyada yalnızca 3 statü kullanılacak: `OPEN`, `IN_PROGRESS`, `DONE`
+- Güncelleme kuralı: Yeni bulgu geldikçe ayrı doküman açmak yerine bu dosyada ilgili P0/P1/P2 maddesi altına işlenecek
+- Kapanış kuralı: Her madde için "kanıt" (PR/commit/test çıktısı) olmadan `DONE` işaretlenmeyecek
+
+**Bir sonraki adım (net):** 24 Mart 2026 itibarıyla yalnızca bu dosyadaki P0 maddeleri uygulanacak; P0 tamamlanmadan P1/P2’ye geçilmeyecek.
+
+---
+
 ## 1) Hızlı Teşhis (Dokümandan çıkarım)
 
 Dokümandaki ana risk kümeleri:
