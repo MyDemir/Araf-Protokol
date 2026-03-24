@@ -13,20 +13,35 @@ const {
   issueRefreshToken,
   rotateRefreshToken,
   revokeRefreshToken,
+  blacklistJWT,   // ORTA-09 Fix
 } = require("../services/siwe");
 const { encryptPII }                         = require("../services/encryption");
 const User                                   = require("../models/User");
 const logger                                 = require("../utils/logger");
 
 /**
- * httpOnly + Secure + SameSite=Strict cookie olarak set edilir.
+ * YÜKS-16 Fix: SameSite=lax — Web3 Yönlendirme Uyumluluğu.
+ *   ÖNCEKİ: sameSite: "strict" — MetaMask/TrustWallet uygulamalarından
+ *   işlem onaylanıp DApp'e yönlendirme yapıldığında (cross-site navigation)
+ *   tarayıcı JWT cookie'yi göndermiyordu → kullanıcı anında çıkış yapmış görünüyordu.
+ *   ŞİMDİ: sameSite: "lax" — cross-site GET yönlendirmelerinde cookie gönderilir.
+ *   State-changing (POST/PUT/DELETE) istekler için CSRF koruması yeterlidir
+ *   çünkü bunlar zaten SIWE imzası veya JWT doğrulaması gerektiriyor.
  *
- * Development'ta Secure=false (http://localhost kullanıldığı için).
- * Production'da Secure=true zorunlu.
+ * KRİT-14 Fix: PUT /profile rotasına authLimiter eklendi.
+ *   ÖNCEKİ: authLimiter import edilmiş ama bu rotaya UYGULANMAMIŞTI.
+ *   encryptPII = HKDF + AES-256-GCM → ağır kriptografi. Sınırsız istek
+ *   Node.js CPU'sunu tamamen bloke edebiliyordu (Asymmetric DoS).
+ *
+ * ORTA-09 Fix: Logout'ta JWT blacklist'e alınıyor.
+ *   Refresh token silinse bile 15 dk'lık JWT hâlâ geçerliydi.
+ *   Artık logout'ta JWT'nin jti değeri 15 dk Redis blacklist'e alınıyor.
  */
+
 const COOKIE_OPTIONS_BASE = {
   httpOnly: true,
-  sameSite: "strict",
+  // YÜKS-16 Fix: strict → lax (Web3 yönlendirme uyumluluğu)
+  sameSite: "lax",
   path:     "/",
 };
 
@@ -34,7 +49,7 @@ function _getJwtCookieOptions() {
   return {
     ...COOKIE_OPTIONS_BASE,
     secure: process.env.NODE_ENV === "production",
-    maxAge: 15 * 60 * 1000, // 15 dakika (JWT_EXPIRES_IN ile senkron)
+    maxAge: 15 * 60 * 1000,
   };
 }
 
@@ -42,26 +57,24 @@ function _getRefreshCookieOptions() {
   return {
     ...COOKIE_OPTIONS_BASE,
     secure: process.env.NODE_ENV === "production",
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 gün (REFRESH_TOKEN_TTL ile senkron)
-    path:   "/api/auth", // Refresh token sadece auth endpoint'lerine gönderilsin
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    path:   "/api/auth",
   };
 }
 
 /**
  * GET /api/auth/nonce?wallet=0x...
- * Frontend MetaMask imzalamadan önce nonce'u çeker.
- * Nonce Redis'te 5 dakika yaşar — tek kullanımlık.
  *
- * Frontend loginWithSIWE fonksiyonu siweDomain'i kullanarak SIWE mesajı oluşturur.
+ * KRİT-07 Fix (siwe.js'te): generateNonce artık mevcut nonce'ı korur.
+ * AFS-010: siweDomain response'a eklendi.
  */
 router.get("/nonce", authLimiter, async (req, res, next) => {
   try {
     const { wallet } = req.query;
     if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet)) {
-      return res.status(400).json({ error: "Geçerli bir Ethereum adresi gir" });
+      return res.status(400).json({ error: "Geçerli bir Ethereum adresi gir." });
     }
-    const nonce = await generateNonce(wallet.toLowerCase());
-    // frontend SIWE mesajında kullanır
+    const nonce      = await generateNonce(wallet.toLowerCase());
     const siweDomain = process.env.SIWE_DOMAIN || "localhost";
     return res.json({ nonce, siweDomain });
   } catch (err) { next(err); }
@@ -69,11 +82,7 @@ router.get("/nonce", authLimiter, async (req, res, next) => {
 
 /**
  * POST /api/auth/verify
- * Body: { message, signature }
- * SIWE imzasını doğrular, JWT döner.
- *
- * Token'lar artık response body'de DEĞİL, httpOnly cookie'de.
- * Frontend sadece { wallet, profile } alır — token'lara erişemez (XSS koruması).
+ * SIWE imzasını doğrular, JWT ve Refresh Token'ı httpOnly cookie olarak set eder.
  */
 router.post("/verify", authLimiter, async (req, res, next) => {
   try {
@@ -92,18 +101,16 @@ router.post("/verify", authLimiter, async (req, res, next) => {
       { upsert: true, new: true }
     );
 
-    if (user.checkBanExpiry()) await user.save();
+    // KRİT-11 Fix: checkBanExpiry artık async ve save() yapıyor
+    await user.checkBanExpiry();
 
     const token        = issueJWT(wallet);
     const refreshToken = await issueRefreshToken(wallet);
 
-    //  httpOnly cookie olarak set et
     res.cookie("araf_jwt",     token,        _getJwtCookieOptions());
     res.cookie("araf_refresh", refreshToken, _getRefreshCookieOptions());
 
     logger.info(`[Auth] Giriş başarılı: ${wallet}`);
-
-    //  Token'lar body'de döndürülmüyor — sadece wallet ve profil
     return res.json({ wallet, profile: user.toPublicProfile() });
   } catch (err) {
     logger.warn(`[Auth] SIWE başarısız: ${err.message}`);
@@ -113,31 +120,27 @@ router.post("/verify", authLimiter, async (req, res, next) => {
 
 /**
  * POST /api/auth/refresh
- *
- * Wallet adresi de cookie'deki JWT'den çözümleniyor (expired olsa bile sub claim okunabilir).
+ * KRİT-01 Fix (siwe.js'te): rotateRefreshToken artık wallet eşleşmesini doğruluyor.
  */
 router.post("/refresh", authLimiter, async (req, res, next) => {
   try {
-    // Refresh token cookie'den okunur
     const refreshToken = req.cookies?.araf_refresh;
     if (!refreshToken) {
       return res.status(401).json({ error: "Refresh token bulunamadı." });
     }
 
-    // Wallet adresini expired JWT'den çözümle (verify skip — sadece decode)
-    // VEYA body'den al (geriye uyumluluk)
+    // [TR] Wallet adresini expired JWT'den veya body'den al
     let wallet = req.body?.wallet;
     if (!wallet) {
-      const jwt = req.cookies?.araf_jwt;
-      if (jwt) {
+      const jwtCookie = req.cookies?.araf_jwt;
+      if (jwtCookie) {
         try {
-          // JWT expired olsa bile payload okunabilir (verify etmeden decode)
-          const parts = jwt.split(".");
+          const parts   = jwtCookie.split(".");
           if (parts.length === 3) {
             const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString());
-            wallet = payload.sub;
+            wallet        = payload.sub;
           }
-        } catch { /* ignore decode errors */ }
+        } catch { /* decode hatası — wallet null kalır */ }
       }
     }
 
@@ -145,12 +148,8 @@ router.post("/refresh", authLimiter, async (req, res, next) => {
       return res.status(400).json({ error: "Wallet adresi belirlenemedi." });
     }
 
-    const result = await rotateRefreshToken(
-      wallet.toLowerCase(),
-      refreshToken
-    );
+    const result = await rotateRefreshToken(wallet.toLowerCase(), refreshToken);
 
-    // Yeni token'ları cookie olarak set et
     res.cookie("araf_jwt",     result.token,        _getJwtCookieOptions());
     res.cookie("araf_refresh", result.refreshToken, _getRefreshCookieOptions());
 
@@ -158,7 +157,6 @@ router.post("/refresh", authLimiter, async (req, res, next) => {
     return res.json({ wallet: wallet.toLowerCase() });
   } catch (err) {
     logger.warn(`[Auth] Refresh başarısız: ${err.message}`);
-    // Başarısız refresh'te cookie'leri temizle
     res.clearCookie("araf_jwt",     { ...COOKIE_OPTIONS_BASE, path: "/" });
     res.clearCookie("araf_refresh", { ...COOKIE_OPTIONS_BASE, path: "/api/auth" });
     return res.status(401).json({ error: err.message });
@@ -167,25 +165,29 @@ router.post("/refresh", authLimiter, async (req, res, next) => {
 
 /**
  * POST /api/auth/logout
- * revokeRefreshToken Redis'ten ve Cookie'leri de temizle.
+ * ORTA-09 Fix: JWT blacklist'e alınıyor + cookie'ler temizleniyor.
  */
 router.post("/logout", requireAuth, async (req, res, next) => {
   try {
+    // ORTA-09 Fix: Mevcut JWT'yi blacklist'e al (15 dk kalan süre için geçersiz)
+    const currentJWT = req.cookies?.araf_jwt;
+    if (currentJWT) {
+      await blacklistJWT(currentJWT);
+    }
+
     await revokeRefreshToken(req.wallet);
 
-    // AUDIT FIX F-01: httpOnly cookie'leri temizle
     res.clearCookie("araf_jwt",     { ...COOKIE_OPTIONS_BASE, path: "/" });
     res.clearCookie("araf_refresh", { ...COOKIE_OPTIONS_BASE, path: "/api/auth" });
 
-    logger.info(`[Auth] Çıkış: ${req.wallet}`);
+    logger.info(`[Auth] Çıkış yapıldı: ${req.wallet}`);
     return res.json({ success: true, message: "Oturum kapatıldı." });
   } catch (err) { next(err); }
 });
 
 /**
  * GET /api/auth/me
- * Frontend sayfa yüklendiğinde cookie'deki JWT'nin geçerli olup olmadığını kontrol eder.
- * Geçerliyse wallet adresini döndürür → frontend isAuthenticated = true yapabilir.
+ * Cookie'deki JWT geçerliyse wallet adresini döndürür.
  */
 router.get("/me", requireAuth, (req, res) => {
   return res.json({ wallet: req.wallet, authenticated: true });
@@ -193,17 +195,36 @@ router.get("/me", requireAuth, (req, res) => {
 
 /**
  * PUT /api/auth/profile
- * Kullanıcının IBAN ve Telegram bilgisini günceller.
- * Veriler veritabanına YAZILMADAN önce AES-256 ile şifrelenir.
+ * KRİT-14 Fix: authLimiter eklendi — ağır kriptografi CPU DoS koruması.
  *
+ * ORTA-03 Fix: Joi validasyonu IBAN regex ve maxlength ile güçlendirildi.
+ *   ÖNCEKİ: Sadece max:34 ve boşluk temizleme vardı.
+ *   ŞİMDİ: TR IBAN formatı zorunlu, bankOwner min/max uzunluk kontrolü.
  */
-router.put("/profile", requireAuth, async (req, res, next) => {
+router.put("/profile", requireAuth, authLimiter, async (req, res, next) => {
   try {
     const schema = Joi.object({
-      bankOwner: Joi.string().max(100).allow("").optional(),
-      iban:      Joi.string().max(34).allow("").optional(),
-      telegram:  Joi.string().max(50).allow("").optional(),
+      // ORTA-03 Fix: IBAN format ve uzunluk doğrulaması
+      bankOwner: Joi.string()
+        .min(2).max(100)
+        .pattern(/^[a-zA-ZğüşöçİĞÜŞÖÇ\s]+$/, "geçerli isim karakterleri")
+        .allow("").optional()
+        .messages({
+          "string.pattern.name": "Banka sahibi adı sadece harf içerebilir.",
+        }),
+      iban: Joi.string()
+        // ORTA-03 Fix: TR IBAN formatı zorunlu (TR + 24 rakam = 26 karakter)
+        .pattern(/^TR\d{24}$/, "TR IBAN formatı")
+        .allow("").optional()
+        .messages({
+          "string.pattern.name": "IBAN formatı geçersiz. Örnek: TR330006100519786457841326",
+        }),
+      telegram: Joi.string()
+        .max(50)
+        .pattern(/^[a-zA-Z0-9_]{5,}$/, "Telegram kullanıcı adı")
+        .allow("").optional(),
     });
+
     const { error, value } = schema.validate(req.body);
     if (error) return res.status(400).json({ error: error.message });
 
