@@ -20,6 +20,7 @@
 12. [Attack Vectors and Known Limitations](#12-attack-vectors-and-known-limitations)
 13. [Finalized Protocol Parameters](#13-finalized-protocol-parameters)
 14. [Future Evolution Path](#14-future-evolution-path)
+15. [Frontend UX Guardrail Layer (March 2026)](#15-frontend-ux-guardrail-layer-march-2026)
 
 ---
 
@@ -530,6 +531,41 @@ The evolution of the Araf Protocol will proceed through four main phases, driven
 | **Phase 2** | **Mainnet & UX** | • Official Base Mainnet Deployment<br>• Base Smart Wallet (Passkey) Support<br>• Paymaster Integration (Gasless UX)<br>• PWA High-Performance Mobile Interface |
 | **Phase 3** | **Expansion & Multi-Asset** | • Order Book Depth & The Graph Indexing<br>• Multi-Asset Swap (ETH, cbBTC, etc.)<br>• Staking & Reputation Incentives (Retroactive)<br>• Institutional API for Liquidity Providers |
 | **Phase 4** | **Privacy & Global Vision** | • ZK-Proof Based IBAN Verification<br>• OP Superchain Cross-Chain Escrow<br>• Full Anonymity & Global Liquidity Layer |
+
+---
+
+
+## 15. Frontend UX Guardrail Layer (March 2026)
+
+In this release, the UI layer was improved to reduce expensive user mistakes **without introducing arbitration logic**. Core principle remains unchanged: **the contract is the final authority**, frontend only guides.
+
+### 15.1 Feedback Flow (TR/EN)
+
+- Feedback modal was upgraded with clearer bilingual UX copy.
+- Category + rating requirements remain; a minimum detail threshold (12 chars) was added.
+- Goal: reduce low-signal reports and capture real TX/revert root causes faster.
+- Failed API submissions no longer show a false-success toast; errors are surfaced explicitly.
+
+### 15.2 Home Information Layer
+
+- Added a responsive **"How P2P Works"** section.
+- Clarifies that dispute outcomes are not decided by backend or human moderators, but by on-chain game-theory timers.
+- Added a bilingual FAQ block for common trust and flow questions.
+
+### 15.3 Footer and Public Presence
+
+- Introduced a modern global footer standard: `Araf © 2026`.
+- Added one-line social actions (GitHub / Twitter / Farcaster) to improve protocol discoverability.
+- Links are env-overridable (`VITE_SOCIAL_*`), enabling deployment-specific branding without code edits.
+
+### 15.4 Architectural Outcome
+
+This layer does not alter protocol safety assumptions; it only reduces avoidable transaction cost and operator friction:
+
+- ✅ On-chain state machine is unchanged.
+- ✅ No human arbitration or backend discretion added.
+- ✅ Missing user inputs are caught before costly reverts.
+- ✅ Better UX = lower support load and less wasted gas.
 
 ---
 

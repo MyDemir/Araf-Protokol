@@ -352,11 +352,12 @@ class EventWorker {
     let listing = await Listing.findOne({ onchain_escrow_id: tradeIdNum }).lean();
 
     if (!listing) {
-      // KRİT-09 Fix: status: "OPEN" filtresi eklendi + en yakın zamana göre eşleştirme
+      // [TR] Chain-first geçiş: önce PENDING ilan aranır, yoksa OPEN fallback yapılır.
+      // [EN] Chain-first migration: prefer PENDING listing, fallback to OPEN.
       listing = await Listing.findOne({
         maker_address:      maker.toLowerCase(),
         onchain_escrow_id:  null,
-        status:             "OPEN",  // KRİT-09: DELETED ilanları karıştırmıyor
+        status:             { $in: ["PENDING", "OPEN"] }, // DELETED/PAUSED dışlanır
         // [TR] Token adresi eşleşmesi — sahte token koruması
         ...(onchainToken ? { token_address: onchainToken } : {}),
       }).sort({ _id: -1 }).lean();
@@ -400,13 +401,47 @@ class EventWorker {
 
   async _onEscrowLocked(event) {
     const { tradeId, taker } = event.args;
+    const tradeIdNum = Number(tradeId);
+    const takerAddress = taker.toLowerCase();
+
+    // [TR] PII snapshot: LOCKED anında maker/taker şifreli alanlarını trade'e kopyala
+    //      Amaç: profil sonradan değişse bile işlemdeki referans sabit kalsın.
+    // [EN] PII snapshot: copy encrypted maker/taker fields at LOCKED time
+    //      so trade references remain stable even if profile changes later.
+    const trade = await Trade.findOne({ onchain_escrow_id: tradeIdNum })
+      .select("maker_address").lean();
+
+    let makerBankOwnerEnc = null;
+    let makerIbanEnc      = null;
+    let takerBankOwnerEnc = null;
+
+    if (trade?.maker_address) {
+      const [makerUser, takerUser] = await Promise.all([
+        User.findOne({ wallet_address: trade.maker_address })
+          .select("pii_data.bankOwner_enc pii_data.iban_enc")
+          .lean(),
+        User.findOne({ wallet_address: takerAddress })
+          .select("pii_data.bankOwner_enc")
+          .lean(),
+      ]);
+
+      makerBankOwnerEnc = makerUser?.pii_data?.bankOwner_enc || null;
+      makerIbanEnc      = makerUser?.pii_data?.iban_enc || null;
+      takerBankOwnerEnc = takerUser?.pii_data?.bankOwner_enc || null;
+    }
+
     await Trade.findOneAndUpdate(
-      { onchain_escrow_id: Number(tradeId) },
+      { onchain_escrow_id: tradeIdNum },
       {
         $set: {
           status:             "LOCKED",
-          taker_address:      taker.toLowerCase(),
+          taker_address:      takerAddress,
           "timers.locked_at": new Date(),
+          "pii_snapshot.maker_bankOwner_enc": makerBankOwnerEnc,
+          "pii_snapshot.maker_iban_enc":      makerIbanEnc,
+          "pii_snapshot.taker_bankOwner_enc": takerBankOwnerEnc,
+          "pii_snapshot.captured_at":         new Date(),
+          "pii_snapshot.snapshot_delete_at":  new Date(Date.now() + 30 * 24 * 3600 * 1000),
         },
       }
     );

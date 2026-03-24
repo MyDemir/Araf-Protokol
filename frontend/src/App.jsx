@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAccount, useConnect, useDisconnect, useSignMessage, useChainId, usePublicClient } from 'wagmi';
 import { SiweMessage } from 'siwe';
 import { useArafContract } from './hooks/useArafContract';
@@ -75,8 +75,8 @@ function App() {
   const [userRole, setUserRole] = useState('taker');
   const [isBanned, setIsBanned] = useState(false);
   const [cancelStatus, setCancelStatus] = useState(null);
-  const [cooldownPassed, setCooldownPassed] = useState(false);
   const [chargebackAccepted, setChargebackAccepted] = useState(false);
+
 
   // [TR] Maker ilan formu state'leri
   // [EN] Maker listing form states
@@ -126,10 +126,14 @@ function App() {
     burnExpired,
     approveToken,
     getAllowance,
+    getTokenDecimals,
     getTrade,
     getPaused,
     decayReputation,
     antiSybilCheck,
+    getCooldownRemaining,
+    getWalletRegisteredAt,
+    getTakerFeeBps,
     mintToken,
     getFirstSuccessfulTradeAt,
   } = useArafContract();
@@ -147,6 +151,9 @@ function App() {
   const [isRegisteringWallet, setIsRegisteringWallet] = useState(false);
 
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const authenticatedWalletRef = React.useRef(null);
+  const pendingTxCheckedRef = React.useRef(false);
+  const autoTradeResumeRef = React.useRef(false);
 
   // [TR] Kontrat işlemleri sırasında çift tıklamayı önleme ve iki aşamalı UX için
   // [EN] Prevents double-clicks during contract tx; shows two-phase loading text
@@ -178,9 +185,15 @@ function App() {
   // [TR] Aktif işlem ve ödeme kanıtı hash state'leri
   // [EN] Active trade and payment proof hash states
   const [activeTrade, setActiveTrade] = useState(null);
+  // [TR] Trade room render state'i için tekil kaynak:
+  //      activeTrade.state varsa önceliklidir; yoksa local tradeState kullanılır.
+  // [EN] Single source for trade-room render state:
+  //      prefer activeTrade.state, fallback to local tradeState.
+  const resolvedTradeState = activeTrade?.state || tradeState;
   const [paymentIpfsHash, setPaymentIpfsHash] = useState('');
 
   const [sybilStatus, setSybilStatus] = useState(null);
+  const [walletAgeRemainingDays, setWalletAgeRemainingDays] = useState(null);
   const [takerName, setTakerName] = useState('');
 
   const [isPaused, setIsPaused] = useState(false);
@@ -189,6 +202,8 @@ function App() {
   const [feedbackText, setFeedbackText] = useState('');
   const [feedbackRating, setFeedbackRating] = useState(0);
   const [feedbackCategory, setFeedbackCategory] = useState('');
+  const [feedbackError, setFeedbackError] = useState('');
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
 
   // [TR] Protokol istatistikleri — /api/stats endpoint'inden çekilir
   // [EN] Protocol stats — fetched from /api/stats endpoint
@@ -199,6 +214,7 @@ function App() {
   // [TR] On-chain bond oranları — tier bazında maker/taker BPS değerleri
   // [EN] On-chain bond rates — maker/taker BPS values per tier
   const [onchainBondMap, setOnchainBondMap] = useState(null);
+  const [takerFeeBps, setTakerFeeBps] = useState(10);
 
   // [TR] CHALLENGED aşamasında teminat erime miktarları
   // [EN] Collateral decay amounts in CHALLENGED phase
@@ -226,10 +242,23 @@ function App() {
       .catch(err => console.error('[ProtocolConfig] fetch failed:', err));
   }, []);
 
+  // [TR] Protokol ücretini kontrattan dinamik okur (fee drift önleme)
+  // [EN] Reads protocol fee dynamically from contract (prevents fee drift)
+  useEffect(() => {
+    if (!getTakerFeeBps) return;
+    const fetchFeeBps = async () => {
+      try {
+        const fee = await getTakerFeeBps();
+        setTakerFeeBps(Number(fee));
+      } catch (_) {}
+    };
+    fetchFeeBps();
+  }, [getTakerFeeBps]);
+
   // [TR] CHALLENGED aşamasında bleeding escrow decay miktarlarını her 30 sn'de günceller
   // [EN] Updates bleeding escrow decay amounts every 30s during CHALLENGED phase
   useEffect(() => {
-    if (tradeState !== 'CHALLENGED' || !activeTrade?.onchainId || !getCurrentAmounts) {
+    if (resolvedTradeState !== 'CHALLENGED' || !activeTrade?.onchainId || !getCurrentAmounts) {
       setBleedingAmounts(null);
       return;
     }
@@ -240,7 +269,7 @@ function App() {
     fetchAmounts();
     const interval = setInterval(fetchAmounts, 30000);
     return () => clearInterval(interval);
-  }, [tradeState, activeTrade?.onchainId, getCurrentAmounts]);
+  }, [resolvedTradeState, activeTrade?.onchainId, getCurrentAmounts]);
 
   // [TR] HTTP-Only Cookie tabanlı kimlik doğrulamalı fetch wrapper.
   //      401 alırsa refresh token ile yeniler, başarısızsa oturumu sona erdirir.
@@ -360,32 +389,29 @@ function App() {
   // [TR] Cüzdan bağlandığında on-chain kayıt durumunu kontrol eder
   // [EN] Checks on-chain wallet registration status when wallet connects
   useEffect(() => {
-    if (!isConnected || !address || !publicClient) {
+    if (!isConnected || !address || !getWalletRegisteredAt) {
       setIsWalletRegistered(null);
-      return;
-    }
-    const ESCROW_ADDR = import.meta.env.VITE_ESCROW_ADDRESS;
-    if (!ESCROW_ADDR || ESCROW_ADDR === '0x0000000000000000000000000000000000000000') {
-      setIsWalletRegistered(null);
+      setWalletAgeRemainingDays(null);
       return;
     }
     const checkRegistration = async () => {
       try {
-        const { getAddress, parseAbi: _parseAbi } = await import('viem');
-        const regAbi = _parseAbi(['function walletRegisteredAt(address) view returns (uint256)']);
-        const regAt = await publicClient.readContract({
-          address: getAddress(ESCROW_ADDR),
-          abi: regAbi,
-          functionName: 'walletRegisteredAt',
-          args: [getAddress(address)],
-        });
+        const regAt = await getWalletRegisteredAt(address);
         setIsWalletRegistered(regAt > 0n);
+        if (regAt > 0n) {
+          const nowSec = Math.floor(Date.now() / 1000);
+          const remainingSec = Math.max(0, Number(regAt) + 7 * 24 * 3600 - nowSec);
+          setWalletAgeRemainingDays(Math.ceil(remainingSec / (24 * 3600)));
+        } else {
+          setWalletAgeRemainingDays(null);
+        }
       } catch {
         setIsWalletRegistered(null);
+        setWalletAgeRemainingDays(null);
       }
     };
     checkRegistration();
-  }, [isConnected, address, publicClient]);
+  }, [isConnected, address, getWalletRegisteredAt]);
 
   // [TR] Kullanıcının on-chain itibar verisini ve efektif tier'ını çeker
   // [EN] Fetches user's on-chain reputation data and effective tier
@@ -427,17 +453,20 @@ function App() {
     const fetchSybil = async () => {
       const res = await antiSybilCheck(address);
       if (res) {
+        const cooldownOk = typeof res.cooldownOk !== 'undefined' ? res.cooldownOk : res[2];
+        const remaining = (!cooldownOk && getCooldownRemaining) ? await getCooldownRemaining(address) : 0n;
         setSybilStatus({
+          aged:              typeof res.aged !== 'undefined' ? res.aged : res[0],
           funded:            typeof res.balanceOk   !== 'undefined' ? res.balanceOk   : (typeof res.funded       !== 'undefined' ? res.funded       : res[1]),
-          cooldownOk:        typeof res.cooldownOk  !== 'undefined' ? res.cooldownOk  : res[2],
-          cooldownRemaining: 0,
+          cooldownOk,
+          cooldownRemaining: Number(remaining),
         });
       }
     };
     fetchSybil();
     const interval = setInterval(fetchSybil, 30000);
     return () => clearInterval(interval);
-  }, [isConnected, address, antiSybilCheck]);
+  }, [isConnected, address, antiSybilCheck, getCooldownRemaining]);
 
   // [TR] Kontratın bakım/paused durumunu her 60 sn'de kontrol eder
   // [EN] Checks contract paused/maintenance status every 60s
@@ -459,13 +488,21 @@ function App() {
   // [TR] Üçgen dolandırıcılık önlemi: trade odasında maker için taker'ın banka sahibi adını çeker
   // [EN] Triangulation fraud prevention: fetches taker's bank owner name for maker in trade room
   useEffect(() => {
-    if (currentView === 'tradeRoom' && tradeState === 'LOCKED' && userRole === 'maker' && activeTrade?.id && isAuthenticated) {
+    if (currentView === 'tradeRoom' && ['LOCKED', 'PAID', 'CHALLENGED'].includes(resolvedTradeState) && userRole === 'maker' && activeTrade?.id && isAuthenticated) {
       authenticatedFetch(`${API_URL}/api/pii/taker-name/${activeTrade.onchainId}`)
         .then(res => res.json())
         .then(data => { if (data.bankOwner) setTakerName(data.bankOwner); })
         .catch(err => console.error('Taker name fetch error', err));
     }
-  }, [currentView, tradeState, userRole, activeTrade?.onchainId, isAuthenticated, authenticatedFetch]);
+  }, [currentView, resolvedTradeState, userRole, activeTrade?.onchainId, activeTrade?.id, isAuthenticated, authenticatedFetch]);
+
+  // [TR] Polling/geçiş yarışlarında tradeState ile activeTrade.state ayrışmasını kapatır.
+  // [EN] Prevents drift between tradeState and activeTrade.state during polling/races.
+  useEffect(() => {
+    if (activeTrade?.state && activeTrade.state !== tradeState) {
+      setTradeState(activeTrade.state);
+    }
+  }, [activeTrade?.state, tradeState]);
 
   // [TR] Kullanıcının aktif işlemlerini çeker. İlk yüklemede ve polling'de kullanılır.
   //      activeTrade'i her döngüde güncelleyerek zamanlayıcı tutarlılığını sağlar.
@@ -513,12 +550,14 @@ function App() {
               fiat: t.financials?.fiat_currency || 'TRY',
               rate,
               max: fiatAmt,
+              cryptoAmount: Number(cryptoAmt),
               paidAt: t.timers?.paid_at,
               lockedAt: t.timers?.locked_at,
               pingedAt: t.timers?.pinged_at,
               challengePingedAt: t.timers?.challenge_pinged_at,
               challengedAt: t.timers?.challenged_at,
               cancelProposedBy: t.cancel_proposal?.proposed_by,
+              chargebackAcked: t.chargeback_ack?.acknowledged === true,
             }
           };
         }));
@@ -530,6 +569,10 @@ function App() {
           if (!prev) return prev;
           const updated = data.trades.find(t => t.onchain_escrow_id === prev.onchainId);
           if (!updated) return prev;
+          if (updated.status !== prev.state) {
+            setTradeState(updated.status);
+          }
+          setChargebackAccepted(updated.chargeback_ack?.acknowledged === true);
           return {
             ...prev,
             state:             updated.status,
@@ -539,6 +582,7 @@ function App() {
             challengePingedAt: updated.timers?.challenge_pinged_at ?? prev.challengePingedAt,
             challengedAt:      updated.timers?.challenged_at      ?? prev.challengedAt,
             cancelProposedBy:  updated.cancel_proposal?.proposed_by ?? prev.cancelProposedBy,
+            chargebackAcked:   updated.chargeback_ack?.acknowledged === true,
           };
         });
       }
@@ -565,10 +609,23 @@ function App() {
   // [TR] Trade room açıkken aktif işlemleri 15 sn'de bir yeniler
   // [EN] Refreshes active trades every 15s while trade room is open
   useEffect(() => {
-    if (currentView !== 'tradeRoom' || !isAuthenticated) return;
+    if (currentView !== 'tradeRoom' || !isAuthenticated || isContractLoading || document.hidden) return;
     const interval = setInterval(fetchMyTrades, 15000);
     return () => clearInterval(interval);
-  }, [currentView, isAuthenticated, fetchMyTrades]);
+  }, [currentView, isAuthenticated, isContractLoading, fetchMyTrades]);
+
+  // [TR] Sekme tekrar görünür olduğunda trade poll'ü hemen tetiklenir.
+  // [EN] Triggers immediate trade poll when the tab becomes visible again.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const onVisibilityChange = () => {
+      if (!document.hidden && currentView === "tradeRoom") {
+        fetchMyTrades();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [isAuthenticated, currentView, fetchMyTrades]);
 
   // [TR] Profil modalı açıldığında mevcut PII verilerini çekip formu doldurur
   // [EN] Pre-fills PII form when profile modal opens
@@ -621,8 +678,118 @@ function App() {
   // [TR] Cüzdan bağlantısı kesildiğinde oturumu sona erdirir
   // [EN] Ends session when wallet disconnects
   useEffect(() => {
-    if (!isConnected) setIsAuthenticated(false);
+    if (!isConnected) {
+      setIsAuthenticated(false);
+      pendingTxCheckedRef.current = false;
+      autoTradeResumeRef.current = false;
+    }
   }, [isConnected, address]);
+
+  // [TR] Yenileme sonrası bekleyen tx hash'i varsa sonucu yakalamayı dener.
+  // [EN] On refresh, tries to recover status of a pending tx hash from localStorage.
+  useEffect(() => {
+    if (!publicClient || !isConnected) return;
+    if (pendingTxCheckedRef.current) return;
+    pendingTxCheckedRef.current = true;
+    const raw = localStorage.getItem('araf_pending_tx');
+    if (!raw) return;
+
+    let parsed = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      localStorage.removeItem('araf_pending_tx');
+      return;
+    }
+
+    if (!parsed?.hash) {
+      localStorage.removeItem('araf_pending_tx');
+      return;
+    }
+    const isValidHash = /^0x[a-fA-F0-9]{64}$/.test(parsed.hash);
+    if (!isValidHash) {
+      localStorage.removeItem('araf_pending_tx');
+      return;
+    }
+    if (parsed.createdAt && (Date.now() - Number(parsed.createdAt) > 24 * 3600 * 1000)) {
+      localStorage.removeItem('araf_pending_tx');
+      return;
+    }
+    if (parsed.chainId && Number(parsed.chainId) !== Number(chainId)) {
+      return;
+    }
+
+    publicClient.getTransactionReceipt({ hash: parsed.hash })
+      .then(() => {
+        localStorage.removeItem('araf_pending_tx');
+        fetchMyTrades();
+        showToast(
+          lang === 'TR'
+            ? 'Bekleyen işlem bulundu ve onaylandı. Veriler yenilendi.'
+            : 'Recovered pending transaction and confirmed it. Data refreshed.',
+          'success'
+        );
+      })
+      .catch(() => {});
+  }, [publicClient, isConnected, fetchMyTrades, chainId, lang]);
+
+  // [TR] SIWE yenilemesi/yeniden giriş sonrası tek aktif trade varsa odaya otomatik döndürür.
+  // [EN] After SIWE refresh/re-login, auto-returns to trade room if exactly one active trade exists.
+  useEffect(() => {
+    if (!isAuthenticated) {
+      autoTradeResumeRef.current = false;
+      return;
+    }
+    if (autoTradeResumeRef.current) return;
+    if (currentView !== 'home') return;
+    if (activeEscrows.length !== 1) return;
+
+    const escrow = activeEscrows[0];
+    autoTradeResumeRef.current = true;
+    setActiveTrade({ ...escrow.rawTrade, onchainId: escrow.onchainId, state: escrow.state });
+    setTradeState(escrow.state);
+    setUserRole(escrow.role);
+    setChargebackAccepted(escrow.rawTrade?.chargebackAcked === true);
+    setCurrentView('tradeRoom');
+    showToast(
+      lang === 'TR' ? 'Aktif işleminize otomatik geri dönüldü.' : 'Automatically returned to your active trade.',
+      'info'
+    );
+  }, [isAuthenticated, currentView, activeEscrows, lang]);
+
+  // [TR] Cüzdan değişimi ile JWT oturumu ayrışmasını önler.
+  // [EN] Prevents wallet switch and JWT session desynchronization.
+  useEffect(() => {
+    if (!address || !isConnected) {
+      authenticatedWalletRef.current = null;
+      return;
+    }
+
+    const currentWallet = address.toLowerCase();
+
+    if (!isAuthenticated) {
+      authenticatedWalletRef.current = currentWallet;
+      return;
+    }
+
+    if (!authenticatedWalletRef.current) {
+      authenticatedWalletRef.current = currentWallet;
+      return;
+    }
+
+    if (authenticatedWalletRef.current !== currentWallet) {
+      authenticatedFetch(`${API_URL}/api/auth/logout`, { method: 'POST' }).catch(() => {});
+      setIsAuthenticated(false);
+      setCurrentView('home');
+      showToast(
+        lang === 'TR'
+          ? 'Cüzdan değişikliği algılandı. Güvenlik için tekrar giriş yapın.'
+          : 'Wallet change detected. Please sign in again for security.',
+        'info'
+      );
+      authenticatedWalletRef.current = currentWallet;
+    }
+  }, [address, isConnected, isAuthenticated, authenticatedFetch, lang]);
 
   // ═══════════════════════════════════════════
   // 6. TÜRETILMIŞ STATE (COMPUTED VALUES)
@@ -646,18 +813,19 @@ function App() {
   //      renderTradeRoom gibi render fonksiyonlarının içinde çağrılamaz.
   // [EN] Countdown hooks — must be at component body level per React rules;
   //      cannot be called inside render helper functions like renderTradeRoom.
-  const gracePeriodEndDate          = activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000) : null;
+  const gracePeriodEndDate          = useMemo(() => activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000) : null, [activeTrade?.paidAt]);
   const gracePeriodTimer            = useCountdown(gracePeriodEndDate);
-  const challengeCountdown          = useCountdown(activeTrade?.challengePingedAt ? new Date(new Date(activeTrade.challengePingedAt).getTime() + 24 * 3600 * 1000) : null);
-  const canChallenge                = import.meta.env.DEV ? (cooldownPassed || challengeCountdown.isFinished) : challengeCountdown.isFinished;
-  const bleedingEndDate             = activeTrade?.challengedAt ? new Date(new Date(activeTrade.challengedAt).getTime() + 240 * 3600 * 1000) : null;
+  const bleedingEndDate             = useMemo(() => activeTrade?.challengedAt ? new Date(new Date(activeTrade.challengedAt).getTime() + 240 * 3600 * 1000) : null, [activeTrade?.challengedAt]);
   const bleedingTimer               = useCountdown(bleedingEndDate);
-  const principalProtectionEndDate  = activeTrade?.challengedAt ? new Date(new Date(activeTrade.challengedAt).getTime() + (48 + 96) * 3600 * 1000) : null;
+  const principalProtectionEndDate  = useMemo(() => activeTrade?.challengedAt ? new Date(new Date(activeTrade.challengedAt).getTime() + (48 + 96) * 3600 * 1000) : null, [activeTrade?.challengedAt]);
   const principalProtectionTimer    = useCountdown(principalProtectionEndDate);
-  const makerPingEndDate            = activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000) : null;
+  const makerPingEndDate            = useMemo(() => activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000) : null, [activeTrade?.paidAt]);
   const makerPingTimer              = useCountdown(makerPingEndDate);
   const canMakerPing                = makerPingTimer.isFinished;
-  const makerChallengeEndDate       = activeTrade?.challengePingedAt ? new Date(new Date(activeTrade.challengePingedAt).getTime() + 24 * 3600 * 1000) : null;
+  const makerChallengePingEndDate   = useMemo(() => activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 24 * 3600 * 1000) : null, [activeTrade?.paidAt]);
+  const makerChallengePingTimer     = useCountdown(makerChallengePingEndDate);
+  const canMakerStartChallengeFlow  = makerChallengePingTimer.isFinished;
+  const makerChallengeEndDate       = useMemo(() => activeTrade?.challengePingedAt ? new Date(new Date(activeTrade.challengePingedAt).getTime() + 24 * 3600 * 1000) : null, [activeTrade?.challengePingedAt]);
   const makerChallengeTimer         = useCountdown(makerChallengeEndDate);
   const canMakerChallenge           = makerChallengeTimer.isFinished;
 
@@ -800,9 +968,11 @@ function App() {
     }
     if (isContractLoading) return;
 
+    let tokenAddress = null;
+    let didIncreaseAllowance = false;
     try {
       setIsContractLoading(true);
-      const tokenAddress = SUPPORTED_TOKEN_ADDRESSES[order.crypto || 'USDT'];
+      tokenAddress = SUPPORTED_TOKEN_ADDRESSES[order.crypto || 'USDT'];
       if (!tokenAddress) {
         showToast(lang === 'TR' ? `${order.crypto} token adresi .env dosyasında tanımlı değil.` : `${order.crypto} token address not configured.`, 'error');
         return;
@@ -814,7 +984,26 @@ function App() {
       }
 
       const tier = order.tier ?? 1;
-      const cryptoAmtRaw = BigInt(Math.round((parseFloat(order.max) || 0) * 1e6));
+      let cryptoAmtRaw = 0n;
+
+      // [TR] Öncelik on-chain trade verisi (fiat/crypto birim karmaşasını önler)
+      // [EN] Prefer on-chain trade amount (prevents fiat/crypto unit confusion)
+      const onchainTrade = await getTrade(BigInt(order.onchainId));
+      if (onchainTrade) {
+        const amountFromChain = typeof onchainTrade.cryptoAmount !== 'undefined' ? onchainTrade.cryptoAmount : onchainTrade[4];
+        const tokenFromChain  = typeof onchainTrade.tokenAddress !== 'undefined' ? onchainTrade.tokenAddress : onchainTrade[3];
+        if (amountFromChain && BigInt(amountFromChain) > 0n) {
+          cryptoAmtRaw = BigInt(amountFromChain);
+        }
+        if (tokenFromChain && tokenFromChain !== '0x0000000000000000000000000000000000000000') {
+          tokenAddress = tokenFromChain;
+        }
+      }
+      if (cryptoAmtRaw === 0n) {
+        showToast(lang === 'TR' ? 'On-chain işlem tutarı okunamadı. Lütfen daha sonra tekrar deneyin.' : 'Failed to read on-chain trade amount. Please try again.', 'error');
+        return;
+      }
+
       const takerBondBps = BigInt(onchainBondMap[tier]?.takerBps ?? 0);
       const takerBond = (cryptoAmtRaw * takerBondBps) / 10000n;
 
@@ -823,6 +1012,7 @@ function App() {
         if (currentAllowance < takerBond) {
           setLoadingText(lang === 'TR' ? `Adım 1/2: ${order.crypto} izni veriliyor...` : `Step 1/2: Approving ${order.crypto}...`);
           await approveToken(tokenAddress, takerBond);
+          didIncreaseAllowance = true;
         }
       }
 
@@ -847,12 +1037,16 @@ function App() {
       setActiveTrade({ ...order, id: realTradeId || order.id, onchainId: order.onchainId });
       setTradeState('LOCKED');
       setCancelStatus(null);
-      setCooldownPassed(false);
       setChargebackAccepted(false);
       setCurrentView('tradeRoom');
       showToast(lang === 'TR' ? '🔒 İşlem başarıyla kilitlendi!' : '🔒 Trade locked successfully!', 'success');
     } catch (err) {
       console.error('handleStartTrade error:', err);
+      // [TR] Güvenlik temizliği: approve başarılı olup lock başarısızsa allowance sıfırlamayı dene
+      // [EN] Security cleanup: if approve succeeded but lock failed, try resetting allowance
+      if (didIncreaseAllowance && tokenAddress) {
+        try { await approveToken(tokenAddress, 0n); } catch (_) {}
+      }
       const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'İşlem kilitlenemedi.' : 'Failed to lock trade.');
       if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
         showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
@@ -868,6 +1062,11 @@ function App() {
   // [TR] Maker ilanını iptal eder: önce on-chain cancelOpenEscrow(), sonra UI güncellenir
   // [EN] Cancels maker listing: on-chain cancelOpenEscrow() first, then UI update
   const handleDeleteOrder = async (order) => {
+    if (order.status && order.status !== 'OPEN') {
+      showToast(lang === 'TR' ? 'Sadece OPEN durumundaki ilanlar silinebilir.' : 'Only OPEN listings can be deleted.', 'error');
+      setConfirmDeleteId(null);
+      return;
+    }
     if (!order.onchainId) {
       showToast(lang === 'TR' ? 'On-chain işlem ID bulunamadı, sadece veritabanından silinecek.' : 'On-chain ID not found, deleting from DB only.', 'info');
       setOrders(prev => prev.filter(o => o.id !== order.id));
@@ -879,6 +1078,7 @@ function App() {
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'İlan iptal ediliyor, lütfen cüzdanınızdan onaylayın...' : 'Cancelling listing, please confirm in wallet...', 'info');
       await cancelOpenEscrow(BigInt(order.onchainId));
+      await authenticatedFetch(`${API_URL}/api/listings/${order.id}`, { method: 'DELETE' });
       setOrders(prev => prev.filter(o => o.id !== order.id));
       setConfirmDeleteId(null);
       showToast(lang === 'TR' ? 'İlan iptal edildi ve fonlar iade edildi.' : 'Listing cancelled and funds returned.', 'success');
@@ -948,7 +1148,6 @@ function App() {
       showToast(lang === 'TR' ? 'Ödeme bildirimi gönderiliyor... Cüzdanınızdan onaylayın.' : 'Reporting payment... Confirm in wallet.', 'info');
       await reportPayment(BigInt(activeTrade.onchainId), paymentIpfsHash.trim());
       setTradeState('PAID');
-      setCooldownPassed(false);
       setPaymentIpfsHash('');
       showToast(lang === 'TR' ? '✅ Ödeme bildirildi! 48 saatlik grace period başladı.' : '✅ Payment reported! 48h grace period started.', 'success');
     } catch (err) {
@@ -1036,19 +1235,48 @@ function App() {
       showToast(lang === 'TR' ? 'Geri bildirim göndermek için giriş yapmalısınız.' : 'Please sign in to send feedback.', 'error');
       return;
     }
+
+    const trimmedFeedback = feedbackText.trim();
+    if (feedbackRating === 0 || !feedbackCategory) {
+      setFeedbackError(lang === 'TR' ? 'Yıldız puanı ve kategori zorunludur.' : 'Rating and category are required.');
+      return;
+    }
+    if (trimmedFeedback.length < FEEDBACK_MIN_LENGTH) {
+      setFeedbackError(
+        lang === 'TR'
+          ? `Lütfen en az ${FEEDBACK_MIN_LENGTH} karakter detay verin (maliyetli revert'leri azaltmamıza yardımcı olur).`
+          : `Please add at least ${FEEDBACK_MIN_LENGTH} characters (helps us reduce costly reverts).`
+      );
+      return;
+    }
+
     try {
+      setIsSubmittingFeedback(true);
+      setFeedbackError('');
       await authenticatedFetch(`${API_URL}/api/feedback`, {
         method: 'POST',
-        body: JSON.stringify({ rating: feedbackRating, comment: feedbackText, category: feedbackCategory }),
+        body: JSON.stringify({ rating: feedbackRating, comment: trimmedFeedback, category: feedbackCategory }),
       });
-    } catch (err) {
-      console.error('Feedback submit error:', err);
-    } finally {
+
       setShowFeedbackModal(false);
       setFeedbackText('');
       setFeedbackRating(0);
       setFeedbackCategory('');
       showToast(lang === 'TR' ? 'Geri bildiriminiz için teşekkürler!' : 'Thank you for your feedback!', 'success');
+    } catch (err) {
+      console.error('Feedback submit error:', err);
+      const raw = String(err?.message || '');
+      const isRateLimit = raw.includes('Too many') || raw.includes('429') || raw.includes('çok fazla');
+      const isAuthError = raw.includes('401') || raw.includes('403') || raw.toLowerCase().includes('unauthorized');
+      const message = isRateLimit
+        ? (lang === 'TR' ? 'Çok sık geri bildirim gönderdiniz. Lütfen biraz bekleyin.' : 'You are sending feedback too frequently. Please wait a bit.')
+        : isAuthError
+          ? (lang === 'TR' ? 'Oturumunuzun süresi dolmuş olabilir. Lütfen tekrar giriş yapın.' : 'Your session may have expired. Please sign in again.')
+          : (lang === 'TR' ? 'Geri bildirim gönderilemedi. Lütfen tekrar deneyin.' : 'Failed to send feedback. Please try again.');
+      setFeedbackError(message);
+      showToast(message, 'error');
+    } finally {
+      setIsSubmittingFeedback(false);
     }
   };
 
@@ -1061,7 +1289,7 @@ function App() {
   //      Skipped in CHALLENGED state — prevents silent failure.
   //      (C-02: chargebackAccepted guard bypassed in CHALLENGED state)
   const handleRelease = async () => {
-    if (tradeState === 'PAID' && !chargebackAccepted) {
+    if (resolvedTradeState === 'PAID' && !chargebackAccepted) {
       showToast(lang === 'TR' ? 'Lütfen ters ibraz riskini kabul edin.' : 'Please acknowledge the chargeback risk.', 'error');
       return;
     }
@@ -1080,6 +1308,9 @@ function App() {
       showToast(lang === 'TR' ? 'İşlem cüzdanınıza gönderildi, onaylayın...' : 'Transaction sent to wallet, please confirm...', 'info');
       await releaseFunds(BigInt(activeTrade.onchainId));
       setTradeState('RESOLVED');
+      setActiveTrade(null);
+      setCancelStatus(null);
+      setChargebackAccepted(false);
       setCurrentView('home');
       showToast(lang === 'TR' ? 'USDT başarıyla serbest bırakıldı! ✅' : 'USDT successfully released! ✅', 'success');
     } catch (err) {
@@ -1106,7 +1337,26 @@ function App() {
     if (isContractLoading) return;
 
     const tradeDetails = activeEscrows.find(e => e.id === `#${activeTrade.onchainId}`);
-    const challengePingedAt = tradeDetails?.challengePingedAt;
+    const challengePingedAt = activeTrade?.challengePingedAt || tradeDetails?.challengePingedAt;
+
+    if (!challengePingedAt && !canMakerStartChallengeFlow) {
+      showToast(
+        lang === 'TR'
+          ? 'Ping için 24 saat dolmadan işlem gönderemezsiniz.'
+          : 'You cannot ping before the 24-hour cooldown ends.',
+        'error'
+      );
+      return;
+    }
+    if (challengePingedAt && !canMakerChallenge) {
+      showToast(
+        lang === 'TR'
+          ? 'Resmi itiraz için ping sonrası 24 saat beklenmeli.'
+          : 'You must wait 24h after ping before opening a challenge.',
+        'error'
+      );
+      return;
+    }
 
     if (!challengePingedAt) {
       try {
@@ -1119,7 +1369,11 @@ function App() {
       } catch (err) {
         console.error('pingTakerForChallenge error:', err);
         const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Uyarı gönderilemedi.' : 'Failed to send ping.');
-        showToast(errorMessage, 'error');
+        if (errorMessage.includes('ConflictingPingPath')) {
+          showToast(lang === 'TR' ? 'Karşı taraf farklı bir uyarı/itiraz akışı başlattı. Bu yolu artık kullanamazsınız.' : 'Counterparty already started another ping/challenge path. This flow is no longer available.', 'error');
+        } else {
+          showToast(errorMessage, 'error');
+        }
       } finally {
         setIsContractLoading(false);
       }
@@ -1137,7 +1391,11 @@ function App() {
     } catch (err) {
       console.error('challengeTrade error:', err);
       const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'İtiraz işlemi başarısız.' : 'Challenge failed.');
-      showToast(errorMessage, 'error');
+      if (errorMessage.includes('ConflictingPingPath')) {
+        showToast(lang === 'TR' ? 'Karşı taraf farklı bir uyarı/itiraz akışı başlattı. Bu yolu artık kullanamazsınız.' : 'Counterparty already started another ping/challenge path. This flow is no longer available.', 'error');
+      } else {
+        showToast(errorMessage, 'error');
+      }
     } finally {
       setIsContractLoading(false);
     }
@@ -1156,7 +1414,9 @@ function App() {
     } catch (err) {
       console.error('pingMaker error:', err);
       const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Ping işlemi başarısız oldu.' : 'Ping failed.');
-      if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
+      if (errorMessage.includes('ConflictingPingPath')) {
+        showToast(lang === 'TR' ? 'Karşı taraf farklı bir uyarı/itiraz akışı başlattı. Bu yolu artık kullanamazsınız.' : 'Counterparty already started another ping/challenge path. This flow is no longer available.', 'error');
+      } else if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
         showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
       } else {
         showToast(errorMessage, 'error');
@@ -1175,6 +1435,9 @@ function App() {
       showToast(lang === 'TR' ? 'Otomatik serbest bırakma işlemi cüzdanınıza gönderiliyor...' : 'Auto-release transaction sent to wallet...', 'info');
       await autoRelease(BigInt(tradeId));
       setTradeState('RESOLVED');
+      setActiveTrade(null);
+      setCancelStatus(null);
+      setChargebackAccepted(false);
       setCurrentView('home');
       showToast(lang === 'TR' ? 'İşlem başarıyla sonlandırıldı. Fonlar cüzdanınıza aktarıldı.' : 'Trade successfully resolved. Funds transferred to your wallet.', 'success');
     } catch (err) {
@@ -1274,7 +1537,7 @@ function App() {
   //      Bond amount dynamically calculated from onchain bondMap.
   //      Listing pre-saved to off-chain DB so event listener can match it.
   const handleCreateEscrow = async () => {
-    const tokenAddress = SUPPORTED_TOKEN_ADDRESSES[makerToken];
+    let tokenAddress = SUPPORTED_TOKEN_ADDRESSES[makerToken];
     if (!tokenAddress) {
       showToast(lang === 'TR' ? `${makerToken} token adresi .env dosyasında tanımlı değil (VITE_${makerToken}_ADDRESS).` : `${makerToken} token address not configured in .env (VITE_${makerToken}_ADDRESS).`, 'error');
       return;
@@ -1290,9 +1553,11 @@ function App() {
     }
     if (isContractLoading) return;
 
+    let didIncreaseAllowance = false;
+    let pendingListingId = null;
     try {
       try {
-        await authenticatedFetch(`${API_URL}/api/listings`, {
+        const preCreateRes = await authenticatedFetch(`${API_URL}/api/listings`, {
           method: 'POST',
           body: JSON.stringify({
             crypto_asset:  makerToken,
@@ -1303,14 +1568,17 @@ function App() {
             token_address: SUPPORTED_TOKEN_ADDRESSES[makerToken],
           }),
         });
+        const preCreateData = await preCreateRes.json().catch(() => ({}));
+        pendingListingId = preCreateData?.listing?._id || null;
       } catch (e) {
         console.warn('Off-chain ilan pre-creation uyarısı:', e);
       }
 
       setIsContractLoading(true);
 
-      const decimals = BigInt(6);
-      const cryptoAmountRaw = BigInt(Math.round(cryptoAmt * 10 ** Number(decimals)));
+      const tokenDecimals = getTokenDecimals ? await getTokenDecimals(tokenAddress) : 6;
+      const { parseUnits } = await import('viem');
+      const cryptoAmountRaw = parseUnits(String(cryptoAmt), tokenDecimals);
 
       if (!onchainBondMap) {
         showToast(lang === 'TR' ? 'Protokol ayarları yükleniyor...' : 'Loading protocol config...', 'info');
@@ -1325,6 +1593,7 @@ function App() {
       if (currentAllowance < totalLock) {
         setLoadingText(lang === 'TR' ? `Adım 1/2: ${makerToken} izni veriliyor...` : `Step 1/2: Approving ${makerToken}...`);
         await approveToken(tokenAddress, totalLock);
+        didIncreaseAllowance = true;
       }
 
       setLoadingText(lang === 'TR' ? 'Adım 2/2: Escrow oluşturuluyor...' : 'Step 2/2: Creating escrow...');
@@ -1342,7 +1611,22 @@ function App() {
       setMakerFiat('TRY');
     } catch (err) {
       console.error('handleCreateEscrow error:', err);
-      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Escrow oluşturulamadı.' : 'Failed to create escrow.');
+      // [TR] On-chain create başarısızsa stale PENDING ilanı temizlemeyi dene.
+      // [EN] If on-chain create fails, attempt to clean stale PENDING listing.
+      if (pendingListingId) {
+        try {
+          await authenticatedFetch(`${API_URL}/api/listings/${pendingListingId}`, { method: 'DELETE' });
+        } catch (_) {}
+      }
+      if (didIncreaseAllowance && tokenAddress) {
+        try { await approveToken(tokenAddress, 0n); } catch (_) {}
+      }
+      let errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Escrow oluşturulamadı.' : 'Failed to create escrow.');
+      if (errorMessage.includes('Efektif tier') || errorMessage.includes('effective tier')) {
+        errorMessage += lang === 'TR'
+          ? ' Not: Tier 1+ için ilk başarılı işlemden sonra 15 gün aktif dönem şartı da aranır.'
+          : ' Note: Tier 1+ also requires a 15-day active period after first successful trade.';
+      }
       if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
         showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
       } else {
@@ -1366,6 +1650,28 @@ function App() {
   // [TR] Çeviri sözlüğü — yalnızca pazar yeri ana metinleri
   // [EN] Translation dictionary — marketplace main labels only
   // ─────────────────────────────────────────────
+  const FEEDBACK_MIN_LENGTH = 12;
+
+  const faqItems = lang === 'TR'
+    ? [
+        { q: 'Araf Protokolü hakem kullanıyor mu?', a: 'Hayır. Uyuşmazlıklarda insan hakem yok. Süreç tamamen on-chain zamanlayıcılar ve ekonomik teşviklerle çalışır.' },
+        { q: 'Platform fonlara erişebiliyor mu?', a: 'Hayır. Sistem non-custodial\'dır; fonlar akıllı kontratta kilitli kalır. Backend, serbest bırakma kararı veremez.' },
+        { q: 'Neden Tier ve teminat var?', a: 'Tier sistemi yeni cüzdanların riskini sınırlar; teminatlar ise kötü niyetli davranışı ekonomik olarak pahalı hale getirir.' },
+        { q: 'Neden feedback önemli?', a: 'Feedback verileri TX maliyeti, akış netliği ve hata tespitini iyileştirerek gereksiz revert ve zaman kaybını azaltır.' },
+      ]
+    : [
+        { q: 'Does Araf Protocol use arbitrators?', a: 'No. There are no human arbitrators in disputes. The flow is enforced by on-chain timers and economic incentives.' },
+        { q: 'Can the platform access user funds?', a: 'No. The system is non-custodial; funds stay locked in the smart contract. Backend cannot force release outcomes.' },
+        { q: 'Why are tiers and bonds required?', a: 'Tiers limit cold-start risk for new wallets, while bonds make dishonest behavior economically expensive.' },
+        { q: 'Why does feedback matter?', a: 'Feedback helps optimize TX flow clarity, reduce avoidable reverts, and improve cost-efficient UX.' },
+      ];
+
+  const socialLinks = {
+    github: import.meta.env.VITE_SOCIAL_GITHUB || 'https://github.com/',
+    twitter: import.meta.env.VITE_SOCIAL_TWITTER || 'https://x.com/',
+    farcaster: import.meta.env.VITE_SOCIAL_FARCASTER || 'https://warpcast.com/',
+  };
+
   const t = {
     title:           lang === 'TR' ? 'Pazar Yeri' : 'Marketplace',
     subtitle:        lang === 'TR' ? 'Merkeziyetsiz, hakemsiz P2P takas tahtası.' : 'Decentralized, oracle-free P2P escrow board.',
@@ -1428,13 +1734,19 @@ function App() {
   const renderFeedbackModal = () => {
     if (!showFeedbackModal) return null;
     return (
-      <div className="fixed inset-0 bg-[#060608]/80 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
-        <div className="bg-[#111113] border border-[#222] rounded-2xl p-6 w-full max-w-sm shadow-2xl max-h-[90vh] overflow-y-auto">
-          <div className="flex justify-between items-center mb-4">
+      <div className="fixed inset-0 bg-[#060608]/70 backdrop-blur-sm flex items-start justify-end p-4 md:p-6 z-[100]">
+        <div className="bg-[#111113] border border-[#222] rounded-2xl p-5 md:p-6 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto animate-in slide-in-from-top-8 slide-in-from-right-8 duration-300">
+          <div className="flex justify-between items-center mb-3">
             <h2 className="text-xl font-bold text-white">{lang === 'TR' ? 'Geri Bildirim' : 'Feedback'}</h2>
-            <button onClick={() => setShowFeedbackModal(false)} className="text-slate-400 hover:text-white text-2xl">&times;</button>
+            <button
+              onClick={() => setShowFeedbackModal(false)}
+              className="text-slate-400 hover:text-white text-2xl"
+              aria-label={lang === 'TR' ? 'Geri bildirim penceresini kapat' : 'Close feedback panel'}
+            >
+              &times;
+            </button>
           </div>
-          <p className="text-sm text-slate-400 mb-4">{lang === 'TR' ? 'Araf Protocol deneyiminizi nasıl buldunuz?' : 'How is your experience with Araf Protocol?'}</p>
+          <p className="text-sm text-slate-400 mb-4">{lang === 'TR' ? 'Deneyiminizi paylaşın. Hedefimiz gereksiz tx/revert maliyetlerini düşürmek.' : 'Share your experience. Our goal is to reduce avoidable tx/revert costs.'}</p>
           <div className="flex justify-center space-x-2 mb-4">
             {[1, 2, 3, 4, 5].map((star) => (
               <button key={star} onClick={() => setFeedbackRating(star)} className={`text-3xl transition ${feedbackRating >= star ? 'text-yellow-400 scale-110' : 'text-slate-600 hover:text-yellow-400/50'}`}>★</button>
@@ -1442,18 +1754,41 @@ function App() {
           </div>
           <select
             value={feedbackCategory}
-            onChange={(e) => setFeedbackCategory(e.target.value)}
-            className="w-full bg-[#151518] text-white px-3 py-2.5 rounded-xl border border-[#2a2a2e] outline-none text-sm mb-4"
+            onChange={(e) => { setFeedbackCategory(e.target.value); setFeedbackError(''); }}
+            className="w-full bg-[#151518] text-white px-3 py-2.5 rounded-xl border border-[#2a2a2e] outline-none text-sm mb-3"
           >
             <option value="" disabled>{lang === 'TR' ? 'Kategori Seçin...' : 'Select Category...'}</option>
             <option value="bug">{lang === 'TR' ? '🐞 Hata Bildirimi' : '🐞 Bug Report'}</option>
             <option value="suggestion">{lang === 'TR' ? '💡 Özellik İsteği' : '💡 Feature Suggestion'}</option>
             <option value="ui/ux">{lang === 'TR' ? '🎨 Tasarım/Kullanıcı Deneyimi' : '🎨 Design/UX'}</option>
-            <option value="other">{lang === 'TR' ? 'Diğer' : 'Other'}</option>
+            <option value="other">{lang === 'TR' ? '🧩 Diğer' : '🧩 Other'}</option>
           </select>
-          <textarea value={feedbackText} onChange={(e) => setFeedbackText(e.target.value)} placeholder={lang === 'TR' ? 'Düşünceleriniz veya bulduğunuz hatalar...' : 'Your thoughts or bugs found...'} className="w-full bg-[#151518] text-white px-3 py-3 rounded-xl border border-[#2a2a2e] outline-none h-24 text-sm mb-4 resize-none"></textarea>
-          <button onClick={submitFeedback} disabled={feedbackRating === 0 || feedbackCategory === ''} className={`w-full py-3 rounded-xl font-bold transition ${feedbackRating > 0 && feedbackCategory !== '' ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-slate-700 text-slate-500 cursor-not-allowed'}`}>
-            {lang === 'TR' ? 'Gönder' : 'Submit'}
+
+          <textarea
+            value={feedbackText}
+            onChange={(e) => { setFeedbackText(e.target.value); setFeedbackError(''); }}
+            placeholder={lang === 'TR' ? 'Nerede sorun yaşadınız? Hangi adımda tx/revert maliyeti oluştu? Kısaca anlatın...' : 'Where did it break? Which step caused tx/revert cost? Please describe briefly...'}
+            className="w-full bg-[#151518] text-white px-3 py-3 rounded-xl border border-[#2a2a2e] outline-none h-28 text-sm mb-2 resize-none"
+          />
+          <div className="flex items-center justify-between text-[11px] mb-3">
+            <span className="text-slate-500">
+              {lang === 'TR' ? `Minimum ${FEEDBACK_MIN_LENGTH} karakter` : `Minimum ${FEEDBACK_MIN_LENGTH} characters`}
+            </span>
+            <span className={`${feedbackText.trim().length >= FEEDBACK_MIN_LENGTH ? 'text-emerald-400' : 'text-slate-500'}`}>
+              {feedbackText.trim().length}/{1000}
+            </span>
+          </div>
+
+          {feedbackError && (
+            <p className="text-red-400 text-xs mb-3 bg-red-950/30 border border-red-900/40 rounded-lg p-2">{feedbackError}</p>
+          )}
+
+          <p className="text-[11px] text-slate-500 mb-3">
+            {lang === 'TR' ? 'Not: Private key, seed phrase veya kişisel bankacılık parolanızı asla paylaşmayın.' : 'Note: Never share private keys, seed phrase, or personal banking passwords.'}
+          </p>
+
+          <button onClick={submitFeedback} disabled={isSubmittingFeedback} className={`w-full py-3 rounded-xl font-bold transition ${isSubmittingFeedback ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_20px_rgba(16,185,129,0.25)]'}`}>
+            {isSubmittingFeedback ? (lang === 'TR' ? 'Gönderiliyor...' : 'Submitting...') : (lang === 'TR' ? 'Gönder' : 'Submit')}
           </button>
         </div>
       </div>
@@ -1854,6 +2189,7 @@ function App() {
                         setActiveTrade(escrow.rawTrade);
                         setUserRole(escrow.role);
                         setTradeState(escrow.state);
+                        setChargebackAccepted(escrow.rawTrade?.chargebackAcked === true);
                         setCurrentView('tradeRoom');
                       }} className="w-full mt-3 bg-[#0c0c0e] hover:bg-[#222] text-white text-xs font-bold py-2.5 rounded-lg transition border border-[#2a2a2e]">
                         {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
@@ -1958,7 +2294,7 @@ function App() {
               <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-300">{orders.filter(o => o.crypto === 'USDT').length}</span>
             </button>
             <button onClick={() => setFilterTier1(!filterTier1)} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterTier1 ? 'bg-[#1a1a1f] text-yellow-500 border border-yellow-500/20' : 'text-slate-400 hover:text-white hover:bg-[#1a1a1f]/50'}`}>
-              <div className="flex items-center gap-2"><span className="text-yellow-500/70">🛡️</span> {lang === 'TR' ? 'Tier 0 Filtresi' : 'Tier 0 Filter'}</div>
+              <div className="flex items-center gap-2"><span className="text-yellow-500/70">🛡️</span> {lang === 'TR' ? 'Tier 0-1 Düşük Risk Filtresi' : 'Tier 0-1 Low-Risk Filter'}</div>
             </button>
           </div>
         </div>
@@ -2003,6 +2339,7 @@ function App() {
                                 setActiveTrade(escrow.rawTrade);
                                 setUserRole(escrow.role);
                                 setTradeState(escrow.state);
+                                setChargebackAccepted(escrow.rawTrade?.chargebackAcked === true);
                                 setCurrentView('tradeRoom');
                                 setSidebarOpen(false);
                               }}
@@ -2094,6 +2431,37 @@ function App() {
           </button>
         </div>
       )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
+        <section className="bg-[#111113] border border-[#222] rounded-2xl p-5 md:p-6">
+          <p className="text-[11px] tracking-[0.2em] uppercase text-emerald-400 mb-2">
+            {lang === 'TR' ? 'P2P Nasıl Çalışır?' : 'How P2P Works'}
+          </p>
+          <h3 className="text-xl font-bold text-white mb-3">
+            {lang === 'TR' ? 'Kararı backend değil, kontrat verir.' : 'The contract decides, not the backend.'}
+          </h3>
+          <ul className="space-y-2 text-sm text-slate-300 leading-relaxed">
+            <li>• {lang === 'TR' ? 'Maker USDT/USDC + bond kilitler, Taker şartları kabul edip girer.' : 'Maker locks USDT/USDC + bond, Taker joins under clear on-chain rules.'}</li>
+            <li>• {lang === 'TR' ? 'Uyuşmazlıkta insan hakem yok; süre uzadıkça her iki taraf için de maliyet artar.' : 'No human arbitrator in disputes; delay becomes progressively expensive for both sides.'}</li>
+            <li>• {lang === 'TR' ? 'Bu yapı gereksiz tartışmayı değil, hızlı uzlaşıyı ekonomik olarak teşvik eder.' : 'This structure rewards fast settlement rather than endless argument.'}</li>
+          </ul>
+        </section>
+
+        <section className="bg-[#111113] border border-[#222] rounded-2xl p-5 md:p-6">
+          <p className="text-[11px] tracking-[0.2em] uppercase text-slate-400 mb-3">FAQ</p>
+          <div className="space-y-3">
+            {faqItems.map((item) => (
+              <details key={item.q} className="group border border-[#2a2a2e] rounded-xl p-3 bg-[#0d0d10]">
+                <summary className="cursor-pointer list-none text-sm font-semibold text-white flex items-center justify-between gap-3">
+                  {item.q}
+                  <span className="text-slate-500 group-open:rotate-45 transition">+</span>
+                </summary>
+                <p className="text-xs md:text-sm text-slate-400 mt-2 leading-relaxed">{item.a}</p>
+              </details>
+            ))}
+          </div>
+        </section>
+      </div>
     </div>
   );
 
@@ -2111,6 +2479,14 @@ function App() {
             {isContractLoading && loadingText.includes('USDC') ? '⏳' : '🚰'} {lang === 'TR' ? 'Test USDC Al' : 'Get Test USDC'}
           </button>
         </div>
+      </div>
+
+      <div className="mb-4 p-3 rounded-xl border border-orange-700/40 bg-orange-900/20">
+        <p className="text-[11px] text-orange-200 leading-relaxed">
+          {lang === 'TR'
+            ? 'Bilgi: CHALLENGED durumunda 10 gün dolunca burnExpired fonksiyonu kontratta herkese açıktır; üçüncü taraflar da çağırabilir.'
+            : 'Info: In CHALLENGED state, once 10 days pass, burnExpired is permissionless on-chain and can be called by third parties.'}
+        </p>
       </div>
 
       <div className="space-y-3">
@@ -2170,14 +2546,19 @@ function App() {
                      !isTokenConfigured  ? <><span>⚙️</span> {lang === 'TR' ? 'Token Ayarlanmadı' : 'Token Not Set'}</> :
                      !canTakeOrder       ? <><span>🔒</span> {lang === 'TR' ? 'Kilitli' : 'Locked'}</> :
                      !isFunded           ? <><span>⚠️</span> {lang === 'TR' ? 'Bakiye Yetersiz' : 'Low Balance'}</> :
-                     // [TR] Cooldown süresini göstermek yerine sade etiket kullanılıyor
-                     // [EN] Using simple label instead of showing cooldown duration
-                     !isCooldownOk       ? <><span>⏳</span> {lang === 'TR' ? 'Cooldown Aktif' : 'Cooldown Active'}</> :
+                     !isCooldownOk       ? <><span>⏳</span> {lang === 'TR' ? `Cooldown: ${Math.ceil((sybilStatus?.cooldownRemaining || 0) / 60)} dk` : `Cooldown: ${Math.ceil((sybilStatus?.cooldownRemaining || 0) / 60)} min`}</> :
                      (isContractLoading  ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : (lang === 'TR' ? 'Satın Al' : 'Buy'))}
                   </button>
                   {!isFunded && isConnected && canTakeOrder && !isPaused && (
                     <p className="text-[10px] text-red-500 mt-2 text-center md:text-right w-full leading-tight">
                       ⚠️ Anti-Spam: {lang === 'TR' ? 'İşlem yapabilmek için cüzdanınızda en az 0.001 ETH bulunmalıdır.' : 'You must have at least 0.001 ETH in your wallet to trade.'}
+                    </p>
+                  )}
+                  {!isCooldownOk && isConnected && (
+                    <p className="text-[10px] text-amber-400 mt-2 text-center md:text-right w-full leading-tight">
+                      {lang === 'TR'
+                        ? 'Not: 4 saatlik cooldown Tier 0 ve Tier 1 için geçerlidir.'
+                        : 'Note: the 4-hour cooldown applies to both Tier 0 and Tier 1.'}
                     </p>
                   )}
                 </div>
@@ -2196,12 +2577,15 @@ function App() {
   // [EN] Trade room — shows taker/maker actions based on LOCKED/PAID/CHALLENGED state.
   //      Contains Bleeding Escrow visual bar, timers, cancel/release and PII section.
   const renderTradeRoom = () => {
-    const isChallenged = tradeState === 'CHALLENGED';
+    const roomState = resolvedTradeState;
+    const isChallenged = roomState === 'CHALLENGED';
     const isTaker = userRole === 'taker';
     const isMaker = userRole === 'maker';
 
-    const rawCryptoAmt = ((activeTrade?.max || 0) / (activeTrade?.rate || 1));
-    const protocolFee  = rawCryptoAmt * 0.001;
+    const rawCryptoAmt = (typeof activeTrade?.cryptoAmount === 'number' && !Number.isNaN(activeTrade.cryptoAmount))
+      ? activeTrade.cryptoAmount
+      : ((activeTrade?.max || 0) / (activeTrade?.rate || 1));
+    const protocolFee  = rawCryptoAmt * ((takerFeeBps || 10) / 10000);
     const netAmount    = rawCryptoAmt - protocolFee;
     const asset        = activeTrade?.crypto || 'USDT';
     const feeBreakdownText = lang === 'TR'
@@ -2218,7 +2602,7 @@ function App() {
               <p className="text-slate-500 text-xs tracking-widest mb-1">{lang === 'TR' ? 'İŞLEM ODASI' : 'TRADE ROOM'}: {activeTrade?.id}</p>
               <h2 className="text-2xl font-bold text-white flex flex-col sm:flex-row items-start sm:items-center gap-3">
                 {activeTrade?.max || '0.00'} {activeTrade?.fiat}
-                <span className={`text-xs px-3 py-1 rounded-full border ${isChallenged ? 'bg-red-900/20 text-red-500 border-red-900' : 'bg-emerald-900/20 text-emerald-500 border-emerald-900'}`}>{isChallenged ? (lang === 'TR' ? 'Araf Fazı' : 'Purgatory') : tradeState}</span>
+                <span className={`text-xs px-3 py-1 rounded-full border ${isChallenged ? 'bg-red-900/20 text-red-500 border-red-900' : 'bg-emerald-900/20 text-emerald-500 border-emerald-900'}`}>{isChallenged ? (lang === 'TR' ? 'Araf Fazı' : 'Purgatory') : roomState}</span>
               </h2>
             </div>
             <div className="text-left md:text-right w-full md:w-auto border-t border-[#222] md:border-none pt-4 md:pt-0">
@@ -2275,7 +2659,7 @@ function App() {
 
           <div className="space-y-6">
             {/* LOCKED state aksiyon paneli */}
-            {tradeState === 'LOCKED' && (
+            {roomState === 'LOCKED' && (
               <div className="text-center py-6">
                 <div className="w-14 h-14 bg-blue-500/10 text-blue-500 border border-blue-500/20 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">🔒</div>
                 <h2 className="text-xl md:text-2xl font-bold text-white mb-2">{lang === 'TR' ? 'USDT Kilitlendi' : 'USDT Locked'}</h2>
@@ -2314,7 +2698,7 @@ function App() {
             )}
 
             {/* PAID state aksiyon paneli */}
-            {tradeState === 'PAID' && (
+            {roomState === 'PAID' && (
               <div className="text-center py-4 flex flex-col items-center">
                 <h2 className="text-lg md:text-xl font-bold text-emerald-400 mb-2">{lang === 'TR' ? 'Ödeme Bildirildi' : 'Payment Reported'}</h2>
                 <div className="w-full max-w-sm bg-[#0a0a0c] border border-[#222] rounded-2xl p-4 mb-6">
@@ -2364,6 +2748,24 @@ function App() {
                   </div>
                 ) : (
                   <div className="w-full max-w-md flex flex-col space-y-4">
+                    {!activeTrade?.challengePingedAt && (
+                      <button
+                        onClick={handleChallenge}
+                        disabled={!canMakerStartChallengeFlow || isContractLoading}
+                        className={`w-full py-3 rounded-xl font-bold transition ${!canMakerStartChallengeFlow || isContractLoading ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-orange-600/20 text-orange-400 border border-orange-500/40 hover:bg-orange-500 hover:text-white'}`}
+                      >
+                        {isContractLoading ? '...' : (!canMakerStartChallengeFlow ? (lang === 'TR' ? '⏱️ Uyarı için 24 saat bekleyin' : '⏱️ Wait 24h to ping buyer') : (lang === 'TR' ? '🔔 Alıcıyı Uyar (Ödeme Gelmedi)' : '🔔 Ping Buyer (No Payment)'))}
+                      </button>
+                    )}
+                    {activeTrade?.challengePingedAt && (
+                      <button
+                        onClick={handleChallenge}
+                        disabled={!canMakerChallenge || isContractLoading}
+                        className={`w-full py-3 rounded-xl font-bold transition ${!canMakerChallenge || isContractLoading ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-red-600/20 text-red-400 border border-red-500/40 hover:bg-red-500 hover:text-white'}`}
+                      >
+                        {isContractLoading ? '...' : (!canMakerChallenge ? (lang === 'TR' ? '⏱️ İtiraz için 24 saat bekleyin' : '⏱️ Wait 24h to challenge') : (lang === 'TR' ? '⚔️ Resmi İtiraz Başlat' : '⚔️ Open Formal Challenge'))}
+                      </button>
+                    )}
                     <label className="flex items-start space-x-3 p-3 md:p-4 bg-[#1a0f0f] border border-red-900/30 rounded-xl cursor-pointer text-left">
                       <input type="checkbox" checked={chargebackAccepted} onChange={(e) => handleChargebackAck(e.target.checked)} className="mt-1 w-4 h-4 accent-emerald-500 rounded bg-[#0a0a0c] border-[#333]" />
                       <span className="text-xs text-slate-400"><strong className="text-red-500">{lang === 'TR' ? 'UYARI:' : 'WARNING:'}</strong> {lang === 'TR' ? 'Paranın farklı isimli bir hesaptan gelmediğini ve Chargeback riskini anladığımı kabul ediyorum.' : 'I confirm the funds came from the correct name and understand the Chargeback risk.'}</span>
@@ -2384,7 +2786,7 @@ function App() {
             )}
 
             {/* Ortak aksiyon paneli (iptal + serbest bırakma) — tüm aktif durumlarda gösterilir */}
-            {['LOCKED', 'PAID', 'CHALLENGED'].includes(tradeState) && (
+            {['LOCKED', 'PAID', 'CHALLENGED'].includes(roomState) && (
               <div className="mt-6 bg-[#0c0c0e] border border-[#222] rounded-xl p-4">
                 <div className="mb-3 text-center p-2 bg-[#111113] rounded-lg border border-[#2a2a2e]">
                   <p className="text-[10px] text-slate-400 font-mono">{feeBreakdownText}</p>
@@ -2398,7 +2800,7 @@ function App() {
                         </button>
                       )}
                       <button onClick={() => {
-                        const msg = tradeState === 'LOCKED'
+                        const msg = roomState === 'LOCKED'
                           ? (lang === 'TR' ? 'LOCKED aşamasında (henüz ödeme bildirilmeden) iptaller kesintisizdir. Onaylıyor musunuz?' : 'Cancel in LOCKED state has zero fees. Confirm?')
                           : (lang === 'TR' ? 'Karşılıklı iptal durumunda standart protokol ücreti kesilecektir. Onaylıyor musunuz?' : 'Standard protocol fees will be deducted upon mutual cancellation. Confirm?');
                         if (window.confirm(msg)) handleProposeCancel();
@@ -2423,7 +2825,7 @@ function App() {
                   <div>
                     <p className="text-orange-400 font-bold text-sm mb-2">⚠️ {lang === 'TR' ? 'Karşı taraf iptal teklif etti.' : 'Opponent proposed cancellation.'}</p>
                     <p className="text-[11px] text-slate-400 mb-3">
-                      {tradeState === 'LOCKED'
+                      {roomState === 'LOCKED'
                         ? (lang === 'TR' ? 'İşlem LOCKED aşamasında olduğu için herhangi bir kesinti yapılmayacaktır.' : 'Since trade is in LOCKED state, no fees will be deducted.')
                         : (lang === 'TR' ? 'Onaylarsanız standart protokol ücreti kesilecek ve kalan fonlar iade edilecektir.' : 'If you approve, standard protocol fee will be deducted and remaining funds returned.')}
                     </p>
@@ -2441,12 +2843,12 @@ function App() {
             )}
 
             {/* PII bölümü: taker şifreli banka bilgilerini görür, maker ödeme beklediğini bilir */}
-            {isTaker && tradeState !== 'RESOLVED' && (
+            {isTaker && roomState !== 'RESOLVED' && (
               <div className="border border-[#222] rounded-xl overflow-hidden mt-6 bg-[#0a0a0c] p-1">
                 <PIIDisplay tradeId={activeTrade?.id} lang={lang} getSafeTelegramUrl={getSafeTelegramUrl} />
               </div>
             )}
-            {isMaker && tradeState !== 'RESOLVED' && (
+            {isMaker && roomState !== 'RESOLVED' && (
               <div className="bg-[#0a0a0c] p-6 rounded-xl border border-[#222] text-center mt-6">
                 <div className="text-3xl mb-2">🏦</div>
                 <p className="text-slate-300 font-medium text-sm">{lang === 'TR' ? 'Banka hesabınıza ödeme bekleniyor.' : 'Waiting for fiat payment.'}</p>
@@ -2455,7 +2857,7 @@ function App() {
             )}
 
             {/* burnExpired butonu — CHALLENGED ve 10 günü geçmiş işlemler için */}
-            {activeTrade?.onchainId && tradeState === 'CHALLENGED' && (() => {
+            {activeTrade?.onchainId && roomState === 'CHALLENGED' && (() => {
               const burnDate = activeTrade.challengedAt;
               if (!burnDate) return null;
               const isExpired = new Date().getTime() - new Date(burnDate).getTime() > 10 * 24 * 3600 * 1000;
@@ -2468,6 +2870,11 @@ function App() {
                   <p className="text-slate-500 text-[11px] mb-3">
                     {lang === 'TR' ? 'Uyarı: Sözleşme yakıldığında içerideki kilitli tüm USDT ve her iki tarafın teminatları kalıcı olarak Protokol Hazinesine aktarılır. İade yapılmaz.' : 'Warning: When burned, all locked USDT and bonds from both parties are permanently transferred to the Treasury. No refunds.'}
                   </p>
+                  <p className="text-[11px] text-orange-300 mb-3">
+                    {lang === 'TR'
+                      ? 'Not: burnExpired fonksiyonu kontratta herkese açıktır; 10 gün dolduktan sonra üçüncü kişiler de bu çağrıyı yapabilir.'
+                      : 'Note: burnExpired is permissionless on-chain; after 10 days, third parties can also execute it.'}
+                  </p>
                   <button
                     onClick={async () => {
                       if (isContractLoading) return;
@@ -2476,6 +2883,9 @@ function App() {
                         showToast(lang === 'TR' ? 'Yakma işlemi gönderiliyor... Cüzdanınızdan onaylayın.' : 'Burn transaction sent... Confirm in wallet.', 'info');
                         await burnExpired(BigInt(activeTrade.onchainId));
                         setTradeState('RESOLVED');
+                        setActiveTrade(null);
+                        setCancelStatus(null);
+                        setChargebackAccepted(false);
                         setCurrentView('home');
                         showToast(lang === 'TR' ? '🔥 İşlem yakıldı. Maker bond protokole aktarıldı.' : '🔥 Trade burned. Maker bond transferred to protocol.', 'success');
                       } catch (err) {
@@ -2513,6 +2923,24 @@ function App() {
         {isConnected && isAuthenticated ? '👤' : '👛'}
       </button>
     </div>
+  );
+
+  const renderFooter = () => (
+    <footer className="w-full max-w-[1200px] px-4 md:px-8 pb-24 md:pb-8 mt-2">
+      <div className="border border-[#222] bg-[#0d0d10] rounded-2xl px-4 py-4 md:px-6 md:py-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold text-white">Araf © 2026</p>
+          <p className="text-xs text-slate-500">
+            {lang === 'TR' ? 'Hakem değil, oyun teorisi. Karar mercii kontrat.' : 'No arbitrator, only game theory. Final authority is the contract.'}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <a href={socialLinks.github} target="_blank" rel="noreferrer" className="px-3 py-2 rounded-xl bg-[#151518] border border-[#2a2a2e] text-xs font-semibold text-slate-200 hover:text-white hover:border-slate-500 transition">GitHub</a>
+          <a href={socialLinks.twitter} target="_blank" rel="noreferrer" className="px-3 py-2 rounded-xl bg-[#151518] border border-[#2a2a2e] text-xs font-semibold text-slate-200 hover:text-white hover:border-slate-500 transition">Twitter</a>
+          <a href={socialLinks.farcaster} target="_blank" rel="noreferrer" className="px-3 py-2 rounded-xl bg-[#151518] border border-[#2a2a2e] text-xs font-semibold text-slate-200 hover:text-white hover:border-slate-500 transition">Farcaster</a>
+        </div>
+      </div>
+    </footer>
   );
 
   // [TR] Kullanım koşulları modalı — ilk bağlantıda bir kez gösterilir, localStorage'a kaydedilir
@@ -2565,6 +2993,15 @@ function App() {
           <button onClick={handleRegisterWallet} disabled={isRegisteringWallet} className="bg-orange-500 text-black px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-orange-400 disabled:opacity-50 transition">{isRegisteringWallet ? '⏳' : '📝 Kaydet'}</button>
         </div>
       )}
+      {isConnected && isWalletRegistered === true && sybilStatus && sybilStatus.aged === false && (
+        <div className="absolute top-0 left-0 right-0 z-[59] bg-orange-900/80 backdrop-blur border-b border-orange-700 px-6 py-2 flex justify-center items-center shadow-xl">
+          <span className="text-xs font-bold text-orange-100">
+            ⏳ {lang === 'TR'
+              ? `Cüzdan kayıtlı ancak 7 günlük yaş şartı henüz dolmadı. Kalan süre: ~${walletAgeRemainingDays ?? '?'} gün.`
+              : `Wallet is registered but the 7-day age requirement is not met yet. Remaining: ~${walletAgeRemainingDays ?? '?'} day(s).`}
+          </span>
+        </div>
+      )}
 
       {renderSlimRail()}
       {renderContextSidebar()}
@@ -2573,6 +3010,7 @@ function App() {
       <div className="flex-1 overflow-y-auto relative bg-[#060608]">
         <div className="min-h-full flex flex-col pt-4 md:pt-10 pb-24 md:pb-10 items-center">
           {currentView === 'home' ? renderHome() : currentView === 'market' ? renderMarket() : renderTradeRoom()}
+          {renderFooter()}
         </div>
       </div>
 
@@ -2585,9 +3023,10 @@ function App() {
       <button
         onClick={() => setShowFeedbackModal(true)}
         title={lang === 'TR' ? 'Geri Bildirim' : 'Feedback'}
-        className="fixed bottom-20 md:bottom-6 left-6 z-40 w-12 h-12 bg-[#111113] hover:bg-[#1a1a1f] border border-[#222] rounded-full flex items-center justify-center text-xl shadow-[0_0_15px_rgba(0,0,0,0.5)] transition-transform hover:scale-105 hover:border-slate-600"
+        className="fixed top-5 right-5 md:top-6 md:right-6 z-40 h-11 px-4 bg-[#111113] hover:bg-[#1a1a1f] border border-[#222] rounded-2xl flex items-center justify-center gap-2 text-sm font-semibold text-white shadow-[0_0_15px_rgba(0,0,0,0.45)] transition-transform hover:scale-[1.02] hover:border-slate-600"
       >
-        💬
+        <span>💬</span>
+        <span>{lang === 'TR' ? 'Geri Bildirim' : 'Feedback'}</span>
       </button>
 
       {toast && (

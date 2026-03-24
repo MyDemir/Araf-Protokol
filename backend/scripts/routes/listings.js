@@ -189,6 +189,10 @@ router.post("/", requireAuth, listingsWriteLimiter, async (req, res, next) => {
         maker_bond_pct: bonds.maker,
         taker_bond_pct: bonds.taker,
       },
+      // [TR] Chain-first felsefe: ilan önce PENDING oluşturulur.
+      //      Event listener EscrowCreated yakaladığında OPEN'a çeker.
+      // [EN] Chain-first: listing starts as PENDING and becomes OPEN on EscrowCreated.
+      status:            "PENDING",
       token_address:     value.token_address,
       onchain_escrow_id: value.onchain_escrow_id || null,
     });
