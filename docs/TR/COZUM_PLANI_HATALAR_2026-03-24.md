@@ -205,3 +205,72 @@ Aşağıdaki kalemler `docs/BackLog.md` ile kod tabanı karşılaştırılarak *
 - Mainnet’te faucet bileşenini feature flag ile tamamen gizle.
 - Numeric saklama/format katmanında `Number` kullanımını azaltıp string/bigint standardına geçir.
 
+
+
+---
+
+## 9) Codex’te 4 Farklı Çıktıyı Nasıl Birleştireceğim?
+
+Aynı repo için 4 farklı Codex çıktısı aldıysan, **hepsini tek tek uygulamak yerine** aşağıdaki birleştirme metodunu kullan:
+
+### 9.1) Önce “master bulgu listesi” çıkar
+Her çıktıyı satır satır okuyup tek tabloda topla:
+- `Bulgu ID` (örn. `B-001`)
+- `Kaynak` (Sürüm-1/2/3/4)
+- `Kategori` (state, timing, decimal, backend, ops, test)
+- `Etkisi` (fon kaybı / yanlış UX / operasyon)
+- `Kanıt dosya` (kod yolu, fonksiyon adı)
+- `Önerilen fix`
+
+> Kural: Aynı konu farklı sürümlerde tekrar ediyorsa **tek bulgu** olarak tut, “Kaynak” kolonunda birden fazla sürüm yaz.
+
+### 9.2) Sonra tekilleştir (dedup)
+Aşağıdaki kalıba uyanları tek maddeye indir:
+- Aynı kök sebep (örn. hardcoded decimal)
+- Aynı etki (örn. yanlış amount hesabı)
+- Aynı çözüm yönü (örn. merkezi bigint helper)
+
+Çakışan önerilerde seçim kuralı:
+1. On-chain gerçeğe en yakın olan,
+2. Test edilebilir olan,
+3. En az yan etki üreten.
+
+### 9.3) P0/P1/P2’ye zorla eşle
+- **P0:** fon güvenliği, on-chain/UX yanlış işlem, kritik auth/race
+- **P1:** yüksek etki ama workaround’ı olan konular
+- **P2:** operasyonel iyileştirme / sertleştirme
+
+Bu sayede 4 rapor → 1 backlog olur.
+
+### 9.4) Çatışma çözüm matrisi (karar tablosu)
+Her çakışan öneriyi 1–5 puanla değerlendir:
+- Güvenlik etkisi (x3)
+- Doğruluk etkisi (x3)
+- Uygulama maliyeti (x1, ters puan)
+- Testlenebilirlik (x2)
+- Regresyon riski (x2, ters puan)
+
+**Toplam puanı yüksek olan öneri kazanır.**
+
+### 9.5) Uygulama sırası (tek sprint akışı)
+1. Dedup sonrası tek backlog oluştur.
+2. Sadece P0 maddeleri için task aç.
+3. Her task için “Definition of Done + test kanıtı” yaz.
+4. P0 bitmeden P1/P2’ye geçme.
+5. Sprint sonunda sadece bu dokümanı güncelle.
+
+### 9.6) Senin durumun için pratik kısa yol
+Bu repo özelinde 4 çıktıdan gelen önerileri şu 5 “epic” altında birleştir:
+1. **State Machine & UI Determinism**
+2. **Timing Guards (+24h sınırları)**
+3. **Decimal/Amount Standardizasyonu**
+4. **Backend/Auth/Listing Senkronu**
+5. **Ops/Runbook/Test Kanıtı**
+
+Eğer bir öneri bu 5 epikten hiçbirine girmiyorsa, çoğunlukla “nice-to-have”tir ve P2’ye atılmalıdır.
+
+### 9.7) Çıktı formatı (önerilen)
+Bu dosyada her bulgu satırı şu formatta tutulmalı:
+`[ID] [P0|P1|P2] [OPEN|IN_PROGRESS|DONE] - Problem - Karar verilen fix - Kanıt(link/commit/test)`
+
+Böylece farklı Codex sürümlerinden gelen tüm içerik tek bir karar mekanizmasında birleşir.
