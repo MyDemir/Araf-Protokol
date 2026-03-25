@@ -139,6 +139,9 @@ router.get(
     try {
       const { tradeId }  = req.params;
       const callerWallet = req.wallet;
+      if (!/^[a-fA-F0-9]{24}$/.test(tradeId)) {
+        return res.status(400).json({ error: "Geçersiz tradeId formatı." });
+      }
 
       const trade = await Trade.findById(tradeId)
         .select("maker_address status taker_address pii_snapshot").lean();
@@ -183,6 +186,10 @@ router.get(
       // BACK-05 Fix: Log'a şifresi çözülmüş veri yazılmıyor — sadece erişim kaydı
       logger.info(`[PII] Accessed: trade=${tradeId.slice(0, 8)}...`);
 
+      // [TR] Hassas veri yanıtlarında ara katman cache'lerini devre dışı bırak.
+      res.set("Cache-Control", "no-store, max-age=0");
+      res.set("Pragma", "no-cache");
+
       return res.json({
         bankOwner,
         iban,
@@ -192,7 +199,7 @@ router.get(
     } catch (err) {
       if (err.message?.includes("Unsupported state") || err.message?.includes("Invalid auth tag")) {
         logger.error(`[PII] Şifre çözme hatası: trade=${req.params.tradeId.slice(0, 8)}...`);
-        return res.status(500).json({ error: "Şifre çözme başarısız. Destek ekibiyle iletişime geçin." });
+        return res.status(500).json({ error: "Şifre çözme başarısız. Lütfen daha sonra tekrar deneyin." });
       }
       next(err);
     }

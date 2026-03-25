@@ -88,6 +88,10 @@ async function requireAuth(req, res, next) {
  */
 function requirePIIToken(req, res, next) {
   try {
+    if (!/^[a-fA-F0-9]{24}$/.test(req.params.tradeId || "")) {
+      return res.status(400).json({ error: "Geçersiz tradeId formatı." });
+    }
+
     const payload = _getPIITokenPayload(req);
 
     if (payload.type !== "pii") {
