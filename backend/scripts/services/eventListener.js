@@ -55,6 +55,8 @@ const logger             = require("../utils/logger");
 
 const CHECKPOINT_KEY             = "worker:last_block";
 const LAST_SAFE_BLOCK_KEY        = "worker:last_safe_block";
+const SAFE_CHECKPOINT_KEY        = "worker:last_safe_checkpoint";
+const LEGACY_CHECKPOINT_KEY      = CHECKPOINT_KEY;
 const DLQ_KEY                    = "worker:dlq";
 const RETRY_DELAY_MS             = 5_000;
 const MAX_RETRIES                = 3;
@@ -121,6 +123,13 @@ class EventWorker {
     this._state = "booting";
     this._reconnectPromise = null;
     this._listenersAttached = false;
+    this._lastSafeCheckpointBlock = 0;
+    this._lastSeenBlock = 0;
+    this._blockAcks = new Map();
+    this._unsafeBlocks = new Set();
+    this._replayInProgress = false;
+    this._retrySuccessCount = 0;
+    this._retryFailureCount = 0;
   }
 
   async start() {
@@ -187,7 +196,7 @@ class EventWorker {
     if (!this.contract) return;
 
     const redis      = getRedisClient();
-    const savedBlock = await redis.get(CHECKPOINT_KEY);
+    const savedBlock = await redis.get(SAFE_CHECKPOINT_KEY) ?? await redis.get(CHECKPOINT_KEY);
     const toBlock    = await this.provider.getBlockNumber();
     const fromBlock  = this._resolveReplayStartBlock(savedBlock, toBlock);
 
@@ -304,6 +313,60 @@ class EventWorker {
       // Geriye dönük uyumluluk: eski key de güncel kalsın
       await redis.set(CHECKPOINT_KEY, safeBlock);
       this._lastCheckpointBlock = blockNumber;
+      this._lastSeenBlock = blockNumber;
+    }
+  }
+
+  _getEventId(event) {
+    const txHash   = event?.transactionHash || "unknown_tx";
+    const logIndex = Number.isInteger(event?.logIndex) ? event.logIndex : -1;
+    return `${txHash}:${logIndex}`;
+  }
+
+  _trackLiveEventSeen(event) {
+    const blockNumber = Number(event?.blockNumber);
+    if (!Number.isInteger(blockNumber) || blockNumber < 0) return;
+    const eventId = this._getEventId(event);
+    const current = this._blockAcks.get(blockNumber) || { seen: new Set(), acked: new Set() };
+    current.seen.add(eventId);
+    this._blockAcks.set(blockNumber, current);
+    if (blockNumber > this._lastSeenBlock) this._lastSeenBlock = blockNumber;
+  }
+
+  _trackLiveEventAck(event) {
+    const blockNumber = Number(event?.blockNumber);
+    if (!Number.isInteger(blockNumber) || blockNumber < 0) return;
+    const eventId = this._getEventId(event);
+    const current = this._blockAcks.get(blockNumber) || { seen: new Set(), acked: new Set() };
+    current.acked.add(eventId);
+    this._blockAcks.set(blockNumber, current);
+  }
+
+  _markBlockUnsafe(blockNumber, eventId) {
+    this._unsafeBlocks.add(Number(blockNumber));
+    logger.warn(`[Worker] Unsafe block işaretlendi: block=${blockNumber} event=${eventId}`);
+  }
+
+  _getRetrySuccessRate() {
+    const total = this._retrySuccessCount + this._retryFailureCount;
+    if (total === 0) return 100;
+    return Number(((this._retrySuccessCount / total) * 100).toFixed(2));
+  }
+
+  async _advanceSafeCheckpointFromAcks(finalizedUpTo) {
+    let nextBlock = this._lastSafeCheckpointBlock + 1;
+    while (nextBlock <= finalizedUpTo) {
+      if (this._unsafeBlocks.has(nextBlock)) break;
+      const blockState = this._blockAcks.get(nextBlock);
+      // Event yoksa checkpoint'in ilerlemesi güvenlidir.
+      if (!blockState || blockState.seen.size === 0 || blockState.acked.size === blockState.seen.size) {
+        await this._updateSafeCheckpointIfHigher(nextBlock);
+        this._blockAcks.delete(nextBlock);
+        this._unsafeBlocks.delete(nextBlock);
+        nextBlock += 1;
+        continue;
+      }
+      break;
     }
   }
 
@@ -502,21 +565,40 @@ class EventWorker {
     let listing = await Listing.findOne({ onchain_escrow_id: tradeIdNum }).lean();
 
     if (!listing) {
-      // [TR] Chain-first geçiş: önce PENDING ilan aranır, yoksa OPEN fallback yapılır.
-      // [EN] Chain-first migration: prefer PENDING listing, fallback to OPEN.
-      listing = await Listing.findOne({
+      const baseFilter = {
         maker_address:      maker.toLowerCase(),
         onchain_escrow_id:  null,
-        status:             { $in: ["PENDING", "OPEN"] }, // DELETED/PAUSED dışlanır
-        // [TR] Token adresi eşleşmesi — sahte token koruması
+        "tier_rules.required_tier": Number(tier),
         ...(onchainToken ? { token_address: onchainToken } : {}),
-      }).sort({ _id: -1 }).lean();
+      };
+      const pendingCandidates = await Listing.find({ ...baseFilter, status: "PENDING" })
+        .sort({ created_at: -1, _id: -1 })
+        .limit(3)
+        .lean();
+      const openCandidates = pendingCandidates.length === 0
+        ? await Listing.find({ ...baseFilter, status: "OPEN" })
+          .sort({ created_at: -1, _id: -1 })
+          .limit(3)
+          .lean()
+        : [];
+      const candidates = pendingCandidates.length ? pendingCandidates : openCandidates;
 
-      if (listing) {
-        await Listing.updateOne(
-          { _id: listing._id },
+      if (candidates.length === 1) {
+        listing = candidates[0];
+        const linkResult = await Listing.updateOne(
+          { _id: listing._id, onchain_escrow_id: null },
           { $set: { onchain_escrow_id: tradeIdNum, status: "OPEN" } }
         );
+        if (!linkResult.modifiedCount) {
+          logger.warn(`[Worker] EscrowCreated: listing link race trade=#${tradeIdNum} listing=${listing._id}`);
+          await this._addToDLQ(event, "Listing link race — onchain_escrow_id atomik bağlanamadı.");
+          return;
+        }
+      } else if (candidates.length > 1) {
+        const candidateIds = candidates.map((c) => c._id.toString());
+        logger.warn(`[Worker] EscrowCreated ambiguity: trade=#${tradeIdNum} candidates=${candidateIds.join(",")}`);
+        await this._addToDLQ(event, `Ambiguous listing match: ${candidateIds.join(",")}`);
+        return;
       } else {
         // KRİT-08 Fix: Listing bulunamazsa hardcode fallback yok — DLQ'ya ekle
         logger.warn(`[Worker] EscrowCreated: Trade #${tradeId} için ilan bulunamadı — DLQ'ya alınıyor.`);
@@ -782,7 +864,7 @@ class EventWorker {
     const eventId = this._getEventId(event);
     const existing = await Trade.findOne({
       onchain_escrow_id: tradeIdNum,
-      "financials.decay_event_keys": eventId,
+      "financials.decay_tx_hashes": eventId,
     }).lean();
 
     if (existing) {
@@ -797,16 +879,21 @@ class EventWorker {
     if (!trade) return;
 
     const currentTotal = BigInt(trade.financials?.total_decayed || "0");
-    const nextTotal    = (currentTotal + BigInt(decayedAmount.toString())).toString();
+    const nextTotalBigInt = currentTotal + BigInt(decayedAmount.toString());
+    const nextTotal       = nextTotalBigInt.toString();
+    const nextTotalNum    = Number(trade.financials?.total_decayed_num || 0) + Number(decayedAmount);
 
     await Trade.findOneAndUpdate(
       { onchain_escrow_id: tradeIdNum },
       {
-        $set:      { "timers.last_decay_at": new Date() },
+        $set:      {
+          "timers.last_decay_at": new Date(),
+          "financials.total_decayed": nextTotal,
+          "financials.total_decayed_num": nextTotalNum,
+        },
         // [TR] Erimek miktarı String olarak biriktirilir — hassasiyet kaybı yok
-        $inc:      { "financials.total_decayed_num": Number(decayedAmount) }, // yaklaşık görüntüleme
-        $push:     { "financials.decay_event_keys": eventId }, // idempotency için
-        $addToSet: { "financials.decayed_amounts": decayedAmount.toString() },
+        $addToSet: { "financials.decay_tx_hashes": eventId }, // idempotency için
+        $push:     { "financials.decayed_amounts": decayedAmount.toString() },
       }
     );
   }
