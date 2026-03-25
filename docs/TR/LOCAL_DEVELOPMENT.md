@@ -302,7 +302,12 @@ fly secrets set \
   TREASURY_ADDRESS="<TREASURY_WALLET>" \
   RELAYER_PRIVATE_KEY="0x<relayer_private_key>" \
   SIWE_DOMAIN="araf-protocol-backend.fly.dev" \
-  ALLOWED_ORIGINS="[https://araf-protocol.vercel.app](https://araf-protocol.vercel.app)"
+  ALLOWED_ORIGINS="[https://araf-protocol.vercel.app](https://araf-protocol.vercel.app)" \
+  ARAF_DEPLOYMENT_BLOCK="<DEPLOY_BLOCK_NO>"
+
+# İlk kurulum: checkpoint seed et (genesis replay'i önler)
+# Not: Redis'te checkpoint zaten varsa bu adımı atlayın.
+redis-cli -u "$REDIS_URL" SET worker:last_block "$ARAF_DEPLOYMENT_BLOCK"
 
 # Deploy et
 fly deploy
