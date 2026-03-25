@@ -202,6 +202,8 @@ router.post("/propose-cancel", requireAuth, tradesLimiter, async (req, res, next
 });
 
 // ─── POST /api/trades/:id/chargeback-ack ─────────────────────────────────────
+// [TR] Bu endpoint yalnızca audit/log içindir. On-chain release akışına veto uygulamaz.
+//      Başarısızlığı kontrat çağrısını engelleyecek bir protocol gate olarak kullanılmamalıdır.
 
 /**
  * ORTA-12 Fix: Gerçek IP belirleme fonksiyonu.

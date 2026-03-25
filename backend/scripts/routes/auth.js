@@ -203,6 +203,12 @@ router.get("/me", requireAuth, (req, res) => {
  */
 router.put("/profile", requireAuth, authLimiter, async (req, res, next) => {
   try {
+    const normalizedBody = {
+      bankOwner: typeof req.body?.bankOwner === "string" ? req.body.bankOwner.trim().replace(/\s+/g, " ") : req.body?.bankOwner,
+      iban: typeof req.body?.iban === "string" ? req.body.iban.replace(/\s+/g, "").toUpperCase() : req.body?.iban,
+      telegram: typeof req.body?.telegram === "string" ? req.body.telegram.trim().replace(/^@+/, "") : req.body?.telegram,
+    };
+
     const schema = Joi.object({
       // ORTA-03 Fix: IBAN format ve uzunluk doğrulaması
       bankOwner: Joi.string()
@@ -225,7 +231,7 @@ router.put("/profile", requireAuth, authLimiter, async (req, res, next) => {
         .allow("").optional(),
     });
 
-    const { error, value } = schema.validate(req.body);
+    const { error, value } = schema.validate(normalizedBody);
     if (error) return res.status(400).json({ error: error.message });
 
     const encrypted = await encryptPII(value, req.wallet);
