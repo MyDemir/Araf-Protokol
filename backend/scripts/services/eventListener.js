@@ -53,10 +53,8 @@ const { Trade, Listing } = require("../models/Trade");
 const User               = require("../models/User");
 const logger             = require("../utils/logger");
 
-const CHECKPOINT_KEY             = "worker:last_block";
-const LAST_SAFE_BLOCK_KEY        = "worker:last_safe_block";
-const SAFE_CHECKPOINT_KEY        = "worker:last_safe_checkpoint";
-const LEGACY_CHECKPOINT_KEY      = CHECKPOINT_KEY;
+const CHECKPOINT_KEY             = "worker:last_block";      // legacy
+const LAST_SAFE_BLOCK_KEY        = "worker:last_safe_block"; // canonical safe checkpoint
 const DLQ_KEY                    = "worker:dlq";
 const RETRY_DELAY_MS             = 5_000;
 const MAX_RETRIES                = 3;
@@ -123,13 +121,12 @@ class EventWorker {
     this._state = "booting";
     this._reconnectPromise = null;
     this._listenersAttached = false;
-    this._lastSafeCheckpointBlock = 0;
-    this._lastSeenBlock = 0;
-    this._blockAcks = new Map();
-    this._unsafeBlocks = new Set();
-    this._replayInProgress = false;
     this._retrySuccessCount = 0;
     this._retryFailureCount = 0;
+    this._blockAcks = new Map();
+    this._lastSeenBlock = 0;
+    this._lastSafeCheckpointBlock = 0;
+    this._replayInProgress = false;
   }
 
   async start() {
@@ -196,7 +193,7 @@ class EventWorker {
     if (!this.contract) return;
 
     const redis      = getRedisClient();
-    const savedBlock = await redis.get(SAFE_CHECKPOINT_KEY) ?? await redis.get(CHECKPOINT_KEY);
+    const savedBlock = await redis.get(LAST_SAFE_BLOCK_KEY) ?? await redis.get(CHECKPOINT_KEY);
     const toBlock    = await this.provider.getBlockNumber();
     const fromBlock  = this._resolveReplayStartBlock(savedBlock, toBlock);
 
@@ -295,79 +292,17 @@ class EventWorker {
 
   async _updateSafeCheckpointIfHigher(blockNumber) {
     const redis   = getRedisClient();
-    const current = parseInt(await redis.get(SAFE_CHECKPOINT_KEY) || "0");
+    const current = parseInt(await redis.get(LAST_SAFE_BLOCK_KEY) || await redis.get(CHECKPOINT_KEY) || "0");
     if (blockNumber > current) {
-      await redis.set(SAFE_CHECKPOINT_KEY, blockNumber.toString());
-      // [TR] Geri uyumluluk için legacy anahtar da güncellenir
-      await redis.set(LEGACY_CHECKPOINT_KEY, blockNumber.toString());
+      await redis.set(LAST_SAFE_BLOCK_KEY, blockNumber.toString());
+      // [TR] Geri uyumluluk için legacy anahtar da güncellenir.
+      await redis.set(CHECKPOINT_KEY, blockNumber.toString());
       this._lastSafeCheckpointBlock = blockNumber;
     }
   }
 
   async _updateSeenBlockIfHigher(blockNumber) {
-    const redis   = getRedisClient();
-    const current = parseInt(await redis.get(LAST_SAFE_BLOCK_KEY) || await redis.get(CHECKPOINT_KEY) || "0");
-    if (blockNumber > current) {
-      const safeBlock = blockNumber.toString();
-      await redis.set(LAST_SAFE_BLOCK_KEY, safeBlock);
-      // Geriye dönük uyumluluk: eski key de güncel kalsın
-      await redis.set(CHECKPOINT_KEY, safeBlock);
-      this._lastCheckpointBlock = blockNumber;
-      this._lastSeenBlock = blockNumber;
-    }
-  }
-
-  _getEventId(event) {
-    const txHash   = event?.transactionHash || "unknown_tx";
-    const logIndex = Number.isInteger(event?.logIndex) ? event.logIndex : -1;
-    return `${txHash}:${logIndex}`;
-  }
-
-  _trackLiveEventSeen(event) {
-    const blockNumber = Number(event?.blockNumber);
-    if (!Number.isInteger(blockNumber) || blockNumber < 0) return;
-    const eventId = this._getEventId(event);
-    const current = this._blockAcks.get(blockNumber) || { seen: new Set(), acked: new Set() };
-    current.seen.add(eventId);
-    this._blockAcks.set(blockNumber, current);
     if (blockNumber > this._lastSeenBlock) this._lastSeenBlock = blockNumber;
-  }
-
-  _trackLiveEventAck(event) {
-    const blockNumber = Number(event?.blockNumber);
-    if (!Number.isInteger(blockNumber) || blockNumber < 0) return;
-    const eventId = this._getEventId(event);
-    const current = this._blockAcks.get(blockNumber) || { seen: new Set(), acked: new Set() };
-    current.acked.add(eventId);
-    this._blockAcks.set(blockNumber, current);
-  }
-
-  _markBlockUnsafe(blockNumber, eventId) {
-    this._unsafeBlocks.add(Number(blockNumber));
-    logger.warn(`[Worker] Unsafe block işaretlendi: block=${blockNumber} event=${eventId}`);
-  }
-
-  _getRetrySuccessRate() {
-    const total = this._retrySuccessCount + this._retryFailureCount;
-    if (total === 0) return 100;
-    return Number(((this._retrySuccessCount / total) * 100).toFixed(2));
-  }
-
-  async _advanceSafeCheckpointFromAcks(finalizedUpTo) {
-    let nextBlock = this._lastSafeCheckpointBlock + 1;
-    while (nextBlock <= finalizedUpTo) {
-      if (this._unsafeBlocks.has(nextBlock)) break;
-      const blockState = this._blockAcks.get(nextBlock);
-      // Event yoksa checkpoint'in ilerlemesi güvenlidir.
-      if (!blockState || blockState.seen.size === 0 || blockState.acked.size === blockState.seen.size) {
-        await this._updateSafeCheckpointIfHigher(nextBlock);
-        this._blockAcks.delete(nextBlock);
-        this._unsafeBlocks.delete(nextBlock);
-        nextBlock += 1;
-        continue;
-      }
-      break;
-    }
   }
 
 
@@ -400,6 +335,58 @@ class EventWorker {
 
     logger.info(`[Worker] Checkpoint bulunamadı. Başlangıç bloğu env'den alındı: ${configuredStart}`);
     return configuredStart;
+  }
+
+  _getEventId(event) {
+    const txHash = event?.transactionHash || "unknown_tx";
+    const logIndex = Number.isInteger(event?.logIndex) ? event.logIndex : -1;
+    return `${txHash}:${logIndex}`;
+  }
+
+  _trackLiveEventSeen(event) {
+    if (!event || !Number.isInteger(event.blockNumber)) return;
+    const eventId = this._getEventId(event);
+    const state = this._blockAcks.get(event.blockNumber) || { seen: new Set(), acked: new Set(), unsafe: false };
+    state.seen.add(eventId);
+    this._blockAcks.set(event.blockNumber, state);
+  }
+
+  _trackLiveEventAck(event) {
+    if (!event || !Number.isInteger(event.blockNumber)) return;
+    const eventId = this._getEventId(event);
+    const state = this._blockAcks.get(event.blockNumber) || { seen: new Set(), acked: new Set(), unsafe: false };
+    state.acked.add(eventId);
+    this._blockAcks.set(event.blockNumber, state);
+  }
+
+  _markBlockUnsafe(blockNumber) {
+    if (!Number.isInteger(blockNumber)) return;
+    const state = this._blockAcks.get(blockNumber) || { seen: new Set(), acked: new Set(), unsafe: false };
+    state.unsafe = true;
+    this._blockAcks.set(blockNumber, state);
+  }
+
+  async _advanceSafeCheckpointFromAcks(finalizedUpTo) {
+    if (!Number.isInteger(finalizedUpTo) || finalizedUpTo <= this._lastSafeCheckpointBlock) return;
+    let nextSafe = this._lastSafeCheckpointBlock;
+    for (let block = this._lastSafeCheckpointBlock + 1; block <= finalizedUpTo; block += 1) {
+      const state = this._blockAcks.get(block);
+      if (!state) break;
+      if (state.unsafe || state.acked.size < state.seen.size) break;
+      nextSafe = block;
+    }
+    if (nextSafe > this._lastSafeCheckpointBlock) {
+      await this._updateSafeCheckpointIfHigher(nextSafe);
+      for (const block of [...this._blockAcks.keys()]) {
+        if (block <= nextSafe) this._blockAcks.delete(block);
+      }
+    }
+  }
+
+  _getRetrySuccessRate() {
+    const total = this._retrySuccessCount + this._retryFailureCount;
+    if (total === 0) return 100;
+    return Math.round((this._retrySuccessCount / total) * 100);
   }
 
   /**
@@ -494,7 +481,9 @@ class EventWorker {
       logIndex:       event.logIndex ?? null,
       idempotencyKey: this._getEventId(event),
       blockNumber:    event.blockNumber,
-      args:           event.args?.map(a => a.toString()),
+      args:           Array.isArray(event.args)
+        ? event.args.map(a => a?.toString?.() ?? String(a))
+        : Object.values(event.args || {}).map(a => a?.toString?.() ?? String(a)),
       attempt:        0,
       next_retry_at:  nowIso,
       first_seen_at:  nowIso,
@@ -860,8 +849,9 @@ class EventWorker {
     const { tradeId, decayedAmount } = event.args;
     const tradeIdNum = Number(tradeId);
 
-    // [TR] Event bazlı idempotency: txHash + logIndex
-    const eventId = this._getEventId(event);
+    // [TR] Model canonical field: financials.decay_tx_hashes.
+    // [EN] Canonical idempotency key is tx hash (derived mirror only).
+    const eventId = event.transactionHash || this._getEventId(event);
     const existing = await Trade.findOne({
       onchain_escrow_id: tradeIdNum,
       "financials.decay_tx_hashes": eventId,
@@ -886,14 +876,10 @@ class EventWorker {
     await Trade.findOneAndUpdate(
       { onchain_escrow_id: tradeIdNum },
       {
-        $set:      {
-          "timers.last_decay_at": new Date(),
-          "financials.total_decayed": nextTotal,
-          "financials.total_decayed_num": nextTotalNum,
-        },
+        $set:      { "timers.last_decay_at": new Date(), "financials.total_decayed": nextTotal },
         // [TR] Erimek miktarı String olarak biriktirilir — hassasiyet kaybı yok
-        $addToSet: { "financials.decay_tx_hashes": eventId }, // idempotency için
-        $push:     { "financials.decayed_amounts": decayedAmount.toString() },
+        $inc:      { "financials.total_decayed_num": Number(decayedAmount) }, // yaklaşık görüntüleme
+        $addToSet: { "financials.decay_tx_hashes": eventId, "financials.decayed_amounts": decayedAmount.toString() },
       }
     );
   }

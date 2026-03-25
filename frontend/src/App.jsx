@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAccount, useConnect, useDisconnect, useSignMessage, useChainId, usePublicClient } from 'wagmi';
 import { SiweMessage } from 'siwe';
+import { formatUnits } from 'viem';
 import { useArafContract } from './hooks/useArafContract';
 import { useCountdown } from './hooks/useCountdown';
 import PIIDisplay from './components/PIIDisplay';
@@ -50,6 +51,32 @@ const StatChange = ({ value }) => {
   if (value == null) return null;
   const isPositive = value >= 0;
   return <span className={`text-[10px] ml-2 font-bold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>{isPositive ? '▲' : '▼'}{Math.abs(value).toFixed(1)}%</span>;
+};
+
+const DEFAULT_TOKEN_DECIMALS = 6;
+
+// [TR] Otoritatif raw base-unit değerini UI için normalize eder (display-only).
+// [EN] Normalizes authoritative raw base-unit values for UI display only.
+const formatTokenAmountFromRaw = (rawAmount, decimals = DEFAULT_TOKEN_DECIMALS, maxFractionDigits = 4) => {
+  try {
+    const normalized = formatUnits(BigInt(rawAmount ?? 0), decimals);
+    return Number(normalized).toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: maxFractionDigits,
+    });
+  } catch {
+    return '0';
+  }
+};
+
+// [TR] UI/analytics hesapları için Number cache; enforcement için kullanılmaz.
+// [EN] Number cache for UI/analytics math; never used for enforcement.
+const rawTokenToDisplayNumber = (rawAmount, decimals = DEFAULT_TOKEN_DECIMALS) => {
+  try {
+    return Number(formatUnits(BigInt(rawAmount ?? 0), decimals));
+  } catch {
+    return 0;
+  }
 };
 
 function App() {
@@ -215,6 +242,7 @@ function App() {
   // [EN] On-chain bond rates — maker/taker BPS values per tier
   const [onchainBondMap, setOnchainBondMap] = useState(null);
   const [takerFeeBps, setTakerFeeBps] = useState(10);
+  const [tokenDecimalsMap, setTokenDecimalsMap] = useState({ USDT: DEFAULT_TOKEN_DECIMALS, USDC: DEFAULT_TOKEN_DECIMALS });
 
   // [TR] CHALLENGED aşamasında teminat erime miktarları
   // [EN] Collateral decay amounts in CHALLENGED phase
@@ -254,6 +282,24 @@ function App() {
     };
     fetchFeeBps();
   }, [getTakerFeeBps]);
+
+  useEffect(() => {
+    const loadTokenDecimals = async () => {
+      try {
+        const [usdtDecimals, usdcDecimals] = await Promise.all([
+          SUPPORTED_TOKEN_ADDRESSES.USDT ? getTokenDecimals(SUPPORTED_TOKEN_ADDRESSES.USDT) : DEFAULT_TOKEN_DECIMALS,
+          SUPPORTED_TOKEN_ADDRESSES.USDC ? getTokenDecimals(SUPPORTED_TOKEN_ADDRESSES.USDC) : DEFAULT_TOKEN_DECIMALS,
+        ]);
+        setTokenDecimalsMap({
+          USDT: Number.isFinite(usdtDecimals) ? usdtDecimals : DEFAULT_TOKEN_DECIMALS,
+          USDC: Number.isFinite(usdcDecimals) ? usdcDecimals : DEFAULT_TOKEN_DECIMALS,
+        });
+      } catch {
+        setTokenDecimalsMap({ USDT: DEFAULT_TOKEN_DECIMALS, USDC: DEFAULT_TOKEN_DECIMALS });
+      }
+    };
+    if (getTokenDecimals) loadTokenDecimals();
+  }, [getTokenDecimals, SUPPORTED_TOKEN_ADDRESSES.USDT, SUPPORTED_TOKEN_ADDRESSES.USDC]);
 
   // [TR] CHALLENGED aşamasında bleeding escrow decay miktarlarını her 30 sn'de günceller
   // [EN] Updates bleeding escrow decay amounts every 30s during CHALLENGED phase
@@ -518,8 +564,10 @@ function App() {
       const data = await res.json();
       if (data.trades) {
         setActiveEscrows(data.trades.map(t => {
-          const cryptoAmt = t.financials?.crypto_amount || "0";
-          const cryptoAmtNum = Number(cryptoAmt);
+          const cryptoAmtRaw = t.financials?.crypto_amount || "0";
+          const cryptoAsset = t.financials?.crypto_asset || 'USDT';
+          const tokenDecimals = tokenDecimalsMap[cryptoAsset] ?? DEFAULT_TOKEN_DECIMALS;
+          const cryptoAmtNum = rawTokenToDisplayNumber(cryptoAmtRaw, tokenDecimals);
           const rate = t.financials?.exchange_rate || 1;
           const fiatAmt = cryptoAmtNum * rate;
           return {
@@ -537,7 +585,7 @@ function App() {
             challengePingedAt: t.timers?.challenge_pinged_at,
             challengedAt: t.timers?.challenged_at,
             onchainId: t.onchain_escrow_id,
-            amount: `${cryptoAmt} ${t.financials?.crypto_asset || 'USDT'}`,
+            amount: `${formatTokenAmountFromRaw(cryptoAmtRaw, tokenDecimals)} ${cryptoAsset}`,
             action: t.status === 'PAID'
               ? (lang === 'TR' ? 'Onay Bekliyor' : 'Pending Approval')
               : (lang === 'TR' ? 'İşlemde' : 'In Progress'),
@@ -547,11 +595,17 @@ function App() {
               maker: formatAddress(t.maker_address),
               makerFull: t.maker_address,
               takerFull: t.taker_address,
-              crypto: t.financials?.crypto_asset || 'USDT',
+              crypto: cryptoAsset,
+              // [TR] Otoritatif değer: base-unit string.
+              // [EN] Authoritative value: base-unit string.
+              cryptoAmountRaw: cryptoAmtRaw,
+              // [TR] UI-normalize display cache (non-authoritative).
+              // [EN] UI-normalized display cache (non-authoritative).
+              cryptoAmountUi: cryptoAmtNum,
               fiat: t.financials?.fiat_currency || 'TRY',
               rate,
               max: fiatAmt,
-              cryptoAmount: cryptoAmtNum,
+              tokenDecimals,
               paidAt: t.timers?.paid_at,
               lockedAt: t.timers?.locked_at,
               pingedAt: t.timers?.pinged_at,
@@ -590,7 +644,7 @@ function App() {
     } catch (err) {
       console.error('Trades fetch error:', err);
     }
-  }, [isAuthenticated, isConnected, address, lang, authenticatedFetch]);
+  }, [isAuthenticated, isConnected, address, lang, authenticatedFetch, tokenDecimalsMap]);
 
   // [TR] cancelStatus'u activeEscrows'dan reaktif olarak hesaplar
   // [EN] Reactively derives cancelStatus from activeEscrows
@@ -2210,11 +2264,13 @@ function App() {
                     const statusMap = { RESOLVED: { text: lang === 'TR' ? 'Tamamlandı' : 'Resolved', color: 'emerald' }, CANCELED: { text: lang === 'TR' ? 'İptal Edildi' : 'Canceled', color: 'slate' }, BURNED: { text: lang === 'TR' ? 'Yakıldı' : 'Burned', color: 'red' } };
                     const displayStatus = statusMap[tx.status] || { text: tx.status, color: 'slate' };
                     const isMaker = tx.maker_address === address?.toLowerCase();
+                    const historyAsset = tx.financials?.crypto_asset || 'USDT';
+                    const historyDecimals = tokenDecimalsMap[historyAsset] ?? DEFAULT_TOKEN_DECIMALS;
                     return (
                       <div key={tx._id} className="bg-[#151518] border border-[#2a2a2e] rounded-xl p-3 flex justify-between items-center">
                         <div>
                           <p className="font-mono text-[10px] text-slate-500">#{tx.onchain_escrow_id}</p>
-                          <p className="text-white font-medium mt-0.5 text-xs"><span className={`mr-1 ${isMaker ? 'text-red-400' : 'text-emerald-400'}`}>{isMaker ? '→' : '←'}</span> {tx.financials.crypto_amount} {tx.financials.crypto_asset}</p>
+                          <p className="text-white font-medium mt-0.5 text-xs"><span className={`mr-1 ${isMaker ? 'text-red-400' : 'text-emerald-400'}`}>{isMaker ? '→' : '←'}</span> {formatTokenAmountFromRaw(tx.financials?.crypto_amount || '0', historyDecimals)} {historyAsset}</p>
                         </div>
                         <span className={`text-[10px] px-2 py-1 rounded font-bold text-${displayStatus.color}-400`}>{displayStatus.text}</span>
                       </div>
@@ -2583,8 +2639,9 @@ function App() {
     const isTaker = userRole === 'taker';
     const isMaker = userRole === 'maker';
 
-    const rawCryptoAmt = (typeof activeTrade?.cryptoAmount === 'number' && !Number.isNaN(activeTrade.cryptoAmount))
-      ? activeTrade.cryptoAmount
+    const tradeTokenDecimals = activeTrade?.tokenDecimals ?? (tokenDecimalsMap[activeTrade?.crypto || 'USDT'] ?? DEFAULT_TOKEN_DECIMALS);
+    const rawCryptoAmt = activeTrade?.cryptoAmountRaw
+      ? rawTokenToDisplayNumber(activeTrade.cryptoAmountRaw, tradeTokenDecimals)
       : ((activeTrade?.max || 0) / (activeTrade?.rate || 1));
     const protocolFee  = rawCryptoAmt * ((takerFeeBps || 10) / 10000);
     const netAmount    = rawCryptoAmt - protocolFee;
@@ -2626,7 +2683,7 @@ function App() {
                 const oppBondOrig  = opponentBond !== null ? Math.max(opponentBond, 1)  : 1;
                 const myPct        = myBond       !== null ? Math.round((myBond       / myBondOrig)  * 100) : 40;
                 const opponentPct  = opponentBond !== null ? Math.round((opponentBond / oppBondOrig)  * 100) : 35;
-                const decayedTotal = bleedingAmounts ? Number(bleedingAmounts.totalDecayed) : 0;
+                const decayedTotal = bleedingAmounts ? (bleedingAmounts.totalDecayed ?? 0n) : 0n;
                 return (
                   <>
                     <div className="w-full h-3 bg-[#111] rounded-full flex relative border border-[#222]">
@@ -2646,7 +2703,7 @@ function App() {
                         <span className="text-orange-500/50 text-[10px] font-mono">{bleedingTimer.isFinished ? '00:00:00' : `${String(bleedingTimer.hours).padStart(2,'0')}:${String(bleedingTimer.minutes).padStart(2,'0')}:${String(bleedingTimer.seconds).padStart(2,'0')}`}</span>
                       </div>
                       <div className="text-center w-full">
-                        <p className="text-red-400 font-bold text-sm drop-shadow-[0_0_5px_red]">{lang === 'TR' ? 'Yanan Toplam:' : 'Total Burned:'} {(decayedTotal / 1e6).toFixed(4)} USDT 🔥</p>
+                        <p className="text-red-400 font-bold text-sm drop-shadow-[0_0_5px_red]">{lang === 'TR' ? 'Yanan Toplam:' : 'Total Burned:'} {formatTokenAmountFromRaw(decayedTotal, tradeTokenDecimals)} {asset} 🔥</p>
                       </div>
                     </div>
                   </>

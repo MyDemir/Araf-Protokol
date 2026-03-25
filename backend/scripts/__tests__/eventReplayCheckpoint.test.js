@@ -3,6 +3,7 @@
 const mockRedis = {
   get: jest.fn(),
   set: jest.fn(),
+  rPush: jest.fn(),
 };
 
 jest.mock("../config/redis", () => ({
@@ -14,6 +15,9 @@ const worker = require("../services/eventListener");
 describe("event replay/checkpoint stabilization", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    worker._blockAcks = new Map();
+    worker._lastSafeCheckpointBlock = 0;
+    worker._lastSeenBlock = 0;
     worker.contract = {
       queryFilter: jest.fn().mockResolvedValue([]),
       on: jest.fn(),
@@ -35,7 +39,8 @@ describe("event replay/checkpoint stabilization", () => {
     expect(worker.contract.queryFilter).toHaveBeenCalled();
   });
 
-  test("block listener never writes unsafe full-head checkpoint", async () => {
+  test("block listener does not advance checkpoint automatically", async () => {
+    worker._lastSafeCheckpointBlock = 1990;
     const updateSpy = jest.spyOn(worker, "_updateSafeCheckpointIfHigher").mockResolvedValue();
 
     worker._attachLiveListeners();
@@ -45,5 +50,22 @@ describe("event replay/checkpoint stabilization", () => {
     expect(updateSpy).toHaveBeenCalled();
     expect(updateSpy).not.toHaveBeenCalledWith(2000);
     updateSpy.mockRestore();
+  });
+
+  test("does not advance safe checkpoint on partially failed replay batch", async () => {
+    mockRedis.get.mockResolvedValueOnce("1490");
+    worker.provider.getBlockNumber.mockResolvedValue(1491);
+    worker.contract.queryFilter.mockResolvedValueOnce([{
+      eventName: "EscrowCreated",
+      transactionHash: "0xtx",
+      logIndex: 0,
+      blockNumber: 1491,
+      args: ["1", "0xabc", "0xtoken", "1", "0"],
+    }]);
+    jest.spyOn(worker, "_processEvent").mockRejectedValue(new Error("boom"));
+
+    await worker._replayMissedEvents();
+
+    expect(mockRedis.set).not.toHaveBeenCalledWith("worker:last_safe_block", expect.any(String));
   });
 });
