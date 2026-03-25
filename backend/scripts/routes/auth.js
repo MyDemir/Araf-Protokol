@@ -9,6 +9,7 @@ const { requireAuth }                        = require("../middleware/auth");
 const {
   generateNonce,
   verifySiweSignature,
+  getSiweConfig,
   issueJWT,
   issueRefreshToken,
   rotateRefreshToken,
@@ -74,11 +75,15 @@ router.get("/nonce", authLimiter, async (req, res, next) => {
     if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet)) {
       return res.status(400).json({ error: "Geçerli bir Ethereum adresi gir." });
     }
-    const nonce      = await generateNonce(wallet.toLowerCase());
-    const siweDomain = process.env.SIWE_DOMAIN || "localhost";
-    const siweUri    = process.env.SIWE_URI || `https://${siweDomain}`;
+    const nonce = await generateNonce(wallet.toLowerCase());
+    const { domain: siweDomain, uri: siweUri } = getSiweConfig();
     return res.json({ nonce, siweDomain, siweUri });
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (/SIWE_/.test(err.message)) {
+      return res.status(503).json({ error: err.message });
+    }
+    next(err);
+  }
 });
 
 /**

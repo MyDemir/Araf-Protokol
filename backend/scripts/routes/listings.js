@@ -149,18 +149,8 @@ router.post("/", requireAuth, listingsWriteLimiter, async (req, res, next) => {
       return res.status(400).json({ error: "limits.max, limits.min'den büyük olmalı." });
     }
 
-    // [TR] Tier başına kripto limiti backend'de de kontrol ediliyor
-    const TIER_MAX_CRYPTO = { 0: 150, 1: 1500, 2: 7500, 3: 30000 };
-    const tierMax = TIER_MAX_CRYPTO[value.tier];
-    if (tierMax !== undefined) {
-      const cryptoEquivalent = value.limits.max / value.exchange_rate;
-      if (cryptoEquivalent > tierMax) {
-        return res.status(400).json({
-          error: `Tier ${value.tier} için maksimum kripto limiti ${tierMax} USDT/USDC. ` +
-                 `Hesaplanan: ${cryptoEquivalent.toFixed(2)}`,
-        });
-      }
-    }
+    // [TR] Tier başına nihai tutar kontrolü sadece kontratta authoritative olarak uygulanır.
+    // [EN] Tier max-amount enforcement is authoritative on-chain only.
 
     // BACK-02 Fix: Tier doğrulaması — null = RPC hatası → ret
     const effectiveTier = await _getOnChainEffectiveTier(req.wallet);

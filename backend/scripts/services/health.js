@@ -31,9 +31,23 @@ async function getReadiness({ worker, provider } = {}) {
     "SIWE_DOMAIN",
   ];
   if (isProduction) {
-    requiredConfig.push("ARAF_ESCROW_ADDRESS", "BASE_RPC_URL");
+    requiredConfig.push("SIWE_URI", "ARAF_ESCROW_ADDRESS", "BASE_RPC_URL");
   }
   const missingConfig = requiredConfig.filter((key) => !process.env[key]);
+
+  if (isProduction && process.env.SIWE_DOMAIN && process.env.SIWE_URI) {
+    try {
+      const siweUri = new URL(process.env.SIWE_URI);
+      if (siweUri.protocol !== "https:") {
+        missingConfig.push("SIWE_URI_MUST_BE_HTTPS");
+      }
+      if (siweUri.host !== process.env.SIWE_DOMAIN) {
+        missingConfig.push("SIWE_URI_HOST_MUST_MATCH_SIWE_DOMAIN");
+      }
+    } catch {
+      missingConfig.push("SIWE_URI_INVALID");
+    }
+  }
 
   let replayBootstrapReady = true;
   if (isProduction) {

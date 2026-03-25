@@ -21,6 +21,7 @@ describe("health/readiness service", () => {
     delete process.env.WORKER_START_BLOCK;
     process.env.JWT_SECRET = "a".repeat(70) + "XYZ123!";
     process.env.SIWE_DOMAIN = "app.araf.io";
+    process.env.SIWE_URI = "https://app.araf.io";
     delete process.env.BASE_WS_RPC_URL;
     getRedisClient.mockReturnValue({ get: jest.fn().mockResolvedValue(null) });
   });
@@ -38,6 +39,7 @@ describe("health/readiness service", () => {
 
   test("returns  missing config and failed checks", async () => {
     delete process.env.SIWE_DOMAIN;
+    delete process.env.SIWE_URI;
     delete process.env.BASE_RPC_URL;
     delete process.env.ARAF_DEPLOYMENT_BLOCK;
     mongoose.connection.readyState = 0;
@@ -48,6 +50,7 @@ describe("health/readiness service", () => {
     expect(readiness.checks.mongo).toBe(false);
     expect(readiness.checks.redis).toBe(false);
     expect(readiness.missingConfig).toContain("SIWE_DOMAIN");
+    expect(readiness.missingConfig).toContain("SIWE_URI");
     expect(readiness.missingConfig).toContain("BASE_RPC_URL");
     expect(readiness.missingConfig).toContain("ARAF_DEPLOYMENT_BLOCK_OR_WORKER_START_BLOCK_OR_CHECKPOINT");
   });
@@ -66,5 +69,17 @@ describe("health/readiness service", () => {
     expect(readiness.ok).toBe(true);
     expect(readiness.checks.replayBootstrap).toBe(true);
     expect(readiness.missingConfig).not.toContain("BASE_RPC_URL");
+  });
+
+  test("fails readiness when SIWE URI host mismatches SIWE domain in production", async () => {
+    process.env.SIWE_DOMAIN = "app.araf.io";
+    process.env.SIWE_URI = "https://evil.example";
+    mongoose.connection.readyState = 1;
+    isReady.mockReturnValue(true);
+    const provider = { getBlockNumber: jest.fn().mockResolvedValue(456) };
+
+    const readiness = await getReadiness({ worker: { isRunning: true, provider }, provider });
+    expect(readiness.ok).toBe(false);
+    expect(readiness.missingConfig).toContain("SIWE_URI_HOST_MUST_MATCH_SIWE_DOMAIN");
   });
 });

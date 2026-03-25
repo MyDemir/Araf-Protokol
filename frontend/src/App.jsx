@@ -936,8 +936,11 @@ function App() {
         throw new Error('Nonce alınamadı');
       }
       const { nonce, siweDomain, siweUri } = await nonceRes.json();
-      const resolvedSiweUri = siweUri || window.location.origin;
-      const resolvedSiweDomain = siweDomain || new URL(resolvedSiweUri).host;
+      if (!siweDomain || !siweUri) {
+        throw new Error('Backend SIWE konfigürasyonu eksik');
+      }
+      const resolvedSiweUri = siweUri;
+      const resolvedSiweDomain = siweDomain;
 
       const siweMessage = new SiweMessage({
         domain:    resolvedSiweDomain,

@@ -53,6 +53,39 @@ const REFRESH_TOKEN_PREFIX   = "refresh:";
 const REFRESH_FAMILY_PREFIX  = "family:";
 const JWT_BLACKLIST_PREFIX   = "blacklist:jti:";
 
+function getSiweConfig() {
+  const domainRaw = process.env.SIWE_DOMAIN;
+  const uriRaw    = process.env.SIWE_URI;
+  const isProduction = process.env.NODE_ENV === "production";
+
+  if (isProduction) {
+    if (!domainRaw) throw new Error("SIWE_DOMAIN production ortamında zorunludur.");
+    if (!uriRaw)    throw new Error("SIWE_URI production ortamında zorunludur.");
+
+    if (domainRaw === "localhost") {
+      throw new Error("SIWE_DOMAIN production'da localhost olamaz.");
+    }
+
+    let parsedUri;
+    try {
+      parsedUri = new URL(uriRaw);
+    } catch {
+      throw new Error("SIWE_URI geçerli bir URL olmalıdır.");
+    }
+
+    if (parsedUri.protocol !== "https:") {
+      throw new Error("SIWE_URI production'da https olmalıdır.");
+    }
+    if (parsedUri.host !== domainRaw) {
+      throw new Error(`SIWE config uyuşmazlığı: SIWE_URI host=${parsedUri.host}, SIWE_DOMAIN=${domainRaw}`);
+    }
+  }
+
+  const domain = domainRaw || "localhost";
+  const uri    = uriRaw || `https://${domain}`;
+  return { domain, uri };
+}
+
 // ── SEC-02: JWT_SECRET Entropy Doğrulaması ────────────────────────────────────
 function _shannonEntropy(str) {
   const freq = {};
@@ -128,8 +161,7 @@ async function consumeNonce(walletAddress) {
  */
 async function verifySiweSignature(messageStr, signature) {
   const message        = new SiweMessage(messageStr);
-  const expectedDomain = process.env.SIWE_DOMAIN || "localhost";
-  const expectedUri    = process.env.SIWE_URI    || `https://${expectedDomain}`;
+  const { domain: expectedDomain, uri: expectedUri } = getSiweConfig();
 
   // [TR] Domain kontrolü
   if (message.domain !== expectedDomain) {
@@ -350,6 +382,7 @@ async function revokeRefreshToken(walletAddress) {
 }
 
 module.exports = {
+  getSiweConfig,
   generateNonce,
   consumeNonce,
   verifySiweSignature,

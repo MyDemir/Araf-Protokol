@@ -5,6 +5,7 @@ const request = require("supertest");
 
 const mockSiwe = {
   generateNonce: jest.fn(),
+  getSiweConfig: jest.fn(),
   verifySiweSignature: jest.fn(),
   issueJWT: jest.fn(),
   issueRefreshToken: jest.fn(),
@@ -43,6 +44,10 @@ describe("auth nonce + verify happy path", () => {
     jest.clearAllMocks();
     process.env.SIWE_DOMAIN = "app.araf.io";
     process.env.SIWE_URI = "https://app.araf.io";
+    mockSiwe.getSiweConfig.mockReturnValue({
+      domain: "app.araf.io",
+      uri: "https://app.araf.io",
+    });
   });
 
   function buildApp() {
@@ -89,5 +94,20 @@ describe("auth nonce + verify happy path", () => {
     expect(res.status).toBe(200);
     expect(res.body.wallet).toBe("0x1111111111111111111111111111111111111111");
     expect(mockSiwe.verifySiweSignature).toHaveBeenCalledTimes(1);
+  });
+
+  test("nonce endpoint fails closed when SIWE config is invalid", async () => {
+    mockSiwe.generateNonce.mockResolvedValue("nonce-1");
+    mockSiwe.getSiweConfig.mockImplementation(() => {
+      throw new Error("SIWE_URI production ortamında zorunludur.");
+    });
+    const app = buildApp();
+
+    const res = await request(app).get("/api/auth/nonce").query({
+      wallet: "0x1111111111111111111111111111111111111111",
+    });
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/SIWE_URI/);
   });
 });
