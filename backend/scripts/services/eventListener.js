@@ -54,6 +54,7 @@ const User               = require("../models/User");
 const logger             = require("../utils/logger");
 
 const CHECKPOINT_KEY             = "worker:last_block";
+const LAST_SAFE_BLOCK_KEY        = "worker:last_safe_block";
 const DLQ_KEY                    = "worker:dlq";
 const RETRY_DELAY_MS             = 5_000;
 const MAX_RETRIES                = 3;
@@ -102,6 +103,9 @@ class EventWorker {
     this.contract  = null;
     this.isRunning = false;
     this._lastCheckpointBlock = 0;
+    this._state = "booting";
+    this._reconnectPromise = null;
+    this._listenersAttached = false;
   }
 
   async start() {
@@ -118,7 +122,15 @@ class EventWorker {
     if (this.provider) {
       this.provider.removeAllListeners();
     }
+    this._listenersAttached = false;
+    this._setState("stopped", "worker stop çağrıldı");
     logger.info("[Worker] Event listener durduruldu.");
+  }
+
+  _setState(nextState, reason) {
+    if (this._state === nextState) return;
+    logger.info(`[Worker][StateMachine] ${this._state} -> ${nextState}${reason ? ` | ${reason}` : ""}`);
+    this._state = nextState;
   }
 
   async _connect() {
@@ -153,6 +165,7 @@ class EventWorker {
 
     this.contract = new ethers.Contract(contractAddress, ARAF_ABI, this.provider);
     logger.info(`[Worker] Kontrat izleniyor: ${contractAddress}`);
+    this._setState("connected", "provider + kontrat hazır");
   }
 
   async _replayMissedEvents() {
@@ -168,6 +181,7 @@ class EventWorker {
       return;
     }
 
+    this._setState("replaying", `replay aralığı: ${fromBlock}-${toBlock}`);
     logger.info(`[Worker] ${fromBlock} - ${toBlock} blok aralığı tekrar işleniyor...`);
 
     for (let from = fromBlock; from <= toBlock; from += BLOCK_BATCH_SIZE) {
@@ -208,12 +222,11 @@ class EventWorker {
       logger.debug(`[Worker] Replay: ${from}-${to} (${allEvents.length} event)`);
     }
 
-    this._lastCheckpointBlock = toBlock;
     logger.info("[Worker] Replay tamamlandı.");
   }
 
   _attachLiveListeners() {
-    if (!this.contract) return;
+    if (!this.contract || this._listenersAttached) return;
 
     for (const eventName of EVENT_NAMES) {
       this.contract.on(eventName, async (...args) => {
@@ -237,13 +250,19 @@ class EventWorker {
       logger.error(`[Worker] Provider hatası: ${err.message}. Yeniden bağlanılıyor...`);
       await this._reconnect();
     });
+
+    this._listenersAttached = true;
+    this._setState("live", "canlı listener'lar bağlandı");
   }
 
   async _updateCheckpointIfHigher(blockNumber) {
     const redis   = getRedisClient();
-    const current = parseInt(await redis.get(CHECKPOINT_KEY) || "0");
+    const current = parseInt(await redis.get(LAST_SAFE_BLOCK_KEY) || await redis.get(CHECKPOINT_KEY) || "0");
     if (blockNumber > current) {
-      await redis.set(CHECKPOINT_KEY, blockNumber.toString());
+      const safeBlock = blockNumber.toString();
+      await redis.set(LAST_SAFE_BLOCK_KEY, safeBlock);
+      // Geriye dönük uyumluluk: eski key de güncel kalsın
+      await redis.set(CHECKPOINT_KEY, safeBlock);
       this._lastCheckpointBlock = blockNumber;
     }
   }
@@ -286,24 +305,42 @@ class EventWorker {
    * Her reconnect'te zombi WebSocket birikiyordu → OOM.
    */
   async _reconnect() {
-    // [TR] Eski provider'ı tamamen temizle
-    if (this.provider) {
-      try {
-        this.provider.removeAllListeners();
-        if (this.provider.destroy) {
-          await this.provider.destroy();
-        }
-      } catch (err) {
-        logger.warn(`[Worker] Provider temizleme hatası: ${err.message}`);
-      }
-      this.provider = null;
-      this.contract = null;
+    if (this._reconnectPromise) {
+      logger.warn("[Worker] Reconnect zaten devam ediyor, mevcut işlem bekleniyor.");
+      return this._reconnectPromise;
     }
 
-    await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
-    await this._connect();
-    if (this.contract) {
-      this._attachLiveListeners();
+    this._reconnectPromise = (async () => {
+      this._setState("reconnecting", "provider error sonrası yeniden bağlanma");
+
+    // [TR] Eski provider'ı tamamen temizle
+      if (this.provider) {
+        try {
+          this.provider.removeAllListeners();
+          if (this.provider.destroy) {
+            await this.provider.destroy();
+          }
+        } catch (err) {
+          logger.warn(`[Worker] Provider temizleme hatası: ${err.message}`);
+        }
+        this.provider = null;
+        this.contract = null;
+        this._listenersAttached = false;
+      }
+
+      await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+      await this._connect();
+      // Reconnect sonrası replay zorunlu
+      await this._replayMissedEvents();
+      if (this.contract) {
+        this._attachLiveListeners();
+      }
+    })();
+
+    try {
+      await this._reconnectPromise;
+    } finally {
+      this._reconnectPromise = null;
     }
   }
 
