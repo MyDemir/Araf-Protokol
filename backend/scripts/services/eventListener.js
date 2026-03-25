@@ -211,10 +211,9 @@ class EventWorker {
         }
       }
 
-      // KRİT-10 Fix: Checkpoint sadece başarılıysa ilerliyor
-      // ÖNCEKİ: Her durumda ilerletiliyordu — event'ler sessizce kayboluyordu
+      // [TR] Replay sırasında yalnızca tamamen başarılı batch safe checkpoint'i ilerletir
       if (batchSuccess) {
-        await this._updateCheckpointIfHigher(to);
+        await this._updateSafeCheckpointIfHigher(to);
       } else {
         logger.warn(`[Worker] Batch ${from}-${to} kısmen başarısız — checkpoint ilerletilmedi.`);
       }
@@ -231,18 +230,33 @@ class EventWorker {
     for (const eventName of EVENT_NAMES) {
       this.contract.on(eventName, async (...args) => {
         const event = args[args.length - 1];
+        const eventId = this._getEventId(event);
+        this._trackLiveEventSeen(event);
         const success = await this._processEventWithRetry(event);
-        // KRİT-10 Fix: Sadece başarılı işlem sonrasında checkpoint ilerlet
         if (success) {
-          await this._updateCheckpointIfHigher(event.blockNumber);
+          this._trackLiveEventAck(event);
+          logger.debug(`[Worker][Metrics] retry_success_rate=${this._getRetrySuccessRate()}% event_id=${eventId}`);
+        } else {
+          this._markBlockUnsafe(event.blockNumber, eventId);
         }
       });
     }
 
-    // [TR] Periyodik checkpoint güncellemesi
+    // [TR] Block listener artık checkpoint'i doğrudan ilerletmez; yalnızca gözlem/metrik tutar.
     this.provider.on("block", async (blockNumber) => {
-      if (blockNumber - this._lastCheckpointBlock >= CHECKPOINT_INTERVAL_BLOCKS) {
-        await this._updateCheckpointIfHigher(blockNumber);
+      await this._updateSeenBlockIfHigher(blockNumber);
+      logger.debug(`[Worker][Metrics] queue_depth=${this._blockAcks.size} last_seen_block=${this._lastSeenBlock} last_safe_block=${this._lastSafeCheckpointBlock}`);
+
+      const finalizedUpTo = blockNumber - 1;
+      await this._advanceSafeCheckpointFromAcks(finalizedUpTo);
+
+      if (!this._replayInProgress && (blockNumber - this._lastSafeCheckpointBlock >= CHECKPOINT_INTERVAL_BLOCKS)) {
+        this._replayInProgress = true;
+        try {
+          await this._replayMissedEvents();
+        } finally {
+          this._replayInProgress = false;
+        }
       }
     });
 
@@ -255,7 +269,18 @@ class EventWorker {
     this._setState("live", "canlı listener'lar bağlandı");
   }
 
-  async _updateCheckpointIfHigher(blockNumber) {
+  async _updateSafeCheckpointIfHigher(blockNumber) {
+    const redis   = getRedisClient();
+    const current = parseInt(await redis.get(SAFE_CHECKPOINT_KEY) || "0");
+    if (blockNumber > current) {
+      await redis.set(SAFE_CHECKPOINT_KEY, blockNumber.toString());
+      // [TR] Geri uyumluluk için legacy anahtar da güncellenir
+      await redis.set(LEGACY_CHECKPOINT_KEY, blockNumber.toString());
+      this._lastSafeCheckpointBlock = blockNumber;
+    }
+  }
+
+  async _updateSeenBlockIfHigher(blockNumber) {
     const redis   = getRedisClient();
     const current = parseInt(await redis.get(LAST_SAFE_BLOCK_KEY) || await redis.get(CHECKPOINT_KEY) || "0");
     if (blockNumber > current) {
@@ -350,6 +375,7 @@ class EventWorker {
   async _processEventWithRetry(event, attempt = 1) {
     try {
       await this._processEvent(event);
+      this._retrySuccessCount += 1;
       return true;
     } catch (err) {
       logger.error(`[Worker] ${event.eventName} başarısız (deneme ${attempt}): ${err.message}`);
@@ -357,24 +383,64 @@ class EventWorker {
         await new Promise(r => setTimeout(r, RETRY_DELAY_MS * attempt));
         return this._processEventWithRetry(event, attempt + 1);
       }
+      this._retryFailureCount += 1;
       await this._addToDLQ(event, err.message);
       return false;
+    }
+  }
+
+
+  async _processEventWithRetryNoDLQ(event, attempt = 1) {
+    try {
+      await this._processEvent(event);
+      this._retrySuccessCount += 1;
+      return { success: true };
+    } catch (err) {
+      logger.error(`[Worker] Re-drive ${event.eventName} başarısız (deneme ${attempt}): ${err.message}`);
+      if (attempt < MAX_RETRIES) {
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS * attempt));
+        return this._processEventWithRetryNoDLQ(event, attempt + 1);
+      }
+      this._retryFailureCount += 1;
+      return { success: false, error: err.message };
     }
   }
 
   // [TR] rPush: Yeni entry'ler sona eklenir — dlqProcessor FIFO düzeni için
   async _addToDLQ(event, errorMsg) {
     const redis = getRedisClient();
+    const nowIso = new Date().toISOString();
     const entry = JSON.stringify({
-      eventName:   event.eventName,
-      txHash:      event.transactionHash,
-      blockNumber: event.blockNumber,
-      args:        event.args?.map(a => a.toString()),
-      error:       errorMsg,
-      timestamp:   new Date().toISOString(),
+      eventName:      event.eventName,
+      txHash:         event.transactionHash,
+      logIndex:       event.logIndex ?? null,
+      idempotencyKey: this._getEventId(event),
+      blockNumber:    event.blockNumber,
+      args:           event.args?.map(a => a.toString()),
+      attempt:        0,
+      next_retry_at:  nowIso,
+      first_seen_at:  nowIso,
+      last_error:     errorMsg,
     });
     await redis.rPush(DLQ_KEY, entry);
-    logger.error(`[Worker] Event DLQ'ya eklendi: ${event.eventName} tx=${event.transactionHash}`);
+    logger.error(`[Worker] Event DLQ'ya eklendi: ${event.eventName} key=${this._getEventId(event)} tx=${event.transactionHash}`);
+  }
+
+
+  async reDriveEvent(entry) {
+    const event = {
+      eventName: entry.eventName,
+      transactionHash: entry.txHash,
+      logIndex: entry.logIndex ?? -1,
+      blockNumber: entry.blockNumber,
+      args: entry.args || [],
+    };
+
+    const result = await this._processEventWithRetryNoDLQ(event);
+    if (!result.success) {
+      this._markBlockUnsafe(event.blockNumber, this._getEventId(event));
+    }
+    return result;
   }
 
   async _processEvent(event) {
@@ -692,15 +758,15 @@ class EventWorker {
     const { tradeId, decayedAmount } = event.args;
     const tradeIdNum = Number(tradeId);
 
-    // YÜKS-05 Fix: Idempotency — transactionHash ile tekrar işleme kontrolü
-    const txHash = event.transactionHash;
+    // [TR] Event bazlı idempotency: txHash + logIndex
+    const eventId = this._getEventId(event);
     const existing = await Trade.findOne({
       onchain_escrow_id: tradeIdNum,
-      "financials.decay_tx_hashes": txHash,
+      "financials.decay_event_keys": eventId,
     }).lean();
 
     if (existing) {
-      logger.debug(`[Worker] BleedingDecayed tekrar işleme atlandı: tx=${txHash}`);
+      logger.debug(`[Worker] BleedingDecayed tekrar işleme atlandı: key=${eventId}`);
       return;
     }
 
@@ -711,7 +777,7 @@ class EventWorker {
         $set:      { "timers.last_decay_at": new Date() },
         // [TR] Erimek miktarı String olarak biriktirilir — hassasiyet kaybı yok
         $inc:      { "financials.total_decayed_num": Number(decayedAmount) }, // yaklaşık görüntüleme
-        $push:     { "financials.decay_tx_hashes": txHash }, // idempotency için
+        $push:     { "financials.decay_event_keys": eventId }, // idempotency için
         $addToSet: { "financials.decayed_amounts": decayedAmount.toString() },
       }
     );

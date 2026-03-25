@@ -1,122 +1,166 @@
 "use strict";
 
 /**
- * DLQ Processor — Dead Letter Queue Monitor
+ * DLQ Processor — Dead Letter Queue Monitor + Re-drive Worker
  *
  * Başarısız event'ler eventListener tarafından Redis DLQ'ya rPush ile yazılır.
- * rPush: Yeni entry'ler listenin SONUNA eklenir.
- *   → index 0 = en eski event (ilk giren)
- *   → index -1 = en yeni event (son giren)
- *
- * KRİT-03 Fix: LIFO/FIFO Ters Mantık Düzeltildi.
- *   ÖNCEKİ: lRange(DLQ_KEY, -overflow, -1) kullanılıyordu.
- *     -overflow:-1 = listenin SONU = EN YENİ event'ler arşive gidiyordu!
- *     lTrim(DLQ_KEY, 0, MAX_DLQ_SIZE - 1) = BAŞTA kalan ESKİ/BOZUK event'ler
- *     sonsuza DLQ'da kalıyor, hiç retry edilmiyordu.
- *     Kritik yeni event'ler (EscrowReleased, EscrowBurned) yutuluyordu.
- *   ŞİMDİ: lRange(DLQ_KEY, 0, overflow - 1) = listenin BAŞI = EN ESKİ event'ler
- *     arşive taşınıyor. lTrim(DLQ_KEY, overflow, -1) = baştan kesiliyor.
- *     FIFO düzeni sağlandı: İlk giren, ilk işlenen.
- *
- * app.js tarafından setInterval(processDLQ, 60_000) ile çağrılır.
+ * Bu processor entry'leri yeniden sürer (re-drive), başarılı olanları siler,
+ * başarısızları exponential backoff ile kuyrukta tutar.
  */
 
 const { getRedisClient } = require("../config/redis");
+const eventWorker        = require("./eventListener");
 const logger             = require("../utils/logger");
 
-const DLQ_KEY           = "worker:dlq";
-const DLQ_ARCHIVE_KEY   = "worker:dlq:archive"; // İnceleme için arşiv (7 gün TTL)
-const ALERT_THRESHOLD   = 5;   // Bu sayının üzerinde entry varsa uyarı ver
-const MAX_DLQ_SIZE      = 100; // DLQ'da tutulan maksimum entry sayısı
-const ALERT_COOLDOWN_MS = 10 * 60 * 1000; // Alert cooldown: 10 dakika
+const DLQ_KEY              = "worker:dlq";
+const DLQ_ARCHIVE_KEY      = "worker:dlq:archive"; // İnceleme için arşiv (7 gün TTL)
+const ALERT_THRESHOLD      = 5;
+const MAX_DLQ_SIZE         = 100;
+const BATCH_SIZE           = 10;
+const MAX_REDRIVE_ATTEMPTS = 10;
+const BASE_BACKOFF_MS      = 30_000;
+const ALERT_COOLDOWN_MS    = 10 * 60 * 1000;
 
-// [TR] Son alert zamanı — cooldown için bellekte tutulur
 let _lastAlertTimestamp = 0;
+let _redriveSuccess     = 0;
+let _redriveFailure     = 0;
 
-/**
- * DLQ'yu kontrol eder, loglar, arşivler ve gerekirse kırpar.
- *
- * Akış:
- * 1. DLQ uzunluğunu kontrol et
- * 2. MAX_DLQ_SIZE'dan fazlaysa EN ESKİ entry'leri arşive taşı (FIFO — KRİT-03)
- * 3. Kuyruğun başındaki 10 entry'yi logla ve sil
- * 4. Eşik aşıldıysa ve cooldown geçtiyse uyarı ver
- */
+function getRetrySuccessRate() {
+  const total = _redriveSuccess + _redriveFailure;
+  if (!total) return 100;
+  return Math.round((_redriveSuccess / total) * 100);
+}
+
+function getBackoffMs(attempt) {
+  return Math.min(BASE_BACKOFF_MS * (2 ** Math.max(attempt - 1, 0)), 30 * 60 * 1000);
+}
+
+function parseEntry(raw) {
+  const entry = JSON.parse(raw);
+  return {
+    ...entry,
+    attempt: Number(entry.attempt || 0),
+    next_retry_at: entry.next_retry_at || new Date(0).toISOString(),
+    first_seen_at: entry.first_seen_at || new Date().toISOString(),
+  };
+}
+
+function isReady(entry, now) {
+  const dueAt = new Date(entry.next_retry_at).getTime();
+  if (Number.isNaN(dueAt)) return true;
+  return dueAt <= now;
+}
+
+function toRaw(entry) {
+  return JSON.stringify(entry);
+}
+
+async function archiveOverflow(redis, length) {
+  if (length <= MAX_DLQ_SIZE) return;
+
+  const overflow = length - MAX_DLQ_SIZE;
+  const oldEntries = await redis.lRange(DLQ_KEY, 0, overflow - 1);
+  if (oldEntries.length === 0) return;
+
+  const multi = redis.multi();
+  for (const entry of oldEntries) {
+    multi.lPush(DLQ_ARCHIVE_KEY, entry);
+  }
+  multi.lTrim(DLQ_ARCHIVE_KEY, 0, 999);
+  multi.expire(DLQ_ARCHIVE_KEY, 7 * 24 * 3600);
+  multi.lTrim(DLQ_KEY, overflow, -1);
+  await multi.exec();
+
+  logger.info(`[DLQ] ${oldEntries.length} eski entry arşive taşındı, DLQ ${MAX_DLQ_SIZE}'a kırpıldı.`);
+}
+
 async function processDLQ() {
   try {
     const redis  = getRedisClient();
-    const length = await redis.lLen(DLQ_KEY);
+    let length   = await redis.lLen(DLQ_KEY);
 
     if (length === 0) {
       logger.debug("[DLQ] Kuyruk temiz.");
       return;
     }
 
-    logger.warn(`[DLQ] ${length} işlenemeyen event bulundu.`);
+    await archiveOverflow(redis, length);
+    length = await redis.lLen(DLQ_KEY);
 
-    // KRİT-03 Fix: MAX_DLQ_SIZE aşıldığında EN ESKİ entry'leri arşive taşı
-    if (length > MAX_DLQ_SIZE) {
-      const overflow = length - MAX_DLQ_SIZE;
+    const now = Date.now();
+    const entries = await redis.lRange(DLQ_KEY, 0, BATCH_SIZE - 1);
 
-      // [TR] lRange(0, overflow-1) = listenin BAŞI = EN ESKİ entry'ler
-      // [EN] lRange(0, overflow-1) = list HEAD = OLDEST entries
-      const oldEntries = await redis.lRange(DLQ_KEY, 0, overflow - 1);
+    let poisonCount = 0;
 
-      if (oldEntries.length > 0) {
-        const multi = redis.multi();
-
-        // [TR] Eski entry'leri arşive taşı
-        for (const entry of oldEntries) {
-          multi.lPush(DLQ_ARCHIVE_KEY, entry);
-        }
-
-        // [TR] Arşivi sınırlı tut (max 1000 entry)
-        multi.lTrim(DLQ_ARCHIVE_KEY, 0, 999);
-
-        // [TR] Arşiv TTL: 7 gün
-        multi.expire(DLQ_ARCHIVE_KEY, 7 * 24 * 3600);
-
-        // KRİT-03 Fix: Ana DLQ'yu BAŞTAN kes — EN ESKİ entry'ler gitti
-        // ÖNCEKİ: lTrim(DLQ_KEY, 0, MAX_DLQ_SIZE - 1) = başı tutuyordu (YANLIŞ)
-        // ŞİMDİ:  lTrim(DLQ_KEY, overflow, -1) = baştan kes (DOĞRU FIFO)
-        multi.lTrim(DLQ_KEY, overflow, -1);
-
-        await multi.exec();
-
-        logger.info(`[DLQ] ${oldEntries.length} eski entry arşive taşındı, DLQ ${MAX_DLQ_SIZE}'a kırpıldı.`);
-      }
-    }
-
-    // [TR] Kuyruğun başındaki 10 entry'yi logla (FIFO — en eski önce)
-    const entries = await redis.lRange(DLQ_KEY, 0, 9);
     for (const raw of entries) {
+      let entry;
       try {
-        const entry = JSON.parse(raw);
-        logger.error(
-          `[DLQ] Event: ${entry.eventName} | tx: ${entry.txHash} | ` +
-          `blok: ${entry.blockNumber} | hata: ${entry.error} | zaman: ${entry.timestamp}`
-        );
+        entry = parseEntry(raw);
       } catch {
         logger.error(`[DLQ] Ham entry parse edilemedi: ${raw}`);
+        await redis.lRem(DLQ_KEY, 1, raw);
+        continue;
       }
-    }
 
-    if (entries.length > 0) {
-      // [TR] Loglanan entry'leri baştan sil (FIFO)
-      await redis.lTrim(DLQ_KEY, entries.length, -1);
-      logger.info(`[DLQ] ${entries.length} entry loglandı ve DLQ'dan kaldırıldı.`);
-    }
+      if (!isReady(entry, now)) {
+        continue;
+      }
 
-    // [TR] Alert cooldown — aynı uyarı 10 dakikada bir kez
-    if (length >= ALERT_THRESHOLD) {
-      const now = Date.now();
-      if (now - _lastAlertTimestamp >= ALERT_COOLDOWN_MS) {
-        _lastAlertTimestamp = now;
-        logger.error(
-          `[DLQ] ⚠ KRİTİK: DLQ'da ${length} event birikti! Manuel müdahale gerekebilir.`
+      const idempotencyKey = entry.idempotencyKey || `${entry.txHash}:${entry.logIndex ?? -1}`;
+      logger.warn(
+        `[DLQ] Re-drive başlıyor event=${entry.eventName} key=${idempotencyKey} ` +
+        `attempt=${entry.attempt} queue_depth=${length}`
+      );
+
+      const result = await eventWorker.reDriveEvent(entry);
+
+      if (result.success) {
+        _redriveSuccess += 1;
+        await redis.lRem(DLQ_KEY, 1, raw);
+        logger.info(
+          `[DLQ][Metrics] re-drive success event=${entry.eventName} key=${idempotencyKey} ` +
+          `retry_success_rate=${getRetrySuccessRate()}%`
         );
-        // TODO: Slack/PagerDuty webhook buraya eklenecek
-        // await sendAlert(`DLQ kritik seviye: ${length} işlenemeyen event`);
+        continue;
+      }
+
+      _redriveFailure += 1;
+      const nextAttempt = entry.attempt + 1;
+      const backoffMs = getBackoffMs(nextAttempt);
+      const nextRetryAt = new Date(Date.now() + backoffMs).toISOString();
+
+      const updated = {
+        ...entry,
+        attempt: nextAttempt,
+        next_retry_at: nextRetryAt,
+        last_error: result.error || entry.last_error || "Re-drive sırasında hata",
+      };
+
+      await redis.lRem(DLQ_KEY, 1, raw);
+      await redis.rPush(DLQ_KEY, toRaw(updated));
+
+      if (nextAttempt >= MAX_REDRIVE_ATTEMPTS) {
+        poisonCount += 1;
+        logger.error(
+          `[DLQ][Metrics] poison_event_count=1 event=${entry.eventName} key=${idempotencyKey} ` +
+          `attempt=${nextAttempt}`
+        );
+      }
+
+      logger.warn(
+        `[DLQ] Re-drive başarısız event=${entry.eventName} key=${idempotencyKey} ` +
+        `next_retry_at=${nextRetryAt} retry_success_rate=${getRetrySuccessRate()}%`
+      );
+    }
+
+    const newDepth = await redis.lLen(DLQ_KEY);
+    logger.info(`[DLQ][Metrics] queue_depth=${newDepth} retry_success_rate=${getRetrySuccessRate()}% poison_event_count=${poisonCount}`);
+
+    if (newDepth >= ALERT_THRESHOLD) {
+      const nowMs = Date.now();
+      if (nowMs - _lastAlertTimestamp >= ALERT_COOLDOWN_MS) {
+        _lastAlertTimestamp = nowMs;
+        logger.error(`[DLQ] ⚠ KRİTİK: DLQ'da ${newDepth} event birikti! Manuel müdahale gerekebilir.`);
       }
     }
   } catch (err) {
