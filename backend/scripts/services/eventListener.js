@@ -554,21 +554,40 @@ class EventWorker {
     let listing = await Listing.findOne({ onchain_escrow_id: tradeIdNum }).lean();
 
     if (!listing) {
-      // [TR] Chain-first geçiş: önce PENDING ilan aranır, yoksa OPEN fallback yapılır.
-      // [EN] Chain-first migration: prefer PENDING listing, fallback to OPEN.
-      listing = await Listing.findOne({
+      const baseFilter = {
         maker_address:      maker.toLowerCase(),
         onchain_escrow_id:  null,
-        status:             { $in: ["PENDING", "OPEN"] }, // DELETED/PAUSED dışlanır
-        // [TR] Token adresi eşleşmesi — sahte token koruması
+        "tier_rules.required_tier": Number(tier),
         ...(onchainToken ? { token_address: onchainToken } : {}),
-      }).sort({ _id: -1 }).lean();
+      };
+      const pendingCandidates = await Listing.find({ ...baseFilter, status: "PENDING" })
+        .sort({ created_at: -1, _id: -1 })
+        .limit(3)
+        .lean();
+      const openCandidates = pendingCandidates.length === 0
+        ? await Listing.find({ ...baseFilter, status: "OPEN" })
+          .sort({ created_at: -1, _id: -1 })
+          .limit(3)
+          .lean()
+        : [];
+      const candidates = pendingCandidates.length ? pendingCandidates : openCandidates;
 
-      if (listing) {
-        await Listing.updateOne(
-          { _id: listing._id },
+      if (candidates.length === 1) {
+        listing = candidates[0];
+        const linkResult = await Listing.updateOne(
+          { _id: listing._id, onchain_escrow_id: null },
           { $set: { onchain_escrow_id: tradeIdNum, status: "OPEN" } }
         );
+        if (!linkResult.modifiedCount) {
+          logger.warn(`[Worker] EscrowCreated: listing link race trade=#${tradeIdNum} listing=${listing._id}`);
+          await this._addToDLQ(event, "Listing link race — onchain_escrow_id atomik bağlanamadı.");
+          return;
+        }
+      } else if (candidates.length > 1) {
+        const candidateIds = candidates.map((c) => c._id.toString());
+        logger.warn(`[Worker] EscrowCreated ambiguity: trade=#${tradeIdNum} candidates=${candidateIds.join(",")}`);
+        await this._addToDLQ(event, `Ambiguous listing match: ${candidateIds.join(",")}`);
+        return;
       } else {
         // KRİT-08 Fix: Listing bulunamazsa hardcode fallback yok — DLQ'ya ekle
         logger.warn(`[Worker] EscrowCreated: Trade #${tradeId} için ilan bulunamadı — DLQ'ya alınıyor.`);
@@ -850,7 +869,9 @@ class EventWorker {
     if (!trade) return;
 
     const currentTotal = BigInt(trade.financials?.total_decayed || "0");
-    const nextTotal    = (currentTotal + BigInt(decayedAmount.toString())).toString();
+    const nextTotalBigInt = currentTotal + BigInt(decayedAmount.toString());
+    const nextTotal       = nextTotalBigInt.toString();
+    const nextTotalNum    = Number(trade.financials?.total_decayed_num || 0) + Number(decayedAmount);
 
     await Trade.findOneAndUpdate(
       { onchain_escrow_id: tradeIdNum },

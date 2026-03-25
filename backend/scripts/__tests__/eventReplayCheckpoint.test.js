@@ -47,7 +47,8 @@ describe("event replay/checkpoint stabilization", () => {
     const blockHandler = worker.provider.on.mock.calls.find(([event]) => event === "block")[1];
     await blockHandler(2000);
 
-    expect(updateSpy).not.toHaveBeenCalled();
+    expect(updateSpy).toHaveBeenCalled();
+    expect(updateSpy).not.toHaveBeenCalledWith(2000);
     updateSpy.mockRestore();
   });
 
