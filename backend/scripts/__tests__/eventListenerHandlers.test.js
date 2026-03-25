@@ -9,6 +9,7 @@ const mockRedis = {
 const mockTrade = {
   findOne: jest.fn(),
   findOneAndUpdate: jest.fn(),
+  updateOne: jest.fn(),
 };
 
 const mockListing = {
@@ -51,7 +52,7 @@ describe("event listener handler consistency", () => {
     expect(handlerSpy).toHaveBeenCalledTimes(1);
   });
 
-  test("BleedingDecayed is idempotent and aligns to financials.decay_tx_hashes", async () => {
+  test("BleedingDecayed uses canonical txHash:logIndex id and is race-safe", async () => {
     const event = {
       eventName: "BleedingDecayed",
       transactionHash: "0xdecaytx",
@@ -59,27 +60,21 @@ describe("event listener handler consistency", () => {
       args: { tradeId: 42, decayedAmount: 25n },
     };
 
-    mockTrade.findOne
-      .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(null) })
-      .mockReturnValueOnce({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue({ financials: { total_decayed: "100" } }),
-        }),
-      })
-      .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue({ _id: "already-processed" }) });
-
-    mockTrade.findOneAndUpdate.mockResolvedValue({});
+    mockTrade.updateOne
+      .mockResolvedValueOnce({ matchedCount: 1, modifiedCount: 1 })
+      .mockResolvedValueOnce({ matchedCount: 1, modifiedCount: 0 });
 
     await worker._onBleedingDecayed(event);
     await worker._onBleedingDecayed(event);
 
-    expect(mockTrade.findOneAndUpdate).toHaveBeenCalledTimes(1);
-    expect(mockTrade.findOneAndUpdate).toHaveBeenCalledWith(
-      { onchain_escrow_id: 42 },
-      expect.objectContaining({
-        $set: expect.objectContaining({ "financials.total_decayed": "125" }),
-        $addToSet: expect.objectContaining({ "financials.decay_tx_hashes": "0xdecaytx" }),
-      })
+    expect(mockTrade.updateOne).toHaveBeenCalledTimes(2);
+    expect(mockTrade.updateOne).toHaveBeenNthCalledWith(
+      1,
+      {
+        onchain_escrow_id: 42,
+        "financials.decay_tx_hashes": { $ne: "0xdecaytx:2" },
+      },
+      expect.any(Array)
     );
   });
 

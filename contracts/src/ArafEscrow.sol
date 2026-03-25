@@ -228,7 +228,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     // ═══════════════════════════════════════════════════
 
     event WalletRegistered(address indexed wallet, uint256 timestamp);
-    event EscrowCreated(uint256 indexed tradeId, address indexed maker, address token, uint256 amount, uint8 tier);
+    event EscrowCreated(uint256 indexed tradeId, address indexed maker, address token, uint256 amount, uint8 tier, bytes32 listingRef);
     event EscrowLocked(uint256 indexed tradeId, address indexed taker, uint256 takerBond);
     event PaymentReported(uint256 indexed tradeId, string ipfsHash, uint256 timestamp);
     event EscrowReleased(uint256 indexed tradeId, address indexed maker, address indexed taker, uint256 takerFee, uint256 makerFee);
@@ -305,6 +305,29 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint256 _cryptoAmount,
         uint8   _tier
     ) external nonReentrant whenNotPaused returns (uint256 tradeId) {
+        return _createEscrow(_token, _cryptoAmount, _tier, bytes32(0));
+    }
+
+    /**
+     * @notice v2.2 authoritative linkage path.
+     *         listingRef frontend/backend tarafından üretilir ve event'e yazılır.
+     * @param  _listingRef Off-chain listing'in deterministic referansı
+     */
+    function createEscrow(
+        address _token,
+        uint256 _cryptoAmount,
+        uint8   _tier,
+        bytes32 _listingRef
+    ) external nonReentrant whenNotPaused returns (uint256 tradeId) {
+        return _createEscrow(_token, _cryptoAmount, _tier, _listingRef);
+    }
+
+    function _createEscrow(
+        address _token,
+        uint256 _cryptoAmount,
+        uint8   _tier,
+        bytes32 _listingRef
+    ) internal returns (uint256 tradeId) {
         // ── Checks ──
         if (!supportedTokens[_token]) revert TokenNotSupported();
         if (_cryptoAmount == 0) revert ZeroAmount();
@@ -348,7 +371,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         // ── Interactions ──
         IERC20(_token).safeTransferFrom(msg.sender, address(this), totalLock);
-        emit EscrowCreated(tradeId, msg.sender, _token, _cryptoAmount, _tier);
+        emit EscrowCreated(tradeId, msg.sender, _token, _cryptoAmount, _tier, _listingRef);
     }
 
     // ═══════════════════════════════════════════════════
