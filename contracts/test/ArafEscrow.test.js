@@ -173,6 +173,22 @@ describe("ArafEscrow", function () {
   // 1. HAPPY PATH
   // ═══════════════════════════════════════════════════════════════════════════
   describe("Happy Path", () => {
+    it("emits authoritative listingRef when provided", async () => {
+      const listingRef = ethers.keccak256(ethers.toUtf8Bytes("listing:test-ref"));
+      const tx = await escrow.connect(maker)["createEscrow(address,uint256,uint8,bytes32)"](
+        await mockUSDT.getAddress(),
+        TRADE_AMOUNT,
+        2,
+        listingRef
+      );
+      const receipt = await tx.wait();
+      const log = receipt.logs.find((l) => {
+        try { return escrow.interface.parseLog(l).name === "EscrowCreated"; }
+        catch { return false; }
+      });
+      const parsed = escrow.interface.parseLog(log);
+      expect(parsed.args.listingRef).to.equal(listingRef);
+    });
 
     it("full trade lifecycle: OPEN → LOCKED → PAID → RESOLVED", async () => {
       const tradeId = await setupTrade(2);

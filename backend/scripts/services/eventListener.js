@@ -29,8 +29,8 @@
  * YÜKS-04 Fix: Atomik Olmayan DB Güncellemeleri — MongoDB Transactions Eklendi.
  *   EscrowReleased ve EscrowBurned'de Trade + User güncellemeleri artık atomik.
  *
- * YÜKS-05 Fix: Replay İdempotency — $inc Çakışması Kapatıldı.
- *   _onBleedingDecayed'e transactionHash bazlı tekrar işleme kontrolü eklendi.
+ * YÜKS-05 Fix: Replay İdempotency — Race-safe atomik güncelleme.
+ *   _onBleedingDecayed canonical event kimliği txHash:logIndex olarak tekilleştirildi.
  *
  * YÜKS-22 Fix: reputation_history Sınırsız Dizi Büyümesi Önlendi.
  *   $push yerine $push + $slice kullanılıyor — maksimum 100 kayıt tutulur.
@@ -84,7 +84,7 @@ const EVENT_NAMES = [
 
 const ARAF_ABI = [
   "event WalletRegistered(address indexed wallet, uint256 timestamp)",
-  "event EscrowCreated(uint256 indexed tradeId, address indexed maker, address token, uint256 amount, uint8 tier)",
+  "event EscrowCreated(uint256 indexed tradeId, address indexed maker, address token, uint256 amount, uint8 tier, bytes32 listingRef)",
   "event EscrowLocked(uint256 indexed tradeId, address indexed taker, uint256 takerBond)",
   "event PaymentReported(uint256 indexed tradeId, string ipfsHash, uint256 timestamp)",
   "event EscrowReleased(uint256 indexed tradeId, address indexed maker, address indexed taker, uint256 takerFee, uint256 makerFee)",
@@ -99,7 +99,7 @@ const ARAF_ABI = [
 
 const EVENT_ARG_KEYS = {
   WalletRegistered:  ["wallet", "timestamp"],
-  EscrowCreated:     ["tradeId", "maker", "token", "amount", "tier"],
+  EscrowCreated:     ["tradeId", "maker", "token", "amount", "tier", "listingRef"],
   EscrowLocked:      ["tradeId", "taker", "takerBond"],
   PaymentReported:   ["tradeId", "ipfsHash", "timestamp"],
   EscrowReleased:    ["tradeId", "maker", "taker", "takerFee", "makerFee"],
@@ -155,16 +155,21 @@ class EventWorker {
   }
 
   async _connect() {
-    const rpcUrl          = process.env.BASE_RPC_URL || "https://mainnet.base.org";
+    const isProduction    = process.env.NODE_ENV === "production";
+    const rpcUrl          = process.env.BASE_RPC_URL || (!isProduction ? "https://mainnet.base.org" : null);
     const contractAddress = process.env.ARAF_ESCROW_ADDRESS;
 
     if (!contractAddress || contractAddress === "0x0000000000000000000000000000000000000000") {
-      if (process.env.NODE_ENV === "production") {
+      if (isProduction) {
         logger.error("[Worker] KRİTİK: ARAF_ESCROW_ADDRESS tanımlı değil. Durduruluyor.");
         process.exit(1);
       }
       logger.warn("[Worker] Kontrat adresi yok — Worker kuru çalışma modunda (development).");
       return;
+    }
+
+    if (!rpcUrl) {
+      throw new Error("[Worker] KRİTİK: BASE_RPC_URL production'da zorunludur.");
     }
 
     const wsRpcUrl = process.env.BASE_WS_RPC_URL;
@@ -179,7 +184,7 @@ class EventWorker {
       }
     } else {
       this.provider = new ethers.JsonRpcProvider(rpcUrl);
-      if (process.env.NODE_ENV === "production") {
+      if (isProduction) {
         logger.warn("[Worker] ⚠ HTTP RPC kullanılıyor. Gerçek zamanlı event için BASE_WS_RPC_URL ekleyin.");
       }
     }
@@ -321,6 +326,9 @@ class EventWorker {
     const configuredStartRaw = process.env.ARAF_DEPLOYMENT_BLOCK ?? process.env.WORKER_START_BLOCK;
 
     if (configuredStartRaw === undefined || configuredStartRaw === null || configuredStartRaw === "") {
+      if (process.env.NODE_ENV === "production") {
+        throw new Error("[Worker] Production için checkpoint veya ARAF_DEPLOYMENT_BLOCK/WORKER_START_BLOCK zorunludur.");
+      }
       logger.warn("[Worker] Checkpoint bulunamadı ve ARAF_DEPLOYMENT_BLOCK/WORKER_START_BLOCK tanımlı değil. Varsayılan başlangıç bloğu: 0.");
       return 0;
     }
@@ -548,51 +556,46 @@ class EventWorker {
     const { tradeId, maker, amount, tier } = event.args;
     const tradeIdNum = Number(tradeId);
 
-    // [TR] Token adresini on-chain event'ten al — KRİT-14 (Sahte Token) koruması
     const onchainToken = event.args.token?.toLowerCase();
+    const listingRef   = event.args.listingRef?.toLowerCase?.() || null;
+    const isZeroRef    = !listingRef || /^0x0{64}$/.test(listingRef);
 
-    let listing = await Listing.findOne({ onchain_escrow_id: tradeIdNum }).lean();
+    if (isZeroRef) {
+      logger.warn(`[Worker] EscrowCreated: listingRef yok/zero trade=#${tradeIdNum} — heuristik link kapalı.`);
+      await this._addToDLQ(event, "Authoritative listingRef eksik (zero) — heuristik eşleme devre dışı.");
+      return;
+    }
 
+    const listing = await Listing.findOne({ listing_ref: listingRef }).lean();
     if (!listing) {
-      const baseFilter = {
-        maker_address:      maker.toLowerCase(),
-        onchain_escrow_id:  null,
-        "tier_rules.required_tier": Number(tier),
-        ...(onchainToken ? { token_address: onchainToken } : {}),
-      };
-      const pendingCandidates = await Listing.find({ ...baseFilter, status: "PENDING" })
-        .sort({ created_at: -1, _id: -1 })
-        .limit(3)
-        .lean();
-      const openCandidates = pendingCandidates.length === 0
-        ? await Listing.find({ ...baseFilter, status: "OPEN" })
-          .sort({ created_at: -1, _id: -1 })
-          .limit(3)
-          .lean()
-        : [];
-      const candidates = pendingCandidates.length ? pendingCandidates : openCandidates;
+      logger.warn(`[Worker] EscrowCreated: listing_ref bulunamadı trade=#${tradeIdNum} ref=${listingRef}`);
+      await this._addToDLQ(event, `listing_ref bulunamadı: ${listingRef}`);
+      return;
+    }
 
-      if (candidates.length === 1) {
-        listing = candidates[0];
-        const linkResult = await Listing.updateOne(
-          { _id: listing._id, onchain_escrow_id: null },
-          { $set: { onchain_escrow_id: tradeIdNum, status: "OPEN" } }
-        );
-        if (!linkResult.modifiedCount) {
-          logger.warn(`[Worker] EscrowCreated: listing link race trade=#${tradeIdNum} listing=${listing._id}`);
-          await this._addToDLQ(event, "Listing link race — onchain_escrow_id atomik bağlanamadı.");
-          return;
-        }
-      } else if (candidates.length > 1) {
-        const candidateIds = candidates.map((c) => c._id.toString());
-        logger.warn(`[Worker] EscrowCreated ambiguity: trade=#${tradeIdNum} candidates=${candidateIds.join(",")}`);
-        await this._addToDLQ(event, `Ambiguous listing match: ${candidateIds.join(",")}`);
+    const makerMatches = listing.maker_address === maker.toLowerCase();
+    const tierMatches  = Number(listing.tier_rules?.required_tier) === Number(tier);
+    const tokenMatches = (listing.token_address || "").toLowerCase() === (onchainToken || "");
+    if (!makerMatches || !tierMatches || !tokenMatches) {
+      logger.warn(`[Worker] EscrowCreated authoritative ref mismatch trade=#${tradeIdNum} ref=${listingRef}`);
+      await this._addToDLQ(event, "listing_ref bulundu fakat on-chain maker/tier/token doğrulaması başarısız.");
+      return;
+    }
+
+    if (listing.onchain_escrow_id !== null && listing.onchain_escrow_id !== tradeIdNum) {
+      await this._addToDLQ(event, `listing_ref başka escrow'a bağlı: ${listing.onchain_escrow_id}`);
+      return;
+    }
+
+    if (listing.onchain_escrow_id === null) {
+      const linkResult = await Listing.updateOne(
+        { _id: listing._id, listing_ref: listingRef, onchain_escrow_id: null },
+        { $set: { onchain_escrow_id: tradeIdNum, status: "OPEN" } }
+      );
+      if (!linkResult.modifiedCount) {
+        logger.warn(`[Worker] EscrowCreated: authoritative listing link race trade=#${tradeIdNum} listing=${listing._id}`);
+        await this._addToDLQ(event, "Authoritative listing link race — onchain_escrow_id atomik bağlanamadı.");
         return;
-      } else {
-        // KRİT-08 Fix: Listing bulunamazsa hardcode fallback yok — DLQ'ya ekle
-        logger.warn(`[Worker] EscrowCreated: Trade #${tradeId} için ilan bulunamadı — DLQ'ya alınıyor.`);
-        await this._addToDLQ(event, "Kaynak ilan bulunamadı — retry bekleniyor.");
-        return; // [TR] İşlemi iptal et, hardcode fallback YOK
       }
     }
 
@@ -848,40 +851,48 @@ class EventWorker {
   async _onBleedingDecayed(event) {
     const { tradeId, decayedAmount } = event.args;
     const tradeIdNum = Number(tradeId);
+    const eventId = this._getEventId(event); // canonical: txHash:logIndex
+    const decayedAmountStr = decayedAmount.toString();
+    const decayedAmountNum = Number(decayedAmount);
 
-    // [TR] Model canonical field: financials.decay_tx_hashes.
-    // [EN] Canonical idempotency key is tx hash (derived mirror only).
-    const eventId = event.transactionHash || this._getEventId(event);
-    const existing = await Trade.findOne({
-      onchain_escrow_id: tradeIdNum,
-      "financials.decay_tx_hashes": eventId,
-    }).lean();
-
-    if (existing) {
-      logger.debug(`[Worker] BleedingDecayed tekrar işleme atlandı: key=${eventId}`);
-      return;
-    }
-
-    // FEL-08 Fix: Number() yerine toString()
-    const trade = await Trade.findOne({ onchain_escrow_id: tradeIdNum })
-      .select("financials.total_decayed")
-      .lean();
-    if (!trade) return;
-
-    const currentTotal = BigInt(trade.financials?.total_decayed || "0");
-    const nextTotalBigInt = currentTotal + BigInt(decayedAmount.toString());
-    const nextTotal       = nextTotalBigInt.toString();
-    const nextTotalNum    = Number(trade.financials?.total_decayed_num || 0) + Number(decayedAmount);
-
-    await Trade.findOneAndUpdate(
-      { onchain_escrow_id: tradeIdNum },
+    const updateResult = await Trade.updateOne(
       {
-        $set:      { "timers.last_decay_at": new Date(), "financials.total_decayed": nextTotal },
-        // [TR] Erimek miktarı String olarak biriktirilir — hassasiyet kaybı yok
-        $inc:      { "financials.total_decayed_num": Number(decayedAmount) }, // yaklaşık görüntüleme
-        $addToSet: { "financials.decay_tx_hashes": eventId, "financials.decayed_amounts": decayedAmount.toString() },
-      }
+        onchain_escrow_id: tradeIdNum,
+        "financials.decay_tx_hashes": { $ne: eventId },
+      },
+      [
+        {
+          $set: {
+            "timers.last_decay_at": new Date(),
+            // [TR] trade mirror'u için string total BigInt güvenli kalır.
+            "financials.total_decayed": {
+              $toString: {
+                $add: [
+                  { $toDecimal: { $ifNull: ["$financials.total_decayed", "0"] } },
+                  { $toDecimal: decayedAmountStr },
+                ],
+              },
+            },
+            // [TR] Sayısal alan yalnızca yaklaşık/analitik görüntüleme içindir.
+            "financials.total_decayed_num": {
+              $add: [{ $ifNull: ["$financials.total_decayed_num", 0] }, decayedAmountNum],
+            },
+            // [TR] txHash:logIndex canonical key ve amount aynı atomik yazımda eklenir.
+            "financials.decay_tx_hashes": {
+              $concatArrays: [{ $ifNull: ["$financials.decay_tx_hashes", []] }, [eventId]],
+            },
+            "financials.decayed_amounts": {
+              $concatArrays: [{ $ifNull: ["$financials.decayed_amounts", []] }, [decayedAmountStr]],
+            },
+          },
+        },
+      ]
     );
+
+    if (updateResult.matchedCount === 0) return;
+    if (updateResult.modifiedCount === 0) {
+      logger.debug(`[Worker] BleedingDecayed tekrar işleme atlandı: key=${eventId}`);
+    }
   }
 
   async _onCancelProposed(event) {

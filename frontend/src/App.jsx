@@ -932,13 +932,18 @@ function App() {
       showToast(lang === 'TR' ? 'Lütfen cüzdanınızdan imza isteğini onaylayın 🦊' : 'Please approve the signature request in your wallet 🦊', 'info');
 
       const nonceRes = await fetch(`${API_URL}/api/auth/nonce?wallet=${address}`, { credentials: 'include' });
-      const { nonce, siweDomain } = await nonceRes.json();
+      if (!nonceRes.ok) {
+        throw new Error('Nonce alınamadı');
+      }
+      const { nonce, siweDomain, siweUri } = await nonceRes.json();
+      const resolvedSiweUri = siweUri || window.location.origin;
+      const resolvedSiweDomain = siweDomain || new URL(resolvedSiweUri).host;
 
       const siweMessage = new SiweMessage({
-        domain:    siweDomain,
+        domain:    resolvedSiweDomain,
         address,
         statement: 'Sign in to Araf Protocol to manage your trades and secure PII data.',
-        uri:       window.location.origin,
+        uri:       resolvedSiweUri,
         version:   '1',
         chainId,
         nonce,
@@ -1587,10 +1592,12 @@ function App() {
 
   // [TR] Maker escrow oluşturma: allowance kontrol → approve() → createEscrow() iki adım.
   //      Bond miktarı onchain bondMap'ten dinamik hesaplanır.
-  //      İlan önce off-chain DB'ye kaydedilir ki event listener eşleşebilsin.
+  //      İlan önce off-chain DB'ye kaydedilir; backend listing_ref üretir ve
+  //      on-chain createEscrow çağrısına authoritative referans olarak taşınır.
   // [EN] Maker escrow creation: check allowance → approve() → createEscrow() two-step.
   //      Bond amount dynamically calculated from onchain bondMap.
-  //      Listing pre-saved to off-chain DB so event listener can match it.
+  //      Listing is pre-saved so backend can generate listing_ref and pass it
+  //      to createEscrow as authoritative linkage reference.
   const handleCreateEscrow = async () => {
     let tokenAddress = SUPPORTED_TOKEN_ADDRESSES[makerToken];
     if (!tokenAddress) {
@@ -1610,23 +1617,27 @@ function App() {
 
     let didIncreaseAllowance = false;
     let pendingListingId = null;
+    let pendingListingRef = null;
     try {
-      try {
-        const preCreateRes = await authenticatedFetch(`${API_URL}/api/listings`, {
-          method: 'POST',
-          body: JSON.stringify({
-            crypto_asset:  makerToken,
-            fiat_currency: makerFiat,
-            exchange_rate: parseFloat(makerRate),
-            limits: { min: parseFloat(makerMinLimit), max: parseFloat(makerMaxLimit) },
-            tier: makerTier,
-            token_address: SUPPORTED_TOKEN_ADDRESSES[makerToken],
-          }),
-        });
-        const preCreateData = await preCreateRes.json().catch(() => ({}));
-        pendingListingId = preCreateData?.listing?._id || null;
-      } catch (e) {
-        console.warn('Off-chain ilan pre-creation uyarısı:', e);
+      const preCreateRes = await authenticatedFetch(`${API_URL}/api/listings`, {
+        method: 'POST',
+        body: JSON.stringify({
+          crypto_asset:  makerToken,
+          fiat_currency: makerFiat,
+          exchange_rate: parseFloat(makerRate),
+          limits: { min: parseFloat(makerMinLimit), max: parseFloat(makerMaxLimit) },
+          tier: makerTier,
+          token_address: SUPPORTED_TOKEN_ADDRESSES[makerToken],
+        }),
+      });
+      const preCreateData = await preCreateRes.json().catch(() => ({}));
+      if (!preCreateRes.ok) {
+        throw new Error(preCreateData?.error || 'İlan hazırlığı başarısız.');
+      }
+      pendingListingId = preCreateData?.listing?._id || null;
+      pendingListingRef = preCreateData?.listing?.listing_ref || null;
+      if (!pendingListingRef) {
+        throw new Error('Listing referansı alınamadı.');
       }
 
       setIsContractLoading(true);
@@ -1652,7 +1663,7 @@ function App() {
       }
 
       setLoadingText(lang === 'TR' ? 'Adım 2/2: Escrow oluşturuluyor...' : 'Step 2/2: Creating escrow...');
-      await createEscrow(tokenAddress, cryptoAmountRaw, makerTier);
+      await createEscrow(tokenAddress, cryptoAmountRaw, makerTier, pendingListingRef);
 
       showToast(
         lang === 'TR' ? '✅ İlan başarıyla oluşturuldu! Fonlar kilitlendi.' : '✅ Listing created! Funds locked.',

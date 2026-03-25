@@ -173,7 +173,7 @@ Four on-chain filters run before every `lockEscrow()` call. The backend **cannot
 ## 6. Standard Transaction Flow (Happy Path)
 
 ```
-Maker calls createEscrow()
+Maker calls createEscrow(..., listingRef)
   → OPEN (USDT + Maker Collateral locked on-chain)
     → Taker lockEscrow() — Anti-Sybil passes
       → LOCKED (Taker Collateral locked on-chain)
@@ -187,7 +187,7 @@ Maker calls createEscrow()
 
 | State | Trigger | Description |
 |---|---|---|
-| `OPEN` | Maker `createEscrow()` | Listing is live. USDT + Maker collateral locked on-chain. |
+| `OPEN` | Maker `createEscrow(..., listingRef)` | Listing is live. USDT + Maker collateral locked on-chain. `listingRef` is emitted as authoritative off-chain linkage reference. |
 | `LOCKED` | Taker `lockEscrow()` | Anti-Sybil passed. Taker collateral locked on-chain. |
 | `PAID` | Taker `reportPayment()` | IPFS receipt hash saved on-chain. 48-hour timer started. |
 | `RESOLVED` | Maker `releaseFunds()` | 0.2% fee taken. USDT → Taker. Collaterals returned. |
@@ -205,7 +205,7 @@ Maker calls createEscrow()
 
 | Function | Description |
 |---|---|
-| `createEscrow(...)` | Allows the Maker to create a listing and lock funds. |
+| `createEscrow(..., listingRef)` | Allows the Maker to create a listing and lock funds. Emits authoritative `listingRef` for off-chain mirror linkage (backend verifies, never infers). |
 | `lockEscrow(tradeId)` | Allows the Taker to enter a listing and lock their collateral. |
 | `reportPayment(tradeId, ipfsHash)` | Allows the Taker to report that the payment has been made. |
 | `releaseFunds(tradeId)` | Allows the Maker to confirm payment and release the funds. |

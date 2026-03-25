@@ -9,11 +9,11 @@ const mockRedis = {
 const mockTradeModel = {
   findOne: jest.fn(),
   findOneAndUpdate: jest.fn(),
+  updateOne: jest.fn(),
 };
 
 const mockListingModel = {
   findOne: jest.fn(),
-  find: jest.fn(),
   updateOne: jest.fn(),
 };
 
@@ -36,36 +36,23 @@ const worker = require("../services/eventListener");
 function mockLeanResult(value) {
   return { lean: jest.fn().mockResolvedValue(value) };
 }
-function mockQueryResult(value) {
-  return {
-    sort: jest.fn().mockReturnThis(),
-    limit: jest.fn().mockReturnThis(),
-    lean: jest.fn().mockResolvedValue(value),
-  };
-}
-function mockSelectLeanResult(value) {
-  return {
-    select: jest.fn().mockReturnThis(),
-    lean: jest.fn().mockResolvedValue(value),
-  };
-}
-
 describe("event listener listing link safety and financial consistency", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockListingModel.find.mockReturnValue(mockQueryResult([]));
   });
 
-  test("links exactly one precreated pending listing on EscrowCreated", async () => {
+  test("links authoritative listing_ref on EscrowCreated", async () => {
     const listing = {
       _id: "listing1",
       maker_address: "0x1111111111111111111111111111111111111111",
+      tier_rules: { required_tier: 1 },
+      token_address: "0x2222222222222222222222222222222222222222",
+      onchain_escrow_id: null,
       exchange_rate: 34.2,
       crypto_asset: "USDT",
       fiat_currency: "TRY",
     };
-    mockListingModel.findOne.mockReturnValueOnce(mockLeanResult(null));
-    mockListingModel.find.mockReturnValueOnce(mockQueryResult([listing]));
+    mockListingModel.findOne.mockReturnValueOnce(mockLeanResult(listing));
     mockListingModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
     mockTradeModel.findOneAndUpdate.mockResolvedValue({});
 
@@ -76,19 +63,25 @@ describe("event listener listing link safety and financial consistency", () => {
         amount: 1000000n,
         tier: 1,
         token: "0x2222222222222222222222222222222222222222",
+        listingRef: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       },
     });
 
+    expect(mockListingModel.findOne).toHaveBeenCalledWith({
+      listing_ref: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    });
     expect(mockListingModel.updateOne).toHaveBeenCalledWith(
-      { _id: "listing1", onchain_escrow_id: null },
+      {
+        _id: "listing1",
+        listing_ref: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        onchain_escrow_id: null,
+      },
       { $set: { onchain_escrow_id: 12, status: "OPEN" } }
     );
     expect(mockTradeModel.findOneAndUpdate).toHaveBeenCalled();
   });
 
-  test("marks ambiguity explicitly and avoids silent wrong listing link", async () => {
-    mockListingModel.findOne.mockReturnValueOnce(mockLeanResult(null));
-    mockListingModel.find.mockReturnValueOnce(mockQueryResult([{ _id: "a1" }, { _id: "a2" }]));
+  test("fails closed when listingRef is missing/zero", async () => {
     const dlqSpy = jest.spyOn(worker, "_addToDLQ").mockResolvedValue();
 
     await worker._onEscrowCreated({
@@ -102,19 +95,18 @@ describe("event listener listing link safety and financial consistency", () => {
         amount: 1000000n,
         tier: 0,
         token: "0x2222222222222222222222222222222222222222",
+        listingRef: "0x0000000000000000000000000000000000000000000000000000000000000000",
       },
     });
 
     expect(dlqSpy).toHaveBeenCalled();
+    expect(mockListingModel.findOne).not.toHaveBeenCalled();
     expect(mockTradeModel.findOneAndUpdate).not.toHaveBeenCalled();
     dlqSpy.mockRestore();
   });
 
   test("keeps decay mirror fields consistent and idempotent keys aligned", async () => {
-    mockTradeModel.findOne
-      .mockReturnValueOnce(mockLeanResult(null))
-      .mockReturnValueOnce(mockSelectLeanResult({ financials: { total_decayed: "5", total_decayed_num: 5 } }));
-    mockTradeModel.findOneAndUpdate.mockResolvedValue({});
+    mockTradeModel.updateOne.mockResolvedValue({ matchedCount: 1, modifiedCount: 1 });
 
     await worker._onBleedingDecayed({
       transactionHash: "0xdecay",
@@ -125,20 +117,22 @@ describe("event listener listing link safety and financial consistency", () => {
       },
     });
 
-    expect(mockTradeModel.findOne).toHaveBeenNthCalledWith(1, {
-      onchain_escrow_id: 15,
-      "financials.decay_tx_hashes": "0xdecay:7",
-    });
-    expect(mockTradeModel.findOneAndUpdate).toHaveBeenCalledWith(
-      { onchain_escrow_id: 15 },
-      expect.objectContaining({
-        $set: expect.objectContaining({
-          "financials.total_decayed": "12",
-          "financials.total_decayed_num": 12,
+    expect(mockTradeModel.updateOne).toHaveBeenCalledWith(
+      {
+        onchain_escrow_id: 15,
+        "financials.decay_tx_hashes": { $ne: "0xdecay:7" },
+      },
+      expect.arrayContaining([
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            "timers.last_decay_at": expect.any(Date),
+            "financials.total_decayed": expect.any(Object),
+            "financials.total_decayed_num": expect.any(Object),
+            "financials.decay_tx_hashes": expect.any(Object),
+            "financials.decayed_amounts": expect.any(Object),
+          }),
         }),
-        $addToSet: { "financials.decay_tx_hashes": "0xdecay:7" },
-        $push: { "financials.decayed_amounts": "7" },
-      })
+      ])
     );
   });
 });

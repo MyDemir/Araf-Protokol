@@ -20,7 +20,7 @@ import { parseAbi, getAddress } from 'viem';
 const ArafEscrowABI = parseAbi([
   // --- Write Fonksiyonları (App.jsx'te kullanılanlar) ---
   'function registerWallet()',
-  'function createEscrow(address _token, uint256 _cryptoAmount, uint8 _tier)',
+  'function createEscrow(address _token, uint256 _cryptoAmount, uint8 _tier, bytes32 _listingRef)',
   'function cancelOpenEscrow(uint256 _tradeId)',
   'function lockEscrow(uint256 _tradeId)',
   'function reportPayment(uint256 _tradeId, string calldata _ipfsHash)',
@@ -166,8 +166,8 @@ export function useArafContract() {
   const registerWallet = useCallback(() =>
     writeContract("registerWallet"), [writeContract]);
 
-  const createEscrow = useCallback((token, cryptoAmount, tier) =>
-    writeContract("createEscrow", [token, cryptoAmount, tier]), [writeContract]);
+  const createEscrow = useCallback((token, cryptoAmount, tier, listingRef) =>
+    writeContract("createEscrow", [token, cryptoAmount, tier, listingRef]), [writeContract]);
 
   //OPEN escrow'u iptal etmek için
   const cancelOpenEscrow = useCallback((tradeId) =>

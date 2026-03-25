@@ -21,6 +21,24 @@ function requireEnvAddress(name) {
   return ethers.getAddress(value);
 }
 
+function resolveProductionTokenConfig() {
+  const isProduction = process.env.NODE_ENV === "production";
+
+  if (!isProduction) {
+    return {
+      isProduction,
+      usdtAddress: null,
+      usdcAddress: null,
+    };
+  }
+
+  return {
+    isProduction,
+    usdtAddress: requireEnvAddress("MAINNET_USDT_ADDRESS"),
+    usdcAddress: requireEnvAddress("MAINNET_USDC_ADDRESS"),
+  };
+}
+
 async function enableAndVerifySupportedToken(escrow, tokenAddress, symbol) {
   const setTx = await escrow.setSupportedToken(tokenAddress, true);
   await setTx.wait();
@@ -35,7 +53,8 @@ async function enableAndVerifySupportedToken(escrow, tokenAddress, symbol) {
 }
 
 async function main() {
-  const isProduction = process.env.NODE_ENV === "production";
+  const { isProduction, usdtAddress: productionUsdt, usdcAddress: productionUsdc } =
+    resolveProductionTokenConfig();
 
   const [deployer] = await ethers.getSigners();
   console.log("🚀 Deploy eden cüzdan:", deployer.address);
@@ -72,14 +91,12 @@ async function main() {
   }
 
   // ── 2. Supported Token Kurulumu (Ownership devrinden ÖNCE) ───────────────
-  let usdtAddress = "";
-  let usdcAddress = "";
+  let usdtAddress = productionUsdt || "";
+  let usdcAddress = productionUsdc || "";
   const tokenSupportChecks = [];
 
   if (isProduction) {
-    console.log("\n⏳ Production token adresleri env'den alınıyor...");
-    usdtAddress = requireEnvAddress("MAINNET_USDT_ADDRESS");
-    usdcAddress = requireEnvAddress("MAINNET_USDC_ADDRESS");
+    console.log("\n⏳ Production token adresleri merkezi config guard ile alındı...");
     console.log("✅ MAINNET_USDT_ADDRESS:", usdtAddress);
     console.log("✅ MAINNET_USDC_ADDRESS:", usdcAddress);
   } else {

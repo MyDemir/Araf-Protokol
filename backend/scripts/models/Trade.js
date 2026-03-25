@@ -49,6 +49,15 @@ const listingSchema = new mongoose.Schema(
       type:    Number,
       default: null,
     },
+    listing_ref: {
+      type: String,
+      lowercase: true,
+      default: null,
+      index: true,
+      sparse: true,
+      unique: true,
+      match: /^0x[a-f0-9]{64}$/,
+    },
     token_address: {
       type:    String,
       lowercase: true,

@@ -15,6 +15,9 @@ const worker = require("../services/eventListener");
 describe("event replay/checkpoint stabilization", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    delete process.env.ARAF_DEPLOYMENT_BLOCK;
+    delete process.env.WORKER_START_BLOCK;
+    process.env.NODE_ENV = "test";
     worker._blockAcks = new Map();
     worker._lastSafeCheckpointBlock = 0;
     worker._lastSeenBlock = 0;
@@ -39,8 +42,23 @@ describe("event replay/checkpoint stabilization", () => {
     expect(worker.contract.queryFilter).toHaveBeenCalled();
   });
 
+  test("fails closed in production when checkpoint and start-block config are missing", async () => {
+    process.env.NODE_ENV = "production";
+    mockRedis.get.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+
+    await expect(worker._replayMissedEvents()).rejects.toThrow(
+      /ARAF_DEPLOYMENT_BLOCK\/WORKER_START_BLOCK/
+    );
+    expect(worker.contract.queryFilter).not.toHaveBeenCalled();
+  });
+
   test("block listener does not advance checkpoint automatically", async () => {
     worker._lastSafeCheckpointBlock = 1990;
+    worker._blockAcks.set(1991, {
+      seen: new Set(["0xtx:0"]),
+      acked: new Set(["0xtx:0"]),
+      unsafe: false,
+    });
     const updateSpy = jest.spyOn(worker, "_updateSafeCheckpointIfHigher").mockResolvedValue();
 
     worker._attachLiveListeners();

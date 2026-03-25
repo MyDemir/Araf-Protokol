@@ -41,6 +41,10 @@ function _getListingsProvider() {
   return _cachedListingsProvider;
 }
 
+function _buildListingRef(listingId) {
+  return ethers.keccak256(ethers.toUtf8Bytes(`listing:${listingId}`));
+}
+
 /**
  * Kullanıcının on-chain efektif tier'ını sorgular.
  *
@@ -178,7 +182,7 @@ router.post("/", requireAuth, listingsWriteLimiter, async (req, res, next) => {
     const config = getConfig();
     const bonds  = config.bondMap[value.tier];
 
-    const listing = await Listing.create({
+    const listing = new Listing({
       maker_address:     req.wallet,
       crypto_asset:      value.crypto_asset,
       fiat_currency:     value.fiat_currency,
@@ -196,6 +200,8 @@ router.post("/", requireAuth, listingsWriteLimiter, async (req, res, next) => {
       token_address:     value.token_address,
       onchain_escrow_id: value.onchain_escrow_id || null,
     });
+    listing.listing_ref = _buildListingRef(listing._id.toString()).toLowerCase();
+    await listing.save();
 
     logger.info(`[Listings] Yeni ilan: maker=${req.wallet} tier=${value.tier} asset=${value.crypto_asset}`);
     return res.status(201).json({ listing });

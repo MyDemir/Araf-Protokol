@@ -66,7 +66,7 @@ function _getRefreshCookieOptions() {
  * GET /api/auth/nonce?wallet=0x...
  *
  * KRİT-07 Fix (siwe.js'te): generateNonce artık mevcut nonce'ı korur.
- * AFS-010: siweDomain response'a eklendi.
+ * AFS-010: siweDomain + siweUri response'a eklendi.
  */
 router.get("/nonce", authLimiter, async (req, res, next) => {
   try {
@@ -76,7 +76,8 @@ router.get("/nonce", authLimiter, async (req, res, next) => {
     }
     const nonce      = await generateNonce(wallet.toLowerCase());
     const siweDomain = process.env.SIWE_DOMAIN || "localhost";
-    return res.json({ nonce, siweDomain });
+    const siweUri    = process.env.SIWE_URI || `https://${siweDomain}`;
+    return res.json({ nonce, siweDomain, siweUri });
   } catch (err) { next(err); }
 });
 
