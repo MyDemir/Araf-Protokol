@@ -27,6 +27,7 @@ jest.mock("../middleware/auth", () => ({
     req.wallet = "0x1111111111111111111111111111111111111111";
     next();
   },
+  requireSessionWalletMatch: (_req, _res, next) => next(),
 }));
 
 jest.mock("../services/siwe", () => mockSiwe);

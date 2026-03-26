@@ -126,7 +126,7 @@ function App() {
   // 2. WEB3 BAĞLANTI VE KONTRAT HOOK'LARI
   //    Wallet connection + all contract methods
   // ═══════════════════════════════════════════
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, connector } = useAccount();
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
   const { signMessageAsync } = useSignMessage();
@@ -171,6 +171,7 @@ function App() {
   // ═══════════════════════════════════════════
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
+  const [authenticatedWallet, setAuthenticatedWallet] = useState(null);
 
   // [TR] Cüzdan on-chain kayıt durumu — null: bilinmiyor, true/false: kayıtlı/değil
   // [EN] Wallet on-chain registration status — null: unknown, true/false: registered/not
@@ -181,6 +182,7 @@ function App() {
   const authenticatedWalletRef = React.useRef(null);
   const pendingTxCheckedRef = React.useRef(false);
   const autoTradeResumeRef = React.useRef(false);
+  const connectedWallet = address?.toLowerCase() || null;
 
   // [TR] Kontrat işlemleri sırasında çift tıklamayı önleme ve iki aşamalı UX için
   // [EN] Prevents double-clicks during contract tx; shows two-phase loading text
@@ -317,19 +319,57 @@ function App() {
     return () => clearInterval(interval);
   }, [resolvedTradeState, activeTrade?.onchainId, getCurrentAmounts]);
 
+  const clearLocalSessionState = React.useCallback(() => {
+    setIsAuthenticated(false);
+    setAuthenticatedWallet(null);
+    authenticatedWalletRef.current = null;
+    setShowMakerModal(false);
+    setShowProfileModal(false);
+    setCurrentView('home');
+    setActiveTrade(null);
+    setActiveEscrows([]);
+    setCancelStatus(null);
+    setChargebackAccepted(false);
+    setPaymentIpfsHash('');
+    setIsLoggingIn(false);
+    setIsContractLoading(false);
+    setLoadingText('');
+    pendingTxCheckedRef.current = false;
+    autoTradeResumeRef.current = false;
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('araf_pending_tx');
+    }
+  }, []);
+
+  const bestEffortBackendLogout = React.useCallback(async () => {
+    try {
+      await fetch(`${API_URL}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+    } catch (_) {}
+  }, []);
+
   // [TR] HTTP-Only Cookie tabanlı kimlik doğrulamalı fetch wrapper.
   //      401 alırsa refresh token ile yeniler, başarısızsa oturumu sona erdirir.
   // [EN] Cookie-based authenticated fetch wrapper.
   //      On 401, attempts token refresh; on failure, ends the session.
   const authenticatedFetch = React.useCallback(async (url, options = {}) => {
+    const walletHeader = connectedWallet ? { 'x-wallet-address': connectedWallet } : {};
     const res = await fetch(url, {
       ...options,
       headers: {
-        ...options.headers,
         'Content-Type': 'application/json',
+        ...options.headers,
+        ...walletHeader,
       },
       credentials: 'include',
     });
+
+    if (res.status === 409) {
+      clearLocalSessionState();
+      return res;
+    }
 
     if (res.status !== 401) return res;
 
@@ -343,40 +383,67 @@ function App() {
 
       if (!refreshRes.ok) {
         console.warn('[Auth] Refresh token expired — re-login required');
-        setIsAuthenticated(false);
+        clearLocalSessionState();
         showToast(lang === 'TR' ? 'Oturumunuz sona erdi. Lütfen tekrar imzalayın.' : 'Session expired. Please sign in again.', 'error');
         return res;
       }
 
       return fetch(url, {
         ...options,
-        headers: { ...options.headers, 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+          ...walletHeader,
+        },
         credentials: 'include',
       });
     } catch (err) {
       console.error('[Auth] Refresh failed:', err);
       return res;
     }
-  }, [address, lang]);
+  }, [connectedWallet, address, lang, clearLocalSessionState]);
 
   // [TR] Sayfa yüklendiğinde mevcut oturumu kontrol eder
   // [EN] Checks existing session on page load
   useEffect(() => {
-    if (!isConnected || !address) {
-      setIsAuthenticated(false);
+    if (!isConnected || !connectedWallet) {
+      clearLocalSessionState();
       setAuthChecked(true);
       return;
     }
-    fetch(`${API_URL}/api/auth/me`, { credentials: 'include' })
-      .then(res => {
-        setIsAuthenticated(res.ok);
+    fetch(`${API_URL}/api/auth/me`, {
+      credentials: 'include',
+      headers: { 'x-wallet-address': connectedWallet },
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          clearLocalSessionState();
+          setAuthChecked(true);
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
+        const sessionWallet = data?.wallet?.toLowerCase?.() || null;
+        if (sessionWallet && sessionWallet === connectedWallet) {
+          setIsAuthenticated(true);
+          setAuthenticatedWallet(sessionWallet);
+          authenticatedWalletRef.current = sessionWallet;
+        } else {
+          await bestEffortBackendLogout();
+          clearLocalSessionState();
+          showToast(
+            lang === 'TR'
+              ? 'Aktif cüzdan için imzalı oturum bulunamadı. Lütfen yeniden giriş yapın.'
+              : 'No signed session for the active wallet. Please sign in again.',
+            'info'
+          );
+        }
         setAuthChecked(true);
       })
       .catch(() => {
-        setIsAuthenticated(false);
+        clearLocalSessionState();
         setAuthChecked(true);
       });
-  }, [isConnected, address]);
+  }, [isConnected, connectedWallet, clearLocalSessionState, bestEffortBackendLogout, lang]);
 
   // [TR] Pazar yeri ilanlarını çeker — herkese açık endpoint
   // [EN] Fetches marketplace listings — public endpoint
@@ -734,11 +801,9 @@ function App() {
   // [EN] Ends session when wallet disconnects
   useEffect(() => {
     if (!isConnected) {
-      setIsAuthenticated(false);
-      pendingTxCheckedRef.current = false;
-      autoTradeResumeRef.current = false;
+      clearLocalSessionState();
     }
-  }, [isConnected, address]);
+  }, [isConnected, clearLocalSessionState]);
 
   // [TR] Yenileme sonrası bekleyen tx hash'i varsa sonucu yakalamayı dener.
   // [EN] On refresh, tries to recover status of a pending tx hash from localStorage.
@@ -812,39 +877,56 @@ function App() {
     );
   }, [isAuthenticated, currentView, activeEscrows, lang]);
 
-  // [TR] Cüzdan değişimi ile JWT oturumu ayrışmasını önler.
-  // [EN] Prevents wallet switch and JWT session desynchronization.
+  // [TR] Wallet / connector / chain event'lerinde auth drift'i güvenli şekilde sıfırlar.
+  // [EN] On wallet / connector / chain events, resets auth drift safely.
   useEffect(() => {
-    if (!address || !isConnected) {
-      authenticatedWalletRef.current = null;
-      return;
-    }
-
-    const currentWallet = address.toLowerCase();
-
-    if (!isAuthenticated) {
-      authenticatedWalletRef.current = currentWallet;
-      return;
-    }
-
-    if (!authenticatedWalletRef.current) {
-      authenticatedWalletRef.current = currentWallet;
-      return;
-    }
-
-    if (authenticatedWalletRef.current !== currentWallet) {
-      authenticatedFetch(`${API_URL}/api/auth/logout`, { method: 'POST' }).catch(() => {});
-      setIsAuthenticated(false);
-      setCurrentView('home');
+    if (!isConnected || !connectedWallet || !isAuthenticated || !authenticatedWallet) return;
+    if (authenticatedWallet !== connectedWallet) {
+      bestEffortBackendLogout();
+      clearLocalSessionState();
       showToast(
         lang === 'TR'
-          ? 'Cüzdan değişikliği algılandı. Güvenlik için tekrar giriş yapın.'
-          : 'Wallet change detected. Please sign in again for security.',
+          ? 'Cüzdan değişikliği algılandı. Güvenlik için yeniden giriş yapmanız gerekiyor.'
+          : 'Wallet change detected. For security, please sign in again.',
         'info'
       );
-      authenticatedWalletRef.current = currentWallet;
     }
-  }, [address, isConnected, isAuthenticated, authenticatedFetch, lang]);
+  }, [isConnected, connectedWallet, isAuthenticated, authenticatedWallet, lang, bestEffortBackendLogout, clearLocalSessionState]);
+
+  useEffect(() => {
+    if (!connector?.getProvider) return undefined;
+    let provider = null;
+    const handleWalletRuntimeEvent = () => {
+      if (!isAuthenticated || !authenticatedWallet) return;
+      const runtimeWallet = provider?.selectedAddress?.toLowerCase?.() || connectedWallet;
+      if (runtimeWallet && runtimeWallet !== authenticatedWallet) {
+        bestEffortBackendLogout();
+        clearLocalSessionState();
+        showToast(
+          lang === 'TR'
+            ? 'Wallet oturumu değişti. Güvenlik için tekrar imza gerekli.'
+            : 'Wallet session changed. Re-sign is required for security.',
+          'info'
+        );
+      }
+    };
+
+    const bind = async () => {
+      provider = await connector.getProvider();
+      if (!provider?.on) return;
+      provider.on('accountsChanged', handleWalletRuntimeEvent);
+      provider.on('disconnect', handleWalletRuntimeEvent);
+      provider.on('chainChanged', handleWalletRuntimeEvent);
+    };
+    bind().catch(() => {});
+
+    return () => {
+      if (!provider?.removeListener) return;
+      provider.removeListener('accountsChanged', handleWalletRuntimeEvent);
+      provider.removeListener('disconnect', handleWalletRuntimeEvent);
+      provider.removeListener('chainChanged', handleWalletRuntimeEvent);
+    };
+  }, [connector, connectedWallet, isAuthenticated, authenticatedWallet, lang, bestEffortBackendLogout, clearLocalSessionState]);
 
   // ═══════════════════════════════════════════
   // 6. TÜRETILMIŞ STATE (COMPUTED VALUES)
@@ -902,6 +984,28 @@ function App() {
     setSidebarOpen(true);
     if (sidebarTimerRef.current) clearTimeout(sidebarTimerRef.current);
     sidebarTimerRef.current = setTimeout(() => setSidebarOpen(false), 5000);
+  };
+
+  const hasSignedSessionForActiveWallet =
+    Boolean(isConnected && connectedWallet && isAuthenticated && authenticatedWallet === connectedWallet);
+
+  const requireSignedSessionForActiveWallet = React.useCallback(() => {
+    if (hasSignedSessionForActiveWallet) return true;
+    showToast(
+      lang === 'TR'
+        ? 'Aktif cüzdan için imzalı oturum yok. Lütfen yeniden giriş yapın.'
+        : 'No signed session for the active wallet. Please sign in again.',
+      'error'
+    );
+    setShowMakerModal(false);
+    setShowProfileModal(false);
+    return false;
+  }, [hasSignedSessionForActiveWallet, lang]);
+
+  const handleLogoutAndDisconnect = async () => {
+    await bestEffortBackendLogout();
+    clearLocalSessionState();
+    disconnect();
   };
 
   // [TR] Cüzdan adresini kısaltır (0x1234...5678 formatı)
@@ -963,7 +1067,16 @@ function App() {
       });
 
       if (verifyRes.ok) {
+        const verifyData = await verifyRes.json().catch(() => ({}));
+        const verifiedWallet = verifyData?.wallet?.toLowerCase?.() || null;
+        if (!verifiedWallet || verifiedWallet !== connectedWallet) {
+          await bestEffortBackendLogout();
+          clearLocalSessionState();
+          throw new Error('Aktif cüzdan ile oturum cüzdanı eşleşmiyor');
+        }
         setIsAuthenticated(true);
+        setAuthenticatedWallet(verifiedWallet);
+        authenticatedWalletRef.current = verifiedWallet;
         showToast(lang === 'TR' ? 'Sisteme başarıyla giriş yapıldı! 🚀' : 'Successfully signed in! 🚀', 'success');
       } else {
         const data = await verifyRes.json().catch(() => ({}));
@@ -1520,7 +1633,8 @@ function App() {
   // [EN] Updates user's bank/IBAN/Telegram info (AES-256 encrypted, off-chain)
   const handleUpdatePII = async (e) => {
     e.preventDefault();
-    if (!isAuthenticated || isContractLoading) return;
+    if (isContractLoading) return;
+    if (!requireSignedSessionForActiveWallet()) return;
     try {
       setIsContractLoading(true);
       const res = await authenticatedFetch(`${API_URL}/api/auth/profile`, {
@@ -1586,10 +1700,7 @@ function App() {
       showToast(lang === 'TR' ? 'Sistem şu an bakım modundadır. Yeni ilan açılamaz.' : 'System is paused. Cannot create ad.', 'error');
       return;
     }
-    if (!isConnected || !isAuthenticated) {
-      showToast(lang === 'TR' ? 'İlan açmak için önce cüzdanınızı bağlayıp imzalamalısınız.' : 'Please connect and sign in to create an ad.', 'error');
-      return;
-    }
+    if (!requireSignedSessionForActiveWallet()) return;
     setShowMakerModal(true);
   };
 
@@ -1602,6 +1713,7 @@ function App() {
   //      Listing is pre-saved so backend can generate listing_ref and pass it
   //      to createEscrow as authoritative linkage reference.
   const handleCreateEscrow = async () => {
+    if (!requireSignedSessionForActiveWallet()) return;
     let tokenAddress = SUPPORTED_TOKEN_ADDRESSES[makerToken];
     if (!tokenAddress) {
       showToast(lang === 'TR' ? `${makerToken} token adresi .env dosyasında tanımlı değil (VITE_${makerToken}_ADDRESS).` : `${makerToken} token address not configured in .env (VITE_${makerToken}_ADDRESS).`, 'error');
@@ -2058,7 +2170,7 @@ function App() {
                   </p>
                 </form>
                 <button
-                  onClick={() => { disconnect(); setIsAuthenticated(false); setShowProfileModal(false); }}
+                  onClick={handleLogoutAndDisconnect}
                   className="w-full mt-4 py-2.5 rounded-xl font-bold text-sm bg-red-950/40 text-red-500 border border-red-900/50 hover:bg-red-900/80 hover:text-white transition">
                   {lang === 'TR' ? '🚪 Çıkış Yap / Cüzdanı Ayır' : '🚪 Disconnect / Logout'}
                 </button>

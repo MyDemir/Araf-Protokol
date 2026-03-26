@@ -5,7 +5,7 @@ const Joi     = require("joi");
 const router  = express.Router();
 
 const { authLimiter }                        = require("../middleware/rateLimiter");
-const { requireAuth }                        = require("../middleware/auth");
+const { requireAuth, requireSessionWalletMatch } = require("../middleware/auth");
 const {
   generateNonce,
   verifySiweSignature,
@@ -207,7 +207,7 @@ router.get("/me", requireAuth, (req, res) => {
  *   ÖNCEKİ: Sadece max:34 ve boşluk temizleme vardı.
  *   ŞİMDİ: TR IBAN formatı zorunlu, bankOwner min/max uzunluk kontrolü.
  */
-router.put("/profile", requireAuth, authLimiter, async (req, res, next) => {
+router.put("/profile", requireAuth, requireSessionWalletMatch, authLimiter, async (req, res, next) => {
   try {
     const normalizedBody = {
       bankOwner: typeof req.body?.bankOwner === "string" ? req.body.bankOwner.trim().replace(/\s+/g, " ") : req.body?.bankOwner,

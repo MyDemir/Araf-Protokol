@@ -96,7 +96,7 @@ export function useArafContract() {
     const preflightChecks = () => {
       //Cüzdan bağlantı kontrolü
       if (!walletClient) {
-        throw new Error("Cüzdan bağlı değil. Lütfen cüzdanınızı bağlayın.");
+        throw new Error("Cüzdan bağlı ancak imzalı oturum bulunmuyor olabilir. Lütfen aktif cüzdanla yeniden giriş yapın.");
       }
       //Kontrat adresi yapılandırma kontrolü (CON-02 Fix)
       if (!_isValidAddress) {
@@ -212,7 +212,7 @@ export function useArafContract() {
    * @returns {Promise<Receipt>}
    */
   const approveToken = useCallback(async (tokenAddress, amount) => {
-    if (!walletClient) throw new Error("Cüzdan bağlı değil.");
+    if (!walletClient) throw new Error("İşlem için aktif wallet client bulunamadı. Cüzdan bağlantınızı ve oturum imzanızı kontrol edin.");
     _validateChain();
     if (!_isValidAddress) throw new Error("VITE_ESCROW_ADDRESS tanımlı değil.");
 
@@ -246,7 +246,7 @@ export function useArafContract() {
    * Token kontratından test bakiyesi basar.
    */
   const mintToken = useCallback(async (tokenAddress) => {
-    if (!walletClient) throw new Error("Cüzdan bağlı değil.");
+    if (!walletClient) throw new Error("İşlem için aktif wallet client bulunamadı. Cüzdan bağlantınızı ve oturum imzanızı kontrol edin.");
     _validateChain();
     
     try {

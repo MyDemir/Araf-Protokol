@@ -21,7 +21,7 @@ const express = require("express");
 const Joi     = require("joi");
 const router  = express.Router();
 
-const { requireAuth }                               = require("../middleware/auth");
+const { requireAuth, requireSessionWalletMatch }    = require("../middleware/auth");
 const { listingsReadLimiter, listingsWriteLimiter } = require("../middleware/rateLimiter");
 const { Listing, Trade }                            = require("../models/Trade");
 const logger                                        = require("../utils/logger");
@@ -126,7 +126,7 @@ router.get("/", listingsReadLimiter, async (req, res, next) => {
 });
 
 // ─── POST /api/listings ───────────────────────────────────────────────────────
-router.post("/", requireAuth, listingsWriteLimiter, async (req, res, next) => {
+router.post("/", requireAuth, requireSessionWalletMatch, listingsWriteLimiter, async (req, res, next) => {
   try {
     const schema = Joi.object({
       crypto_asset:      Joi.string().valid("USDT", "USDC").required(),
@@ -199,7 +199,7 @@ router.post("/", requireAuth, listingsWriteLimiter, async (req, res, next) => {
 });
 
 // ─── DELETE /api/listings/:id ─────────────────────────────────────────────────
-router.delete("/:id", requireAuth, async (req, res, next) => {
+router.delete("/:id", requireAuth, requireSessionWalletMatch, async (req, res, next) => {
   try {
     if (!/^[a-fA-F0-9]{24}$/.test(req.params.id)) {
       return res.status(400).json({ error: "Geçersiz ilan ID formatı." });

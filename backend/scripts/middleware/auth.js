@@ -83,6 +83,43 @@ async function requireAuth(req, res, next) {
 }
 
 /**
+ * requireSessionWalletMatch — cookie'den doğrulanan session wallet ile
+ * istemcinin aktif bağlı cüzdan başlığını eşleştirir.
+ *
+ * Not: Header asla tek başına auth kaynağı değildir.
+ * Sadece requireAuth sonrası invariant kontrolü yapılır.
+ */
+function requireSessionWalletMatch(req, res, next) {
+  const headerWalletRaw = req.headers["x-wallet-address"];
+  if (!headerWalletRaw || typeof headerWalletRaw !== "string") {
+    return res.status(401).json({
+      error: "Aktif cüzdan bilgisi eksik. Güvenlik için yeniden giriş yapın.",
+      code: "SESSION_WALLET_HEADER_MISSING",
+    });
+  }
+
+  const headerWallet = headerWalletRaw.trim().toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(headerWallet)) {
+    return res.status(400).json({
+      error: "Geçersiz cüzdan başlığı formatı.",
+      code: "SESSION_WALLET_HEADER_INVALID",
+    });
+  }
+
+  if (!req.wallet || req.wallet !== headerWallet) {
+    logger.warn(
+      `[Auth] Session-wallet mismatch: cookie=${req.wallet || "none"} header=${headerWallet}`
+    );
+    return res.status(409).json({
+      error: "Oturum cüzdanı aktif bağlı cüzdanla eşleşmiyor. Lütfen yeniden giriş yapın.",
+      code: "SESSION_WALLET_MISMATCH",
+    });
+  }
+
+  next();
+}
+
+/**
  * requirePIIToken — IBAN endpoint'i için daha sıkı kontrol.
  * Token tipi "pii" olmalı ve URL'deki tradeId ile eşleşmeli.
  */
@@ -115,4 +152,4 @@ function requirePIIToken(req, res, next) {
   }
 }
 
-module.exports = { requireAuth, requirePIIToken };
+module.exports = { requireAuth, requirePIIToken, requireSessionWalletMatch };

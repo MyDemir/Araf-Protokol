@@ -31,7 +31,7 @@ const fs      = require("fs");
 const os      = require("os");
 const router  = express.Router();
 
-const { requireAuth }   = require("../middleware/auth");
+const { requireAuth, requireSessionWalletMatch } = require("../middleware/auth");
 const { tradesLimiter } = require("../middleware/rateLimiter");
 const { encryptField }  = require("../services/encryption");
 const { Trade }         = require("../models/Trade");
@@ -122,6 +122,7 @@ async function encryptFileFromDisk(filePath, wallet) {
 router.post(
   "/upload",
   requireAuth,
+  requireSessionWalletMatch,
   tradesLimiter,
   upload.single("receipt"),
   async (req, res, next) => {

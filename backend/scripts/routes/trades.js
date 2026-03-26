@@ -5,7 +5,7 @@ const Joi     = require("joi");
 const crypto  = require("crypto");
 const router  = express.Router();
 
-const { requireAuth }   = require("../middleware/auth");
+const { requireAuth, requireSessionWalletMatch } = require("../middleware/auth");
 const { tradesLimiter } = require("../middleware/rateLimiter");
 const { Trade }         = require("../models/Trade");
 const logger            = require("../utils/logger");
@@ -125,7 +125,7 @@ router.get("/:id", requireAuth, tradesLimiter, async (req, res, next) => {
 });
 
 // ─── POST /api/trades/propose-cancel ─────────────────────────────────────────
-router.post("/propose-cancel", requireAuth, tradesLimiter, async (req, res, next) => {
+router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, tradesLimiter, async (req, res, next) => {
   try {
     const schema = Joi.object({
       tradeId:   Joi.string().length(24).hex().required(),
@@ -220,7 +220,7 @@ function _getRealIP(req) {
   return req.ip || req.socket?.remoteAddress || "unknown";
 }
 
-router.post("/:id/chargeback-ack", requireAuth, tradesLimiter, async (req, res, next) => {
+router.post("/:id/chargeback-ack", requireAuth, requireSessionWalletMatch, tradesLimiter, async (req, res, next) => {
   try {
     if (!/^[a-fA-F0-9]{24}$/.test(req.params.id)) {
       return res.status(400).json({ error: "Geçersiz trade ID formatı." });
