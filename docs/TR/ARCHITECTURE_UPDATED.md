@@ -1,3 +1,9 @@
+> **SÜRÜM NOTU**
+> Dosya: `ARCHITECTURE_UPDATED.md`
+> Durum: Aktif çalışma kopyası
+> Son güncelleme kapsamı: Config + Jobs + Middleware mimari uyarlamaları
+> Not: Bundan sonraki her revizyonda bu blok güncellenecektir.
+
 # 🌀 Araf Protokolü — Kanonik Mimari & Teknik Referans
 
 > **Versiyon:** 2.1 | **Ağ:** Base (Katman 2) | **Durum:** Testnete Hazır | **Son Güncelleme:** Mart 2026
@@ -337,8 +343,11 @@ Taker, `pingMaker` fonksiyonunu çağırdıktan 24 saat sonra hala yanıt alamam
 | 1 | Frontend | `GET /api/auth/nonce` | Nonce Redis'te 5 dakika TTL ile saklanır |
 | 2 | Kullanıcı | Cüzdanda EIP-4361 SIWE mesajı imzalar | `siwe.SiweMessage` sınıfı ile standart format |
 | 3 | Frontend | `POST /api/auth/verify` — mesaj + imza | Nonce atomik olarak tüketilir (`getDel` — tekrar korumalı) |
-| 4 | Backend | SIWE imzasını doğrular, JWT yayınlar (HS256, 15 dk) | JWT'de `type: "auth"` talebi var, PII içermez |
-| 5 | Frontend | Tüm korumalı API çağrıları için Bearer token olarak JWT | Her rota `requireAuth` middleware'ini çağırır |
+| 4 | Backend | SIWE imzasını doğrular, `type: "auth"` JWT üretir | Auth JWT yalnızca httpOnly `araf_jwt` cookie'sine yazılır; normal auth için Bearer fallback kapalıdır |
+| 5 | Backend | Korumalı rotalar `requireAuth` ile cookie'den JWT okur | JWT blacklist / `jti` kontrolü her istekte çalışır |
+| 6 | Backend | Gerekli rotalar `requireSessionWalletMatch` ile `x-wallet-address` başlığını doğrular | Header tek başına auth kaynağı değildir; cookie'deki wallet ile eşleşme zorunludur |
+| 7 | Backend | Uyuşmazlıkta session invalidation uygulanır | Refresh token ailesi revoke edilir, `araf_jwt` ve `araf_refresh` temizlenir, `409 SESSION_WALLET_MISMATCH` döner |
+| 8 | Backend | PII erişimi ayrı `type: "pii"` token ile yapılır | `requirePIIToken` yalnızca Bearer authorization kabul eder; token trade-scoped ve kısa ömürlüdür |
 
 ### 9.2 Müşterek İptal Akışı (EIP-712 ile Gassız Anlaşma)
 
@@ -393,7 +402,11 @@ IBAN ve banka sahibi adı yalnızca MongoDB'de, AES-256-GCM ile şifreli olarak 
 | İşlemler | 30 istek | 1 dakika | Cüzdan |
 | Geri Bildirim | 3 istek | 1 saat | Cüzdan |
 
-**Operasyonel karar:** Rate limiter, Redis erişilemez olduğunda platformu tamamen kilitlemez. Redis readiness kontrolü başarısızsa middleware **fail-open** davranır; yani limit enforcement geçici olarak atlanır, ancak çekirdek API erişilebilir kalır. Bu tercih güvenlikten değil, **erişilebilirlikten yana yapılan kontrollü bir trade-off**'tur ve Redis'i tek nokta hatası olmaktan çıkarır.
+**Genel yüzeyler için operasyonel karar:** Listings, trades, feedback ve benzeri public/düşük riskli yüzeylerde Redis readiness kontrolü başarısızsa limiter **fail-open** davranır; enforcement geçici olarak atlanır ama çekirdek API erişilebilir kalır.
+
+**Auth yüzeyi için özel karar:** `/nonce`, `/verify`, `/refresh` gibi kimlik doğrulama endpoint'leri Redis yokken tamamen sınırsız bırakılmaz. Bu yüzey için IP bazlı **in-memory fallback limiter** devreye girer; eşik aşılırsa doğrudan `429` döner. Böylece genel platform availability korunurken auth yüzeyi tam fail-open olmaz.
+
+**Dağıtım notu:** Limit anahtarları `req.ip` üstünden üretildiği için reverse proxy / load balancer arkasında `trust proxy` yapılandırması doğru olmalıdır; aksi halde kullanıcılar aynı IP kovasına düşebilir.
 
 ### 9.5 Çalışma Zamanı Dayanıklılık ve Bağlantı Yönetimi
 
@@ -410,6 +423,13 @@ IBAN ve banka sahibi adı yalnızca MongoDB'de, AES-256-GCM ile şifreli olarak 
 - `rediss://` veya `REDIS_TLS=true` ile TLS etkinleşir; managed Redis servisleriyle uyumludur.
 - `REDIS_TLS_SKIP_VERIFY=true` yalnızca self-signed geliştirme ortamları içindir; production'da kullanılmamalıdır.
 - `isReady()` semantiği, Redis bağlantısının yalnızca oluşturulmuş değil gerçekten servis verebilir durumda olup olmadığını ayırt etmek için kullanılır.
+
+### 9.5.1 Hata Yönetimi ve Güvenli Loglama
+
+- Global error handler her istekte tek bir terminal response üretir; tanınmayan hata tiplerinde bile fallback `500` cevabı döner. Bu sayede isteklerin sonsuza kadar asılı kalması engellenir.
+- `req.body` içindeki bilinen hassas alanlar (`iban`, `bankOwner`, `telegram`, `password`, `token`, `refreshToken`, `signature` ve şifreli karşılıkları) loglanmadan önce `[REDACTED]` olarak scrub edilir.
+- PII scrub işlemi yalnızca production'da değil tüm ortamlarda uygulanır; geliştirme logları plaintext IBAN / isim sızıntı kanalı olarak kullanılmaz.
+- Mongoose validation, duplicate key, JWT ve bilinçli `statusCode` hataları ayrı response sınıflarına ayrılır; geri kalan tüm beklenmeyen hatalar standart internal error cevabına düşer.
 
 ### 9.6 Olay Dinleyici Güvenilirliği
 
@@ -552,9 +572,9 @@ Taker dekont yüklediğinde public IPFS'e atmak yerine, backend üzerinde AES-25
 | Kendi kendine işlem | Yüksek | On-chain `msg.sender ≠ maker` | ✅ Giderildi |
 | Tek taraflı iptal tacizi | Yüksek | 2/2 EIP-712 — tek taraflı iptal imkansız | ✅ Giderildi |
 | Backend anahtar hırsızlığı | Kritik | Sıfır özel anahtar mimarisi — yalnızca relayer | ✅ Giderildi |
-| JWT ele geçirme | Yüksek | 15 dakika geçerlilik + işlem kapsamlı PII tokenları | ✅ Giderildi |
-| PII veri sızıntısı | Kritik | AES-256-GCM + HKDF + hız sınırı (3 / 10 dk) + retention cleanup job'ları | ✅ Giderildi |
-| Redis tek nokta hatası | Yüksek | Readiness kontrolü + rate limiter fail-open davranışı | ✅ Giderildi |
+| JWT ele geçirme | Yüksek | 15 dakika geçerlilik + cookie-only auth + session-wallet mismatch durumunda aktif session invalidation + işlem kapsamlı PII tokenları | ✅ Giderildi |
+| PII veri sızıntısı | Kritik | AES-256-GCM + HKDF + hız sınırı (3 / 10 dk) + retention cleanup job'ları + error log scrub | ✅ Giderildi |
+| Redis tek nokta hatası | Yüksek | Readiness kontrolü + genel yüzeylerde fail-open + auth yüzeyinde in-memory fallback limiter | ✅ Giderildi |
 | Yetim `PENDING` ilan birikimi | Orta | 12 saatlik cleanup job ile `DELETED`'a süpürme | ✅ Giderildi |
 | Stale reputation mirror ile yanlış decay | Yüksek | Nihai uygunluğu on-chain `reputation()` ile doğrulayan decay job | ✅ Giderildi |
 | Duplicate günlük istatistik kaydı | Düşük | Gün bazlı idempotent upsert (`historical_stats`) | ✅ Giderildi |
