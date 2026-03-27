@@ -1,4 +1,50 @@
 "use strict";
+/* ## auth middleware hardening
+
+This PR updates `backend/scripts/middleware/auth.js` to preserve the existing cookie-only auth and JWT blacklist protections while making wallet mismatch handling actively invalidate the backend session.
+
+### Existing protections that remain
+
+The following behavior is preserved:
+
+- auth JWT is still accepted only from the httpOnly cookie
+- bearer fallback for normal auth remains disabled
+- JWT blacklist checks still run during authenticated requests
+- `requirePIIToken` still uses Bearer authorization separately for short-lived trade-scoped PII access
+
+### Previous behavior
+
+`requireSessionWalletMatch` already compared the authenticated wallet from the cookie with the connected wallet sent in `x-wallet-address`.
+
+If they did not match, the middleware returned:
+
+- `409 SESSION_WALLET_MISMATCH`
+
+But it did not actively invalidate backend session state.
+
+That meant the request was blocked, but the backend-side session boundary remained softer than intended.
+
+### New behavior
+
+On wallet mismatch, the middleware now treats the event as a session invalidation event.
+
+New behavior:
+
+- log the mismatch
+- revoke the refresh token family for the authenticated wallet
+- clear `araf_jwt`
+- clear `araf_refresh`
+- return `409 SESSION_WALLET_MISMATCH`
+
+### Effect
+
+This closes the gap between frontend logout behavior and backend session invalidation.
+
+Instead of only rejecting the mismatched request, the backend now actively terminates the invalid session state as well.
+
+### Scope
+
+Only `backend/scripts/middleware/auth.js` was targeted here.*/
 
 const { verifyJWT, isJWTBlacklisted, revokeRefreshToken } = require("../services/siwe");
 const logger = require("../utils/logger");
