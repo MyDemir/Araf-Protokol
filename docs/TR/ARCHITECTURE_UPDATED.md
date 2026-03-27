@@ -1,12 +1,6 @@
-> **SÜRÜM NOTU**
-> Dosya: `ARCHITECTURE_UPDATED.md`
-> Durum: Aktif çalışma kopyası
-> Son güncelleme kapsamı: Config + Jobs + Middleware mimari uyarlamaları
-> Not: Bundan sonraki her revizyonda bu blok güncellenecektir.
-
 # 🌀 Araf Protokolü — Kanonik Mimari & Teknik Referans
 
-> **Versiyon:** 2.1 | **Ağ:** Base (Katman 2) | **Durum:** Testnete Hazır | **Son Güncelleme:** Mart 2026
+> **Versiyon:** 2.2 | **Ağ:** Base (Katman 2) | **Durum:** Testnete Hazır | **Son Güncelleme:** Mart 2026
 
 ---
 
@@ -491,7 +485,9 @@ Taker dekont yüklediğinde public IPFS'e atmak yerine, backend üzerinde AES-25
 
 ## 10. Veri Modelleri (MongoDB)
 
-### Kullanıcılar Koleksiyonu
+Bu bölüm, backend model katmanının gerçek veri sözleşmesini özetler. Kritik ilke korunur: **on-chain alanlar otoritatif gerçekliği temsil eder; off-chain alanlar indeksleme, UX, retention ve analitik için tutulur.** Özellikle `reputation_cache`, `banned_until`, `consecutive_bans`, `max_allowed_tier`, `crypto_amount_num` ve `total_decayed_num` gibi alanlar hız ve görüntüleme amaçlı aynalardır; yetkilendirme veya ekonomik enforcement için tek başına kullanılmaz.
+
+### 10.1 Kullanıcılar Koleksiyonu
 
 | Alan | Tür | Açıklama |
 |---|---|---|
@@ -499,18 +495,27 @@ Taker dekont yüklediğinde public IPFS'e atmak yerine, backend üzerinde AES-25
 | `pii_data.bankOwner_enc` | Dize | AES-256-GCM şifreli banka sahibi adı |
 | `pii_data.iban_enc` | Dize | AES-256-GCM şifreli IBAN (TR formatı) |
 | `pii_data.telegram_enc` | Dize | AES-256-GCM şifreli Telegram kullanıcı adı |
-| `reputation_cache.total_trades` | Sayı | Başarılı tamamlanan toplam işlem sayısı. |
-| `reputation_cache.failed_disputes` | Sayı | Başarısızlıkla sonuçlanan toplam uyuşmazlık sayısı. |
-| `reputation_cache.success_rate` | Sayı | `(total - failed) / total * 100` formülüyle hesaplanan başarı oranı. |
-| `reputation_cache.failure_score` | Sayı | Ağırlıklı başarısızlık puanı. `BURNED` gibi ciddi olaylar daha yüksek puana sahiptir. |
-| `reputation_history` | Dizi | Başarısızlıkların zamanla etkisini yitirmesi için tutulan geçmiş kaydı. `[{ type: 'burned', score: 50, date: '...', tradeId: 123 }]` |
+| `reputation_cache.total_trades` | Sayı | Başarılı tamamlanan toplam işlem sayısı |
+| `reputation_cache.failed_disputes` | Sayı | Başarısızlıkla sonuçlanan toplam uyuşmazlık sayısı |
+| `reputation_cache.success_rate` | Sayı | UI için hesaplanan başarı oranı |
+| `reputation_cache.failure_score` | Sayı | Ağırlıklı başarısızlık puanı |
+| `reputation_history` | Dizi | Zamanla etkisi düşen başarısızlık geçmişi |
 | `is_banned` / `banned_until` | Boolean / Tarih | On-chain yasak durumu aynası |
-| `consecutive_bans` | Sayı (varsayılan: 0) | On-chain ardışık yasak sayısı aynası |
-| `max_allowed_tier` | Sayı (varsayılan: 4) | On-chain tier tavanı aynası — yalnızca görüntüleme |
+| `consecutive_bans` | Sayı | On-chain ardışık yasak sayısı aynası |
+| `max_allowed_tier` | Sayı | Ceza kaynaklı tier tavanı aynası |
 | `last_login` | Tarih | TTL: 2 yıl hareketsizlik sonrası otomatik silme (GDPR) |
-| `wallet_address` seçilmiş subset | Dize | Reputation decay job aday havuzu için hızlı taranabilir kullanıcı kümesi |
 
-### İlanlar Koleksiyonu
+**Model davranışları**
+- `toPublicProfile()` **allowlist/fail-safe** yaklaşımıyla çalışır; yalnızca açıkça seçilmiş public alanlar döner. Böylece modele ileride yeni alan eklense bile istemeden PII veya iç durum sızdırılmaz.
+- `checkBanExpiry()` artık yalnızca bellekte flag düşürmez; ban süresi geçmişse veritabanına `save()` ile kalıcı yazar. Böylece kullanıcı bir istekte banlı görünmeyip sonraki sayfa yenilemede tekrar banlı görünme hatası oluşmaz.
+- `reputation_cache` ve ban alanları hızlı UI render ve indeksleme içindir; nihai otorite gerektiğinde on-chain veridir.
+
+**İndeks / retention**
+- `wallet_address` benzersiz ve indekslidir.
+- `is_banned` alanı ban taramaları için indekslidir.
+- `last_login` üzerinde 2 yıllık TTL vardır; uzun süre inaktif kullanıcı verisi otomatik temizlenir.
+
+### 10.2 İlanlar Koleksiyonu (`Listing`)
 
 | Alan | Tür | Açıklama |
 |---|---|---|
@@ -522,23 +527,87 @@ Taker dekont yüklediğinde public IPFS'e atmak yerine, backend üzerinde AES-25
 | `tier_rules.required_tier` | 0 – 4 | Bu ilanı almak için gereken minimum tier |
 | `tier_rules.maker_bond_pct` | Sayı | Maker teminat yüzdesi |
 | `tier_rules.taker_bond_pct` | Sayı | Taker teminat yüzdesi |
-| `status` | `PENDING` \| `OPEN` \| `PAUSED` \| `COMPLETED` \| `DELETED` | `PENDING` = henüz on-chain'e yazılmamış geçici ilan; cleanup job tarafından süpürülebilir |
-| `onchain_escrow_id` | Sayı \| null | Escrow oluşturulduğunda on-chain `tradeId`; `null` + eski `PENDING` kayıtlar yetim ilan sinyalidir |
+| `status` | `PENDING` \| `OPEN` \| `PAUSED` \| `COMPLETED` \| `DELETED` | `PENDING` = henüz on-chain'e yazılmamış geçici ilan |
+| `onchain_escrow_id` | Sayı \| null | Escrow oluştuğunda on-chain `tradeId` |
+| `listing_ref` | Dize \| null | 64-byte hex referans; sparse+unique |
 | `token_address` | Dize | Base'deki ERC-20 sözleşme adresi |
 
-### İşlemler Koleksiyonu
+**Model davranışları**
+- `pre("save")` kuralı ile `limits.max > limits.min` zorunlu tutulur; bozuk ilan verisi model seviyesinde reddedilir.
+- `PENDING` durumu kalıcı iş durumu değil, **frontend/backend–on-chain senkronizasyon penceresi** olarak kabul edilir.
+- `onchain_escrow_id = null` ve uzun süredir `PENDING` kalan kayıtlar, cleanup job tarafından yetim ilan olarak `DELETED` durumuna süpürülür.
+
+**İndeks stratejisi**
+- `status + fiat_currency + limits.min + limits.max` birleşik indeksi filtreli pazar yeri sorgularını hızlandırır.
+- `maker_address + status` ve `tier_rules.required_tier + status` indeksleri hem kullanıcı panosu hem de eşleşme taramaları için kullanılır.
+- `listing_ref` sparse/unique indekslidir; referans çakışmasını önler.
+
+### 10.3 İşlemler Koleksiyonu (`Trade`)
 
 | Alan Grubu | Temel Alanlar | Notlar |
 |---|---|---|
 | Kimlik | `onchain_escrow_id`, `listing_id`, `maker_address`, `taker_address` | `onchain_escrow_id` = gerçeğin kaynağı |
-| Finansal | `crypto_amount` (String, authoritative), `crypto_amount_num` (Number, cache), `exchange_rate`, `total_decayed` (String), `total_decayed_num` (Number, cache), `decay_tx_hashes`, `decayed_amounts` | `*_num` alanları yalnızca analytics/UI için yaklaşık değerdir; enforcement için kullanılmaz |
-| Durum | `status` | On-chain durum makinesini yansıtır |
-| Zamanlayıcılar | `locked_at`, `paid_at`, `challenged_at`, `resolved_at`, `last_decay_at` | `last_decay_at` = son `BleedingDecayed` olayı |
-| Kanıt | `ipfs_receipt_hash`, `receipt_timestamp`, `evidence.receipt_encrypted`, `evidence.receipt_delete_at` | Hash on-chain referansıdır; şifreli payload retention süresi dolunca scrub edilir |
-| İptal Önerisi | `proposed_by`, `proposed_at`, `approved_by`, `maker_signed`, `taker_signed`, imzalar | On-chain gönderimden önce toplanan EIP-712 imzaları |
-| Chargeback Onayı | `acknowledged`, `acknowledged_by`, `acknowledged_at`, `ip_hash` | `releaseFunds` öncesi Maker'ın yasal onayı. `ip_hash = SHA-256(IP)` |
-| PII Snapshot | `pii_snapshot.*`, `pii_snapshot.snapshot_delete_at`, `pii_snapshot.captured_at` | Karşı taraf gösterimi için geçici snapshot; retention job alanları null'lar |
-| Tier | `tier` (0–4) | İşlem oluşturma anındaki on-chain tier |
+| Finansal | `crypto_amount` (String, authoritative), `crypto_amount_num` (Number, cache), `fiat_amount`, `exchange_rate`, `crypto_asset`, `fiat_currency`, `total_decayed` (String), `total_decayed_num` (Number, cache), `decay_tx_hashes`, `decayed_amounts` | `*_num` alanları analytics/UI içindir; enforcement için kullanılmaz |
+| Durum | `status` | `OPEN`, `LOCKED`, `PAID`, `CHALLENGED`, `RESOLVED`, `CANCELED`, `BURNED` |
+| Zamanlayıcılar | `locked_at`, `paid_at`, `challenged_at`, `resolved_at`, `last_decay_at`, `pinged_at`, `challenge_pinged_at` | Uyuşmazlık ve decay zaman çizelgesini yansıtır |
+| Kanıt | `evidence.ipfs_receipt_hash`, `evidence.receipt_encrypted`, `evidence.receipt_timestamp`, `evidence.receipt_delete_at` | Hash on-chain referansıdır; payload public IPFS'te değil backend'de şifreli tutulur |
+| PII Snapshot | `pii_snapshot.*`, `pii_snapshot.captured_at`, `pii_snapshot.snapshot_delete_at` | LOCKED anında karşı taraf verisinin sabitlenmiş görünümü |
+| İptal Önerisi | `cancel_proposal.*` | Karşılıklı iptal için toplanan imzalar ve deadline |
+| Chargeback Onayı | `chargeback_ack.*` | `releaseFunds` öncesi Maker'ın yasal beyan izi |
+| Tier | `tier` (0–4) | İşlem açıldığı andaki tier |
+
+**Model davranışları**
+- Finansal doğruluk için `crypto_amount` ve `total_decayed` **String** tutulur; bu alanlar BigInt-safe otoritatif değerlerdir.
+- `crypto_amount_num` ve `total_decayed_num` yalnızca dashboard/aggregation kolaylığı için bulunan yaklaşık cache alanlarıdır.
+- Dekont verisi gerçek IPFS yüklemesi değildir; tarihsel isim korunmuş olsa da backend tarafında AES-256-GCM ile şifreli tutulur.
+- `pii_snapshot`, LOCKED anındaki karşı taraf bilgilerini dondurarak bait-and-switch riskini azaltır.
+- Virtual alanlar:
+  - `isInGracePeriod`
+  - `isInBleedingPhase`
+  Bu alanlar sorgu değil, runtime hesaplaması için tasarlanmıştır.
+
+**İndeks / retention**
+- `maker_address + status`, `taker_address + status`, `onchain_escrow_id` indeksleri temel trade okuma yollarını hızlandırır.
+- `timers.resolved_at` üzerinde **partial TTL index** vardır; yalnızca `RESOLVED`, `CANCELED`, `BURNED` trade'ler 1 yıl sonra otomatik silinir.
+- `evidence.receipt_delete_at` üzerinde sparse index vardır; bu index TTL için değil, cleanup job'ın scrub edilecek alanları verimli bulması içindir. Mongo TTL field'ı değil dokümanı sildiğinden, dekont ve snapshot scrub'ı job ile yapılır.
+
+### 10.4 Geri Bildirimler Koleksiyonu (`Feedback`)
+
+| Alan | Tür | Açıklama |
+|---|---|---|
+| `wallet_address` | Dize | Geri bildirimi gönderen cüzdan |
+| `rating` | 1–5 | Zorunlu yıldız puanı |
+| `comment` | Dize | Maksimum 1000 karakter yorum |
+| `category` | `bug` \| `suggestion` \| `ui/ux` \| `other` | Route doğrulamasıyla senkron kategori |
+| `created_at` | Tarih | Kayıt tarihi |
+
+**Model davranışları**
+- Feedback modeli hafif ve operasyoneldir; ürün geri bildirimi toplar, protokol otoritesi üretmez.
+- `category` alanı Mongoose enum ile kısıtlanır; route katmanındaki Joi doğrulaması ile uyumlu tutulur.
+
+**İndeks / retention**
+- `created_at` üzerinde 1 yıllık TTL bulunur; ürün geri bildirimleri süresiz saklanmaz.
+- `wallet_address + created_at` indeksi, wallet başına saatlik feedback sınırı ve abuse analizleri için hızlı tarama sağlar.
+
+### 10.5 Günlük İstatistikler Koleksiyonu (`HistoricalStat`)
+
+| Alan | Tür | Açıklama |
+|---|---|---|
+| `date` | `YYYY-MM-DD` dizesi | Günlük benzersiz anahtar |
+| `total_volume_usdt` | Sayı | Çözülen trade'lerin toplam hacmi |
+| `completed_trades` | Sayı | Günlük snapshot anındaki toplam tamamlanan trade sayısı |
+| `active_listings` | Sayı | Snapshot anındaki açık ilan sayısı |
+| `burned_bonds_usdt` | Sayı | Toplam eriyen/yakılan miktar |
+| `avg_trade_hours` | Sayı \| null | Ortalama çözülme süresi (saat) |
+| `created_at` | Tarih | Snapshot'ın oluşturulma zamanı |
+
+**Model davranışları**
+- `date` benzersiz anahtardır; snapshot job aynı gün içinde tekrar çalışsa bile ikinci kayıt açılmaz, mevcut satır güncellenir.
+- Bu koleksiyon, `/api/stats` için 30 günlük karşılaştırma ve trend hesaplarını trade koleksiyonunu her istekte taramadan destekler.
+
+**İndeks stratejisi**
+- `date: -1` indeksi en yeni snapshot'ların hızlı sıralanmasını sağlar.
+- `created_at` yalnızca oluşturulma izidir; `updated_at` tutulmaz çünkü aynı günkü kayıt işlevsel olarak tek günlük snapshot'ı temsil eder.
 
 ---
 
@@ -574,6 +643,8 @@ Taker dekont yüklediğinde public IPFS'e atmak yerine, backend üzerinde AES-25
 | Backend anahtar hırsızlığı | Kritik | Sıfır özel anahtar mimarisi — yalnızca relayer | ✅ Giderildi |
 | JWT ele geçirme | Yüksek | 15 dakika geçerlilik + cookie-only auth + session-wallet mismatch durumunda aktif session invalidation + işlem kapsamlı PII tokenları | ✅ Giderildi |
 | PII veri sızıntısı | Kritik | AES-256-GCM + HKDF + hız sınırı (3 / 10 dk) + retention cleanup job'ları + error log scrub | ✅ Giderildi |
+| Public profile üzerinden alan sızması | Orta | `toPublicProfile()` allowlist/fail-safe tasarım; yalnızca açık seçilmiş alanlar döner | ✅ Giderildi |
+| Ban bitişinin yalnızca bellekte kalması | Orta | `checkBanExpiry()` DB'ye kalıcı save yapar; ban durumu sayfa yenilemede geri dönmez | ✅ Giderildi |
 | Redis tek nokta hatası | Yüksek | Readiness kontrolü + genel yüzeylerde fail-open + auth yüzeyinde in-memory fallback limiter | ✅ Giderildi |
 | Yetim `PENDING` ilan birikimi | Orta | 12 saatlik cleanup job ile `DELETED`'a süpürme | ✅ Giderildi |
 | Stale reputation mirror ile yanlış decay | Yüksek | Nihai uygunluğu on-chain `reputation()` ile doğrulayan decay job | ✅ Giderildi |
