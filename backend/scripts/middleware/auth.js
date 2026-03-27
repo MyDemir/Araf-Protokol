@@ -1,29 +1,10 @@
 "use strict";
 
-const { verifyJWT, isJWTBlacklisted } = require("../services/siwe");
-const logger                           = require("../utils/logger");
+const { verifyJWT, isJWTBlacklisted, revokeRefreshToken } = require("../services/siwe");
+const logger = require("../utils/logger");
 
 /**
- * requireAuth Middleware
- *
- * ORTA-09 Fix: JWT Blacklist Kontrolü Eklendi.
- *   ÖNCEKİ: JWT geçerliyse her zaman kabul ediliyordu.
- *   Logout sonrası 15 dk'lık süre boyunca çalınan JWT kullanılabiliyordu.
- *   ŞİMDİ: Her doğrulamada JWT'nin jti değeri Redis blacklist'te kontrol ediliyor.
- *   Blacklist'teki (logout edilmiş) JWT'ler reddediliyor.
- *
- * Dual-Auth Smuggling Fix:
- *   ÖNCEKİ: Cookie yoksa Authorization: Bearer header'a fallback yapılıyordu.
- *   XSS ile localStorage'dan çalınan token header üzerinden kabul edilebiliyordu.
- *   ŞİMDİ: requireAuth yalnızca httpOnly cookie'yi kabul ediyor.
- *   Header fallback sadece PII token için ayrı middleware'de korunuyor.
- *
- * Not: requirePIIToken DEĞİŞMEDİ — PII token trade-scoped ve kısa ömürlü,
- * cookie'de saklanması uygun değil. Bearer header ile gönderilmeye devam eder.
- */
-
-/**
- * @private JWT'yi sadece httpOnly cookie'den okur (header fallback KALDIRILDI).
+ * Yalnızca httpOnly auth cookie'den JWT okur.
  */
 async function _getTokenPayload(req) {
   const token = req.cookies?.araf_jwt;
@@ -36,7 +17,6 @@ async function _getTokenPayload(req) {
 
   const payload = verifyJWT(token);
 
-  // ORTA-09 Fix: Blacklist kontrolü
   if (payload.jti) {
     const blacklisted = await isJWTBlacklisted(payload.jti);
     if (blacklisted) {
@@ -50,7 +30,7 @@ async function _getTokenPayload(req) {
 }
 
 /**
- * @private PII token'ı her zaman Authorization header'dan okur.
+ * PII token'ı Authorization header'dan okur.
  */
 function _getPIITokenPayload(req) {
   const authHeader = req.headers.authorization;
@@ -63,8 +43,8 @@ function _getPIITokenPayload(req) {
 }
 
 /**
- * requireAuth — Korunan route'lar için JWT doğrulaması.
- * Sadece httpOnly cookie'yi okur — XSS koruması.
+ * Auth korumalı route'lar için JWT doğrulaması.
+ * Sadece httpOnly cookie kabul edilir.
  */
 async function requireAuth(req, res, next) {
   try {
@@ -78,19 +58,19 @@ async function requireAuth(req, res, next) {
     next();
   } catch (err) {
     logger.warn(`[Auth] Token doğrulaması başarısız: ${err.message}`);
-    return res.status(err.statusCode || 401).json({ error: err.message || "Geçersiz veya süresi dolmuş token." });
+    return res
+      .status(err.statusCode || 401)
+      .json({ error: err.message || "Geçersiz veya süresi dolmuş token." });
   }
 }
 
 /**
- * requireSessionWalletMatch — cookie'den doğrulanan session wallet ile
- * istemcinin aktif bağlı cüzdan başlığını eşleştirir.
- *
- * Not: Header asla tek başına auth kaynağı değildir.
- * Sadece requireAuth sonrası invariant kontrolü yapılır.
+ * Cookie ile doğrulanan session wallet ile istemcinin aktif bağlı cüzdanını eşleştirir.
+ * Header hiçbir zaman tek başına auth kaynağı değildir.
  */
-function requireSessionWalletMatch(req, res, next) {
+async function requireSessionWalletMatch(req, res, next) {
   const headerWalletRaw = req.headers["x-wallet-address"];
+
   if (!headerWalletRaw || typeof headerWalletRaw !== "string") {
     return res.status(401).json({
       error: "Aktif cüzdan bilgisi eksik. Güvenlik için yeniden giriş yapın.",
@@ -99,6 +79,7 @@ function requireSessionWalletMatch(req, res, next) {
   }
 
   const headerWallet = headerWalletRaw.trim().toLowerCase();
+
   if (!/^0x[a-f0-9]{40}$/.test(headerWallet)) {
     return res.status(400).json({
       error: "Geçersiz cüzdan başlığı formatı.",
@@ -110,6 +91,19 @@ function requireSessionWalletMatch(req, res, next) {
     logger.warn(
       `[Auth] Session-wallet mismatch: cookie=${req.wallet || "none"} header=${headerWallet}`
     );
+
+    try {
+      if (req.wallet) {
+        await revokeRefreshToken(req.wallet);
+      }
+    } catch (revokeErr) {
+      logger.warn(`[Auth] Mismatch revoke başarısız: ${revokeErr.message}`);
+    }
+
+    const cookieOpts = { httpOnly: true, sameSite: "lax", path: "/" };
+    res.clearCookie("araf_jwt", { ...cookieOpts });
+    res.clearCookie("araf_refresh", { ...cookieOpts, path: "/api/auth" });
+
     return res.status(409).json({
       error: "Oturum cüzdanı aktif bağlı cüzdanla eşleşmiyor. Lütfen yeniden giriş yapın.",
       code: "SESSION_WALLET_MISMATCH",
@@ -120,8 +114,7 @@ function requireSessionWalletMatch(req, res, next) {
 }
 
 /**
- * requirePIIToken — IBAN endpoint'i için daha sıkı kontrol.
- * Token tipi "pii" olmalı ve URL'deki tradeId ile eşleşmeli.
+ * IBAN / PII erişimi için trade-scoped token kontrolü.
  */
 function requirePIIToken(req, res, next) {
   try {
@@ -135,7 +128,6 @@ function requirePIIToken(req, res, next) {
       return res.status(403).json({ error: "Geçersiz token tipi. 'pii' bekleniyordu." });
     }
 
-    // [TR] Token sadece belirtilen tradeId için geçerli
     if (payload.tradeId !== req.params.tradeId) {
       logger.warn(
         `[GÜVENLİK] PII token manipülasyonu: caller=${payload.sub} ` +
@@ -148,7 +140,9 @@ function requirePIIToken(req, res, next) {
     next();
   } catch (err) {
     logger.warn(`[PIIAuth] Token doğrulaması başarısız: ${err.message}`);
-    return res.status(err.statusCode || 401).json({ error: err.message || "Geçersiz PII token." });
+    return res
+      .status(err.statusCode || 401)
+      .json({ error: err.message || "Geçersiz PII token." });
   }
 }
 
