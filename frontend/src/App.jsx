@@ -1192,139 +1192,161 @@ function App() {
   //      realTradeId after lockEscrow (event listener delay can be 3-5s).
   //      (C-03: Added retry loop to prevent PIIDisplay 404 error)
   const handleStartTrade = async (order) => {
-    if (!window.confirm(lang === 'TR' ? 'İşlemi onaylıyor musunuz?' : 'Do you confirm the transaction?')) return;
-    if (isBanned) {
-      showToast(lang === 'TR' ? '🚫 Taker kısıtlamanız aktif. Süre için on-chain kaydınızı kontrol edin.' : '🚫 Taker restriction active. Check on-chain record for duration.', 'error');
+  if (!window.confirm(lang === 'TR' ? 'İşlemi onaylıyor musunuz?' : 'Do you confirm the transaction?')) return;
+  if (isBanned) {
+    showToast(
+      lang === 'TR'
+        ? '🚫 Taker kısıtlamanız aktif. Süre için on-chain kaydınızı kontrol edin.'
+        : '🚫 Taker restriction active. Check on-chain record for duration.',
+      'error'
+    );
+    return;
+  }
+  if (!order.onchainId) {
+    showToast(
+      lang === 'TR'
+        ? 'Bu ilanın on-chain ID\'si henüz yok. Lütfen daha sonra tekrar deneyin.'
+        : 'This listing has no on-chain ID yet. Please try again later.',
+      'error'
+    );
+    return;
+  }
+  if (isContractLoading) return;
+
+  let tokenAddress = null;
+  let didIncreaseAllowance = false;
+
+  try {
+    setIsContractLoading(true);
+    tokenAddress = SUPPORTED_TOKEN_ADDRESSES[order.crypto || 'USDT'];
+
+    if (!tokenAddress) {
+      showToast(
+        lang === 'TR'
+          ? `${order.crypto} token adresi .env dosyasında tanımlı değil.`
+          : `${order.crypto} token address not configured.`,
+        'error'
+      );
       return;
     }
-    if (!order.onchainId) {
-      showToast(lang === 'TR' ? 'Bu ilanın on-chain ID\'si henüz yok. Lütfen daha sonra tekrar deneyin.' : 'This listing has no on-chain ID yet. Please try again later.', 'error');
+
+    if (!onchainBondMap) {
+      showToast(lang === 'TR' ? 'Protokol ayarları yükleniyor...' : 'Loading protocol config...', 'info');
+      setIsContractLoading(false);
       return;
     }
-    if (isContractLoading) return;
 
-    let tokenAddress = null;
-    let didIncreaseAllowance = false;
-    try {
-      setIsContractLoading(true);
-      tokenAddress = SUPPORTED_TOKEN_ADDRESSES[order.crypto || 'USDT'];
-      if (!tokenAddress) {
-        showToast(lang === 'TR' ? `${order.crypto} token adresi .env dosyasında tanımlı değil.` : `${order.crypto} token address not configured.`, 'error');
-        return;
+    const tier = order.tier ?? 1;
+    let cryptoAmtRaw = 0n;
+
+    // Öncelik on-chain trade verisinde.
+    // Böylece fiat/crypto karışıklığında UI cache yerine contract state baz alınır.
+    const onchainTrade = await getTrade(BigInt(order.onchainId));
+    if (onchainTrade) {
+      const amountFromChain = typeof onchainTrade.cryptoAmount !== 'undefined' ? onchainTrade.cryptoAmount : onchainTrade[4];
+      const tokenFromChain = typeof onchainTrade.tokenAddress !== 'undefined' ? onchainTrade.tokenAddress : onchainTrade[3];
+
+      if (amountFromChain && BigInt(amountFromChain) > 0n) {
+        cryptoAmtRaw = BigInt(amountFromChain);
       }
-      if (!onchainBondMap) {
-        showToast(lang === 'TR' ? 'Protokol ayarları yükleniyor...' : 'Loading protocol config...', 'info');
-        setIsContractLoading(false);
-        return;
+      if (tokenFromChain && tokenFromChain !== '0x0000000000000000000000000000000000000000') {
+        tokenAddress = tokenFromChain;
       }
+    }
 
-      const tier = order.tier ?? 1;
-      let cryptoAmtRaw = 0n;
+    if (cryptoAmtRaw === 0n) {
+      showToast(
+        lang === 'TR'
+          ? 'On-chain işlem tutarı okunamadı. Lütfen daha sonra tekrar deneyin.'
+          : 'Failed to read on-chain trade amount. Please try again.',
+        'error'
+      );
+      return;
+    }
 
-      // [TR] Öncelik on-chain trade verisi (fiat/crypto birim karmaşasını önler)
-      // [EN] Prefer on-chain trade amount (prevents fiat/crypto unit confusion)
-      const onchainTrade = await getTrade(BigInt(order.onchainId));
-      if (onchainTrade) {
-        const amountFromChain = typeof onchainTrade.cryptoAmount !== 'undefined' ? onchainTrade.cryptoAmount : onchainTrade[4];
-        const tokenFromChain  = typeof onchainTrade.tokenAddress !== 'undefined' ? onchainTrade.tokenAddress : onchainTrade[3];
-        if (amountFromChain && BigInt(amountFromChain) > 0n) {
-          cryptoAmtRaw = BigInt(amountFromChain);
+    const takerBondBps = BigInt(onchainBondMap[tier]?.takerBps ?? 0);
+    const takerBond = (cryptoAmtRaw * takerBondBps) / 10000n;
+
+    if (takerBond > 0n) {
+      const currentAllowance = await getAllowance(tokenAddress, address);
+      if (currentAllowance < takerBond) {
+        setLoadingText(
+          lang === 'TR'
+            ? `Adım 1/2: ${order.crypto} izni veriliyor...`
+            : `Step 1/2: Approving ${order.crypto}...`
+        );
+        await approveToken(tokenAddress, takerBond);
+        didIncreaseAllowance = true;
+      }
+    }
+
+    setLoadingText(
+      lang === 'TR'
+        ? 'Adım 2/2: İşlem kilitleniyor...'
+        : 'Step 2/2: Locking trade...'
+    );
+    await lockEscrow(BigInt(order.onchainId));
+
+    // Backend trade kaydı listener gecikmesiyle gelebilir.
+    // Bu yüzden birkaç deneme yapılır; gerçek trade ID yoksa sahte/fallback ID ile devam edilmez.
+    let realTradeId = null;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try {
+        const res = await authenticatedFetch(`${API_URL}/api/trades/by-escrow/${order.onchainId}`);
+        if (res.ok) {
+          const data = await res.json();
+          realTradeId = data.trade?._id;
+          if (realTradeId) break;
         }
-        if (tokenFromChain && tokenFromChain !== '0x0000000000000000000000000000000000000000') {
-          tokenAddress = tokenFromChain;
-        }
-      }
-      if (cryptoAmtRaw === 0n) {
-        showToast(lang === 'TR' ? 'On-chain işlem tutarı okunamadı. Lütfen daha sonra tekrar deneyin.' : 'Failed to read on-chain trade amount. Please try again.', 'error');
-        return;
-      }
+      } catch (_) {}
+      if (attempt < 5) await new Promise(r => setTimeout(r, 2000));
+    }
 
-      const takerBondBps = BigInt(onchainBondMap[tier]?.takerBps ?? 0);
-      const takerBond = (cryptoAmtRaw * takerBondBps) / 10000n;
+    if (!realTradeId) {
+      showToast(
+        lang === 'TR'
+          ? '⚠️ İşlem zincire yazıldı ancak backend kaydı henüz oluşmadı. Birkaç saniye sonra "Aktif İşlemler" ekranını kontrol edin.'
+          : '⚠️ Trade was written on-chain but backend record is not ready yet. Check "Active Trades" in a few seconds.',
+        'info'
+      );
 
-      if (takerBond > 0n) {
-        const currentAllowance = await getAllowance(tokenAddress, address);
-        if (currentAllowance < takerBond) {
-          setLoadingText(lang === 'TR' ? `Adım 1/2: ${order.crypto} izni veriliyor...` : `Step 1/2: Approving ${order.crypto}...`);
-          await approveToken(tokenAddress, takerBond);
-          didIncreaseAllowance = true;
-        }
-      }
-
-      setLoadingText(lang === 'TR' ? 'Adım 2/2: İşlem kilitleniyor...' : 'Step 2/2: Locking trade...');
-      await lockEscrow(BigInt(order.onchainId));
-
-      // [TR] Event listener gecikmesine karşı 6 deneme / 2 sn aralıklı retry loop
-      // [EN] Retry loop with 6 attempts / 2s intervals against event listener delay
-      let realTradeId = null;
-      for (let attempt = 0; attempt < 6; attempt++) {
-        try {
-          const res = await authenticatedFetch(`${API_URL}/api/trades/by-escrow/${order.onchainId}`);
-          if (res.ok) {
-            const data = await res.json();
-            realTradeId = data.trade?._id;
-            if (realTradeId) break;
-          }
-        } catch (_) {}
-        if (attempt < 5) await new Promise(r => setTimeout(r, 2000));
-      }
-
-      setActiveTrade({ ...order, id: realTradeId || order.id, onchainId: order.onchainId });
+      setActiveTrade({
+        ...order,
+        id: null,
+        onchainId: order.onchainId,
+        _pendingBackendSync: true,
+      });
       setTradeState('LOCKED');
       setCancelStatus(null);
       setChargebackAccepted(false);
       setCurrentView('tradeRoom');
-      showToast(lang === 'TR' ? '🔒 İşlem başarıyla kilitlendi!' : '🔒 Trade locked successfully!', 'success');
-    } catch (err) {
-      console.error('handleStartTrade error:', err);
-      // [TR] Güvenlik temizliği: approve başarılı olup lock başarısızsa allowance sıfırlamayı dene
-      // [EN] Security cleanup: if approve succeeded but lock failed, try resetting allowance
-      if (didIncreaseAllowance && tokenAddress) {
-        try { await approveToken(tokenAddress, 0n); } catch (_) {}
-      }
-      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'İşlem kilitlenemedi.' : 'Failed to lock trade.');
-      if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
-        showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
-      } else {
-        showToast(errorMessage, 'error');
-      }
-    } finally {
-      setIsContractLoading(false);
-      setLoadingText('');
+      return;
     }
-  };
 
-  // [TR] Maker ilanını iptal eder: önce on-chain cancelOpenEscrow(), sonra UI güncellenir
-  // [EN] Cancels maker listing: on-chain cancelOpenEscrow() first, then UI update
-  const handleDeleteOrder = async (order) => {
-    if (order.status && order.status !== 'OPEN') {
-      showToast(lang === 'TR' ? 'Sadece OPEN durumundaki ilanlar silinebilir.' : 'Only OPEN listings can be deleted.', 'error');
-      setConfirmDeleteId(null);
-      return;
+    setActiveTrade({ ...order, id: realTradeId, onchainId: order.onchainId });
+    setTradeState('LOCKED');
+    setCancelStatus(null);
+    setChargebackAccepted(false);
+    setCurrentView('tradeRoom');
+    showToast(lang === 'TR' ? '🔒 İşlem başarıyla kilitlendi!' : '🔒 Trade locked successfully!', 'success');
+  } catch (err) {
+    console.error('handleStartTrade error:', err);
+
+    if (didIncreaseAllowance && tokenAddress) {
+      try { await approveToken(tokenAddress, 0n); } catch (_) {}
     }
-    if (!order.onchainId) {
-      showToast(lang === 'TR' ? 'On-chain işlem ID bulunamadı, sadece veritabanından silinecek.' : 'On-chain ID not found, deleting from DB only.', 'info');
-      setOrders(prev => prev.filter(o => o.id !== order.id));
-      setConfirmDeleteId(null);
-      return;
-    }
-    if (isContractLoading) return;
-    try {
-      setIsContractLoading(true);
-      showToast(lang === 'TR' ? 'İlan iptal ediliyor, lütfen cüzdanınızdan onaylayın...' : 'Cancelling listing, please confirm in wallet...', 'info');
-      await cancelOpenEscrow(BigInt(order.onchainId));
-      await authenticatedFetch(`${API_URL}/api/listings/${order.id}`, { method: 'DELETE' });
-      setOrders(prev => prev.filter(o => o.id !== order.id));
-      setConfirmDeleteId(null);
-      showToast(lang === 'TR' ? 'İlan iptal edildi ve fonlar iade edildi.' : 'Listing cancelled and funds returned.', 'success');
-    } catch (err) {
-      console.error('cancelOpenEscrow error:', err);
-      const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'On-chain iptal başarısız oldu.' : 'On-chain cancellation failed.');
+
+    const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'İşlem kilitlenemedi.' : 'Failed to lock trade.');
+    if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
+      showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Transaction cancelled.', 'error');
+    } else {
       showToast(errorMessage, 'error');
-    } finally {
-      setIsContractLoading(false);
     }
-  };
+  } finally {
+    setIsContractLoading(false);
+    setLoadingText('');
+  }
+};
 
   // [TR] Dekont dosyasını backend'e yükler, dönen SHA-256 hash'ini paymentIpfsHash state'ine kaydeder.
   //      activeTrade.onchainId zorunlu — backend hangi trade'e ait olduğunu belirler.
