@@ -181,7 +181,7 @@ flowchart TD
 
 ---
 
-## 6) Zaman Sabitleri (Kanonik Dosya ile Hizalı)
+## 6) Zaman Sabitleri 
 
 | Parametre | Değer |
 |---|---:|
@@ -194,28 +194,3 @@ flowchart TD
 | Auto-release ihmal cezası | Her iki teminattan %2 |
 
 ---
-
-## 7) Uygulama (Frontend) Katmanı İçin Yorum
-
-`App.jsx` bu oyun teorisini yalnız göstermiyor; kullanıcıyı doğru yola sokacak şekilde de orkestre ediyor:
-
-- Maker challenge akışı iki adımlı UI olarak yürütülüyor (`pingTakerForChallenge` → `challengeTrade`)
-- Taker timeout akışı ayrı tutuluyor (`pingMaker` → `autoRelease`)
-- `ConflictingPingPath` revert'i kullanıcıya açık hata mesajıyla yansıtılıyor
-- burn yolu `CHALLENGED` ve üst süre dolduğunda ayrıca görünür hale getiriliyor.
-
-Bu yüzden bu diyagram yalnız sözleşme mantığını değil, frontend'de nasıl temsil edildiğini de daha doğru yansıtır.
-
----
-
-## 8) Önceki Sürümden Başlıca Düzeltmeler
-
-Bu revizyonda özellikle şu noktalar düzeltildi:
-
-- `48s` / `24s` gibi belirsiz kısaltmalar → **48 saat / 24 saat** olarak netleştirildi
-- `ConflictingPingPath` koruması daha açık yazıldı
-- `PAID` durumunda da müşterek iptal yolu görünür kılındı
-- `CHALLENGED` içinde yalnız burn değil, **release / cancel** kapanış yolları da eklendi
-- auto-release cezası **%2** olarak mimari sabitlerle hizalandı
-- burn yolunun **permissionless** doğası açık yazıldı
-- decay tablosu maker bond / taker bond / escrowed crypto diye üç kalemli hale getirildi
