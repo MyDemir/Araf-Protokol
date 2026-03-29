@@ -59,6 +59,17 @@ error NoBansToReset();
 error DeadlineTooFar();
 error ConflictingPingPath();
 
+// [TR] V3 Order katmanı için yeni özel hatalar
+// [EN] New custom errors for the V3 Order layer
+error InvalidOrderRef();
+error InvalidOrderState();
+error OnlyOrderOwner();
+error FillAmountExceedsRemaining();
+error FillAmountBelowMinimum();
+error InvalidMinFill();
+error OrderSideMismatch();
+error TokenDirectionNotAllowed();
+
 contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     using SafeERC20 for IERC20;
 
@@ -77,14 +88,33 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         BURNED
     }
 
+    // [TR] Parent emir yönü — satım veya alım
+    // [EN] Parent order direction — sell or buy
+    enum OrderSide {
+        SELL_CRYPTO,
+        BUY_CRYPTO
+    }
+
+    // [TR] Parent emir yaşam döngüsü
+    // [EN] Parent order lifecycle
+    enum OrderState {
+        OPEN,
+        PARTIALLY_FILLED,
+        FILLED,
+        CANCELED
+    }
+
     struct Trade {
         uint256 id;
+        uint256 parentOrderId;
         address maker;
         address taker;
         address tokenAddress;
         uint256 cryptoAmount;
         uint256 makerBond;
         uint256 takerBond;
+        uint16  takerFeeBpsSnapshot;
+        uint16  makerFeeBpsSnapshot;
         uint8   tier;
         TradeState state;
         uint256 lockedAt;
@@ -99,11 +129,42 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         bool    challengePingedByMaker;
     }
 
+    // [TR] Parent Order — public emir katmanı
+    // [EN] Parent Order — public order layer
+    struct Order {
+        uint256 id;
+        address owner;
+        OrderSide side;
+        address tokenAddress;
+        uint256 totalAmount;
+        uint256 remainingAmount;
+        uint256 minFillAmount;
+        uint256 remainingMakerBondReserve;
+        uint256 remainingTakerBondReserve;
+        uint16  takerFeeBpsSnapshot;
+        uint16  makerFeeBpsSnapshot;
+        uint8   tier;
+        OrderState state;
+        bytes32 orderRef;
+    }
+
     struct Reputation {
         uint256 successfulTrades;
         uint256 failedDisputes;
         uint256 bannedUntil;
         uint256 consecutiveBans;
+    }
+
+    // [TR] Token bazlı yön kontrolü — owner tarafından yönetilir.
+    //      Bond oranları sabit kalırken, hangi token'ın hangi order yönünde
+    //      kullanılacağı owner seviyesinde açılıp kapatılabilir.
+    // [EN] Token direction controls — owner managed.
+    //      While bond ratios stay fixed, the owner can decide which tokens
+    //      are enabled for which order direction.
+    struct TokenConfig {
+        bool supported;
+        bool allowSellOrders;
+        bool allowBuyOrders;
     }
 
     // ═══════════════════════════════════════════════════
@@ -131,8 +192,12 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     uint256 public constant GOOD_REP_DISCOUNT_BPS = 100;
     uint256 public constant BAD_REP_PENALTY_BPS   = 300;
 
-    uint256 public constant TAKER_FEE_BPS = 10;
-    uint256 public constant MAKER_FEE_BPS = 10;
+    // [TR] Fee ve cooldown artık mutable'dır.
+    //      Bu default değerler constructor sırasında başlangıç değeri olarak yüklenir.
+    // [EN] Fee and cooldown are now mutable.
+    //      These defaults are loaded as initial values in the constructor.
+    uint256 public constant DEFAULT_TAKER_FEE_BPS = 15;
+    uint256 public constant DEFAULT_MAKER_FEE_BPS = 15;
 
     uint256 public constant AUTO_RELEASE_PENALTY_BPS = 200;
 
@@ -140,8 +205,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     uint256 public constant USDT_DECAY_START     =  96 hours;
     uint256 public constant MAX_BLEEDING         = 240 hours;
     uint256 public constant WALLET_AGE_MIN       =   7 days;
-    uint256 public constant TIER0_TRADE_COOLDOWN =   4 hours;
-    uint256 public constant TIER1_TRADE_COOLDOWN =   4 hours;
+    uint256 public constant DEFAULT_TIER0_TRADE_COOLDOWN = 4 hours;
+    uint256 public constant DEFAULT_TIER1_TRADE_COOLDOWN = 4 hours;
     uint256 public constant MAX_CANCEL_DEADLINE  =   7 days;
     uint256 public constant MIN_ACTIVE_PERIOD    =  15 days;
 
@@ -167,9 +232,11 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     // ═══════════════════════════════════════════════════
 
     uint256 public tradeCounter;
+    uint256 public orderCounter;
     address public treasury;
 
     mapping(uint256 => Trade) public trades;
+    mapping(uint256 => Order) public orders;
     mapping(address => Reputation) public reputation;
 
     mapping(address => uint256) public walletRegisteredAt;
@@ -180,7 +247,15 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
     mapping(address => uint256) public firstSuccessfulTradeAt;
     mapping(address => bool) public supportedTokens;
+    mapping(address => TokenConfig) public tokenConfigs;
     mapping(address => uint256) public sigNonces;
+
+    // [TR] Owner kontrollü mutable fee / cooldown alanları
+    // [EN] Owner-controlled mutable fee / cooldown state
+    uint256 public takerFeeBps;
+    uint256 public makerFeeBps;
+    uint256 public tier0TradeCooldown;
+    uint256 public tier1TradeCooldown;
 
     // ═══════════════════════════════════════════════════
     //  OLAYLAR / EVENTS
@@ -200,6 +275,45 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     event ReputationUpdated(address indexed wallet, uint256 successful, uint256 failed, uint256 bannedUntil, uint8 effectiveTier);
     event TreasuryUpdated(address indexed newTreasury);
     event TokenSupportUpdated(address indexed token, bool supported);
+
+    // [TR] V3 Order / Config event'leri
+    // [EN] V3 Order / Config events
+    event OrderCreated(
+        uint256 indexed orderId,
+        address indexed owner,
+        OrderSide side,
+        address token,
+        uint256 totalAmount,
+        uint256 minFillAmount,
+        uint8 tier,
+        bytes32 orderRef
+    );
+
+    event OrderFilled(
+        uint256 indexed orderId,
+        uint256 indexed tradeId,
+        address indexed filler,
+        uint256 fillAmount,
+        uint256 remainingAmount
+    );
+
+    event OrderCanceled(
+        uint256 indexed orderId,
+        OrderSide side,
+        uint256 remainingAmount,
+        uint256 makerBondRefund,
+        uint256 takerBondRefund
+    );
+
+    event FeeConfigUpdated(uint256 takerFeeBps, uint256 makerFeeBps);
+    event CooldownConfigUpdated(uint256 tier0TradeCooldown, uint256 tier1TradeCooldown);
+
+    event TokenConfigUpdated(
+        address indexed token,
+        bool supported,
+        bool allowSellOrders,
+        bool allowBuyOrders
+    );
 
     // ═══════════════════════════════════════════════════
     //  MODIFIER'LAR / MODIFIERS
@@ -226,6 +340,13 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     {
         if (_treasury == address(0)) revert OwnableInvalidOwner(address(0));
         treasury = _treasury;
+
+        // [TR] Mutable fee / cooldown için varsayılan başlangıç değerleri
+        // [EN] Default initial values for mutable fee / cooldown
+        takerFeeBps = DEFAULT_TAKER_FEE_BPS;
+        makerFeeBps = DEFAULT_MAKER_FEE_BPS;
+        tier0TradeCooldown = DEFAULT_TIER0_TRADE_COOLDOWN;
+        tier1TradeCooldown = DEFAULT_TIER1_TRADE_COOLDOWN;
     }
 
     // ═══════════════════════════════════════════════════
@@ -291,7 +412,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint8   _tier,
         bytes32 _listingRef
     ) internal returns (uint256 tradeId) {
-        if (!supportedTokens[_token]) revert TokenNotSupported();
+        if (!_isSupportedToken(_token)) revert TokenNotSupported();
         if (_cryptoAmount == 0) revert ZeroAmount();
         if (_tier > 4) revert InvalidTier();
         if (_listingRef == bytes32(0)) revert InvalidListingRef();
@@ -309,12 +430,15 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         tradeId = ++tradeCounter;
         trades[tradeId] = Trade({
             id:                     tradeId,
+            parentOrderId:          0,
             maker:                  msg.sender,
             taker:                  address(0),
             tokenAddress:           _token,
             cryptoAmount:           _cryptoAmount,
             makerBond:              makerBond,
             takerBond:              0,
+            takerFeeBpsSnapshot:    uint16(_getCurrentTakerFeeBps(_tier)),
+            makerFeeBpsSnapshot:    uint16(_getCurrentMakerFeeBps(_tier)),
             tier:                   _tier,
             state:                  TradeState.OPEN,
             ipfsReceiptHash:        "",
@@ -331,6 +455,352 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         IERC20(_token).safeTransferFrom(msg.sender, address(this), totalLock);
         emit EscrowCreated(tradeId, msg.sender, _token, _cryptoAmount, _tier, _listingRef);
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  V3 ORDER KATMANI — SELL / BUY EMİRLER
+    //  V3 ORDER LAYER — SELL / BUY ORDERS
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * @notice Public sell order oluşturur.
+     *         Seller token inventory + toplam maker bond reserve'ini peşin kilitler.
+     * @notice Creates a public sell order.
+     *         The seller locks token inventory + total maker bond reserve upfront.
+     */
+    function createSellOrder(
+        address _token,
+        uint256 _totalAmount,
+        uint256 _minFillAmount,
+        uint8   _tier,
+        bytes32 _orderRef
+    ) external nonReentrant whenNotPaused returns (uint256 orderId) {
+        if (!_isTokenAllowedForSellOrder(_token)) revert TokenDirectionNotAllowed();
+        if (_totalAmount == 0) revert ZeroAmount();
+        if (_minFillAmount == 0 || _minFillAmount > _totalAmount) revert InvalidMinFill();
+        if (_tier > 4) revert InvalidTier();
+        if (_orderRef == bytes32(0)) revert InvalidOrderRef();
+
+        uint8 effectiveTier = _getEffectiveTier(msg.sender);
+        if (_tier > effectiveTier) revert TierNotAllowed();
+
+        uint256 tierMax = _getTierMaxAmount(_tier);
+        if (tierMax > 0 && _totalAmount > tierMax) revert AmountExceedsTierLimit();
+
+        uint256 makerBondBps   = _getMakerBondBps(msg.sender, _tier);
+        uint256 makerBondTotal = (_totalAmount * makerBondBps) / BPS_DENOMINATOR;
+
+        orderId = ++orderCounter;
+        orders[orderId] = Order({
+            id:                         orderId,
+            owner:                      msg.sender,
+            side:                       OrderSide.SELL_CRYPTO,
+            tokenAddress:               _token,
+            totalAmount:                _totalAmount,
+            remainingAmount:            _totalAmount,
+            minFillAmount:              _minFillAmount,
+            remainingMakerBondReserve:  makerBondTotal,
+            remainingTakerBondReserve:  0,
+            takerFeeBpsSnapshot:        uint16(_getCurrentTakerFeeBps(_tier)),
+            makerFeeBpsSnapshot:        uint16(_getCurrentMakerFeeBps(_tier)),
+            tier:                       _tier,
+            state:                      OrderState.OPEN,
+            orderRef:                   _orderRef
+        });
+
+        IERC20(_token).safeTransferFrom(msg.sender, address(this), _totalAmount + makerBondTotal);
+
+        emit OrderCreated(
+            orderId,
+            msg.sender,
+            OrderSide.SELL_CRYPTO,
+            _token,
+            _totalAmount,
+            _minFillAmount,
+            _tier,
+            _orderRef
+        );
+    }
+
+    /**
+     * @notice Public sell order'ı exact fill ile child trade'e dönüştürür.
+     *         Child trade aynı tx içinde doğrudan LOCKED olarak üretilir.
+     * @notice Converts a public sell order into an exact-fill child trade.
+     *         The child trade is spawned as LOCKED directly in the same tx.
+     */
+    function fillSellOrder(
+        uint256 _orderId,
+        uint256 _fillAmount,
+        bytes32 _childListingRef
+    ) external nonReentrant whenNotPaused returns (uint256 tradeId) {
+        Order storage o = orders[_orderId];
+
+        if (o.side != OrderSide.SELL_CRYPTO) revert OrderSideMismatch();
+        if (o.state != OrderState.OPEN && o.state != OrderState.PARTIALLY_FILLED) revert InvalidOrderState();
+        if (_fillAmount == 0) revert ZeroAmount();
+        if (_childListingRef == bytes32(0)) revert InvalidListingRef();
+        if (msg.sender == o.owner) revert SelfTradeForbidden();
+        if (_fillAmount > o.remainingAmount) revert FillAmountExceedsRemaining();
+        if (_fillAmount < o.minFillAmount && _fillAmount != o.remainingAmount) revert FillAmountBelowMinimum();
+
+        _enforceTakerEntry(msg.sender, o.tier);
+
+        uint256 takerBondBps = _getTakerBondBps(msg.sender, o.tier);
+        uint256 takerBond    = (_fillAmount * takerBondBps) / BPS_DENOMINATOR;
+
+        uint256 makerBondSlice = _proportionalSlice(
+            o.remainingMakerBondReserve,
+            o.remainingAmount,
+            _fillAmount
+        );
+
+        o.remainingAmount -= _fillAmount;
+        o.remainingMakerBondReserve -= makerBondSlice;
+        o.state = o.remainingAmount == 0 ? OrderState.FILLED : OrderState.PARTIALLY_FILLED;
+
+        if (takerBond > 0) {
+            IERC20(o.tokenAddress).safeTransferFrom(msg.sender, address(this), takerBond);
+        }
+
+        tradeId = ++tradeCounter;
+        trades[tradeId] = Trade({
+            id:                     tradeId,
+            parentOrderId:          _orderId,
+            maker:                  o.owner,
+            taker:                  msg.sender,
+            tokenAddress:           o.tokenAddress,
+            cryptoAmount:           _fillAmount,
+            makerBond:              makerBondSlice,
+            takerBond:              takerBond,
+            takerFeeBpsSnapshot:    o.takerFeeBpsSnapshot,
+            makerFeeBpsSnapshot:    o.makerFeeBpsSnapshot,
+            tier:                   o.tier,
+            state:                  TradeState.LOCKED,
+            ipfsReceiptHash:        "",
+            lockedAt:               block.timestamp,
+            paidAt:                 0,
+            challengedAt:           0,
+            cancelProposedByMaker:  false,
+            cancelProposedByTaker:  false,
+            pingedAt:               0,
+            pingedByTaker:          false,
+            challengePingedAt:      0,
+            challengePingedByMaker: false
+        });
+
+        lastTradeAt[msg.sender] = block.timestamp;
+
+        emit OrderFilled(_orderId, tradeId, msg.sender, _fillAmount, o.remainingAmount);
+
+        // [TR] Child trade doğrudan LOCKED oluşsa da, backend/event mirror katmanı ile
+        //      geriye uyumluluk için create + lock event zinciri aynı tx içinde korunur.
+        // [EN] Even though the child trade is created directly as LOCKED, the create + lock
+        //      event chain is preserved in the same tx for backend/event mirror compatibility.
+        emit EscrowCreated(tradeId, o.owner, o.tokenAddress, _fillAmount, o.tier, _childListingRef);
+        emit EscrowLocked(tradeId, msg.sender, takerBond);
+    }
+
+    /**
+     * @notice Sell order'ın henüz doldurulmamış kalan kısmını iptal eder.
+     *         Yalnız kullanılmamış inventory ve maker reserve iade edilir.
+     * @notice Cancels the still-unfilled remainder of a sell order.
+     *         Only unused inventory and maker reserve are refunded.
+     */
+    function cancelSellOrder(uint256 _orderId) external nonReentrant {
+        Order storage o = orders[_orderId];
+
+        if (o.side != OrderSide.SELL_CRYPTO) revert OrderSideMismatch();
+        if (msg.sender != o.owner) revert OnlyOrderOwner();
+        if (o.state != OrderState.OPEN && o.state != OrderState.PARTIALLY_FILLED) revert InvalidOrderState();
+
+        uint256 remainingAmount   = o.remainingAmount;
+        uint256 makerBondRefund   = o.remainingMakerBondReserve;
+        uint256 takerBondRefund   = 0;
+        uint256 totalRefund       = remainingAmount + makerBondRefund;
+
+        o.state = OrderState.CANCELED;
+        o.remainingAmount = 0;
+        o.remainingMakerBondReserve = 0;
+
+        if (totalRefund > 0) {
+            IERC20(o.tokenAddress).safeTransfer(o.owner, totalRefund);
+        }
+
+        emit OrderCanceled(_orderId, o.side, remainingAmount, makerBondRefund, takerBondRefund);
+    }
+
+    /**
+     * @notice Public buy order oluşturur.
+     *         Buyer, eventual taker olarak kendi toplam taker bond reserve'ini peşin kilitler.
+     * @notice Creates a public buy order.
+     *         The buyer prepays the full taker bond reserve as the eventual taker.
+     */
+    function createBuyOrder(
+        address _token,
+        uint256 _totalAmount,
+        uint256 _minFillAmount,
+        uint8   _tier,
+        bytes32 _orderRef
+    ) external nonReentrant whenNotPaused returns (uint256 orderId) {
+        if (!_isTokenAllowedForBuyOrder(_token)) revert TokenDirectionNotAllowed();
+        if (_totalAmount == 0) revert ZeroAmount();
+        if (_minFillAmount == 0 || _minFillAmount > _totalAmount) revert InvalidMinFill();
+        if (_tier > 4) revert InvalidTier();
+        if (_orderRef == bytes32(0)) revert InvalidOrderRef();
+
+        uint8 effectiveTier = _getEffectiveTier(msg.sender);
+        if (_tier > effectiveTier) revert TierNotAllowed();
+
+        uint256 tierMax = _getTierMaxAmount(_tier);
+        if (tierMax > 0 && _totalAmount > tierMax) revert AmountExceedsTierLimit();
+
+        uint256 takerBondBps   = _getTakerBondBps(msg.sender, _tier);
+        uint256 takerBondTotal = (_totalAmount * takerBondBps) / BPS_DENOMINATOR;
+
+        orderId = ++orderCounter;
+        orders[orderId] = Order({
+            id:                         orderId,
+            owner:                      msg.sender,
+            side:                       OrderSide.BUY_CRYPTO,
+            tokenAddress:               _token,
+            totalAmount:                _totalAmount,
+            remainingAmount:            _totalAmount,
+            minFillAmount:              _minFillAmount,
+            remainingMakerBondReserve:  0,
+            remainingTakerBondReserve:  takerBondTotal,
+            takerFeeBpsSnapshot:        uint16(_getCurrentTakerFeeBps(_tier)),
+            makerFeeBpsSnapshot:        uint16(_getCurrentMakerFeeBps(_tier)),
+            tier:                       _tier,
+            state:                      OrderState.OPEN,
+            orderRef:                   _orderRef
+        });
+
+        if (takerBondTotal > 0) {
+            IERC20(_token).safeTransferFrom(msg.sender, address(this), takerBondTotal);
+        }
+
+        emit OrderCreated(
+            orderId,
+            msg.sender,
+            OrderSide.BUY_CRYPTO,
+            _token,
+            _totalAmount,
+            _minFillAmount,
+            _tier,
+            _orderRef
+        );
+    }
+
+    /**
+     * @notice Public buy order'ı exact fill ile child trade'e dönüştürür.
+     *         Seller child trade'de maker olur; buyer order owner taker olarak atanır.
+     * @notice Converts a public buy order into an exact-fill child trade.
+     *         The seller becomes maker in the child trade; the buyer order owner is assigned as taker.
+     */
+    function fillBuyOrder(
+        uint256 _orderId,
+        uint256 _fillAmount,
+        bytes32 _childListingRef
+    ) external nonReentrant whenNotPaused returns (uint256 tradeId) {
+        Order storage o = orders[_orderId];
+
+        if (o.side != OrderSide.BUY_CRYPTO) revert OrderSideMismatch();
+        if (o.state != OrderState.OPEN && o.state != OrderState.PARTIALLY_FILLED) revert InvalidOrderState();
+        if (_fillAmount == 0) revert ZeroAmount();
+        if (_childListingRef == bytes32(0)) revert InvalidListingRef();
+        if (msg.sender == o.owner) revert SelfTradeForbidden();
+        if (_fillAmount > o.remainingAmount) revert FillAmountExceedsRemaining();
+        if (_fillAmount < o.minFillAmount && _fillAmount != o.remainingAmount) revert FillAmountBelowMinimum();
+
+        // [TR] Buy order owner, child trade'de taker olacağı için lock benzeri
+        //      anti-sybil kapısından fill anında yeniden geçirilir.
+        // [EN] Since the buy order owner becomes the taker in the child trade,
+        //      the lock-equivalent anti-sybil gate is re-applied at fill time.
+        _enforceTakerEntry(o.owner, o.tier);
+
+        uint8 makerEffectiveTier = _getEffectiveTier(msg.sender);
+        if (o.tier > makerEffectiveTier) revert TierNotAllowed();
+
+        uint256 makerBondBps = _getMakerBondBps(msg.sender, o.tier);
+        uint256 makerBond    = (_fillAmount * makerBondBps) / BPS_DENOMINATOR;
+        uint256 totalLock    = _fillAmount + makerBond;
+
+        uint256 takerBondSlice = _proportionalSlice(
+            o.remainingTakerBondReserve,
+            o.remainingAmount,
+            _fillAmount
+        );
+
+        o.remainingAmount -= _fillAmount;
+        o.remainingTakerBondReserve -= takerBondSlice;
+        o.state = o.remainingAmount == 0 ? OrderState.FILLED : OrderState.PARTIALLY_FILLED;
+
+        IERC20(o.tokenAddress).safeTransferFrom(msg.sender, address(this), totalLock);
+
+        tradeId = ++tradeCounter;
+        trades[tradeId] = Trade({
+            id:                     tradeId,
+            parentOrderId:          _orderId,
+            maker:                  msg.sender,
+            taker:                  o.owner,
+            tokenAddress:           o.tokenAddress,
+            cryptoAmount:           _fillAmount,
+            makerBond:              makerBond,
+            takerBond:              takerBondSlice,
+            takerFeeBpsSnapshot:    o.takerFeeBpsSnapshot,
+            makerFeeBpsSnapshot:    o.makerFeeBpsSnapshot,
+            tier:                   o.tier,
+            state:                  TradeState.LOCKED,
+            ipfsReceiptHash:        "",
+            lockedAt:               block.timestamp,
+            paidAt:                 0,
+            challengedAt:           0,
+            cancelProposedByMaker:  false,
+            cancelProposedByTaker:  false,
+            pingedAt:               0,
+            pingedByTaker:          false,
+            challengePingedAt:      0,
+            challengePingedByMaker: false
+        });
+
+        lastTradeAt[o.owner] = block.timestamp;
+
+        emit OrderFilled(_orderId, tradeId, msg.sender, _fillAmount, o.remainingAmount);
+
+        // [TR] Child trade doğrudan LOCKED oluşsa da, geriye uyumluluk için
+        //      create + lock event zinciri aynı tx içinde korunur.
+        // [EN] Even though the child trade is created directly as LOCKED, the
+        //      create + lock event chain is preserved in the same tx for backward compatibility.
+        emit EscrowCreated(tradeId, msg.sender, o.tokenAddress, _fillAmount, o.tier, _childListingRef);
+        emit EscrowLocked(tradeId, o.owner, takerBondSlice);
+    }
+
+    /**
+     * @notice Buy order'ın henüz doldurulmamış kalan kısmını iptal eder.
+     *         Yalnız kullanılmamış taker bond reserve'i iade edilir.
+     * @notice Cancels the still-unfilled remainder of a buy order.
+     *         Only unused taker bond reserve is refunded.
+     */
+    function cancelBuyOrder(uint256 _orderId) external nonReentrant {
+        Order storage o = orders[_orderId];
+
+        if (o.side != OrderSide.BUY_CRYPTO) revert OrderSideMismatch();
+        if (msg.sender != o.owner) revert OnlyOrderOwner();
+        if (o.state != OrderState.OPEN && o.state != OrderState.PARTIALLY_FILLED) revert InvalidOrderState();
+
+        uint256 remainingAmount   = o.remainingAmount;
+        uint256 makerBondRefund   = 0;
+        uint256 takerBondRefund   = o.remainingTakerBondReserve;
+
+        o.state = OrderState.CANCELED;
+        o.remainingAmount = 0;
+        o.remainingTakerBondReserve = 0;
+
+        if (takerBondRefund > 0) {
+            IERC20(o.tokenAddress).safeTransfer(o.owner, takerBondRefund);
+        }
+
+        emit OrderCanceled(_orderId, o.side, remainingAmount, makerBondRefund, takerBondRefund);
     }
 
     // ═══════════════════════════════════════════════════
@@ -381,17 +851,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         Trade storage t = trades[_tradeId];
 
         if (msg.sender == t.maker) revert SelfTradeForbidden();
-        if (walletRegisteredAt[msg.sender] == 0 ||
-            block.timestamp < walletRegisteredAt[msg.sender] + WALLET_AGE_MIN) {
-            revert WalletTooYoung();
-        }
-        if (msg.sender.balance < DUST_LIMIT) revert InsufficientNativeBalance();
-        if (t.tier == 0 || t.tier == 1) {
-            if (lastTradeAt[msg.sender] != 0 &&
-                block.timestamp < lastTradeAt[msg.sender] + TIER0_TRADE_COOLDOWN) {
-                revert TierCooldownActive();
-            }
-        }
+
+        _enforceTakerEntry(msg.sender, t.tier);
 
         uint8 takerEffectiveTier = _getEffectiveTier(msg.sender);
         if (t.tier > takerEffectiveTier) revert TierNotAllowed();
@@ -463,10 +924,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             emit BleedingDecayed(_tradeId, decayed, block.timestamp);
         }
 
-        uint256 takerFee      = (currentCrypto * TAKER_FEE_BPS) / BPS_DENOMINATOR;
+        uint256 takerFee      = (currentCrypto * t.takerFeeBpsSnapshot) / BPS_DENOMINATOR;
         uint256 takerReceives = currentCrypto - takerFee;
 
-        uint256 makerFee          = (currentCrypto * MAKER_FEE_BPS) / BPS_DENOMINATOR;
+        uint256 makerFee          = (currentCrypto * t.makerFeeBpsSnapshot) / BPS_DENOMINATOR;
         uint256 makerBondAfterFee = currentMakerBond > makerFee ? currentMakerBond - makerFee : 0;
         uint256 actualMakerFee    = currentMakerBond > makerFee ? makerFee : currentMakerBond;
 
@@ -694,8 +1155,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint256 makerFee = 0;
 
         if (currentState == TradeState.PAID || currentState == TradeState.CHALLENGED) {
-            takerFee = (currentCrypto * TAKER_FEE_BPS) / BPS_DENOMINATOR;
-            makerFee = (currentCrypto * MAKER_FEE_BPS) / BPS_DENOMINATOR;
+            takerFee = (currentCrypto * t.takerFeeBpsSnapshot) / BPS_DENOMINATOR;
+            makerFee = (currentCrypto * t.makerFeeBpsSnapshot) / BPS_DENOMINATOR;
         }
 
         uint256 totalFeeToTreasury = 0;
@@ -979,7 +1440,11 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     function getCooldownRemaining(address _wallet) external view returns (uint256) {
         uint256 last = lastTradeAt[_wallet];
         if (last == 0) return 0;
-        uint256 cooldownEnd = last + TIER0_TRADE_COOLDOWN;
+
+        uint256 infoCooldown = _getInformationalCooldown();
+        if (infoCooldown == 0) return 0;
+
+        uint256 cooldownEnd = last + infoCooldown;
         if (block.timestamp >= cooldownEnd) return 0;
         return cooldownEnd - block.timestamp;
     }
@@ -990,6 +1455,34 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      */
     function getTrade(uint256 _tradeId) external view returns (Trade memory) {
         return trades[_tradeId];
+    }
+
+    /**
+     * @notice Parent order verisini döndürür.
+     *         Frontend ve backend bu katmanı read-model olarak kullanabilir.
+     * @notice Returns the parent order struct.
+     *         Frontend and backend may use this layer as a read model.
+     */
+    function getOrder(uint256 _orderId) external view returns (Order memory) {
+        return orders[_orderId];
+    }
+
+    /**
+     * @notice Güncel global fee config'i döndürür.
+     *         Aktif trade'ler yine snapshot ile korunur.
+     * @notice Returns the current global fee config.
+     *         Active trades remain protected by their snapshots.
+     */
+    function getFeeConfig() external view returns (uint256 currentTakerFeeBps, uint256 currentMakerFeeBps) {
+        return (takerFeeBps, makerFeeBps);
+    }
+
+    /**
+     * @notice Güncel global cooldown config'i döndürür.
+     * @notice Returns the current global cooldown config.
+     */
+    function getCooldownConfig() external view returns (uint256 currentTier0TradeCooldown, uint256 currentTier1TradeCooldown) {
+        return (tier0TradeCooldown, tier1TradeCooldown);
     }
 
     /**
@@ -1027,8 +1520,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         funded = _wallet.balance >= DUST_LIMIT;
 
-        cooldownOk = lastTradeAt[_wallet] == 0 ||
-                     block.timestamp >= lastTradeAt[_wallet] + TIER0_TRADE_COOLDOWN;
+        uint256 infoCooldown = _getInformationalCooldown();
+        cooldownOk = infoCooldown == 0 ||
+                     lastTradeAt[_wallet] == 0 ||
+                     block.timestamp >= lastTradeAt[_wallet] + infoCooldown;
     }
 
     /**
@@ -1052,6 +1547,32 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     }
 
     /**
+     * @notice Güncel fee config'ini owner seviyesinde günceller.
+     *         Yeni trade / yeni order açılışları yeni değerleri kullanır;
+     *         mevcut aktif trade'ler fee snapshot ile korunur.
+     * @notice Updates the current fee config at owner level.
+     *         New trades / new orders use the new values;
+     *         existing active trades remain protected by fee snapshots.
+     */
+    function setFeeConfig(uint256 _takerFeeBps, uint256 _makerFeeBps) external onlyOwner {
+        takerFeeBps = _takerFeeBps;
+        makerFeeBps = _makerFeeBps;
+        emit FeeConfigUpdated(_takerFeeBps, _makerFeeBps);
+    }
+
+    /**
+     * @notice Güncel cooldown config'ini owner seviyesinde günceller.
+     *         Bu değişiklik yeni lock / fill girişlerinde uygulanır.
+     * @notice Updates the current cooldown config at owner level.
+     *         The change applies to new lock / fill entries.
+     */
+    function setCooldownConfig(uint256 _tier0TradeCooldown, uint256 _tier1TradeCooldown) external onlyOwner {
+        tier0TradeCooldown = _tier0TradeCooldown;
+        tier1TradeCooldown = _tier1TradeCooldown;
+        emit CooldownConfigUpdated(_tier0TradeCooldown, _tier1TradeCooldown);
+    }
+
+    /**
      * @notice Desteklenen token ekler veya çıkarır.
      *         supportedTokens mapping'i güncellenir — önceki versiyonda bu satır eksikti.
      * @notice Add or remove a supported token.
@@ -1059,8 +1580,41 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      */
     function setSupportedToken(address _token, bool _supported) external onlyOwner {
         if (_token == address(0)) revert OwnableInvalidOwner(address(0));
+
         supportedTokens[_token] = _supported;
+        tokenConfigs[_token] = TokenConfig({
+            supported: _supported,
+            allowSellOrders: _supported,
+            allowBuyOrders: _supported
+        });
+
         emit TokenSupportUpdated(_token, _supported);
+        emit TokenConfigUpdated(_token, _supported, _supported, _supported);
+    }
+
+    /**
+     * @notice Token yön izinlerini owner seviyesinde günceller.
+     *         Sell / buy order yüzeyleri ayrı ayrı açılıp kapatılabilir.
+     * @notice Updates token direction permissions at owner level.
+     *         Sell / buy order surfaces can be enabled or disabled independently.
+     */
+    function setTokenConfig(
+        address _token,
+        bool _supported,
+        bool _allowSellOrders,
+        bool _allowBuyOrders
+    ) external onlyOwner {
+        if (_token == address(0)) revert OwnableInvalidOwner(address(0));
+
+        supportedTokens[_token] = _supported;
+        tokenConfigs[_token] = TokenConfig({
+            supported: _supported,
+            allowSellOrders: _allowSellOrders,
+            allowBuyOrders: _allowBuyOrders
+        });
+
+        emit TokenSupportUpdated(_token, _supported);
+        emit TokenConfigUpdated(_token, _supported, _allowSellOrders, _allowBuyOrders);
     }
 
     /**
@@ -1078,4 +1632,125 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      *         This re-opens new create/lock flows.
      */
     function unpause() external onlyOwner { _unpause(); }
+
+    // ═══════════════════════════════════════════════════
+    //  İÇ YARDIMCILAR — V3 EXTENSIONS
+    //  INTERNAL HELPERS — V3 EXTENSIONS
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * @notice Tier bazlı güncel taker fee değerini döndürür.
+     *         Tier 0'da da taker fee uygulanır.
+     * @notice Returns the current taker fee by tier.
+     *         Taker fee also applies on Tier 0.
+     */
+    function _getCurrentTakerFeeBps(uint8 /* _tier */) internal view returns (uint256) {
+        return takerFeeBps;
+    }
+
+    /**
+     * @notice Tier bazlı güncel maker fee değerini döndürür.
+     *         Tier 0 deliberately uses makerFee = 0 so new users stay friction-light.
+     * @notice Returns the current maker fee by tier.
+     *         Tier 0 deliberately uses makerFee = 0 so new users stay friction-light.
+     */
+    function _getCurrentMakerFeeBps(uint8 _tier) internal view returns (uint256) {
+        if (_tier == 0) return 0;
+        return makerFeeBps;
+    }
+
+    /**
+     * @notice Tier bazlı uygulanacak cooldown'u döndürür.
+     *         Tier 2+ tarafında cooldown uygulanmaz.
+     * @notice Returns the cooldown that applies for a given tier.
+     *         No cooldown is applied on Tier 2+.
+     */
+    function _getCooldownForTier(uint8 _tier) internal view returns (uint256) {
+        if (_tier == 0) return tier0TradeCooldown;
+        if (_tier == 1) return tier1TradeCooldown;
+        return 0;
+    }
+
+    /**
+     * @notice Parametresiz UX helper'lar için bilgi amaçlı cooldown döndürür.
+     *         Bu değer bağlayıcı enforcement değildir; yalnız view helper içindir.
+     * @notice Returns an informational cooldown for param-less UX helpers.
+     *         This value is not the binding enforcement rule; it is used only in view helpers.
+     */
+    function _getInformationalCooldown() internal view returns (uint256) {
+        return tier0TradeCooldown >= tier1TradeCooldown ? tier0TradeCooldown : tier1TradeCooldown;
+    }
+
+    /**
+     * @notice Taker giriş kapısını tek yerden zorlar.
+     *         lockEscrow, fillSellOrder ve fillBuyOrder bu helper'ı ortak kullanır.
+     * @notice Enforces the taker entry gate in one place.
+     *         lockEscrow, fillSellOrder and fillBuyOrder share this helper.
+     */
+    function _enforceTakerEntry(address _wallet, uint8 _tier) internal view {
+        Reputation storage rep = reputation[_wallet];
+        if (rep.bannedUntil != 0 && block.timestamp <= rep.bannedUntil) revert TakerBanActive();
+
+        if (walletRegisteredAt[_wallet] == 0 ||
+            block.timestamp < walletRegisteredAt[_wallet] + WALLET_AGE_MIN) {
+            revert WalletTooYoung();
+        }
+
+        if (_wallet.balance < DUST_LIMIT) revert InsufficientNativeBalance();
+
+        uint256 cooldown = _getCooldownForTier(_tier);
+        if (cooldown > 0) {
+            if (lastTradeAt[_wallet] != 0 &&
+                block.timestamp < lastTradeAt[_wallet] + cooldown) {
+                revert TierCooldownActive();
+            }
+        }
+    }
+
+    /**
+     * @notice Token destekli mi helper'ı.
+     *         Geriye uyumluluk için supportedTokens ve tokenConfigs birlikte okunur.
+     * @notice Supported-token helper.
+     *         For backward compatibility, both supportedTokens and tokenConfigs are read.
+     */
+    function _isSupportedToken(address _token) internal view returns (bool) {
+        if (tokenConfigs[_token].supported) return true;
+        return supportedTokens[_token];
+    }
+
+    /**
+     * @notice Sell order yönünde token açık mı helper'ı.
+     * @notice Helper that checks if a token is enabled for sell orders.
+     */
+    function _isTokenAllowedForSellOrder(address _token) internal view returns (bool) {
+        TokenConfig memory cfg = tokenConfigs[_token];
+        if (cfg.supported) return cfg.allowSellOrders;
+        return supportedTokens[_token];
+    }
+
+    /**
+     * @notice Buy order yönünde token açık mı helper'ı.
+     * @notice Helper that checks if a token is enabled for buy orders.
+     */
+    function _isTokenAllowedForBuyOrder(address _token) internal view returns (bool) {
+        TokenConfig memory cfg = tokenConfigs[_token];
+        if (cfg.supported) return cfg.allowBuyOrders;
+        return supportedTokens[_token];
+    }
+
+    /**
+     * @notice Kalan reserve'den exact fill'e karşılık gelen slice'ı hesaplar.
+     *         Son fill kalan rezervin tamamını süpürür; rounding drift birikmez.
+     * @notice Computes the reserve slice that corresponds to an exact fill.
+     *         The final fill sweeps the entire remaining reserve, preventing rounding drift accumulation.
+     */
+    function _proportionalSlice(
+        uint256 _remainingReserve,
+        uint256 _remainingAmount,
+        uint256 _fillAmount
+    ) internal pure returns (uint256) {
+        if (_remainingReserve == 0 || _remainingAmount == 0) return 0;
+        if (_fillAmount == _remainingAmount) return _remainingReserve;
+        return (_remainingReserve * _fillAmount) / _remainingAmount;
+    }
 }
