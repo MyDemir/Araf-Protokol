@@ -142,6 +142,11 @@ class EventWorker {
     this._lastSeenBlock = 0;
     this._lastSafeCheckpointBlock = 0;
     this._replayInProgress = false;
+
+    // [TR] Live path artık contract.on(...) yerine block-range polling kullanır.
+    // [EN] Live path now uses block-range polling instead of contract.on(...).
+    this._livePollInProgress = false;
+    this._lastLivePolledBlock = 0;
   }
 
   async start() {
@@ -149,6 +154,13 @@ class EventWorker {
     this.isRunning = true;
     await this._connect();
     await this._replayMissedEvents();
+
+    // [TR] Replay tamamlandıktan sonra live polling başlangıç referansı güncel block olur.
+    // [EN] After replay finishes, current block becomes the live polling baseline.
+    if (this.provider) {
+      this._lastLivePolledBlock = await this.provider.getBlockNumber();
+    }
+
     this._attachLiveListeners();
     logger.info("[Worker] Event listener aktif.");
   }
@@ -159,6 +171,7 @@ class EventWorker {
       this.provider.removeAllListeners();
     }
     this._listenersAttached = false;
+    this._livePollInProgress = false;
     this._setState("stopped", "worker stop çağrıldı");
     logger.info("[Worker] Event listener durduruldu.");
   }
@@ -267,39 +280,61 @@ class EventWorker {
   _attachLiveListeners() {
     if (!this.contract || this._listenersAttached) return;
 
-    for (const eventName of EVENT_NAMES) {
-      this.contract.on(eventName, async (...args) => {
-        const event = args[args.length - 1];
-        const eventId = this._getEventId(event);
-        this._trackLiveEventSeen(event);
-        const success = await this._processEventWithRetry(event);
-        if (success) {
-          this._trackLiveEventAck(event);
-          logger.debug(`[Worker][Metrics] retry_success_rate=${this._getRetrySuccessRate()}% event_id=${eventId}`);
-        } else {
-          this._markBlockUnsafe(event.blockNumber);
-        }
-      });
-    }
-
-    // Block listener checkpoint'i körlemesine ilerletmez.
-    // Önce ilgili blokta görülen event'lerin ack durumuna bakılır.
+    // [TR] Canlı dinleme artık contract.on(...) ile tek tek event abonesi açmaz.
+    //      Bunun yerine yeni block sinyalini tetik olarak kullanır ve son işlenen
+    //      bloktan güncel bloğa kadar olan aralığı queryFilter(...) ile tarar.
+    //
+    // [EN] Live mode no longer opens per-event contract.on(...) subscriptions.
+    //      Instead, each new block is treated as a trigger and the worker scans
+    //      the full block range from the last processed block to the current block
+    //      via queryFilter(...).
+    //
+    // Bu yaklaşım:
+    // - replay ve live path'i aynı veri toplama mantığına yaklaştırır
+    // - missed event riskini azaltır
+    // - provider subscriber/filter-id kaynaklı kırılganlığı düşürür
     this.provider.on("block", async (blockNumber) => {
-      await this._updateSeenBlockIfHigher(blockNumber);
-      logger.debug(
-        `[Worker][Metrics] queue_depth=${this._blockAcks.size} last_seen_block=${this._lastSeenBlock} last_safe_block=${this._lastSafeCheckpointBlock}`
-      );
+      if (this._livePollInProgress) {
+        logger.debug(`[Worker] Live poll zaten çalışıyor — block=${blockNumber} için yeni tetik atlandı.`);
+        return;
+      }
 
-      const finalizedUpTo = blockNumber - 1;
-      await this._advanceSafeCheckpointFromAcks(finalizedUpTo);
+      this._livePollInProgress = true;
 
-      if (!this._replayInProgress && (blockNumber - this._lastSafeCheckpointBlock >= CHECKPOINT_INTERVAL_BLOCKS)) {
-        this._replayInProgress = true;
-        try {
-          await this._replayMissedEvents();
-        } finally {
-          this._replayInProgress = false;
+      try {
+        await this._updateSeenBlockIfHigher(blockNumber);
+
+        const fromBlock = this._lastLivePolledBlock + 1;
+        const toBlock = blockNumber;
+
+        if (fromBlock <= toBlock) {
+          await this._pollLiveRange(fromBlock, toBlock);
+
+          // [TR] Range başarıyla sorgulanıp işlendiği anda live cursor ilerletilir.
+          //      Kısmi event hataları _markBlockUnsafe ile checkpoint'i durdurur;
+          //      ama aynı range'i her block'ta tekrar sorgulamak duplicate baskısı yaratır.
+          this._lastLivePolledBlock = toBlock;
         }
+
+        logger.debug(
+          `[Worker][Metrics] queue_depth=${this._blockAcks.size} last_seen_block=${this._lastSeenBlock} last_safe_block=${this._lastSafeCheckpointBlock}`
+        );
+
+        const finalizedUpTo = blockNumber - 1;
+        await this._advanceSafeCheckpointFromAcks(finalizedUpTo);
+
+        if (!this._replayInProgress && (blockNumber - this._lastSafeCheckpointBlock >= CHECKPOINT_INTERVAL_BLOCKS)) {
+          this._replayInProgress = true;
+          try {
+            await this._replayMissedEvents();
+          } finally {
+            this._replayInProgress = false;
+          }
+        }
+      } catch (err) {
+        logger.error(`[Worker] Live block-range poll hatası: ${err.message}`);
+      } finally {
+        this._livePollInProgress = false;
       }
     });
 
@@ -309,7 +344,87 @@ class EventWorker {
     });
 
     this._listenersAttached = true;
-    this._setState("live", "canlı listener'lar bağlandı");
+    this._setState("live", "canlı block-range listener bağlandı");
+  }
+
+  // [TR] Belirli block aralığındaki event'leri canlı modda toplar ve işler.
+  //      Replay ile aynı queryFilter mantığını kullanır, ancak canlı akış için
+  //      block ack/state bookkeeping de yapar.
+  //
+  // [EN] Collects and processes events for a given block range in live mode.
+  //      Uses the same queryFilter model as replay, but additionally updates
+  //      block ack/state bookkeeping required by safe checkpoint advancement.
+  async _pollLiveRange(fromBlock, toBlock) {
+    if (!this.contract || fromBlock > toBlock) return;
+
+    for (let from = fromBlock; from <= toBlock; from += BLOCK_BATCH_SIZE) {
+      const to = Math.min(from + BLOCK_BATCH_SIZE - 1, toBlock);
+
+      try {
+        const allEvents = [];
+        for (const eventName of EVENT_NAMES) {
+          const filtered = await this.contract.queryFilter(eventName, from, to);
+          if (Array.isArray(filtered)) allEvents.push(...filtered);
+        }
+
+        allEvents.sort((a, b) => a.blockNumber - b.blockNumber || a.logIndex - b.logIndex);
+
+        // [TR] Boş bloklar checkpoint akışını kilitlemesin diye aralıktaki her blok için
+        //      ack state önceden oluşturulur. Eğer bir blokta event yoksa seen=0/acked=0
+        //      olarak güvenli şekilde ilerlenebilir.
+        this._seedAckStateForRange(from, to);
+
+        for (const event of allEvents) {
+          const eventId = this._getEventId(event);
+          this._trackLiveEventSeen(event);
+
+          const success = await this._processEventWithRetry(event);
+          if (success) {
+            this._trackLiveEventAck(event);
+            logger.debug(`[Worker][Metrics] retry_success_rate=${this._getRetrySuccessRate()}% event_id=${eventId}`);
+          } else {
+            this._markBlockUnsafe(event.blockNumber);
+          }
+        }
+
+        logger.debug(`[Worker] Live poll: ${from}-${to} (${allEvents.length} event)`);
+      } catch (err) {
+        // [TR] Range sorgusu veya toplama katmanı patlarsa bu aralık checkpoint açısından
+        //      güvenli kabul edilmez. Aynı range daha sonra replay/live akışında yeniden ele alınır.
+        this._seedAckStateForRange(from, to);
+        this._markRangeUnsafe(from, to);
+        throw err;
+      }
+    }
+  }
+
+  // [TR] Bir bloğun ack bookkeeping state'ini garanti eder.
+  // [EN] Ensures a block has an ack bookkeeping state.
+  _ensureBlockAckState(blockNumber) {
+    const existing = this._blockAcks.get(blockNumber);
+    if (existing) return existing;
+
+    const state = { seen: new Set(), acked: new Set(), unsafe: false };
+    this._blockAcks.set(blockNumber, state);
+    return state;
+  }
+
+  // [TR] Boş blokların safe checkpoint ilerlemesini durdurmaması için aralıktaki
+  //      tüm bloklara başlangıç ack state'i eklenir.
+  // [EN] Seeds ack state for every block in a range so empty blocks do not block
+  //      safe checkpoint advancement.
+  _seedAckStateForRange(fromBlock, toBlock) {
+    for (let block = fromBlock; block <= toBlock; block += 1) {
+      this._ensureBlockAckState(block);
+    }
+  }
+
+  // [TR] Belirli block aralığını unsafe olarak işaretler.
+  // [EN] Marks a block range as unsafe.
+  _markRangeUnsafe(fromBlock, toBlock) {
+    for (let block = fromBlock; block <= toBlock; block += 1) {
+      this._markBlockUnsafe(block);
+    }
   }
 
   async _updateSafeCheckpointIfHigher(blockNumber) {
@@ -369,7 +484,7 @@ class EventWorker {
   _trackLiveEventSeen(event) {
     if (!event || !Number.isInteger(event.blockNumber)) return;
     const eventId = this._getEventId(event);
-    const state = this._blockAcks.get(event.blockNumber) || { seen: new Set(), acked: new Set(), unsafe: false };
+    const state = this._ensureBlockAckState(event.blockNumber);
     state.seen.add(eventId);
     this._blockAcks.set(event.blockNumber, state);
   }
@@ -377,14 +492,14 @@ class EventWorker {
   _trackLiveEventAck(event) {
     if (!event || !Number.isInteger(event.blockNumber)) return;
     const eventId = this._getEventId(event);
-    const state = this._blockAcks.get(event.blockNumber) || { seen: new Set(), acked: new Set(), unsafe: false };
+    const state = this._ensureBlockAckState(event.blockNumber);
     state.acked.add(eventId);
     this._blockAcks.set(event.blockNumber, state);
   }
 
   _markBlockUnsafe(blockNumber) {
     if (!Number.isInteger(blockNumber)) return;
-    const state = this._blockAcks.get(blockNumber) || { seen: new Set(), acked: new Set(), unsafe: false };
+    const state = this._ensureBlockAckState(blockNumber);
     state.unsafe = true;
     this._blockAcks.set(blockNumber, state);
   }
@@ -437,11 +552,16 @@ class EventWorker {
         this.provider = null;
         this.contract = null;
         this._listenersAttached = false;
+        this._livePollInProgress = false;
       }
 
       await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
       await this._connect();
       await this._replayMissedEvents();
+
+      if (this.provider) {
+        this._lastLivePolledBlock = await this.provider.getBlockNumber();
+      }
 
       if (this.contract) {
         this._attachLiveListeners();
