@@ -30,8 +30,8 @@ const {
 const CHECKPOINT_KEY = "worker:last_block";
 const LAST_SAFE_BLOCK_KEY = "worker:last_safe_block";
 const DLQ_KEY = "worker:dlq";
-const RETRY_DELAY_MS = 5_000;
-const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 2_000;
+const MAX_RETRIES = 5;
 const BLOCK_BATCH_SIZE = 1_000;
 const CHECKPOINT_INTERVAL_BLOCKS = 50;
 const MAX_REPUTATION_HISTORY = 100;
@@ -77,6 +77,7 @@ const ARAF_ABI = [
   "event TokenConfigUpdated(address indexed token, bool supported, bool allowSellOrders, bool allowBuyOrders)",
   "function getTrade(uint256 _tradeId) view returns ((uint256 id,uint256 parentOrderId,address maker,address taker,address tokenAddress,uint256 cryptoAmount,uint256 makerBond,uint256 takerBond,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 state,uint256 lockedAt,uint256 paidAt,uint256 challengedAt,string ipfsReceiptHash,bool cancelProposedByMaker,bool cancelProposedByTaker,uint256 pingedAt,bool pingedByTaker,uint256 challengePingedAt,bool challengePingedByMaker))",
   "function getOrder(uint256 _orderId) view returns ((uint256 id,address owner,uint8 side,address tokenAddress,uint256 totalAmount,uint256 remainingAmount,uint256 minFillAmount,uint256 remainingMakerBondReserve,uint256 remainingTakerBondReserve,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 state,bytes32 orderRef))",
+  "function getReputation(address _wallet) view returns (uint256 successful,uint256 failed,uint256 bannedUntil,uint256 consecutiveBans,uint8 effectiveTier)",
 ];
 
 const EVENT_ARG_KEYS = {
@@ -459,6 +460,9 @@ class EventWorker {
   async _fetchOrderFromChain(orderId) {
     return this.contract.getOrder(orderId);
   }
+  async _fetchReputationFromChain(wallet) {
+    return this.contract.getReputation(wallet);
+  }
 
   async _upsertOrderMirror(orderData, opts = {}) {
     const orderId = _toNum(orderData.id);
@@ -627,6 +631,11 @@ class EventWorker {
 
   async _onOrderFilled(event) {
     const { orderId, tradeId, filler, fillAmount, remainingAmount } = event.args;
+    const tradeIdNum = _toNum(tradeId);
+    const existingTrade = await Trade.findOne({ onchain_escrow_id: tradeIdNum })
+      .select("onchain_escrow_id")
+      .lean();
+
     const [orderData, tradeData] = await Promise.all([
       this._fetchOrderFromChain(orderId),
       this._fetchTradeFromChain(tradeId),
@@ -641,15 +650,19 @@ class EventWorker {
       remainingAmountAfterFill: remainingAmount,
     });
 
-    await this._bumpOrderChildStats(_toNum(orderId), (stats) => ({
-      child_trade_count: (stats.child_trade_count || 0) + 1,
-      active_child_trade_count: (stats.active_child_trade_count || 0) + 1,
-      resolved_child_trade_count: stats.resolved_child_trade_count || 0,
-      canceled_child_trade_count: stats.canceled_child_trade_count || 0,
-      burned_child_trade_count: stats.burned_child_trade_count || 0,
-      total_filled_amount: String(BigInt(stats.total_filled_amount || "0") + BigInt(_toStr(fillAmount))),
-      total_filled_amount_num: (stats.total_filled_amount_num || 0) + _toNum(fillAmount),
-    }));
+    // [TR] Idempotency: aynı child trade zaten mirror edilmişse order stats tekrar artırılmaz.
+    // [EN] Do not bump order stats again if the same child trade was already mirrored.
+    if (!existingTrade) {
+      await this._bumpOrderChildStats(_toNum(orderId), (stats) => ({
+        child_trade_count: (stats.child_trade_count || 0) + 1,
+        active_child_trade_count: (stats.active_child_trade_count || 0) + 1,
+        resolved_child_trade_count: stats.resolved_child_trade_count || 0,
+        canceled_child_trade_count: stats.canceled_child_trade_count || 0,
+        burned_child_trade_count: stats.burned_child_trade_count || 0,
+        total_filled_amount: String(BigInt(stats.total_filled_amount || "0") + BigInt(_toStr(fillAmount))),
+        total_filled_amount_num: (stats.total_filled_amount_num || 0) + _toNum(fillAmount),
+      }));
+    }
   }
 
   async _onOrderCanceled(event) {
@@ -722,19 +735,23 @@ class EventWorker {
   async _onEscrowReleased(event) {
     const { tradeId } = event.args;
     const tradeIdNum = _toNum(tradeId);
-    const existingTrade = await Trade.findOne({ onchain_escrow_id: tradeIdNum }).lean();
-    const wasDisputed = existingTrade?.status === "CHALLENGED";
+    const tradeData = await this._fetchTradeFromChain(tradeId);
+    const wasDisputed = _toNum(tradeData.challengedAt) > 0;
     const session = await mongoose.startSession();
     session.startTransaction();
     try {
       const trade = await Trade.findOneAndUpdate(
-        { onchain_escrow_id: tradeIdNum },
+        {
+          onchain_escrow_id: tradeIdNum,
+          status: { $ne: "RESOLVED" },
+        },
         { $set: { status: "RESOLVED", "timers.resolved_at": new Date(), "evidence.receipt_delete_at": new Date(Date.now() + 24 * 3600 * 1000) } },
         { new: true, session }
       );
       if (!trade) { await session.abortTransaction(); return; }
 
       // [TR] V3 kuralı: challenged -> resolved akışında haksız itiraz eden maker mirror edilir.
+      // [EN] Use authoritative on-chain challengedAt instead of stale DB status.
       if (wasDisputed && trade.maker_address) {
         const scoreType = "unjust_challenge";
         const score = FAILURE_SCORE_WEIGHTS[scoreType];
@@ -783,7 +800,10 @@ class EventWorker {
   async _onEscrowCanceled(event) {
     const { tradeId } = event.args;
     const trade = await Trade.findOneAndUpdate(
-      { onchain_escrow_id: _toNum(tradeId) },
+      {
+        onchain_escrow_id: _toNum(tradeId),
+        status: { $ne: "CANCELED" },
+      },
       { $set: { status: "CANCELED", "timers.resolved_at": new Date(), "evidence.receipt_delete_at": new Date(Date.now() + 24 * 3600 * 1000) } },
       { new: true }
     ).lean();
@@ -802,7 +822,10 @@ class EventWorker {
     session.startTransaction();
     try {
       const trade = await Trade.findOneAndUpdate(
-        { onchain_escrow_id: tradeIdNum },
+        {
+          onchain_escrow_id: tradeIdNum,
+          status: { $ne: "BURNED" },
+        },
         { $set: { status: "BURNED", "timers.resolved_at": new Date(), "evidence.receipt_delete_at": new Date(Date.now() + 30 * 24 * 3600 * 1000) } },
         { new: true, session }
       );
@@ -864,19 +887,39 @@ class EventWorker {
 
   async _onCancelProposed(event) {
     const { tradeId, proposer } = event.args;
+    const tradeData = await this._fetchTradeFromChain(tradeId);
+    const proposerAddress = proposer.toLowerCase();
+    const makerAddress = tradeData.maker.toLowerCase();
+    const takerAddress = tradeData.taker && tradeData.taker !== ethers.ZeroAddress
+      ? tradeData.taker.toLowerCase()
+      : null;
+
     await Trade.findOneAndUpdate(
       { onchain_escrow_id: _toNum(tradeId) },
-      { $set: { "cancel_proposal.proposed_by": proposer.toLowerCase(), "cancel_proposal.proposed_at": new Date() } }
+      {
+        $set: {
+          "cancel_proposal.proposed_by": proposerAddress,
+          "cancel_proposal.proposed_at": new Date(),
+          "cancel_proposal.approved_by":
+            tradeData.cancelProposedByMaker && tradeData.cancelProposedByTaker ? proposerAddress : null,
+          "cancel_proposal.maker_signed": Boolean(tradeData.cancelProposedByMaker),
+          "cancel_proposal.taker_signed": Boolean(tradeData.cancelProposedByTaker),
+          ...(proposerAddress !== makerAddress && proposerAddress === takerAddress
+            ? { "cancel_proposal.approved_by": proposerAddress }
+            : {}),
+        },
+      }
     );
   }
 
   async _onMakerPinged(event) {
     const { tradeId, pinger } = event.args;
     const trade = await Trade.findOne({ onchain_escrow_id: _toNum(tradeId) }).lean();
-    if (!trade) return;
+    if (!trade) {
+      throw new Error("MakerPinged geldi ama trade mirror bulunamadı.");
+    }
     if (!trade.taker_address) {
-      await this._addToDLQ(event, "taker_address henüz DB'de yok — EscrowLocked gecikmiş olabilir.");
-      return;
+      throw new Error("taker_address henüz DB'de yok — EscrowLocked gecikmiş olabilir.");
     }
     const isTakerPing = pinger.toLowerCase() === trade.taker_address.toLowerCase();
     const updateFields = isTakerPing
@@ -891,6 +934,19 @@ class EventWorker {
     const successRate = totalTrades > 0 ? Math.round((_toNum(successful) / totalTrades) * 100) : 100;
     const banTimestamp = _toNum(bannedUntil);
     const isBanned = banTimestamp > Math.floor(Date.now() / 1000);
+
+    // [TR] Event payload consecutiveBans içermediğinde authoritative chain read ile tamamla.
+    // [EN] Backfill consecutive bans from chain because the event payload is intentionally slim.
+    let consecutiveBans = 0;
+    try {
+      const rep = await this._fetchReputationFromChain(wallet);
+      if (rep && rep.consecutiveBans !== undefined) {
+        consecutiveBans = _toNum(rep.consecutiveBans);
+      }
+    } catch (err) {
+      logger.warn(`[Worker] getReputation backfill başarısız: wallet=${wallet} err=${err.message}`);
+    }
+
     await User.findOneAndUpdate(
       { wallet_address: wallet.toLowerCase() },
       {
@@ -901,6 +957,7 @@ class EventWorker {
           "reputation_cache.effective_tier": _toNum(effectiveTier),
           "is_banned": isBanned,
           "banned_until": isBanned ? new Date(banTimestamp * 1000) : null,
+          "consecutive_bans": consecutiveBans,
         },
       },
       { upsert: true }
