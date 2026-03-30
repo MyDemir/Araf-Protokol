@@ -271,8 +271,21 @@ class EventWorker {
       return explicitDate;
     }
 
-    const blockDate = await this._getBlockTimestampDate(event?.blockNumber);
-    return blockDate || new Date();
+    const blockNumber = event?.blockNumber;
+    const blockDate = await this._getBlockTimestampDate(blockNumber);
+
+    // [TR] V3 kapanış kuralı: local clock fallback YOK.
+    //      Event zamanı yalnız explicit on-chain timestamp veya block timestamp olabilir.
+    //      Timestamp çözülemezse event retry/DLQ hattına düşmelidir.
+    // [EN] No local clock fallback. Event time must come from explicit on-chain time
+    //      or block timestamp; otherwise the event must fail and be retried / DLQ'd.
+    if (!blockDate) {
+      throw new Error(
+        `[Worker] BLOCK_TIMESTAMP_UNAVAILABLE: event=${event?.eventName || "unknown"} block=${blockNumber}`
+      );
+    }
+
+    return blockDate;
   }
 
   async _replayMissedEvents() {
@@ -730,20 +743,21 @@ class EventWorker {
       },
       tier: _toNum(tradeData.tier),
       status: _normalizeTradeState(tradeData.state),
-      timers: {
-        created_at_onchain: opts.createdAt || null,
-        locked_at: _toDateOrNull(tradeData.lockedAt),
-        paid_at: _toDateOrNull(tradeData.paidAt),
-        challenged_at: _toDateOrNull(tradeData.challengedAt),
-        resolved_at: opts.resolvedAt || null,
-        pinged_at: _toDateOrNull(tradeData.pingedAt),
-        challenge_pinged_at: _toDateOrNull(tradeData.challengePingedAt),
-      },
       pinged_by_taker: Boolean(tradeData.pingedByTaker),
       challenge_pinged_by_maker: Boolean(tradeData.challengePingedByMaker),
       evidence: {
         ipfs_receipt_hash: tradeData.ipfsReceiptHash || null,
       },
+
+      // [TR] timers subdocument overwrite riski nedeniyle tüm obje replace edilmiyor.
+      //      Yalnız değişen timer alanları dotted $set ile güncellenir.
+      "timers.created_at_onchain": opts.createdAt || null,
+      "timers.locked_at": _toDateOrNull(tradeData.lockedAt),
+      "timers.paid_at": _toDateOrNull(tradeData.paidAt),
+      "timers.challenged_at": _toDateOrNull(tradeData.challengedAt),
+      "timers.resolved_at": opts.resolvedAt || null,
+      "timers.pinged_at": _toDateOrNull(tradeData.pingedAt),
+      "timers.challenge_pinged_at": _toDateOrNull(tradeData.challengePingedAt),
     };
 
     if (opts.fillAmount !== undefined) {
@@ -902,7 +916,7 @@ class EventWorker {
     const [makerUser, takerUser] = await Promise.all([
       User.findOne({ wallet_address: trade.maker_address })
         .select(
-          "pii_data.bankOwner_enc pii_data.iban_enc " +
+          "pii_data.bankOwner_enc pii_data.iban_enc pii_data.telegram_enc " +
           "profileVersion lastBankChangeAt bankChangeCount7d bankChangeCount30d"
         )
         .lean(),
@@ -920,6 +934,7 @@ class EventWorker {
           "timers.locked_at": lockedAt,
           "pii_snapshot.maker_bankOwner_enc": makerUser?.pii_data?.bankOwner_enc || null,
           "pii_snapshot.maker_iban_enc": makerUser?.pii_data?.iban_enc || null,
+          "pii_snapshot.maker_telegram_enc": makerUser?.pii_data?.telegram_enc || null,
           "pii_snapshot.taker_bankOwner_enc": takerUser?.pii_data?.bankOwner_enc || null,
           "pii_snapshot.profileVersionAtLock": makerUser?.profileVersion ?? 0,
           "pii_snapshot.lastBankChangeAt": makerUser?.lastBankChangeAt || null,
