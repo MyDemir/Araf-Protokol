@@ -6,6 +6,14 @@
  * Başarısız event'ler eventListener tarafından Redis DLQ'ya rPush ile yazılır.
  * Bu processor entry'leri yeniden sürer (re-drive), başarılı olanları siler,
  * başarısızları exponential backoff ile kuyrukta tutar.
+ *
+ * V3 Notu:
+ *   - DLQ processor kontrat otoritesi üretmez; yalnız eventListener'ın
+ *     işleyemediği kanonik event'leri tekrar sürer.
+ *   - Parent order / child trade / mutable config event'leri için özel
+ *     heuristik karar vermez.
+ *   - Authority eventListener + on-chain okumadadır; DLQ burada yalnız
+ *     operasyonel yeniden deneme orkestratörüdür.
  */
 
 const { getRedisClient } = require("../config/redis");
@@ -91,6 +99,7 @@ async function processDLQ() {
     const entries = await redis.lRange(DLQ_KEY, 0, BATCH_SIZE - 1);
 
     let poisonCount = 0;
+    let readyCount = 0;
 
     for (const raw of entries) {
       let entry;
@@ -106,12 +115,18 @@ async function processDLQ() {
         continue;
       }
 
+      readyCount += 1;
+
       const idempotencyKey = entry.idempotencyKey || `${entry.txHash}:${entry.logIndex ?? -1}`;
       logger.warn(
         `[DLQ] Re-drive başlıyor event=${entry.eventName} key=${idempotencyKey} ` +
         `attempt=${entry.attempt} queue_depth=${length}`
       );
 
+      // V3-native yaklaşım:
+      //   - Burada event türüne göre kural üretmeyiz.
+      //   - Tüm yeniden sürme kararı eventListener.reDriveEvent(...) içine delege edilir.
+      //   - Böylece order/trade/config olayları için tek kanonik yorum katmanı korunur.
       const result = await eventWorker.reDriveEvent(entry);
 
       if (result.success) {
@@ -137,7 +152,7 @@ async function processDLQ() {
       };
 
       await redis.lRem(DLQ_KEY, 1, raw);
-      await redis.rPush(DLQ_KEY, toRaw(updated));
+      await redis.rPush(DLQ_KEY, JSON.stringify(updated));
 
       if (nextAttempt >= MAX_REDRIVE_ATTEMPTS) {
         poisonCount += 1;
@@ -154,7 +169,10 @@ async function processDLQ() {
     }
 
     const newDepth = await redis.lLen(DLQ_KEY);
-    logger.info(`[DLQ][Metrics] queue_depth=${newDepth} retry_success_rate=${getRetrySuccessRate()}% poison_event_count=${poisonCount}`);
+    logger.info(
+      `[DLQ][Metrics] queue_depth=${newDepth} ready_count=${readyCount} ` +
+      `retry_success_rate=${getRetrySuccessRate()}% poison_event_count=${poisonCount}`
+    );
 
     if (newDepth >= ALERT_THRESHOLD) {
       const nowMs = Date.now();

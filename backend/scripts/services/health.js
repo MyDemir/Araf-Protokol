@@ -130,6 +130,14 @@ async function getReadiness({ worker, provider } = {}) {
   // [EN] During replay the system may be live, but not fully "ready".
   const workerReplayHealthy = workerState !== "replaying";
 
+  // [TR] V3-native not:
+  //      Parent order / child trade mimarisinde worker'ın "ready" sayılması için
+  //      hâlâ tek şart aynıdır: zincir mirror'u gerçeğin önüne geçmeden çalışmalıdır.
+  //      Bu endpoint order sayısını veya trade cache hacmini değil, kanonik event akışının
+  //      güvenli ilerleyip ilerlemediğini raporlar.
+  // [EN] V3-native note:
+  //      In the parent-order / child-trade architecture, readiness still means the
+  //      worker is safely mirroring canonical on-chain events without drifting ahead.
   const workerReady =
     workerRunning &&
     workerStateHealthy &&
