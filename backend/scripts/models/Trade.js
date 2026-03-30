@@ -207,6 +207,10 @@ const tradeSchema = new mongoose.Schema(
     pii_snapshot: {
       maker_bankOwner_enc: { type: String, default: null },
       maker_iban_enc:      { type: String, default: null },
+      // [TR] Telegram snapshot'ı da aynı trade-scoped PII disiplinine dahildir.
+      //      Current profile fallback yapılmaması için LOCKED anında yakalanır.
+      // [EN] Telegram snapshot follows the same trade-scoped PII discipline.
+      maker_telegram_enc:  { type: String, default: null },
       taker_bankOwner_enc: { type: String, default: null },
 
       // [TR] Lock anında maker profil risk meta snapshot'ı.
