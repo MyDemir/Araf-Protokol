@@ -39,11 +39,21 @@ const { runStatsSnapshot } = require("./jobs/statsSnapshot");
 // [EN] V2 listing cleanup legacy — may be a no-op/compatibility layer in V3.
 const { runPendingListingCleanup } = require("./jobs/cleanupPendingListings");
 
-const { getReadiness, getLiveness } = require("./services/health");
+// [TR] Hassas veri retention cleanup job'ları
+// [EN] Sensitive data retention cleanup jobs
 const {
   runReceiptCleanup,
   runPIISnapshotCleanup,
 } = require("./jobs/cleanupSensitiveData");
+
+// [TR] User belgesindeki banka risk metadata'sını prune eder.
+//      Amaç: bank_change_history kontrolsüz büyümesin, rolling sayaçlar normalize kalsın.
+// [EN] Prunes bank risk metadata in User documents.
+const {
+  runUserBankRiskMetadataCleanup,
+} = require("./jobs/cleanupUserBankRiskMetadata");
+
+const { getReadiness, getLiveness } = require("./services/health");
 
 // [TR] Global Express hata yakalayıcı
 // [EN] Global Express error handler
@@ -132,6 +142,19 @@ async function bootstrap() {
   let pendingCleanupInterval = null;
   let sensitiveCleanupDelay = null;
   let sensitiveCleanupInterval = null;
+  let userBankRiskCleanupDelay = null;
+  let userBankRiskCleanupInterval = null;
+
+  // [TR] Aynı job'ın üst üste binmesini engelleyen hafif scheduler lock'ları.
+  // [EN] Lightweight scheduler locks to prevent overlapping runs.
+  const jobLocks = {
+    dlq: false,
+    reputationDecay: false,
+    statsSnapshot: false,
+    pendingCleanup: false,
+    sensitiveCleanup: false,
+    userBankRiskCleanup: false,
+  };
 
   const clearRuntimeSchedulers = () => {
     if (dlqInterval) clearInterval(dlqInterval);
@@ -143,6 +166,43 @@ async function bootstrap() {
     if (pendingCleanupInterval) clearInterval(pendingCleanupInterval);
     if (sensitiveCleanupDelay) clearTimeout(sensitiveCleanupDelay);
     if (sensitiveCleanupInterval) clearInterval(sensitiveCleanupInterval);
+    if (userBankRiskCleanupDelay) clearTimeout(userBankRiskCleanupDelay);
+    if (userBankRiskCleanupInterval) clearInterval(userBankRiskCleanupInterval);
+  };
+
+  /**
+   * [TR] Job overlap engelleyici koruma katmanı.
+   *      Aynı job henüz bitmemişse bir sonraki tick atlanır.
+   *
+   * [EN] Prevents overlapping job execution.
+   *      If the same job is still running, the next tick is skipped.
+   */
+  const runScheduledJob = async (jobKey, jobFn) => {
+    if (jobLocks[jobKey]) {
+      logger.warn(`[Scheduler] ${jobKey} hâlâ çalışıyor — bu tick atlandı.`);
+      return;
+    }
+
+    jobLocks[jobKey] = true;
+    try {
+      await jobFn();
+    } catch (err) {
+      logger.error(`[Scheduler] ${jobKey} başarısız: ${err.message}`, { stack: err.stack });
+    } finally {
+      jobLocks[jobKey] = false;
+    }
+  };
+
+  /**
+   * [TR] Hassas veri retention cleanup tek bir wrapper altında çalıştırılır.
+   *      Böylece scheduler tarafında tek job gibi yönetilir.
+   *
+   * [EN] Sensitive-data retention cleanup runs under one wrapper,
+   *      so the scheduler treats it as a single job.
+   */
+  const runSensitiveCleanupBundle = async () => {
+    await runReceiptCleanup();
+    await runPIISnapshotCleanup();
   };
 
   const shutdown = async ({ signal = "UNKNOWN", exitCode = 0, reason = null }) => {
@@ -208,6 +268,7 @@ async function bootstrap() {
       reason: { message: err.message, stack: err.stack },
     });
   });
+
   process.on("unhandledRejection", (reason) => {
     shutdown({
       signal: "unhandledRejection",
@@ -241,41 +302,73 @@ async function bootstrap() {
 
     // [TR] DLQ monitörü — her 60 saniyede başarısız event'leri kontrol eder
     // [EN] DLQ monitor — checks failed events every 60 seconds
-    dlqInterval = setInterval(processDLQ, 60_000);
+    dlqInterval = setInterval(() => {
+      runScheduledJob("dlq", processDLQ);
+    }, 60_000);
 
     // [TR] İlk çalıştırma 30 sn geciktirilir — cold start'ta DB'ye eş zamanlı yük binmesini önler
     // [EN] First run delayed by 30s — prevents simultaneous DB load on cold start
     reputationDecayDelay = setTimeout(() => {
-      runReputationDecay();
+      runScheduledJob("reputationDecay", runReputationDecay);
       logger.info("Periyodik İtibar İyileştirme görevi zamanlandı (her 24 saatte bir).");
     }, 30_000);
-    reputationDecayInterval = setInterval(runReputationDecay, 24 * 60 * 60 * 1000);
+
+    reputationDecayInterval = setInterval(() => {
+      runScheduledJob("reputationDecay", runReputationDecay);
+    }, 24 * 60 * 60 * 1000);
 
     statsSnapshotDelay = setTimeout(() => {
-      runStatsSnapshot();
+      runScheduledJob("statsSnapshot", runStatsSnapshot);
       logger.info("Periyodik V3 istatistik snapshot görevi zamanlandı (her 24 saatte bir).");
     }, 60_000);
-    statsSnapshotInterval = setInterval(runStatsSnapshot, 24 * 60 * 60 * 1000);
+
+    statsSnapshotInterval = setInterval(() => {
+      runScheduledJob("statsSnapshot", runStatsSnapshot);
+    }, 24 * 60 * 60 * 1000);
 
     // [TR] Legacy/compat listing cleanup — V3 market authority Order olsa da
     //      elde eski/yardımcı kayıtlar varsa onları süpürür. No-op olabilir.
     // [EN] Legacy/compat listing cleanup.
     pendingCleanupDelay = setTimeout(() => {
-      runPendingListingCleanup();
+      runScheduledJob("pendingCleanup", runPendingListingCleanup);
       logger.info("Periyodik compatibility listing cleanup görevi zamanlandı (her 1 saatte bir).");
     }, 90_000);
-    pendingCleanupInterval = setInterval(runPendingListingCleanup, 60 * 60 * 1000);
+
+    pendingCleanupInterval = setInterval(() => {
+      runScheduledJob("pendingCleanup", runPendingListingCleanup);
+    }, 60 * 60 * 1000);
 
     // [TR] Hassas veri retention cleanup — her 30 dakikada bir
-    sensitiveCleanupDelay = setTimeout(async () => {
-      await runReceiptCleanup();
-      await runPIISnapshotCleanup();
-      logger.info("Receipt/PII retention cleanup görevi zamanlandı (her 30 dakikada bir).");
+    //      Trade üzerindeki:
+    //        - şifreli dekont payload
+    //        - PII snapshot
+    //        - lock anındaki banka risk snapshot metadata
+    //      süre dolunca temizlenir.
+    // [EN] Sensitive-data retention cleanup every 30 minutes.
+    sensitiveCleanupDelay = setTimeout(() => {
+      runScheduledJob("sensitiveCleanup", runSensitiveCleanupBundle);
+      logger.info("Receipt/PII snapshot retention cleanup görevi zamanlandı (her 30 dakikada bir).");
     }, 120_000);
-    sensitiveCleanupInterval = setInterval(async () => {
-      await runReceiptCleanup();
-      await runPIISnapshotCleanup();
+
+    sensitiveCleanupInterval = setInterval(() => {
+      runScheduledJob("sensitiveCleanup", runSensitiveCleanupBundle);
     }, 30 * 60 * 1000);
+
+    // [TR] User bank risk metadata prune — her 6 saatte bir
+    //      Amaç:
+    //        - bank_change_history dizisini 30 günlük pencere içinde tutmak
+    //        - bankChangeCount7d / bankChangeCount30d alanlarını normalize etmek
+    //        - kullanıcı bazlı risk metadata'nın gereksiz büyümesini önlemek
+    //
+    // [EN] User bank risk metadata prune every 6 hours.
+    userBankRiskCleanupDelay = setTimeout(() => {
+      runScheduledJob("userBankRiskCleanup", runUserBankRiskMetadataCleanup);
+      logger.info("User bank risk metadata cleanup görevi zamanlandı (her 6 saatte bir).");
+    }, 150_000);
+
+    userBankRiskCleanupInterval = setInterval(() => {
+      runScheduledJob("userBankRiskCleanup", runUserBankRiskMetadataCleanup);
+    }, 6 * 60 * 60 * 1000);
 
     // [TR] Rotalar DB ve Redis hazır olduktan sonra yüklenir
     // [EN] Routes loaded after DB and Redis are ready
@@ -305,13 +398,13 @@ async function bootstrap() {
     app.use("/api/receipts", receiptRoutes);
 
     app.get("/health", (_req, res) => res.json(getLiveness()));
+
     app.get("/ready", async (_req, res) => {
       const readiness = await getReadiness({ worker, provider: worker.provider });
       return res.status(readiness.ok ? 200 : 503).json(readiness);
     });
 
     app.use((_req, res) => res.status(404).json({ error: "İstenen endpoint bulunamadı" }));
-
     app.use(globalErrorHandler);
 
     const PORT = process.env.PORT || 4000;
@@ -321,6 +414,7 @@ async function bootstrap() {
       logger.info(`🌍 Ortam: ${process.env.NODE_ENV || "development"}`);
       logger.info("🧭 Mimari: V3-native Order + Child Trade backend mirror");
       logger.info("🛡️  Güvenlik: Non-custodial backend (opsiyonel automation signer olabilir).");
+      logger.info("🧹 Retention: receipt / PII snapshot / bank risk metadata cleanup aktif");
       logger.info("===========================================================");
     });
 
