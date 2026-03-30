@@ -3,239 +3,177 @@
 const mongoose = require("mongoose");
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// LISTING MODEL — Pazar Yeri Vitrini
+// TRADE MODEL — V3 Child Trade Mirror
 // ═══════════════════════════════════════════════════════════════════════════════
-
-const listingSchema = new mongoose.Schema(
-  {
-    maker_address: {
-      type:     String,
-      required: true,
-      lowercase: true,
-      match:    /^0x[a-fA-F0-9]{40}$/,
-      index:    true,
-    },
-    crypto_asset: {
-      type:     String,
-      required: true,
-      enum:     ["USDT", "USDC"],
-    },
-    fiat_currency: {
-      type:     String,
-      required: true,
-      enum:     ["TRY", "USD", "EUR"],
-    },
-    exchange_rate: {
-      type:     Number,
-      required: true,
-      min:      0,
-    },
-    limits: {
-      min: { type: Number, required: true, min: 0 },
-      max: { type: Number, required: true, min: 0 },
-    },
-    tier_rules: {
-      required_tier:   { type: Number, enum: [0, 1, 2, 3, 4], required: true },
-      maker_bond_pct:  { type: Number, required: true },
-      taker_bond_pct:  { type: Number, required: true },
-    },
-    status: {
-      type:    String,
-      enum:    ["PENDING", "OPEN", "PAUSED", "COMPLETED", "DELETED"],
-      default: "OPEN",
-      index:   true,
-    },
-    onchain_escrow_id: {
-      type:    Number,
-      default: null,
-    },
-    listing_ref: {
-      type: String,
-      lowercase: true,
-      default: null,
-      index: true,
-      sparse: true,
-      unique: true,
-      match: /^0x[a-f0-9]{64}$/,
-    },
-    token_address: {
-      type:    String,
-      lowercase: true,
-      default: null,
-    },
-  },
-  {
-    timestamps: { createdAt: "created_at", updatedAt: "updated_at" },
-    versionKey: false,
-  }
-);
-
-listingSchema.index({ status: 1, fiat_currency: 1, "limits.min": 1, "limits.max": 1 });
-listingSchema.index({ maker_address: 1, status: 1 });
-listingSchema.index({ "tier_rules.required_tier": 1, status: 1 });
-
-listingSchema.pre("save", function (next) {
-  if (this.limits.max <= this.limits.min) {
-    return next(new Error("limits.max must be greater than limits.min"));
-  }
-  next();
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// TRADE MODEL — Aktif İşlemler ve Araf Odası
-// ═══════════════════════════════════════════════════════════════════════════════
+//
+// V3 kuralı:
+//   - Gerçek escrow işlemi artık "child trade" seviyesinde yaşar.
+//   - Parent order kamusal emir katmanıdır; child trade ise gerçek escrow lifecycle'ıdır.
+//   - Backend bu modeli authoritative olarak ÜRETMEZ; kontrattan mirror eder.
+//
+// Bu yüzden bu model:
+//   1. on-chain trade kimliğini merkez alır,
+//   2. varsa parent order bağını explicit saklar,
+//   3. financial alanları BigInt-safe string olarak taşır,
+//   4. PII snapshot ve dekont alanlarını child trade bağlamında tutar.
+//
+// Not:
+//   ArafEscrow-yeni.sol hâlâ canonical direct escrow yolunu teknik olarak içerir.
+//   Ancak V3 omurgası parent order + child trade'tir.
+//   Bu model direct escrow'u "legacy authority" olarak değil,
+//   kontratın izin verdiği ikincil kaynak olarak mirror edebilir.
+//
 
 const tradeSchema = new mongoose.Schema(
   {
+    // [TR] Kontrattaki tradeId aynası — child trade için birincil kimlik.
+    // [EN] Mirror of on-chain tradeId — primary identity for child trade.
     onchain_escrow_id: {
-      type:   Number,
+      type: Number,
       unique: true,
       sparse: true,
+      index: true,
     },
 
-    listing_id: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref:  "Listing",
-    },
-
-    // [TR] V3 child trade ise ait olduğu parent order'ın on-chain kimliği.
-    //      Legacy direct escrow'larda null kalır.
-    // [EN] On-chain id of the parent order for V3 child trades.
-    //      Remains null for legacy direct escrows.
+    // [TR] Parent order bağı. Child trade order fill ile doğduysa set edilir.
+    //      Direct escrow akışında null kalabilir.
+    // [EN] Parent order linkage. Populated when the trade is spawned from an order fill.
     parent_order_id: {
-      type:    Number,
+      type: Number,
       default: null,
-      index:   true,
-      sparse:  true,
+      index: true,
     },
 
-    // [TR] Trade'in kökeni:
-    //      - LEGACY_DIRECT  = createEscrow(..., listingRef)
-    //      - ORDER_CHILD    = fillSellOrder / fillBuyOrder ile doğan exact-size child trade
-    // [EN] Trade origin:
-    //      - LEGACY_DIRECT  = createEscrow(..., listingRef)
-    //      - ORDER_CHILD    = exact-size child trade spawned by fillSellOrder / fillBuyOrder
+    // [TR] Trade kökeni. V3'te ana yol ORDER_CHILD'dır.
+    //      DIRECT_ESCROW yalnız kontratın canonical createEscrow yolu için saklanır.
+    // [EN] Trade origin. ORDER_CHILD is the primary V3 path.
+    //      DIRECT_ESCROW is retained only for the contract's canonical direct path.
     trade_origin: {
-      type:    String,
-      enum:    ["LEGACY_DIRECT", "ORDER_CHILD"],
-      default: "LEGACY_DIRECT",
-      index:   true,
+      type: String,
+      enum: ["ORDER_CHILD", "DIRECT_ESCROW"],
+      default: "ORDER_CHILD",
+      index: true,
     },
 
-    // [TR] Child trade'in parent order side snapshot'ı.
-    //      Böylece order sonradan mirror'da eksik olsa bile trade bağlamı okunabilir.
-    // [EN] Parent order side snapshot for child trades.
-    //      Allows trade context to stay readable even if the order mirror is temporarily missing.
+    // [TR] Parent order yönü. Child trade market semantics'i için yararlıdır.
+    // [EN] Parent order side. Useful for market semantics of the child trade.
     parent_order_side: {
-      type:    String,
-      enum:    ["SELL_CRYPTO", "BUY_CRYPTO"],
+      type: String,
+      enum: ["SELL_CRYPTO", "BUY_CRYPTO", null],
       default: null,
-    },
-
-    // [TR] Direct escrow ve V3 child trade canonical ref alanları ayrı tutulur.
-    //      listing_ref: legacy direct escrow için canonical bağ.
-    //      child_listing_ref: order fill'den türeyen child trade ref'i (varsa).
-    // [EN] Canonical refs for direct escrow vs V3 child trade are tracked separately.
-    canonical_refs: {
-      listing_ref: {
-        type:      String,
-        lowercase: true,
-        default:   null,
-        match:     /^0x[a-f0-9]{64}$/,
-      },
-      child_listing_ref: {
-        type:      String,
-        lowercase: true,
-        default:   null,
-        match:     /^0x[a-f0-9]{64}$/,
-      },
-    },
-
-    // [TR] Trade'in kullandığı ERC-20 token adresi.
-    //      Listing mirror'ına bağımlı kalmadan trade okunabilir olsun diye ayrıca tutulur.
-    // [EN] ERC-20 token address used by the trade.
-    //      Stored directly so trade reads do not depend on listing mirror presence.
-    token_address: {
-      type:      String,
-      lowercase: true,
-      default:   null,
-      match:     /^0x[a-fA-F0-9]{40}$/,
-      index:     true,
+      index: true,
     },
 
     maker_address: {
-      type:      String,
-      required:  true,
+      type: String,
+      required: true,
       lowercase: true,
-      match:     /^0x[a-fA-F0-9]{40}$/,
+      match: /^0x[a-fA-F0-9]{40}$/,
+      index: true,
     },
     taker_address: {
-      type:      String,
+      type: String,
       lowercase: true,
-      match:     /^0x[a-fA-F0-9]{40}$/,
-      default:   null,
+      match: /^0x[a-fA-F0-9]{40}$/,
+      default: null,
+      index: true,
+    },
+
+    token_address: {
+      type: String,
+      lowercase: true,
+      default: null,
+      match: /^0x[a-fA-F0-9]{40}$/,
+      index: true,
+    },
+
+    // [TR] Canonical referanslar. listing_ref authority değildir; yalnız kontrat event'inden
+    //      gelen referans izi olarak tutulur. Parent order akışında order_ref daha güçlü bağdır.
+    // [EN] Canonical references. listing_ref is NOT an authority layer; it is only an event trace.
+    canonical_refs: {
+      listing_ref: {
+        type: String,
+        lowercase: true,
+        default: null,
+        match: /^0x[a-f0-9]{64}$/,
+      },
+      order_ref: {
+        type: String,
+        lowercase: true,
+        default: null,
+        match: /^0x[a-f0-9]{64}$/,
+      },
+    },
+
+    // [TR] Fill'e özgü metadata. Child trade order fill'den doğduysa set edilir.
+    // [EN] Fill-specific metadata. Present when the child trade is born from an order fill.
+    fill_metadata: {
+      fill_amount:      { type: String, default: null },
+      fill_amount_num:  { type: Number, default: 0 },
+      filler_address:   { type: String, lowercase: true, default: null },
+      remaining_amount_after_fill:     { type: String, default: null },
+      remaining_amount_after_fill_num: { type: Number, default: 0 },
+    },
+
+    // [TR] Kontrat snapshot'larının backend aynası.
+    //      Ekonomi burada hesaplanmaz; yalnız kontrattan yansıtılır.
+    // [EN] Mirror of contract snapshots.
+    //      Economics are not computed here; only mirrored from the contract.
+    fee_snapshot: {
+      taker_fee_bps: { type: Number, default: null, min: 0 },
+      maker_fee_bps: { type: Number, default: null, min: 0 },
     },
 
     financials: {
       // [TR] Otoritatif tutar: zincirdeki ham token miktarı (base units) String.
       // [EN] Authoritative amount: raw on-chain token amount (base units) as String.
-      crypto_amount:  { type: String, required: true },
+      crypto_amount: { type: String, required: true },
+
       // [TR] Yaklaşık Number cache (analytics/UI aggregation). Enforcement amaçlı KULLANILMAZ.
       // [EN] Approximate Number cache (analytics/UI aggregation). NOT for enforcement.
       crypto_amount_num: { type: Number, default: 0 },
-      fiat_amount:    { type: Number, default: null },
-      exchange_rate:  { type: Number, required: true },
-      crypto_asset:   { type: String, enum: ["USDT", "USDC"], required: true },
-      fiat_currency:  { type: String, enum: ["TRY", "USD", "EUR"], required: true },
 
-      // [TR] Fee snapshot mirror'ı — aktif trade economics geriye dönük etkilenmesin diye
-      //      kontratın trade create / child spawn anında kilitlediği BPS değerleri.
-      // [EN] Fee snapshot mirror — BPS values frozen by the contract at trade creation /
-      //      child spawn so active trade economics cannot be changed retroactively.
-      taker_fee_bps_snapshot: { type: Number, default: null, min: 0 },
-      maker_fee_bps_snapshot: { type: Number, default: null, min: 0 },
+      maker_bond:     { type: String, default: "0" },
+      maker_bond_num: { type: Number, default: 0 },
+      taker_bond:     { type: String, default: "0" },
+      taker_bond_num: { type: Number, default: 0 },
+
+      // [TR] Fiat/rate canonical veri değildir. Bunlar opsiyonel enrichment alanlarıdır.
+      // [EN] Fiat/rate are NOT canonical protocol values. They are optional enrichment fields.
+      fiat_amount:   { type: Number, default: null },
+      exchange_rate: { type: Number, default: null },
+      crypto_asset:  { type: String, enum: ["USDT", "USDC", null], default: null },
+      fiat_currency: { type: String, enum: ["TRY", "USD", "EUR", null], default: null },
 
       // [TR] Otoritatif kümülatif erime: String (BigInt güvenli).
       // [EN] Authoritative cumulative decay: String (BigInt-safe).
-      total_decayed:  { type: String, default: "0" },
-      // [TR] Yaklaşık Number cache (sadece telemetry/dashboard).
-      // [EN] Approximate Number cache (telemetry/dashboard only).
+      total_decayed: { type: String, default: "0" },
       total_decayed_num: { type: Number, default: 0 },
+
       // [TR] İdempotency ve denetim için decay tx hash listesi.
       // [EN] Decay tx hash list for idempotency and audit.
       decay_tx_hashes: { type: [String], default: [] },
-      // [TR] Her BleedingDecayed miktarı (String, base units).
-      // [EN] Each BleedingDecayed amount (String, base units).
       decayed_amounts: { type: [String], default: [] },
     },
 
-    // [TR] Child trade metadata:
-    //      V3'te her gerçek execution exact-size child trade olduğundan,
-    //      fill bağlamı burada saklanabilir.
-    // [EN] Child trade metadata:
-    //      In V3 every real execution is an exact-size child trade,
-    //      so fill-specific context can be mirrored here.
-    fill_metadata: {
-      is_exact_size_child: { type: Boolean, default: false },
-      child_sequence:      { type: Number,  default: null, min: 0 },
-      fill_tx_hash:        { type: String,  default: null },
+    status: {
+      type: String,
+      enum: ["OPEN", "LOCKED", "PAID", "CHALLENGED", "RESOLVED", "CANCELED", "BURNED"],
+      default: "OPEN",
+      index: true,
     },
 
-    status: {
-      type:    String,
-      enum:    ["OPEN", "LOCKED", "PAID", "CHALLENGED", "RESOLVED", "CANCELED", "BURNED"],
-      default: "OPEN",
-      index:   true,
-    },
+    tier: { type: Number, enum: [0, 1, 2, 3, 4], required: true, index: true },
 
     timers: {
-      locked_at:           { type: Date, default: null },
-      paid_at:             { type: Date, default: null },
-      challenged_at:       { type: Date, default: null },
-      resolved_at:         { type: Date, default: null },
-      last_decay_at:       { type: Date, default: null },
-      pinged_at:           { type: Date, default: null },
-      challenge_pinged_at: { type: Date, default: null },
+      created_at_onchain:    { type: Date, default: null },
+      locked_at:             { type: Date, default: null },
+      paid_at:               { type: Date, default: null },
+      challenged_at:         { type: Date, default: null },
+      resolved_at:           { type: Date, default: null },
+      last_decay_at:         { type: Date, default: null },
+      pinged_at:             { type: Date, default: null },
+      challenge_pinged_at:   { type: Date, default: null },
     },
 
     pinged_by_taker:           { type: Boolean, default: false },
@@ -250,29 +188,17 @@ const tradeSchema = new mongoose.Schema(
       //      Receipt is NOT on public IPFS; encrypted AES-256-GCM on backend.
       ipfs_receipt_hash: { type: String, default: null },
 
-      // [TR] AES-256-GCM şifreli dekont verisi (base64 → encryptField → hex).
-      //      encryption.js encryptField() ile taker wallet DEK'i kullanılarak şifrelenir.
-      //      RESOLVED/CANCELED → 24 saat, CHALLENGED/BURNED → 30 gün sonra null'a çekilir.
-      // [EN] AES-256-GCM encrypted receipt data (base64 → encryptField → hex).
-      //      Encrypted via encryption.js encryptField() using taker wallet DEK.
-      //      Set to null 24h after RESOLVED/CANCELED, 30d after CHALLENGED/BURNED.
+      // [TR] AES-256-GCM şifreli dekont verisi.
+      //      Child trade çözüldükten sonra retention politikasıyla temizlenir.
+      // [EN] AES-256-GCM encrypted receipt data.
+      //      Cleared after child trade completion according to retention policy.
       receipt_encrypted: { type: String, default: null },
-
       receipt_timestamp: { type: Date, default: null },
-
-      // [TR] Şifreli verinin silineceği tarih.
-      //      eventListener, trade sonuçlandığında bu alanı set eder.
-      //      Silinme: cleanupReceipts job'u bu alana göre receipt_encrypted'ı null'lar.
-      // [EN] Date when encrypted data must be deleted.
-      //      Set by eventListener when trade concludes.
-      //      Cleanup: cleanupReceipts job nulls receipt_encrypted based on this field.
       receipt_delete_at: { type: Date, default: null },
     },
 
-    // [TR] LOCKED anında yakalanan PII snapshot (bait-and-switch koruması)
-    //      Kullanıcı sonradan profilini değiştirse bile trade sırasında görülen veri sabit kalır.
-    // [EN] PII snapshot captured at LOCKED (bait-and-switch protection)
-    //      Trade-facing data remains stable even if profile changes later.
+    // [TR] LOCKED anında yakalanan PII snapshot (bait-and-switch koruması).
+    // [EN] PII snapshot captured at LOCKED (bait-and-switch protection).
     pii_snapshot: {
       maker_bankOwner_enc: { type: String, default: null },
       maker_iban_enc:      { type: String, default: null },
@@ -298,8 +224,6 @@ const tradeSchema = new mongoose.Schema(
       acknowledged_at: { type: Date,    default: null },
       ip_hash:         { type: String,  default: null },
     },
-
-    tier: { type: Number, enum: [0, 1, 2, 3, 4], required: true },
   },
   {
     timestamps: { createdAt: "created_at", updatedAt: "updated_at" },
@@ -308,14 +232,13 @@ const tradeSchema = new mongoose.Schema(
 );
 
 // ── Indexes ───────────────────────────────────────────────────────────────────
+tradeSchema.index({ parent_order_id: 1, status: 1 });
 tradeSchema.index({ maker_address: 1, status: 1 });
 tradeSchema.index({ taker_address: 1, status: 1 });
-tradeSchema.index({ onchain_escrow_id: 1 });
-tradeSchema.index({ parent_order_id: 1, status: 1 });
 tradeSchema.index({ trade_origin: 1, status: 1 });
+tradeSchema.index({ parent_order_side: 1, status: 1 });
 tradeSchema.index({ token_address: 1, status: 1 });
-tradeSchema.index({ "canonical_refs.listing_ref": 1 }, { sparse: true });
-tradeSchema.index({ "canonical_refs.child_listing_ref": 1 }, { sparse: true });
+tradeSchema.index({ tier: 1, status: 1 });
 
 // [TR] Trade'leri 1 yıl sonra sil — GDPR uyumu
 // [EN] Delete trades after 1 year — GDPR compliance
@@ -330,21 +253,17 @@ tradeSchema.index(
 // [TR] receipt_delete_at dolunca temizlenecek trade'leri bulmak için sparse index.
 //      MongoDB TTL dokümanı siler, field'ı değil — cleanup job bu index'i kullanır.
 // [EN] Sparse index to find trades with expired receipts for cleanup.
-//      MongoDB TTL deletes documents, not fields — cleanup job uses this index.
 tradeSchema.index({ "evidence.receipt_delete_at": 1 }, { sparse: true });
 
 // ── Virtuals ─────────────────────────────────────────────────────────────────
 tradeSchema.virtual("isInGracePeriod").get(function () {
-  if (this.status !== "CHALLENGED" || !this.timers.challenged_at) return false;
+  if (this.status !== "CHALLENGED" || !this.timers?.challenged_at) return false;
   return Date.now() - this.timers.challenged_at.getTime() < 48 * 3600 * 1000;
 });
 
 tradeSchema.virtual("isInBleedingPhase").get(function () {
-  if (this.status !== "CHALLENGED" || !this.timers.challenged_at) return false;
+  if (this.status !== "CHALLENGED" || !this.timers?.challenged_at) return false;
   return Date.now() - this.timers.challenged_at.getTime() >= 48 * 3600 * 1000;
 });
 
-module.exports = {
-  Listing: mongoose.model("Listing", listingSchema),
-  Trade:   mongoose.model("Trade",   tradeSchema),
-};
+module.exports = mongoose.model("Trade", tradeSchema);
