@@ -1,173 +1,377 @@
 /**
- * ArafEscrow Deploy Script (Güncellenmiş Testnet + Mainnet Güvenli Sürüm)
+ * ArafEscrow V3 — Güvenlik Odaklı Nihai Deploy Script
  *
- * Deploy sonrası token support doğrulaması zincir üstünde teyit edilir.
- * Ownership, yalnızca tüm desteklenen tokenlar başarıyla aktif ve doğrulanmışsa devredilir.
- * Production ortamında gerçek token adresleri ENV'den zorunlu alınır; eksikse script hard fail olur.
+ * Bu sürüm, V3 kontrat yüzeyine göre hazırlanmıştır:
+ *   - constructor(address treasury)
+ *   - setSupportedToken(address,bool)
+ *   - setTokenConfig(address,bool,bool,bool)
+ *   - getFeeConfig()
+ *   - getCooldownConfig()
+ *   - tokenConfigs(address)
+ *   - transferOwnership(address)
  *
- * Kullanım: npx hardhat run scripts/deploy.js --network localhost
+ * Tasarım hedefleri:
+ *   - Local geliştirmede hızlı ve güvenli mock deploy
+ *   - Public chain'de mock token kurulumunu yasaklama
+ *   - Token desteğini zincir üstünde doğrulama
+ *   - Ownership devrini ancak kurulum doğrulanınca yapma
+ *   - ABI artifact'ını frontend'e senkronlama
+ *   - Deployment manifest'i üretme
+ *
+ * Kullanım örnekleri:
+ *   npx hardhat run scripts/deploy.js --network localhost
+ *   npx hardhat run scripts/deploy.js --network hardhat
+ *   CONFIRM_PUBLIC_DEPLOY=yes npx hardhat run scripts/deploy.js --network base-sepolia
+ *   CONFIRM_PUBLIC_DEPLOY=yes NODE_ENV=production npx hardhat run scripts/deploy.js --network base
  */
-const { ethers } = require("hardhat");
+
+const hre = require("hardhat");
+const { ethers, artifacts, network } = hre;
 const fs = require("fs");
 const path = require("path");
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const PUBLIC_CHAIN_IDS = new Set([8453, 84532]);
+const LOCAL_NETWORK_NAMES = new Set(["hardhat", "localhost"]);
 
-function requireEnvAddress(name) {
-  const value = process.env[name];
-  if (!value || value === ZERO_ADDRESS) {
-    throw new Error(`❌ ${name} .env'de zorunlu ve geçerli bir adres olmalı.`);
+function isAddress(value) {
+  try {
+    return !!value && ethers.isAddress(value);
+  } catch {
+    return false;
+  }
+}
+
+function normalizeAddress(name, value) {
+  if (!isAddress(value) || value === ZERO_ADDRESS) {
+    throw new Error(`❌ ${name} geçerli bir EVM adresi olmalı. Gelen değer: ${value || "<empty>"}`);
   }
   return ethers.getAddress(value);
 }
 
-function resolveProductionTokenConfig() {
-  const isProduction = process.env.NODE_ENV === "production";
+function getRequiredEnvAddress(name) {
+  return normalizeAddress(name, process.env[name]);
+}
 
-  if (!isProduction) {
-    return {
-      isProduction,
-      usdtAddress: null,
-      usdcAddress: null,
-    };
+function getOptionalEnvAddress(name, fallback = null) {
+  const value = process.env[name];
+  if (!value) return fallback;
+  return normalizeAddress(name, value);
+}
+
+function ensureBooleanEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  return raw === "true";
+}
+
+function ensureDir(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function readJson(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function writeJson(filePath, value) {
+  fs.writeFileSync(filePath, JSON.stringify(value, null, 2));
+}
+
+async function artifactExists(contractName) {
+  try {
+    await artifacts.readArtifact(contractName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getDeployMode(chainId, networkName) {
+  if (LOCAL_NETWORK_NAMES.has(networkName) || chainId === 31337n) return "local";
+  if (PUBLIC_CHAIN_IDS.has(Number(chainId))) return "public";
+  return "custom";
+}
+
+async function deployMockToken(name, symbol, decimals) {
+  const hasMock = await artifactExists("MockERC20");
+  if (!hasMock) {
+    throw new Error(
+      "❌ Local deploy için MockERC20 artifact'i bulunamadı. " +
+      "contracts/src altında MockERC20 derlenmiş olmalı veya public-chain env adresleri kullanılmalı."
+    );
   }
 
+  const MockERC20 = await ethers.getContractFactory("MockERC20");
+  const token = await MockERC20.deploy(name, symbol, decimals);
+  await token.waitForDeployment();
+  return token;
+}
+
+async function getTokenConfigSnapshot(escrow, tokenAddress) {
+  const [supportedLegacy, cfg] = await Promise.all([
+    escrow.supportedTokens(tokenAddress),
+    escrow.tokenConfigs(tokenAddress),
+  ]);
+
   return {
-    isProduction,
-    usdtAddress: requireEnvAddress("MAINNET_USDT_ADDRESS"),
-    usdcAddress: requireEnvAddress("MAINNET_USDC_ADDRESS"),
+    supportedLegacy,
+    supported: cfg.supported,
+    allowSellOrders: cfg.allowSellOrders,
+    allowBuyOrders: cfg.allowBuyOrders,
   };
 }
 
-async function enableAndVerifySupportedToken(escrow, tokenAddress, symbol) {
-  const setTx = await escrow.setSupportedToken(tokenAddress, true);
-  await setTx.wait();
+async function setAndVerifyTokenConfig(escrow, tokenAddress, symbol, config) {
+  const tx = await escrow.setTokenConfig(
+    tokenAddress,
+    config.supported,
+    config.allowSellOrders,
+    config.allowBuyOrders
+  );
+  const receipt = await tx.wait();
 
-  const isSupported = await escrow.supportedTokens(tokenAddress);
-  if (!isSupported) {
-    throw new Error(`❌ ${symbol} desteklenen token olarak zincir üstünde doğrulanamadı: ${tokenAddress}`);
+  const snapshot = await getTokenConfigSnapshot(escrow, tokenAddress);
+
+  if (
+    snapshot.supported !== config.supported ||
+    snapshot.allowSellOrders !== config.allowSellOrders ||
+    snapshot.allowBuyOrders !== config.allowBuyOrders
+  ) {
+    throw new Error(
+      `❌ ${symbol} tokenConfig doğrulaması başarısız. ` +
+      `Beklenen=${JSON.stringify(config)} Gerçek=${JSON.stringify(snapshot)}`
+    );
   }
 
-  console.log(`✅ ${symbol} desteklenen token listesine eklendi ve zincir üstünde doğrulandı:`, tokenAddress);
-  return { symbol, address: tokenAddress, isSupported };
+  if (config.supported && !snapshot.supportedLegacy) {
+    throw new Error(`❌ ${symbol} supportedTokens mirror doğrulaması başarısız.`);
+  }
+
+  console.log(
+    `✅ ${symbol} token config doğrulandı ` +
+    `(supported=${snapshot.supported}, sell=${snapshot.allowSellOrders}, buy=${snapshot.allowBuyOrders})`
+  );
+
+  return {
+    symbol,
+    address: tokenAddress,
+    txHash: receipt.hash,
+    config: snapshot,
+  };
+}
+
+async function syncAbiToFrontend() {
+  const artifact = await artifacts.readArtifact("ArafEscrow");
+  const abiDestDir = path.resolve(__dirname, "../../frontend/src/abi");
+  const abiDestPath = path.join(abiDestDir, "ArafEscrow.json");
+
+  ensureDir(abiDestDir);
+  fs.writeFileSync(abiDestPath, JSON.stringify(artifact.abi, null, 2));
+  console.log(`✅ ABI frontend'e yazıldı: ${abiDestPath}`);
+  return abiDestPath;
+}
+
+function updateFrontendEnvIfPresent(values) {
+  const frontendRoot = path.resolve(__dirname, "../../frontend");
+  const envPath = path.join(frontendRoot, ".env");
+  const examplePath = path.join(frontendRoot, ".env.example");
+
+  if (!fs.existsSync(envPath) && fs.existsSync(examplePath)) {
+    fs.copyFileSync(examplePath, envPath);
+    console.log("📝 frontend/.env, .env.example üzerinden oluşturuldu.");
+  }
+
+  if (!fs.existsSync(envPath)) {
+    console.log("ℹ️ frontend/.env bulunamadı; otomatik env güncellemesi atlandı.");
+    return null;
+  }
+
+  let content = fs.readFileSync(envPath, "utf8");
+  const replaceOrAppend = (key, value) => {
+    const line = `${key}=${value}`;
+    const pattern = new RegExp(`^${key}=.*$`, "m");
+    if (pattern.test(content)) content = content.replace(pattern, line);
+    else content += `${content.endsWith("\n") ? "" : "\n"}${line}\n`;
+  };
+
+  replaceOrAppend("VITE_ESCROW_ADDRESS", values.escrowAddress);
+  replaceOrAppend("VITE_USDT_ADDRESS", values.usdtAddress);
+  replaceOrAppend("VITE_USDC_ADDRESS", values.usdcAddress);
+
+  if (process.env.CODESPACE_NAME) {
+    replaceOrAppend("VITE_API_URL", `https://${process.env.CODESPACE_NAME}-4000.app.github.dev`);
+  }
+
+  fs.writeFileSync(envPath, content);
+  console.log(`✅ frontend/.env güncellendi: ${envPath}`);
+  return envPath;
 }
 
 async function main() {
-  const { isProduction, usdtAddress: productionUsdt, usdcAddress: productionUsdc } =
-    resolveProductionTokenConfig();
-
   const [deployer] = await ethers.getSigners();
-  console.log("🚀 Deploy eden cüzdan:", deployer.address);
-  console.log("🌍 Ortam:", isProduction ? "production" : "non-production");
+  const feeData = await ethers.provider.getFeeData();
+  const chainId = await hre.getChainId();
+  const chainIdBig = BigInt(chainId);
+  const deployMode = getDeployMode(chainIdBig, network.name);
+  const isPublic = deployMode === "public";
+  const isLocal = deployMode === "local";
+
+  if (isPublic && process.env.CONFIRM_PUBLIC_DEPLOY !== "yes") {
+    throw new Error(
+      "❌ Public chain deploy guard aktif. Devam etmek için CONFIRM_PUBLIC_DEPLOY=yes ver."
+    );
+  }
 
   const balance = await ethers.provider.getBalance(deployer.address);
-  console.log("💰 Bakiye:", ethers.formatEther(balance), "ETH\n");
+  if (balance === 0n) {
+    throw new Error("❌ Deployer bakiyesi 0. Deploy başlatılmadı.");
+  }
 
-  // ── Treasury & Owner ──────────────────────────────────────────────────────
-  const treasuryAddress = requireEnvAddress("TREASURY_ADDRESS");
-  console.log("🏦 Treasury & Son Owner adresi:", treasuryAddress);
+  console.log("==================================================");
+  console.log("🚀 ArafEscrow V3 deploy başlıyor");
+  console.log(`🌐 Network       : ${network.name}`);
+  console.log(`🧭 Chain ID      : ${chainId}`);
+  console.log(`🧱 Mode          : ${deployMode}`);
+  console.log(`👤 Deployer      : ${deployer.address}`);
+  console.log(`💰 Balance       : ${ethers.formatEther(balance)} ETH`);
+  console.log(`⛽ MaxFeePerGas  : ${feeData.maxFeePerGas ? ethers.formatUnits(feeData.maxFeePerGas, "gwei") : "n/a"} gwei`);
+  console.log(`⛽ MaxPriority   : ${feeData.maxPriorityFeePerGas ? ethers.formatUnits(feeData.maxPriorityFeePerGas, "gwei") : "n/a"} gwei`);
+  console.log("==================================================\n");
 
-  // ── 1. Escrow Kontratı Deploy ─────────────────────────────────────────────
-  console.log("\n⏳ ArafEscrow deploy ediliyor...");
+  const treasuryAddress = getRequiredEnvAddress("TREASURY_ADDRESS");
+  const finalOwnerAddress = getOptionalEnvAddress("FINAL_OWNER_ADDRESS", treasuryAddress);
+
+  let usdtAddress;
+  let usdcAddress;
+  let deployedMocks = [];
+
+  if (isPublic) {
+    usdtAddress = getRequiredEnvAddress("MAINNET_USDT_ADDRESS");
+    usdcAddress = getRequiredEnvAddress("MAINNET_USDC_ADDRESS");
+  } else {
+    const useExternalTokens = ensureBooleanEnv("USE_EXTERNAL_TOKEN_ADDRESSES", false);
+    if (useExternalTokens) {
+      usdtAddress = getRequiredEnvAddress("MAINNET_USDT_ADDRESS");
+      usdcAddress = getRequiredEnvAddress("MAINNET_USDC_ADDRESS");
+      console.log("ℹ️ Local/custom deploy harici token adresleri ile devam ediyor.");
+    } else {
+      console.log("⏳ Mock token deploy başlatılıyor...");
+      const [usdt, usdc] = await Promise.all([
+        deployMockToken("Mock USDT", "USDT", 6),
+        deployMockToken("Mock USDC", "USDC", 6),
+      ]);
+      usdtAddress = await usdt.getAddress();
+      usdcAddress = await usdc.getAddress();
+      deployedMocks = [
+        { symbol: "USDT", address: usdtAddress },
+        { symbol: "USDC", address: usdcAddress },
+      ];
+      console.log(`✅ Mock USDT: ${usdtAddress}`);
+      console.log(`✅ Mock USDC: ${usdcAddress}`);
+    }
+  }
+
+  console.log("⏳ ArafEscrow deploy ediliyor...");
   const ArafEscrow = await ethers.getContractFactory("ArafEscrow");
   const escrow = await ArafEscrow.deploy(treasuryAddress);
   await escrow.waitForDeployment();
+  const escrowAddress = await escrow.getAddress();
+  const deployTx = escrow.deploymentTransaction();
 
-  const address = await escrow.getAddress();
-  console.log("✅ ArafEscrow deploy edildi:", address);
+  console.log(`✅ ArafEscrow deploy edildi: ${escrowAddress}`);
+  if (deployTx) console.log(`🧾 Deploy tx: ${deployTx.hash}`);
 
-  // ── ABI Kopyalama ─────────────────────────────────────────────────────────
-  try {
-    const artifactPath = path.resolve(__dirname, "../artifacts/src/ArafEscrow.sol/ArafEscrow.json");
-    const artifact = JSON.parse(fs.readFileSync(artifactPath, "utf8"));
-    const abiDestDir = path.resolve(__dirname, "../../frontend/src/abi");
-    const abiDestPath = path.join(abiDestDir, "ArafEscrow.json");
+  console.log("\n⏳ V3 token yön config'leri uygulanıyor...");
+  const tokenResults = [];
+  tokenResults.push(
+    await setAndVerifyTokenConfig(escrow, usdtAddress, "USDT", {
+      supported: true,
+      allowSellOrders: true,
+      allowBuyOrders: true,
+    })
+  );
+  tokenResults.push(
+    await setAndVerifyTokenConfig(escrow, usdcAddress, "USDC", {
+      supported: true,
+      allowSellOrders: true,
+      allowBuyOrders: true,
+    })
+  );
 
-    fs.mkdirSync(abiDestDir, { recursive: true });
-    fs.writeFileSync(abiDestPath, JSON.stringify(artifact.abi, null, 2));
-    console.log("✅ ABI frontend'e kopyalandı.");
-  } catch (err) {
-    console.warn("⚠ ABI kopyalanamadı (Önemli Değil, Hardcoded ABI kullanıyoruz):", err.message);
-  }
+  const [feeConfig, cooldownConfig, ownerAfterDeploy, treasuryAfterDeploy] = await Promise.all([
+    escrow.getFeeConfig(),
+    escrow.getCooldownConfig(),
+    escrow.owner(),
+    escrow.treasury(),
+  ]);
 
-  // ── 2. Supported Token Kurulumu (Ownership devrinden ÖNCE) ───────────────
-  let usdtAddress = productionUsdt || "";
-  let usdcAddress = productionUsdc || "";
-  const tokenSupportChecks = [];
+  console.log(`✅ Fee config snapshot: taker=${feeConfig.currentTakerFeeBps} maker=${feeConfig.currentMakerFeeBps}`);
+  console.log(`✅ Cooldown snapshot  : tier0=${cooldownConfig.currentTier0TradeCooldown} tier1=${cooldownConfig.currentTier1TradeCooldown}`);
+  console.log(`✅ Owner (pre-transfer): ${ownerAfterDeploy}`);
+  console.log(`✅ Treasury           : ${treasuryAfterDeploy}`);
 
-  if (isProduction) {
-    console.log("\n⏳ Production token adresleri merkezi config guard ile alındı...");
-    console.log("✅ MAINNET_USDT_ADDRESS:", usdtAddress);
-    console.log("✅ MAINNET_USDC_ADDRESS:", usdcAddress);
-  } else {
-    console.log("\n⏳ MockERC20 (USDT ve USDC) deploy ediliyor...");
-    const MockERC20 = await ethers.getContractFactory("MockERC20");
-
-    const usdt = await MockERC20.deploy("Mock USDT", "USDT", 6);
-    await usdt.waitForDeployment();
-    usdtAddress = await usdt.getAddress();
-    console.log("✅ MockUSDT deploy edildi:", usdtAddress);
-
-    const usdc = await MockERC20.deploy("Mock USDC", "USDC", 6);
-    await usdc.waitForDeployment();
-    usdcAddress = await usdc.getAddress();
-    console.log("✅ MockUSDC deploy edildi:", usdcAddress);
-  }
-
-  tokenSupportChecks.push(await enableAndVerifySupportedToken(escrow, usdtAddress, "USDT"));
-  tokenSupportChecks.push(await enableAndVerifySupportedToken(escrow, usdcAddress, "USDC"));
-
-  const allTokenSupportVerified = tokenSupportChecks.every((check) => check.isSupported);
-  if (!allTokenSupportVerified) {
-    throw new Error("❌ Token support doğrulaması tamamlanmadı; ownership devri iptal edildi.");
-  }
-
-  // ── 3. Ownership Devri ────────────────────────────────────────────────────
-  console.log("\n🔒 Ownership devrediliyor →", treasuryAddress);
-  const tx = await escrow.transferOwnership(treasuryAddress);
-  await tx.wait();
-  console.log("✅ Ownership başarıyla devredildi!");
-
-  // ── 4. FE .env Auto-write (Production'da KAPALI) ──────────────────────────
-  if (!isProduction) {
-    const frontendEnvPath = path.resolve(__dirname, "../../frontend/.env");
-    const exampleEnvPath = path.resolve(__dirname, "../../frontend/.env.example");
-
-    if (!fs.existsSync(frontendEnvPath) && fs.existsSync(exampleEnvPath)) {
-      fs.copyFileSync(exampleEnvPath, frontendEnvPath);
-      console.log("📝 .env.example'dan yeni .env oluşturuldu.");
+  if (finalOwnerAddress !== ownerAfterDeploy) {
+    console.log(`\n🔒 Ownership devrediliyor -> ${finalOwnerAddress}`);
+    const transferTx = await escrow.transferOwnership(finalOwnerAddress);
+    await transferTx.wait();
+    const ownerAfterTransfer = await escrow.owner();
+    if (ownerAfterTransfer !== finalOwnerAddress) {
+      throw new Error(`❌ Ownership devri doğrulanamadı. Beklenen=${finalOwnerAddress} Gerçek=${ownerAfterTransfer}`);
     }
-
-    if (fs.existsSync(frontendEnvPath)) {
-      let envContent = fs.readFileSync(frontendEnvPath, "utf8");
-
-      const codespaceName = process.env.CODESPACE_NAME;
-      if (codespaceName) {
-        const apiUrl = `https://${codespaceName}-4000.app.github.dev`;
-        envContent = envContent.replace(/VITE_API_URL=.*/, `VITE_API_URL=${apiUrl}`);
-      }
-
-      envContent = envContent.replace(/VITE_ESCROW_ADDRESS=.*/, `VITE_ESCROW_ADDRESS=\"${address}\"`);
-      envContent = envContent.replace(/VITE_USDT_ADDRESS=.*/, `VITE_USDT_ADDRESS=\"${usdtAddress}\"`);
-      envContent = envContent.replace(/VITE_USDC_ADDRESS=.*/, `VITE_USDC_ADDRESS=\"${usdcAddress}\"`);
-
-      fs.writeFileSync(frontendEnvPath, envContent);
-      console.log("✅ .env dosyası otomatik olarak güncellendi (non-production). ");
-    }
+    console.log(`✅ Ownership devredildi: ${ownerAfterTransfer}`);
   } else {
-    console.log("ℹ️ Production modunda frontend/.env auto-write atlandı.");
+    console.log("ℹ️ Ownership devri gerekmiyor; deployer zaten final owner değilse treasury ile eşleşiyor.");
   }
 
-  // ── 5. Sonuçlar ve completion koşulu ──────────────────────────────────────
-  if (!allTokenSupportVerified) {
-    throw new Error("❌ deployment complete koşulu sağlanmadı: token support doğrulaması başarısız.");
+  const abiPath = await syncAbiToFrontend();
+  let frontendEnvPath = null;
+  if (isLocal) {
+    frontendEnvPath = updateFrontendEnvIfPresent({
+      escrowAddress,
+      usdtAddress,
+      usdcAddress,
+    });
+  } else {
+    console.log("ℹ️ Public/custom modda frontend .env auto-write yapılmadı.");
   }
 
-  console.log("\n🎉 DEPLOYMENT COMPLETE (token support zincir üstünde doğrulandı) 🎉");
+  const manifestDir = path.resolve(__dirname, "../deployments");
+  ensureDir(manifestDir);
+  const manifestPath = path.join(manifestDir, `${network.name}.json`);
+  const manifest = {
+    generatedAt: new Date().toISOString(),
+    network: network.name,
+    chainId: Number(chainId),
+    deployMode,
+    contractName: "ArafEscrow",
+    escrowAddress,
+    treasuryAddress,
+    finalOwnerAddress,
+    deployer: deployer.address,
+    deployTxHash: deployTx ? deployTx.hash : null,
+    abiPath,
+    frontendEnvPath,
+    tokens: tokenResults,
+    deployedMocks,
+    feeConfig: {
+      takerFeeBps: feeConfig.currentTakerFeeBps.toString(),
+      makerFeeBps: feeConfig.currentMakerFeeBps.toString(),
+    },
+    cooldownConfig: {
+      tier0TradeCooldown: cooldownConfig.currentTier0TradeCooldown.toString(),
+      tier1TradeCooldown: cooldownConfig.currentTier1TradeCooldown.toString(),
+    },
+  };
+  writeJson(manifestPath, manifest);
+
+  console.log("\n🎉 DEPLOYMENT COMPLETE");
   console.log("--------------------------------------------------");
-  console.log(`VITE_ESCROW_ADDRESS=\"${address}\"`);
-  console.log(`VITE_USDT_ADDRESS=\"${usdtAddress}\"`);
-  console.log(`VITE_USDC_ADDRESS=\"${usdcAddress}\"`);
+  console.log(`Escrow        : ${escrowAddress}`);
+  console.log(`USDT          : ${usdtAddress}`);
+  console.log(`USDC          : ${usdcAddress}`);
+  console.log(`Treasury      : ${treasuryAddress}`);
+  console.log(`Final Owner   : ${finalOwnerAddress}`);
+  console.log(`Manifest      : ${manifestPath}`);
   console.log("--------------------------------------------------");
 }
 
@@ -180,4 +384,9 @@ if (require.main === module) {
     });
 }
 
-module.exports = { resolveProductionTokenConfig };
+module.exports = {
+  main,
+  getDeployMode,
+  getTokenConfigSnapshot,
+  setAndVerifyTokenConfig,
+};
