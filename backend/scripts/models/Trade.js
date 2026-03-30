@@ -98,6 +98,71 @@ const tradeSchema = new mongoose.Schema(
       ref:  "Listing",
     },
 
+    // [TR] V3 child trade ise ait olduğu parent order'ın on-chain kimliği.
+    //      Legacy direct escrow'larda null kalır.
+    // [EN] On-chain id of the parent order for V3 child trades.
+    //      Remains null for legacy direct escrows.
+    parent_order_id: {
+      type:    Number,
+      default: null,
+      index:   true,
+      sparse:  true,
+    },
+
+    // [TR] Trade'in kökeni:
+    //      - LEGACY_DIRECT  = createEscrow(..., listingRef)
+    //      - ORDER_CHILD    = fillSellOrder / fillBuyOrder ile doğan exact-size child trade
+    // [EN] Trade origin:
+    //      - LEGACY_DIRECT  = createEscrow(..., listingRef)
+    //      - ORDER_CHILD    = exact-size child trade spawned by fillSellOrder / fillBuyOrder
+    trade_origin: {
+      type:    String,
+      enum:    ["LEGACY_DIRECT", "ORDER_CHILD"],
+      default: "LEGACY_DIRECT",
+      index:   true,
+    },
+
+    // [TR] Child trade'in parent order side snapshot'ı.
+    //      Böylece order sonradan mirror'da eksik olsa bile trade bağlamı okunabilir.
+    // [EN] Parent order side snapshot for child trades.
+    //      Allows trade context to stay readable even if the order mirror is temporarily missing.
+    parent_order_side: {
+      type:    String,
+      enum:    ["SELL_CRYPTO", "BUY_CRYPTO"],
+      default: null,
+    },
+
+    // [TR] Direct escrow ve V3 child trade canonical ref alanları ayrı tutulur.
+    //      listing_ref: legacy direct escrow için canonical bağ.
+    //      child_listing_ref: order fill'den türeyen child trade ref'i (varsa).
+    // [EN] Canonical refs for direct escrow vs V3 child trade are tracked separately.
+    canonical_refs: {
+      listing_ref: {
+        type:      String,
+        lowercase: true,
+        default:   null,
+        match:     /^0x[a-f0-9]{64}$/,
+      },
+      child_listing_ref: {
+        type:      String,
+        lowercase: true,
+        default:   null,
+        match:     /^0x[a-f0-9]{64}$/,
+      },
+    },
+
+    // [TR] Trade'in kullandığı ERC-20 token adresi.
+    //      Listing mirror'ına bağımlı kalmadan trade okunabilir olsun diye ayrıca tutulur.
+    // [EN] ERC-20 token address used by the trade.
+    //      Stored directly so trade reads do not depend on listing mirror presence.
+    token_address: {
+      type:      String,
+      lowercase: true,
+      default:   null,
+      match:     /^0x[a-fA-F0-9]{40}$/,
+      index:     true,
+    },
+
     maker_address: {
       type:      String,
       required:  true,
@@ -122,6 +187,14 @@ const tradeSchema = new mongoose.Schema(
       exchange_rate:  { type: Number, required: true },
       crypto_asset:   { type: String, enum: ["USDT", "USDC"], required: true },
       fiat_currency:  { type: String, enum: ["TRY", "USD", "EUR"], required: true },
+
+      // [TR] Fee snapshot mirror'ı — aktif trade economics geriye dönük etkilenmesin diye
+      //      kontratın trade create / child spawn anında kilitlediği BPS değerleri.
+      // [EN] Fee snapshot mirror — BPS values frozen by the contract at trade creation /
+      //      child spawn so active trade economics cannot be changed retroactively.
+      taker_fee_bps_snapshot: { type: Number, default: null, min: 0 },
+      maker_fee_bps_snapshot: { type: Number, default: null, min: 0 },
+
       // [TR] Otoritatif kümülatif erime: String (BigInt güvenli).
       // [EN] Authoritative cumulative decay: String (BigInt-safe).
       total_decayed:  { type: String, default: "0" },
@@ -134,6 +207,18 @@ const tradeSchema = new mongoose.Schema(
       // [TR] Her BleedingDecayed miktarı (String, base units).
       // [EN] Each BleedingDecayed amount (String, base units).
       decayed_amounts: { type: [String], default: [] },
+    },
+
+    // [TR] Child trade metadata:
+    //      V3'te her gerçek execution exact-size child trade olduğundan,
+    //      fill bağlamı burada saklanabilir.
+    // [EN] Child trade metadata:
+    //      In V3 every real execution is an exact-size child trade,
+    //      so fill-specific context can be mirrored here.
+    fill_metadata: {
+      is_exact_size_child: { type: Boolean, default: false },
+      child_sequence:      { type: Number,  default: null, min: 0 },
+      fill_tx_hash:        { type: String,  default: null },
     },
 
     status: {
@@ -226,6 +311,11 @@ const tradeSchema = new mongoose.Schema(
 tradeSchema.index({ maker_address: 1, status: 1 });
 tradeSchema.index({ taker_address: 1, status: 1 });
 tradeSchema.index({ onchain_escrow_id: 1 });
+tradeSchema.index({ parent_order_id: 1, status: 1 });
+tradeSchema.index({ trade_origin: 1, status: 1 });
+tradeSchema.index({ token_address: 1, status: 1 });
+tradeSchema.index({ "canonical_refs.listing_ref": 1 }, { sparse: true });
+tradeSchema.index({ "canonical_refs.child_listing_ref": 1 }, { sparse: true });
 
 // [TR] Trade'leri 1 yıl sonra sil — GDPR uyumu
 // [EN] Delete trades after 1 year — GDPR compliance
