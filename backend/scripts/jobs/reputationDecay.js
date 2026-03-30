@@ -1,30 +1,34 @@
 "use strict";
 
 /**
- * Reputation Decay Job — Periyodik İtibar Temizleme Görevi
+ * Reputation Decay Job — V3 On-Chain Clean-Slate Trigger
  *
- * KRİT-13 Fix (v2): Stale DB mirror bağımlılığı kaldırıldı.
- *   ÖNCEKİ: Aday seçimi DB'deki banned_until / consecutive_bans alanlarına dayanıyordu.
- *   Sorun: Bu alanlar stale kalabildiğinde decay adayı yanlış seçiliyor veya kaçıyordu.
- *   ŞİMDİ: DB yalnızca aday havuzu için kullanılıyor; nihai karar on-chain
- *   reputation() verisine göre veriliyor (bannedUntil + consecutiveBans).
+ * V3 kuralı değişmez:
+ *   - İtibarın otoritatif kaynağı kontrattır.
+ *   - Backend yalnız aday havuzu çıkarır ve uygun kullanıcılar için
+ *     on-chain `decayReputation()` çağrısını tetikler.
+ *   - Nihai eligibility kararı MongoDB cache'e değil, kontratın kendi
+ *     `getReputation()` çıktısına göre verilir.
  *
  * Bu görev:
- * 1. Her 24 saatte bir çalışır (app.js tarafından tetiklenir)
- * 2. Uygun kullanıcıları bulur
- * 3. Relayer cüzdanı üzerinden on-chain decayReputation() fonksiyonunu çağırır
- * 4. ReputationUpdated eventi eventListener tarafından yakalanır → MongoDB senkronize
+ *   1. Geniş bir aday havuzu çıkarır (mirror/cache yardımcıdır)
+ *   2. Her aday için kontrattan güncel bannedUntil + consecutiveBans okur
+ *   3. 180 günlük clean-slate eşiği dolmuşsa decayReputation() çağırır
+ *   4. ReputationUpdated event'i eventListener tarafından mirror'a yansıtılır
  */
 
 const { ethers } = require("ethers");
-const User       = require("../models/User");
-const logger     = require("../utils/logger");
+const User = require("../models/User");
+const logger = require("../utils/logger");
 
-// [TR] Sadece decayReputation fonksiyonunu çağırmak için minimal ABI
 const DECAY_ABI = [
   "function decayReputation(address _wallet)",
-  "function reputation(address) view returns (uint256 successfulTrades, uint256 failedDisputes, uint256 bannedUntil, uint256 consecutiveBans)",
+  "function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier)",
 ];
+
+const CLEAN_SLATE_DAYS = 180;
+const DEFAULT_CANDIDATE_LIMIT = Number(process.env.REPUTATION_DECAY_CANDIDATE_LIMIT || 250);
+const DEFAULT_TX_LIMIT = Number(process.env.REPUTATION_DECAY_TX_LIMIT || 50);
 
 let relayerWallet = null;
 let decayContract = null;
@@ -32,16 +36,16 @@ let decayContract = null;
 function getRelayer() {
   if (relayerWallet) return relayerWallet;
 
-  const rpcUrl     = process.env.BASE_RPC_URL;
+  const rpcUrl = process.env.BASE_RPC_URL;
   const privateKey = process.env.RELAYER_PRIVATE_KEY;
 
   if (!rpcUrl || !privateKey) {
-    logger.error("[DecayJob] RELAYER_PRIVATE_KEY veya RPC URL tanımsız. Görev çalıştırılamıyor.");
+    logger.error("[DecayJob] RELAYER_PRIVATE_KEY veya BASE_RPC_URL tanımsız. Görev çalıştırılamıyor.");
     return null;
   }
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
-  relayerWallet  = new ethers.Wallet(privateKey, provider);
+  relayerWallet = new ethers.Wallet(privateKey, provider);
   logger.info(`[DecayJob] Relayer cüzdanı yüklendi: ${relayerWallet.address}`);
   return relayerWallet;
 }
@@ -50,61 +54,74 @@ function getDecayContract() {
   if (decayContract) return decayContract;
 
   const contractAddress = process.env.ARAF_ESCROW_ADDRESS;
-  const relayer         = getRelayer();
-  if (!contractAddress || !relayer) return null;
+  const relayer = getRelayer();
+  if (!contractAddress || !relayer || contractAddress === "0x0000000000000000000000000000000000000000") {
+    logger.error("[DecayJob] ARAF_ESCROW_ADDRESS tanımsız veya geçersiz.");
+    return null;
+  }
 
   decayContract = new ethers.Contract(contractAddress, DECAY_ABI, relayer);
   return decayContract;
 }
 
 async function runReputationDecay() {
-  logger.info("[DecayJob] İtibar temizleme görevi başlatıldı...");
+  logger.info("[DecayJob] V3 itibar temizleme görevi başlatıldı...");
 
   const contract = getDecayContract();
   if (!contract) return;
 
-  const oneHundredEightyDaysAgo = new Date(Date.now() - 180 * 24 * 3600 * 1000);
+  const cutoffMs = Date.now() - CLEAN_SLATE_DAYS * 24 * 3600 * 1000;
 
-  // [TR] Stale mirror riskini azaltmak için adayları geniş havuzdan al, nihai kararı on-chain ver.
-  // [EN] Reduce stale mirror risk: pick a broad candidate pool, decide eligibility on-chain.
-  const candidates = await User.find({ is_banned: false })
-    .select("wallet_address")
-    .limit(200);
+  // [TR] Mirror alanları stale olabilir. Bu yüzden query yalnız aday havuzu içindir.
+  //      Nihai eligibility kararı kontratın getReputation() çağrısından gelir.
+  // [EN] Mirror fields may be stale. This query only builds a candidate pool.
+  const candidates = await User.find({
+    $or: [
+      { consecutive_bans: { $gt: 0 } },
+      { banned_until: { $ne: null } },
+    ],
+  })
+    .select("wallet_address consecutive_bans banned_until")
+    .sort({ updated_at: -1, wallet_address: 1 })
+    .limit(DEFAULT_CANDIDATE_LIMIT)
+    .lean();
+
+  if (candidates.length === 0) {
+    logger.info("[DecayJob] Aday havuzunda kullanıcı bulunamadı.");
+    return;
+  }
 
   const usersToClean = [];
   for (const user of candidates) {
     try {
-      const rep = await contract.reputation(user.wallet_address);
-      const bannedUntil = Number(rep.bannedUntil);
-      const consecutiveBans = Number(rep.consecutiveBans);
+      const rep = await contract.getReputation(user.wallet_address);
+      const bannedUntil = Number(rep.bannedUntil || 0);
+      const consecutiveBans = Number(rep.consecutiveBans || 0);
+
       if (!bannedUntil || consecutiveBans <= 0) continue;
-      if (new Date(bannedUntil * 1000) < oneHundredEightyDaysAgo) {
-        usersToClean.push(user);
+      const bannedUntilMs = bannedUntil * 1000;
+      if (bannedUntilMs <= cutoffMs) {
+        usersToClean.push(user.wallet_address);
       }
-      if (usersToClean.length >= 50) break;
+      if (usersToClean.length >= DEFAULT_TX_LIMIT) break;
     } catch (err) {
-      logger.warn(`[DecayJob] reputation() okunamadı: ${user.wallet_address} err=${err.message}`);
+      logger.warn(`[DecayJob] getReputation() okunamadı: ${user.wallet_address} err=${err.message}`);
     }
   }
 
   if (usersToClean.length === 0) {
-    logger.info("[DecayJob] Temizlenecek itibara sahip kullanıcı bulunamadı.");
+    logger.info("[DecayJob] On-chain koşullara göre temizlenecek kullanıcı bulunamadı.");
     return;
   }
 
-  logger.info(`[DecayJob] ${usersToClean.length} kullanıcının itibarı on-chain'de temizlenecek...`);
+  logger.info(`[DecayJob] ${usersToClean.length} kullanıcı için decayReputation() denenecek.`);
 
-  for (const user of usersToClean) {
+  for (const wallet of usersToClean) {
     try {
-      const tx = await contract.decayReputation(user.wallet_address);
-      logger.info(
-        `[DecayJob] ${user.wallet_address} için on-chain temizleme işlemi gönderildi. Tx: ${tx.hash}`
-      );
+      const tx = await contract.decayReputation(wallet);
+      logger.info(`[DecayJob] decayReputation gönderildi: wallet=${wallet} tx=${tx.hash}`);
     } catch (err) {
-      // [TR] "180-day clean period not elapsed" gibi kontrat revert mesajlarını logla
-      logger.error(
-        `[DecayJob] ${user.wallet_address} için itibar temizleme başarısız: ${err.reason || err.message}`
-      );
+      logger.error(`[DecayJob] ${wallet} için itibar temizleme başarısız: ${err.reason || err.message}`);
     }
   }
 }

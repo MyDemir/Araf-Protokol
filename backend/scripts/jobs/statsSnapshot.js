@@ -1,57 +1,104 @@
 "use strict";
 
 /**
- * Stats Snapshot Job — Günlük İstatistik Anlık Görüntüsü Alma Görevi
+ * Stats Snapshot Job — V3 Günlük Order + Child Trade Snapshot
  *
- * Bu görev, her 24 saatte bir çalışarak güncel protokol istatistiklerini
- * hesaplar ve `historical_stats` koleksiyonuna kaydeder.
+ * V3 ile birlikte istatistik dili değişti:
+ *   - public market katmanı artık Order üzerinden okunur
+ *   - gerçek escrow lifecycle'ı child trade üzerinden ölçülür
+ *   - analytics katmanı bunları AYRI raporlar
  *
- * app.js tarafından periyodik olarak tetiklenir.
+ * Bu job her çalıştığında güncel V3 metriklerini hesaplar ve
+ * `historical_stats` koleksiyonunda ilgili güne upsert eder.
  */
 
-const { Trade, Listing } = require("../models/Trade");
-const HistoricalStat     = require("../models/HistoricalStat");
-const logger             = require("../utils/logger");
+const Trade = require("../models/Trade");
+const Order = require("../models/Order");
+const HistoricalStat = require("../models/HistoricalStat");
+const logger = require("../utils/logger");
 
-// Yeni versiyon MongoDB aggregation kullanarak DB seviyesinde hesaplama yapar.
+/**
+ * V3 güncel istatistiklerini DB seviyesinde hesaplar.
+ *
+ * Notlar:
+ *   - total_volume_usdt      = RESOLVED child trade hacmi
+ *   - executed_volume_usdt   = spawn edilmiş (fill edilmiş) child trade hacmi
+ *   - completed_trades       = RESOLVED child trade adedi
+ *   - child_trade_count      = tüm child trade kayıtları
+ *   - active_child_trades    = terminal state'e geçmemiş child trade adedi
+ *   - open_sell/open_buy     = açık parent order sayıları
+ */
 async function computeCurrentStats() {
-  // Paralel aggregation çağrıları — her biri kendi pipeline'ında
-  const [resolvedAgg, burnedAgg, activeListings] = await Promise.all([
-    // RESOLVED trade'lerin toplam hacmi, sayısı ve ortalama süresi
+  const activeTradeStates = ["OPEN", "LOCKED", "PAID", "CHALLENGED"];
+  const executedTradeStates = ["LOCKED", "PAID", "CHALLENGED", "RESOLVED", "CANCELED", "BURNED"];
+
+  const [
+    resolvedAgg,
+    executedAgg,
+    burnedAgg,
+    childTradeCount,
+    activeChildTrades,
+    openSellOrders,
+    openBuyOrders,
+    partiallyFilledOrders,
+    filledOrders,
+    canceledOrders,
+  ] = await Promise.all([
     Trade.aggregate([
       { $match: { status: "RESOLVED" } },
-      { $group: {
-        _id: null,
-        totalVolume: { $sum: "$financials.crypto_amount_num" },
-        count:       { $sum: 1 },
-        totalDurationMs: {
-          $sum: {
-            $cond: {
-              if: { $and: [
-                { $ne: ["$timers.locked_at", null] },
-                { $ne: ["$timers.resolved_at", null] },
-              ]},
-              then: { $subtract: ["$timers.resolved_at", "$timers.locked_at"] },
-              else: 0,
+      {
+        $group: {
+          _id: null,
+          totalVolume: { $sum: "$financials.crypto_amount_num" },
+          count: { $sum: 1 },
+          totalDurationMs: {
+            $sum: {
+              $cond: {
+                if: {
+                  $and: [
+                    { $ne: ["$timers.locked_at", null] },
+                    { $ne: ["$timers.resolved_at", null] },
+                  ],
+                },
+                then: { $subtract: ["$timers.resolved_at", "$timers.locked_at"] },
+                else: 0,
+              },
             },
           },
         },
-      }},
+      },
     ]),
-    // BURNED trade'lerin toplam eriyen miktarı
+    Trade.aggregate([
+      { $match: { status: { $in: executedTradeStates } } },
+      {
+        $group: {
+          _id: null,
+          totalExecutedVolume: { $sum: "$financials.crypto_amount_num" },
+          count: { $sum: 1 },
+        },
+      },
+    ]),
     Trade.aggregate([
       { $match: { status: "BURNED" } },
-      { $group: {
-        _id: null,
-        totalDecayed: { $sum: "$financials.total_decayed_num" },
-      }},
+      {
+        $group: {
+          _id: null,
+          totalDecayed: { $sum: "$financials.total_decayed_num" },
+        },
+      },
     ]),
-    // Aktif ilan sayısı
-    Listing.countDocuments({ status: "OPEN" }),
+    Trade.countDocuments({}),
+    Trade.countDocuments({ status: { $in: activeTradeStates } }),
+    Order.countDocuments({ side: "SELL_CRYPTO", status: "OPEN" }),
+    Order.countDocuments({ side: "BUY_CRYPTO", status: "OPEN" }),
+    Order.countDocuments({ status: "PARTIALLY_FILLED" }),
+    Order.countDocuments({ status: "FILLED" }),
+    Order.countDocuments({ status: "CANCELED" }),
   ]);
 
   const resolved = resolvedAgg[0] || { totalVolume: 0, count: 0, totalDurationMs: 0 };
-  const burned   = burnedAgg[0]   || { totalDecayed: 0 };
+  const executed = executedAgg[0] || { totalExecutedVolume: 0, count: 0 };
+  const burned = burnedAgg[0] || { totalDecayed: 0 };
 
   const avgTradeHours = resolved.count > 0
     ? parseFloat((resolved.totalDurationMs / resolved.count / (1000 * 3600)).toFixed(1))
@@ -59,24 +106,25 @@ async function computeCurrentStats() {
 
   return {
     total_volume_usdt: resolved.totalVolume,
-    completed_trades:  resolved.count,
-    active_listings:   activeListings,
+    executed_volume_usdt: executed.totalExecutedVolume,
+    completed_trades: resolved.count,
+    child_trade_count: childTradeCount,
+    active_child_trades: activeChildTrades,
+    open_sell_orders: openSellOrders,
+    open_buy_orders: openBuyOrders,
+    partially_filled_orders: partiallyFilledOrders,
+    filled_orders: filledOrders,
+    canceled_orders: canceledOrders,
     burned_bonds_usdt: burned.totalDecayed,
-    avg_trade_hours:   avgTradeHours,
+    avg_trade_hours: avgTradeHours,
   };
 }
 
-/**
- * İstatistikleri hesaplar ve `historical_stats` koleksiyonuna kaydeder/günceller.
- * Görev idempotenttir; aynı gün içinde birden çok kez çalıştırılsa bile
- * sadece tek bir kayıt oluşturur/günceller.
- */
 async function runStatsSnapshot() {
-  logger.info("[Job:StatsSnapshot] Günlük istatistik anlık görüntüsü oluşturuluyor...");
+  logger.info("[Job:StatsSnapshot] V3 günlük istatistik anlık görüntüsü oluşturuluyor...");
   try {
     const stats = await computeCurrentStats();
-
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const today = new Date().toISOString().split("T")[0];
 
     await HistoricalStat.findOneAndUpdate(
       { date: today },
@@ -85,8 +133,10 @@ async function runStatsSnapshot() {
     );
 
     logger.info(
-      `[Job:StatsSnapshot] Anlık görüntü kaydedildi: date=${today}, ` +
-      `volume=${stats.total_volume_usdt.toFixed(2)}, trades=${stats.completed_trades}`
+      `[Job:StatsSnapshot] Snapshot kaydedildi: date=${today}, ` +
+      `resolved_volume=${Number(stats.total_volume_usdt || 0).toFixed(2)}, ` +
+      `executed_volume=${Number(stats.executed_volume_usdt || 0).toFixed(2)}, ` +
+      `child_trades=${stats.child_trade_count}`
     );
   } catch (err) {
     logger.error(`[Job:StatsSnapshot] Görev başarısız oldu: ${err.message}`, { stack: err.stack });
