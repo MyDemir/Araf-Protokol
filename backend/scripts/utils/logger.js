@@ -15,6 +15,12 @@ const fs   = require("fs");
  *
  * Kullanım önerisi (production):
  *   LOG_DIR=/var/log/araf ortam değişkeni ile özel dizin belirlenebilir.
+ *
+ * V3 Notu:
+ *   Order + Child Trade mimarisinde log hacmi ve korelasyon ihtiyacı artar.
+ *   Bu yüzden logger; tradeId, orderId, txHash, logIndex ve worker state gibi
+ *   alanları güvenle taşıyacak kadar yapılandırılmış olmalı, ancak PII asla
+ *   doğrudan bu katmanda üretilmemelidir.
  */
 
 // [TR] Log dizini — production'da ortam değişkeniyle özelleştirilebilir
