@@ -3,7 +3,7 @@
  * eventListener.js — V3 Native Event Worker
  *
  * Tasarım hedefi:
- *   - ArafEscrow-yeni.sol authoritative kaynaktır.
+ *   - ArafEscrow.sol authoritative kaynaktır.
  *   - Backend order/trade state üretmez; yalnız mirror eder.
  *   - Parent order ve child trade explicit bağlarla tutulur.
  *   - same-tx OrderFilled -> EscrowCreated -> EscrowLocked zinciri güvenli işlenir.
@@ -14,11 +14,12 @@
  *   - remainingAmount, reserve ve fee snapshot kontrattan gelir.
  *   - Heuristik linkage YOK; explicit orderId / tradeId / orderRef kullanılır.
  *
- * Bu sürüm, ArafEscrow-yeni.sol V3 surface'ına göre güncellenmiştir:
+ * Bu sürüm, güncel V3 yüzeye göre hizalanmıştır:
  *   - OrderCreated / OrderFilled / OrderCanceled event'leri
  *   - FeeConfigUpdated / CooldownConfigUpdated / TokenConfigUpdated event'leri
  *   - getTrade(), getOrder(), getReputation() getter'ları
  *   - Trade.parentOrderId alanı
+ *   - User.js ve Trade.js içindeki banka profil riski snapshot alanları
  */
 const { ethers } = require("ethers");
 const mongoose = require("mongoose");
@@ -41,6 +42,7 @@ const MAX_RETRIES = 5;
 const BLOCK_BATCH_SIZE = 1_000;
 const CHECKPOINT_INTERVAL_BLOCKS = 50;
 const MAX_REPUTATION_HISTORY = 100;
+const BLOCK_TIMESTAMP_CACHE_LIMIT = 2_048;
 
 const FAILURE_SCORE_WEIGHTS = {
   burned: 50,
@@ -109,10 +111,12 @@ const EVENT_ARG_KEYS = {
 
 function _toNum(v) { return Number(v ?? 0); }
 function _toStr(v) { return v?.toString?.() ?? String(v); }
+
 function _normalizeSide(sideValue) {
   const sideNum = Number(sideValue);
   return sideNum === 1 ? "BUY_CRYPTO" : "SELL_CRYPTO";
 }
+
 function _normalizeOrderState(stateValue) {
   const n = Number(stateValue);
   if (n === 1) return "PARTIALLY_FILLED";
@@ -120,6 +124,7 @@ function _normalizeOrderState(stateValue) {
   if (n === 3) return "CANCELED";
   return "OPEN";
 }
+
 function _normalizeTradeState(stateValue) {
   const n = Number(stateValue);
   if (n === 1) return "LOCKED";
@@ -130,15 +135,19 @@ function _normalizeTradeState(stateValue) {
   if (n === 6) return "BURNED";
   return "OPEN";
 }
+
 function _toDateOrNull(unixSeconds) {
   const n = Number(unixSeconds || 0);
   return n > 0 ? new Date(n * 1000) : null;
 }
+
 function _inferCryptoAssetFromToken(tokenAddress) {
   const addr = (tokenAddress || "").toLowerCase();
   if (!addr) return null;
+
   const usdt = (process.env.USDT_ADDRESS || "").toLowerCase();
   const usdc = (process.env.USDC_ADDRESS || "").toLowerCase();
+
   if (usdt && addr === usdt) return "USDT";
   if (usdc && addr === usdc) return "USDC";
   return null;
@@ -161,6 +170,7 @@ class EventWorker {
     this._replayInProgress = false;
     this._livePollInProgress = false;
     this._lastLivePolledBlock = 0;
+    this._blockTimestampCache = new Map();
   }
 
   async start() {
@@ -178,6 +188,7 @@ class EventWorker {
     if (this.provider) this.provider.removeAllListeners();
     this._listenersAttached = false;
     this._livePollInProgress = false;
+    this._blockTimestampCache.clear();
     this._setState("stopped", "worker stop çağrıldı");
     logger.info("[Worker] Event listener durduruldu.");
   }
@@ -201,9 +212,13 @@ class EventWorker {
       logger.warn("[Worker] Kontrat adresi yok — Worker kuru çalışma modunda (development).");
       return;
     }
-    if (!rpcUrl) throw new Error("[Worker] KRİTİK: BASE_RPC_URL production'da zorunludur.");
+
+    if (!rpcUrl) {
+      throw new Error("[Worker] KRİTİK: BASE_RPC_URL production'da zorunludur.");
+    }
 
     const wsRpcUrl = process.env.BASE_WS_RPC_URL;
+
     if (wsRpcUrl && wsRpcUrl.startsWith("wss://")) {
       try {
         this.provider = new ethers.WebSocketProvider(wsRpcUrl);
@@ -222,18 +237,60 @@ class EventWorker {
     this._setState("connected", "provider + kontrat hazır");
   }
 
+  async _getBlockTimestampDate(blockNumber) {
+    if (!this.provider || !Number.isInteger(blockNumber) || blockNumber < 0) {
+      return null;
+    }
+
+    const cached = this._blockTimestampCache.get(blockNumber);
+    if (cached) {
+      return new Date(cached.getTime());
+    }
+
+    const block = await this.provider.getBlock(blockNumber);
+    if (!block || block.timestamp === undefined || block.timestamp === null) {
+      return null;
+    }
+
+    const blockDate = new Date(Number(block.timestamp) * 1000);
+    this._blockTimestampCache.set(blockNumber, blockDate);
+
+    if (this._blockTimestampCache.size > BLOCK_TIMESTAMP_CACHE_LIMIT) {
+      const oldestKey = this._blockTimestampCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this._blockTimestampCache.delete(oldestKey);
+      }
+    }
+
+    return new Date(blockDate.getTime());
+  }
+
+  async _getEventDate(event, explicitUnixSeconds = null) {
+    const explicitDate = _toDateOrNull(explicitUnixSeconds);
+    if (explicitDate) {
+      return explicitDate;
+    }
+
+    const blockDate = await this._getBlockTimestampDate(event?.blockNumber);
+    return blockDate || new Date();
+  }
+
   async _replayMissedEvents() {
     if (!this.contract) return;
+
     const redis = getRedisClient();
     const savedBlock = await redis.get(LAST_SAFE_BLOCK_KEY) ?? await redis.get(CHECKPOINT_KEY);
     const toBlock = await this.provider.getBlockNumber();
     const fromBlock = this._resolveReplayStartBlock(savedBlock, toBlock);
+
     if (fromBlock > toBlock) return;
 
     this._setState("replaying", `replay aralığı: ${fromBlock}-${toBlock}`);
+
     for (let from = fromBlock; from <= toBlock; from += BLOCK_BATCH_SIZE) {
       const to = Math.min(from + BLOCK_BATCH_SIZE - 1, toBlock);
       const allEvents = [];
+
       for (const eventName of EVENT_NAMES) {
         try {
           const filtered = await this.contract.queryFilter(eventName, from, to);
@@ -242,6 +299,7 @@ class EventWorker {
           logger.warn(`[Worker] Replay: ${eventName} sorgusu başarısız (${from}-${to}): ${err.message}`);
         }
       }
+
       allEvents.sort((a, b) => a.blockNumber - b.blockNumber || a.logIndex - b.logIndex);
 
       let batchSuccess = true;
@@ -254,8 +312,12 @@ class EventWorker {
           batchSuccess = false;
         }
       }
-      if (batchSuccess) await this._updateSafeCheckpointIfHigher(to);
+
+      if (batchSuccess) {
+        await this._updateSafeCheckpointIfHigher(to);
+      }
     }
+
     logger.info("[Worker] Replay tamamlandı.");
   }
 
@@ -264,20 +326,32 @@ class EventWorker {
 
     this.provider.on("block", async (blockNumber) => {
       if (this._livePollInProgress) return;
+
       this._livePollInProgress = true;
       try {
         await this._updateSeenBlockIfHigher(blockNumber);
+
         const fromBlock = this._lastLivePolledBlock + 1;
         const toBlock = blockNumber;
+
         if (fromBlock <= toBlock) {
           await this._pollLiveRange(fromBlock, toBlock);
           this._lastLivePolledBlock = toBlock;
         }
+
         const finalizedUpTo = blockNumber - 1;
         await this._advanceSafeCheckpointFromAcks(finalizedUpTo);
-        if (!this._replayInProgress && (blockNumber - this._lastSafeCheckpointBlock >= CHECKPOINT_INTERVAL_BLOCKS)) {
+
+        if (
+          !this._replayInProgress &&
+          (blockNumber - this._lastSafeCheckpointBlock >= CHECKPOINT_INTERVAL_BLOCKS)
+        ) {
           this._replayInProgress = true;
-          try { await this._replayMissedEvents(); } finally { this._replayInProgress = false; }
+          try {
+            await this._replayMissedEvents();
+          } finally {
+            this._replayInProgress = false;
+          }
         }
       } catch (err) {
         logger.error(`[Worker] Live block-range poll hatası: ${err.message}`);
@@ -297,16 +371,21 @@ class EventWorker {
 
   async _pollLiveRange(fromBlock, toBlock) {
     if (!this.contract || fromBlock > toBlock) return;
+
     for (let from = fromBlock; from <= toBlock; from += BLOCK_BATCH_SIZE) {
       const to = Math.min(from + BLOCK_BATCH_SIZE - 1, toBlock);
+
       try {
         const allEvents = [];
+
         for (const eventName of EVENT_NAMES) {
           const filtered = await this.contract.queryFilter(eventName, from, to);
           if (Array.isArray(filtered)) allEvents.push(...filtered);
         }
+
         allEvents.sort((a, b) => a.blockNumber - b.blockNumber || a.logIndex - b.logIndex);
         this._seedAckStateForRange(from, to);
+
         for (const event of allEvents) {
           this._trackLiveEventSeen(event);
           const success = await this._processEventWithRetry(event);
@@ -324,30 +403,57 @@ class EventWorker {
   _ensureBlockAckState(blockNumber) {
     const existing = this._blockAcks.get(blockNumber);
     if (existing) return existing;
+
     const state = { seen: new Set(), acked: new Set(), unsafe: false };
     this._blockAcks.set(blockNumber, state);
     return state;
   }
-  _seedAckStateForRange(fromBlock, toBlock) { for (let b = fromBlock; b <= toBlock; b += 1) this._ensureBlockAckState(b); }
-  _markRangeUnsafe(fromBlock, toBlock) { for (let b = fromBlock; b <= toBlock; b += 1) this._markBlockUnsafe(b); }
+
+  _seedAckStateForRange(fromBlock, toBlock) {
+    for (let b = fromBlock; b <= toBlock; b += 1) {
+      this._ensureBlockAckState(b);
+    }
+  }
+
+  _markRangeUnsafe(fromBlock, toBlock) {
+    for (let b = fromBlock; b <= toBlock; b += 1) {
+      this._markBlockUnsafe(b);
+    }
+  }
+
   async _updateSafeCheckpointIfHigher(blockNumber) {
     const redis = getRedisClient();
     const current = parseInt(await redis.get(LAST_SAFE_BLOCK_KEY) || await redis.get(CHECKPOINT_KEY) || "0");
+
     if (blockNumber > current) {
       await redis.set(LAST_SAFE_BLOCK_KEY, blockNumber.toString());
       await redis.set(CHECKPOINT_KEY, blockNumber.toString());
       this._lastSafeCheckpointBlock = blockNumber;
     }
   }
-  async _updateSeenBlockIfHigher(blockNumber) { if (blockNumber > this._lastSeenBlock) this._lastSeenBlock = blockNumber; }
+
+  async _updateSeenBlockIfHigher(blockNumber) {
+    if (blockNumber > this._lastSeenBlock) this._lastSeenBlock = blockNumber;
+  }
+
   _resolveReplayStartBlock(savedBlock, currentBlock) {
     if (savedBlock !== null && savedBlock !== undefined) {
       const checkpoint = Number(savedBlock);
-      if (!Number.isInteger(checkpoint) || checkpoint < 0) throw new Error(`[Worker] Geçersiz checkpoint değeri: ${savedBlock}`);
-      if (checkpoint > currentBlock) throw new Error(`[Worker] Checkpoint current block'u aşıyor: checkpoint=${checkpoint} current=${currentBlock}`);
+
+      if (!Number.isInteger(checkpoint) || checkpoint < 0) {
+        throw new Error(`[Worker] Geçersiz checkpoint değeri: ${savedBlock}`);
+      }
+      if (checkpoint > currentBlock) {
+        throw new Error(
+          `[Worker] Checkpoint current block'u aşıyor: checkpoint=${checkpoint} current=${currentBlock}`
+        );
+      }
+
       return checkpoint + 1;
     }
+
     const configuredStartRaw = process.env.ARAF_DEPLOYMENT_BLOCK ?? process.env.WORKER_START_BLOCK;
+
     if (configuredStartRaw === undefined || configuredStartRaw === null || configuredStartRaw === "") {
       if (process.env.NODE_ENV === "production") {
         throw new Error("[Worker] Production için checkpoint veya ARAF_DEPLOYMENT_BLOCK/WORKER_START_BLOCK zorunludur.");
@@ -355,34 +461,66 @@ class EventWorker {
       logger.warn("[Worker] Checkpoint bulunamadı ve başlangıç bloğu tanımlı değil. Varsayılan başlangıç: 0.");
       return 0;
     }
+
     const configuredStart = Number(configuredStartRaw);
-    if (!Number.isInteger(configuredStart) || configuredStart < 0) throw new Error(`[Worker] Geçersiz başlangıç bloğu: ${configuredStartRaw}.`);
-    if (configuredStart > currentBlock) throw new Error(`[Worker] Başlangıç bloğu current block'tan büyük olamaz: start=${configuredStart} current=${currentBlock}`);
+
+    if (!Number.isInteger(configuredStart) || configuredStart < 0) {
+      throw new Error(`[Worker] Geçersiz başlangıç bloğu: ${configuredStartRaw}.`);
+    }
+    if (configuredStart > currentBlock) {
+      throw new Error(
+        `[Worker] Başlangıç bloğu current block'tan büyük olamaz: start=${configuredStart} current=${currentBlock}`
+      );
+    }
+
     return configuredStart;
   }
-  _getEventId(event) { return `${event?.transactionHash || "unknown_tx"}:${Number.isInteger(event?.logIndex) ? event.logIndex : -1}`; }
-  _trackLiveEventSeen(event) { const state = this._ensureBlockAckState(event.blockNumber); state.seen.add(this._getEventId(event)); }
-  _trackLiveEventAck(event) { const state = this._ensureBlockAckState(event.blockNumber); state.acked.add(this._getEventId(event)); }
-  _markBlockUnsafe(blockNumber) { const state = this._ensureBlockAckState(blockNumber); state.unsafe = true; }
+
+  _getEventId(event) {
+    return `${event?.transactionHash || "unknown_tx"}:${Number.isInteger(event?.logIndex) ? event.logIndex : -1}`;
+  }
+
+  _trackLiveEventSeen(event) {
+    const state = this._ensureBlockAckState(event.blockNumber);
+    state.seen.add(this._getEventId(event));
+  }
+
+  _trackLiveEventAck(event) {
+    const state = this._ensureBlockAckState(event.blockNumber);
+    state.acked.add(this._getEventId(event));
+  }
+
+  _markBlockUnsafe(blockNumber) {
+    const state = this._ensureBlockAckState(blockNumber);
+    state.unsafe = true;
+  }
+
   async _advanceSafeCheckpointFromAcks(finalizedUpTo) {
     if (!Number.isInteger(finalizedUpTo) || finalizedUpTo <= this._lastSafeCheckpointBlock) return;
+
     let nextSafe = this._lastSafeCheckpointBlock;
+
     for (let block = this._lastSafeCheckpointBlock + 1; block <= finalizedUpTo; block += 1) {
       const state = this._blockAcks.get(block);
       if (!state) break;
       if (state.unsafe || state.acked.size < state.seen.size) break;
       nextSafe = block;
     }
+
     if (nextSafe > this._lastSafeCheckpointBlock) {
       await this._updateSafeCheckpointIfHigher(nextSafe);
-      for (const block of [...this._blockAcks.keys()]) if (block <= nextSafe) this._blockAcks.delete(block);
+      for (const block of [...this._blockAcks.keys()]) {
+        if (block <= nextSafe) this._blockAcks.delete(block);
+      }
     }
   }
 
   async _reconnect() {
     if (this._reconnectPromise) return this._reconnectPromise;
+
     this._reconnectPromise = (async () => {
       this._setState("reconnecting", "provider error sonrası yeniden bağlanma");
+
       if (this.provider) {
         try {
           this.provider.removeAllListeners();
@@ -392,14 +530,22 @@ class EventWorker {
         this.contract = null;
         this._listenersAttached = false;
         this._livePollInProgress = false;
+        this._blockTimestampCache.clear();
       }
+
       await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
       await this._connect();
       await this._replayMissedEvents();
+
       if (this.provider) this._lastLivePolledBlock = await this.provider.getBlockNumber();
       if (this.contract) this._attachLiveListeners();
     })();
-    try { await this._reconnectPromise; } finally { this._reconnectPromise = null; }
+
+    try {
+      await this._reconnectPromise;
+    } finally {
+      this._reconnectPromise = null;
+    }
   }
 
   async _processEventWithRetry(event, attempt = 1) {
@@ -413,14 +559,18 @@ class EventWorker {
         await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
         return this._processEventWithRetry(event, attempt + 1);
       }
+
       this._retryFailureCount += 1;
       await this._addToDLQ(event, err.message);
       return false;
     }
   }
+
   async _processEventWithRetryNoDLQ(event, attempt = 1) {
-    try { await this._processEvent(event); return { success: true }; }
-    catch (err) {
+    try {
+      await this._processEvent(event);
+      return { success: true };
+    } catch (err) {
       if (attempt < MAX_RETRIES) {
         await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
         return this._processEventWithRetryNoDLQ(event, attempt + 1);
@@ -428,22 +578,29 @@ class EventWorker {
       return { success: false, error: err.message };
     }
   }
+
   async _addToDLQ(event, errorMsg) {
     const redis = getRedisClient();
     const nowIso = new Date().toISOString();
+
     const entry = JSON.stringify({
       eventName: event.eventName,
       txHash: event.transactionHash,
       logIndex: event.logIndex ?? null,
       idempotencyKey: this._getEventId(event),
       blockNumber: event.blockNumber,
-      namedArgs: Object.fromEntries(Object.entries(event.args || {}).filter(([k]) => Number.isNaN(Number(k)))),
-      args: Array.isArray(event.args) ? event.args.map((a) => _toStr(a)) : Object.values(event.args || {}).map((a) => _toStr(a)),
+      namedArgs: Object.fromEntries(
+        Object.entries(event.args || {}).filter(([k]) => Number.isNaN(Number(k)))
+      ),
+      args: Array.isArray(event.args)
+        ? event.args.map((a) => _toStr(a))
+        : Object.values(event.args || {}).map((a) => _toStr(a)),
       attempt: 0,
       next_retry_at: nowIso,
       first_seen_at: nowIso,
       last_error: errorMsg,
     });
+
     await redis.rPush(DLQ_KEY, entry);
   }
 
@@ -455,6 +612,7 @@ class EventWorker {
       blockNumber: entry.blockNumber,
       args: entry.namedArgs || {},
     };
+
     const result = await this._processEventWithRetryNoDLQ(event);
     if (!result.success) this._markBlockUnsafe(event.blockNumber);
     return result;
@@ -463,9 +621,11 @@ class EventWorker {
   async _fetchTradeFromChain(tradeId) {
     return this.contract.getTrade(tradeId);
   }
+
   async _fetchOrderFromChain(orderId) {
     return this.contract.getOrder(orderId);
   }
+
   async _fetchReputationFromChain(wallet) {
     return this.contract.getReputation(wallet);
   }
@@ -508,11 +668,24 @@ class EventWorker {
       "timers.canceled_at": opts.canceledAt || undefined,
     };
 
-    Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
+    Object.keys(payload).forEach((key) => payload[key] === undefined && delete payload[key]);
 
     await Order.findOneAndUpdate(
       { onchain_order_id: orderId },
-      { $set: payload, $setOnInsert: { stats: { child_trade_count: 0, active_child_trade_count: 0, resolved_child_trade_count: 0, canceled_child_trade_count: 0, burned_child_trade_count: 0, total_filled_amount: "0", total_filled_amount_num: 0 } } },
+      {
+        $set: payload,
+        $setOnInsert: {
+          stats: {
+            child_trade_count: 0,
+            active_child_trade_count: 0,
+            resolved_child_trade_count: 0,
+            canceled_child_trade_count: 0,
+            burned_child_trade_count: 0,
+            total_filled_amount: "0",
+            total_filled_amount_num: 0,
+          },
+        },
+      },
       { upsert: true }
     );
   }
@@ -520,7 +693,8 @@ class EventWorker {
   async _upsertTradeMirror(tradeData, opts = {}) {
     const tradeId = _toNum(tradeData.id);
     const parentOrderId = _toNum(tradeData.parentOrderId);
-    const parentOrder = opts.parentOrder || (parentOrderId > 0 ? await this._fetchOrderFromChain(parentOrderId) : null);
+    const parentOrder =
+      opts.parentOrder || (parentOrderId > 0 ? await this._fetchOrderFromChain(parentOrderId) : null);
 
     const tradeOrigin = parentOrderId > 0 ? "ORDER_CHILD" : "DIRECT_ESCROW";
     const parentOrderSide = parentOrder ? _normalizeSide(parentOrder.side) : null;
@@ -532,7 +706,10 @@ class EventWorker {
       trade_origin: tradeOrigin,
       parent_order_side: parentOrderSide,
       maker_address: tradeData.maker.toLowerCase(),
-      taker_address: tradeData.taker && tradeData.taker !== ethers.ZeroAddress ? tradeData.taker.toLowerCase() : null,
+      taker_address:
+        tradeData.taker && tradeData.taker !== ethers.ZeroAddress
+          ? tradeData.taker.toLowerCase()
+          : null,
       token_address: tradeData.tokenAddress.toLowerCase(),
       canonical_refs: {
         listing_ref: opts.listingRef || null,
@@ -588,8 +765,10 @@ class EventWorker {
 
   async _bumpOrderChildStats(orderId, updater) {
     if (!orderId) return;
+
     const order = await Order.findOne({ onchain_order_id: orderId }).lean();
     if (!order) return;
+
     const next = updater(order.stats || {});
     await Order.updateOne({ onchain_order_id: orderId }, { $set: { stats: next } });
   }
@@ -615,39 +794,50 @@ class EventWorker {
       CooldownConfigUpdated: this._onCooldownConfigUpdated.bind(this),
       TokenConfigUpdated: this._onTokenConfigUpdated.bind(this),
     };
+
     const handler = handlers[event.eventName];
     if (handler) await handler(event);
   }
 
   async _onWalletRegistered(event) {
     const { wallet } = event.args;
+    const registeredAt = await this._getEventDate(event, event.args?.timestamp);
+
     await User.findOneAndUpdate(
       { wallet_address: wallet.toLowerCase() },
-      { $setOnInsert: { wallet_address: wallet.toLowerCase() } },
+      {
+        $setOnInsert: { wallet_address: wallet.toLowerCase() },
+        $set: { last_onchain_sync_at: registeredAt },
+      },
       { upsert: true }
     );
   }
 
   async _onOrderCreated(event) {
     const { orderId } = event.args;
+    const createdAt = await this._getEventDate(event);
     const orderData = await this._fetchOrderFromChain(orderId);
-    await this._upsertOrderMirror(orderData, { createdAt: new Date() });
+    await this._upsertOrderMirror(orderData, { createdAt });
   }
 
   async _onOrderFilled(event) {
     const { orderId, tradeId, filler, fillAmount, remainingAmount } = event.args;
+    const fillEventAt = await this._getEventDate(event);
     const tradeIdNum = _toNum(tradeId);
-    const existingTrade = await Trade.findOne({ onchain_escrow_id: tradeIdNum }).select("onchain_escrow_id").lean();
+
+    const existingTrade = await Trade.findOne({ onchain_escrow_id: tradeIdNum })
+      .select("onchain_escrow_id")
+      .lean();
 
     const [orderData, tradeData] = await Promise.all([
       this._fetchOrderFromChain(orderId),
       this._fetchTradeFromChain(tradeId),
     ]);
 
-    await this._upsertOrderMirror(orderData, { lastFilledAt: new Date() });
+    await this._upsertOrderMirror(orderData, { lastFilledAt: fillEventAt });
     await this._upsertTradeMirror(tradeData, {
       parentOrder: orderData,
-      createdAt: new Date(),
+      createdAt: fillEventAt,
       fillAmount,
       filler,
       remainingAmountAfterFill: remainingAmount,
@@ -660,7 +850,8 @@ class EventWorker {
         resolved_child_trade_count: stats.resolved_child_trade_count || 0,
         canceled_child_trade_count: stats.canceled_child_trade_count || 0,
         burned_child_trade_count: stats.burned_child_trade_count || 0,
-        total_filled_amount: String(BigInt(stats.total_filled_amount || "0") + BigInt(_toStr(fillAmount))),
+        total_filled_amount:
+          String(BigInt(stats.total_filled_amount || "0") + BigInt(_toStr(fillAmount))),
         total_filled_amount_num: (stats.total_filled_amount_num || 0) + _toNum(fillAmount),
       }));
     }
@@ -668,27 +859,34 @@ class EventWorker {
 
   async _onOrderCanceled(event) {
     const { orderId } = event.args;
+    const canceledAt = await this._getEventDate(event);
     const orderData = await this._fetchOrderFromChain(orderId);
-    await this._upsertOrderMirror(orderData, { canceledAt: new Date() });
+    await this._upsertOrderMirror(orderData, { canceledAt });
   }
 
   async _onEscrowCreated(event) {
     const { tradeId, listingRef } = event.args;
+    const createdAt = await this._getEventDate(event);
     const tradeData = await this._fetchTradeFromChain(tradeId);
     const parentOrderId = _toNum(tradeData.parentOrderId);
     const parentOrder = parentOrderId > 0 ? await this._fetchOrderFromChain(parentOrderId) : null;
     const normalizedListingRef = listingRef ? _toStr(listingRef).toLowerCase() : null;
+
     await this._upsertTradeMirror(tradeData, {
       parentOrder,
-      createdAt: new Date(),
+      createdAt,
       listingRef: normalizedListingRef,
     });
   }
 
   async _onEscrowLocked(event, attempt = 1) {
     const { tradeId, taker } = event.args;
+    const lockedAt = await this._getEventDate(event);
     const tradeIdNum = _toNum(tradeId);
-    const trade = await Trade.findOne({ onchain_escrow_id: tradeIdNum }).select("maker_address taker_address status").lean();
+
+    const trade = await Trade.findOne({ onchain_escrow_id: tradeIdNum })
+      .select("maker_address taker_address status")
+      .lean();
 
     if (!trade) {
       if (attempt < MAX_RETRIES) {
@@ -700,9 +898,17 @@ class EventWorker {
     }
 
     const takerAddress = taker.toLowerCase();
+
     const [makerUser, takerUser] = await Promise.all([
-      User.findOne({ wallet_address: trade.maker_address }).select("pii_data.bankOwner_enc pii_data.iban_enc").lean(),
-      User.findOne({ wallet_address: takerAddress }).select("pii_data.bankOwner_enc").lean(),
+      User.findOne({ wallet_address: trade.maker_address })
+        .select(
+          "pii_data.bankOwner_enc pii_data.iban_enc " +
+          "profileVersion lastBankChangeAt bankChangeCount7d bankChangeCount30d"
+        )
+        .lean(),
+      User.findOne({ wallet_address: takerAddress })
+        .select("pii_data.bankOwner_enc")
+        .lean(),
     ]);
 
     await Trade.findOneAndUpdate(
@@ -711,57 +917,85 @@ class EventWorker {
         $set: {
           status: "LOCKED",
           taker_address: takerAddress,
-          "timers.locked_at": new Date(),
+          "timers.locked_at": lockedAt,
           "pii_snapshot.maker_bankOwner_enc": makerUser?.pii_data?.bankOwner_enc || null,
           "pii_snapshot.maker_iban_enc": makerUser?.pii_data?.iban_enc || null,
           "pii_snapshot.taker_bankOwner_enc": takerUser?.pii_data?.bankOwner_enc || null,
-          "pii_snapshot.captured_at": new Date(),
-          "pii_snapshot.snapshot_delete_at": new Date(Date.now() + 30 * 24 * 3600 * 1000),
+          "pii_snapshot.profileVersionAtLock": makerUser?.profileVersion ?? 0,
+          "pii_snapshot.lastBankChangeAt": makerUser?.lastBankChangeAt || null,
+          "pii_snapshot.bankChangeCount7d": makerUser?.bankChangeCount7d ?? 0,
+          "pii_snapshot.bankChangeCount30d": makerUser?.bankChangeCount30d ?? 0,
+          "pii_snapshot.captured_at": lockedAt,
+          "pii_snapshot.snapshot_delete_at": new Date(lockedAt.getTime() + 30 * 24 * 3600 * 1000),
         },
       }
     );
   }
 
   async _onPaymentReported(event) {
-    const { tradeId, ipfsHash } = event.args;
+    const { tradeId, ipfsHash, timestamp } = event.args;
+    const reportedAt = await this._getEventDate(event, timestamp);
     const safeHash = CID_PATTERN.test(ipfsHash) ? ipfsHash : null;
+
     await Trade.findOneAndUpdate(
       { onchain_escrow_id: _toNum(tradeId) },
-      { $set: { status: "PAID", "evidence.ipfs_receipt_hash": safeHash, "evidence.receipt_timestamp": new Date(), "timers.paid_at": new Date() } }
+      {
+        $set: {
+          status: "PAID",
+          "evidence.ipfs_receipt_hash": safeHash,
+          "evidence.receipt_timestamp": reportedAt,
+          "timers.paid_at": reportedAt,
+        },
+      }
     );
   }
 
   async _onEscrowReleased(event) {
     const { tradeId } = event.args;
+    const resolvedAt = await this._getEventDate(event);
     const tradeIdNum = _toNum(tradeId);
     const tradeData = await this._fetchTradeFromChain(tradeId);
     const wasDisputed = _toNum(tradeData.challengedAt) > 0;
+
     const session = await mongoose.startSession();
     session.startTransaction();
+
     try {
       const trade = await Trade.findOneAndUpdate(
         {
           onchain_escrow_id: tradeIdNum,
           status: { $ne: "RESOLVED" },
         },
-        { $set: { status: "RESOLVED", "timers.resolved_at": new Date(), "evidence.receipt_delete_at": new Date(Date.now() + 24 * 3600 * 1000) } },
+        {
+          $set: {
+            status: "RESOLVED",
+            "timers.resolved_at": resolvedAt,
+            "evidence.receipt_delete_at": new Date(resolvedAt.getTime() + 24 * 3600 * 1000),
+          },
+        },
         { new: true, session }
       );
-      if (!trade) { await session.abortTransaction(); return; }
+
+      if (!trade) {
+        await session.abortTransaction();
+        return;
+      }
 
       if (wasDisputed && trade.maker_address) {
         const scoreType = "unjust_challenge";
         const score = FAILURE_SCORE_WEIGHTS[scoreType];
+
         await User.findOneAndUpdate(
           { wallet_address: trade.maker_address },
           {
             $inc: { "reputation_cache.failure_score": score },
             $push: {
               reputation_history: {
-                $each: [{ type: scoreType, score, date: new Date(), tradeId: tradeIdNum }],
+                $each: [{ type: scoreType, score, date: resolvedAt, tradeId: tradeIdNum }],
                 $slice: -MAX_REPUTATION_HISTORY,
               },
             },
+            $set: { last_onchain_sync_at: resolvedAt },
           },
           { session }
         );
@@ -779,31 +1013,50 @@ class EventWorker {
           { session }
         );
       }
+
       await session.commitTransaction();
     } catch (err) {
       await session.abortTransaction();
       throw err;
-    } finally { await session.endSession(); }
+    } finally {
+      await session.endSession();
+    }
   }
 
   async _onDisputeOpened(event) {
-    const { tradeId } = event.args;
+    const { tradeId, timestamp } = event.args;
+    const challengedAt = await this._getEventDate(event, timestamp);
+
     await Trade.findOneAndUpdate(
       { onchain_escrow_id: _toNum(tradeId) },
-      { $set: { status: "CHALLENGED", "timers.challenged_at": new Date() } }
+      {
+        $set: {
+          status: "CHALLENGED",
+          "timers.challenged_at": challengedAt,
+        },
+      }
     );
   }
 
   async _onEscrowCanceled(event) {
     const { tradeId } = event.args;
+    const canceledAt = await this._getEventDate(event);
+
     const trade = await Trade.findOneAndUpdate(
       {
         onchain_escrow_id: _toNum(tradeId),
         status: { $ne: "CANCELED" },
       },
-      { $set: { status: "CANCELED", "timers.resolved_at": new Date(), "evidence.receipt_delete_at": new Date(Date.now() + 24 * 3600 * 1000) } },
+      {
+        $set: {
+          status: "CANCELED",
+          "timers.resolved_at": canceledAt,
+          "evidence.receipt_delete_at": new Date(canceledAt.getTime() + 24 * 3600 * 1000),
+        },
+      },
       { new: true }
     ).lean();
+
     if (trade?.parent_order_id) {
       await Order.findOneAndUpdate(
         { onchain_order_id: trade.parent_order_id },
@@ -814,22 +1067,33 @@ class EventWorker {
 
   async _onEscrowBurned(event) {
     const { tradeId } = event.args;
+    const burnedAt = await this._getEventDate(event);
     const tradeIdNum = _toNum(tradeId);
+
     const session = await mongoose.startSession();
     session.startTransaction();
+
     try {
       const trade = await Trade.findOneAndUpdate(
         {
           onchain_escrow_id: tradeIdNum,
           status: { $ne: "BURNED" },
         },
-        { $set: { status: "BURNED", "timers.resolved_at": new Date(), "evidence.receipt_delete_at": new Date(Date.now() + 30 * 24 * 3600 * 1000) } },
+        {
+          $set: {
+            status: "BURNED",
+            "timers.resolved_at": burnedAt,
+            "evidence.receipt_delete_at": new Date(burnedAt.getTime() + 30 * 24 * 3600 * 1000),
+          },
+        },
         { new: true, session }
       );
+
       if (trade) {
         const scoreType = "burned";
         const score = FAILURE_SCORE_WEIGHTS[scoreType];
         const addresses = [trade.maker_address, trade.taker_address].filter(Boolean);
+
         for (const addr of addresses) {
           await User.findOneAndUpdate(
             { wallet_address: addr },
@@ -837,15 +1101,17 @@ class EventWorker {
               $inc: { "reputation_cache.failure_score": score },
               $push: {
                 reputation_history: {
-                  $each: [{ type: scoreType, score, date: new Date(), tradeId: tradeIdNum }],
+                  $each: [{ type: scoreType, score, date: burnedAt, tradeId: tradeIdNum }],
                   $slice: -MAX_REPUTATION_HISTORY,
                 },
               },
+              $set: { last_onchain_sync_at: burnedAt },
             },
             { session }
           );
         }
       }
+
       if (trade?.parent_order_id) {
         await Order.findOneAndUpdate(
           { onchain_order_id: trade.parent_order_id },
@@ -853,29 +1119,47 @@ class EventWorker {
           { session }
         );
       }
+
       await session.commitTransaction();
     } catch (err) {
       await session.abortTransaction();
       throw err;
-    } finally { await session.endSession(); }
+    } finally {
+      await session.endSession();
+    }
   }
 
   async _onBleedingDecayed(event) {
-    const { tradeId, decayedAmount } = event.args;
+    const { tradeId, decayedAmount, timestamp } = event.args;
+    const lastDecayAt = await this._getEventDate(event, timestamp);
     const tradeIdNum = _toNum(tradeId);
     const eventId = this._getEventId(event);
     const decayedAmountStr = _toStr(decayedAmount);
     const decayedAmountNum = _toNum(decayedAmount);
+
     await Trade.updateOne(
       { onchain_escrow_id: tradeIdNum, "financials.decay_tx_hashes": { $ne: eventId } },
       [
         {
           $set: {
-            "timers.last_decay_at": new Date(),
-            "financials.total_decayed": { $toString: { $add: [{ $toDecimal: { $ifNull: ["$financials.total_decayed", "0"] } }, { $toDecimal: decayedAmountStr }] } },
-            "financials.total_decayed_num": { $add: [{ $ifNull: ["$financials.total_decayed_num", 0] }, decayedAmountNum] },
-            "financials.decay_tx_hashes": { $concatArrays: [{ $ifNull: ["$financials.decay_tx_hashes", []] }, [eventId]] },
-            "financials.decayed_amounts": { $concatArrays: [{ $ifNull: ["$financials.decayed_amounts", []] }, [decayedAmountStr]] },
+            "timers.last_decay_at": lastDecayAt,
+            "financials.total_decayed": {
+              $toString: {
+                $add: [
+                  { $toDecimal: { $ifNull: ["$financials.total_decayed", "0"] } },
+                  { $toDecimal: decayedAmountStr },
+                ],
+              },
+            },
+            "financials.total_decayed_num": {
+              $add: [{ $ifNull: ["$financials.total_decayed_num", 0] }, decayedAmountNum],
+            },
+            "financials.decay_tx_hashes": {
+              $concatArrays: [{ $ifNull: ["$financials.decay_tx_hashes", []] }, [eventId]],
+            },
+            "financials.decayed_amounts": {
+              $concatArrays: [{ $ifNull: ["$financials.decayed_amounts", []] }, [decayedAmountStr]],
+            },
           },
         },
       ]
@@ -884,16 +1168,19 @@ class EventWorker {
 
   async _onCancelProposed(event) {
     const { tradeId, proposer } = event.args;
+    const proposedAt = await this._getEventDate(event);
     const tradeData = await this._fetchTradeFromChain(tradeId);
+
     const proposerAddress = proposer.toLowerCase();
     const makerAddress = tradeData.maker.toLowerCase();
-    const takerAddress = tradeData.taker && tradeData.taker !== ethers.ZeroAddress
-      ? tradeData.taker.toLowerCase()
-      : null;
+    const takerAddress =
+      tradeData.taker && tradeData.taker !== ethers.ZeroAddress
+        ? tradeData.taker.toLowerCase()
+        : null;
 
     const update = {
       "cancel_proposal.proposed_by": proposerAddress,
-      "cancel_proposal.proposed_at": new Date(),
+      "cancel_proposal.proposed_at": proposedAt,
       "cancel_proposal.maker_signed": Boolean(tradeData.cancelProposedByMaker),
       "cancel_proposal.taker_signed": Boolean(tradeData.cancelProposedByTaker),
     };
@@ -911,7 +1198,9 @@ class EventWorker {
   }
 
   async _onMakerPinged(event) {
-    const { tradeId, pinger } = event.args;
+    const { tradeId, pinger, timestamp } = event.args;
+    const pingAt = await this._getEventDate(event, timestamp);
+
     const trade = await Trade.findOne({ onchain_escrow_id: _toNum(tradeId) }).lean();
     if (!trade) {
       throw new Error("MakerPinged geldi ama trade mirror bulunamadı.");
@@ -919,17 +1208,26 @@ class EventWorker {
     if (!trade.taker_address) {
       throw new Error("taker_address henüz DB'de yok — EscrowLocked gecikmiş olabilir.");
     }
+
     const isTakerPing = pinger.toLowerCase() === trade.taker_address.toLowerCase();
     const updateFields = isTakerPing
-      ? { "timers.pinged_at": new Date(), "pinged_by_taker": true }
-      : { "timers.challenge_pinged_at": new Date(), "challenge_pinged_by_maker": true };
-    await Trade.findOneAndUpdate({ onchain_escrow_id: _toNum(tradeId) }, { $set: updateFields });
+      ? { "timers.pinged_at": pingAt, "pinged_by_taker": true }
+      : { "timers.challenge_pinged_at": pingAt, "challenge_pinged_by_maker": true };
+
+    await Trade.findOneAndUpdate(
+      { onchain_escrow_id: _toNum(tradeId) },
+      { $set: updateFields }
+    );
   }
 
   async _onReputationUpdated(event) {
     const { wallet, successful, failed, bannedUntil, effectiveTier } = event.args;
+    const syncAt = await this._getEventDate(event);
+
     const totalTrades = _toNum(successful) + _toNum(failed);
-    const successRate = totalTrades > 0 ? Math.round((_toNum(successful) / totalTrades) * 100) : 100;
+    const successRate =
+      totalTrades > 0 ? Math.round((_toNum(successful) / totalTrades) * 100) : 100;
+
     const banTimestamp = _toNum(bannedUntil);
     const isBanned = banTimestamp > Math.floor(Date.now() / 1000);
 
@@ -955,7 +1253,7 @@ class EventWorker {
           "is_banned": isBanned,
           "banned_until": isBanned ? new Date(banTimestamp * 1000) : null,
           "consecutive_bans": consecutiveBans,
-          "last_onchain_sync_at": new Date(),
+          "last_onchain_sync_at": syncAt,
         },
       },
       { upsert: true }
@@ -966,10 +1264,12 @@ class EventWorker {
     const { takerFeeBps, makerFeeBps } = event.args;
     await updateCachedFeeConfig(takerFeeBps, makerFeeBps);
   }
+
   async _onCooldownConfigUpdated(event) {
     const { tier0TradeCooldown, tier1TradeCooldown } = event.args;
     await updateCachedCooldownConfig(tier0TradeCooldown, tier1TradeCooldown);
   }
+
   async _onTokenConfigUpdated(event) {
     const { token, supported, allowSellOrders, allowBuyOrders } = event.args;
     await updateCachedTokenConfig(token, { supported, allowSellOrders, allowBuyOrders });
@@ -977,16 +1277,29 @@ class EventWorker {
 }
 
 const worker = new EventWorker();
+
 worker.buildSyntheticEventFromDLQEntry = function buildSyntheticEventFromDLQEntry(entry) {
   const mappedArgs = { ...(entry.namedArgs || {}) };
+
   if (!Object.keys(mappedArgs).length && Array.isArray(entry.args)) {
     const keys = EVENT_ARG_KEYS[entry.eventName] || [];
-    keys.forEach((key, i) => { if (entry.args[i] !== undefined) mappedArgs[key] = entry.args[i]; });
+    keys.forEach((key, i) => {
+      if (entry.args[i] !== undefined) mappedArgs[key] = entry.args[i];
+    });
   }
-  return { eventName: entry.eventName, transactionHash: entry.txHash, logIndex: entry.logIndex ?? -1, blockNumber: entry.blockNumber, args: mappedArgs };
+
+  return {
+    eventName: entry.eventName,
+    transactionHash: entry.txHash,
+    logIndex: entry.logIndex ?? -1,
+    blockNumber: entry.blockNumber,
+    args: mappedArgs,
+  };
 };
+
 worker.reprocessDLQEntry = async function reprocessDLQEntry(entry) {
   if (!entry?.eventName) return false;
+
   try {
     const syntheticEvent = worker.buildSyntheticEventFromDLQEntry(entry);
     await worker._processEvent(syntheticEvent);
