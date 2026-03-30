@@ -198,13 +198,27 @@ const tradeSchema = new mongoose.Schema(
     },
 
     // [TR] LOCKED anında yakalanan PII snapshot (bait-and-switch koruması).
+    //      Amaç:
+    //        - Trade sırasında görülen banka sahibini/IBAN'ı sabitlemek
+    //        - Profil sonradan değişse bile lock anındaki referansı korumak
+    //        - Üçgen dolandırıcılık / profil oynatma riskini trade bazında izlemek
+    //
     // [EN] PII snapshot captured at LOCKED (bait-and-switch protection).
     pii_snapshot: {
       maker_bankOwner_enc: { type: String, default: null },
       maker_iban_enc:      { type: String, default: null },
       taker_bankOwner_enc: { type: String, default: null },
-      captured_at:         { type: Date,   default: null },
-      snapshot_delete_at:  { type: Date,   default: null },
+
+      // [TR] Lock anında maker profil risk meta snapshot'ı.
+      //      Bunlar frontend state'te değil, trade belgesinde tutulur;
+      //      çünkü "işlem başladığında görülen durum" sonradan değişmemelidir.
+      profileVersionAtLock: { type: Number, default: null, min: 0 },
+      lastBankChangeAt:     { type: Date,   default: null },
+      bankChangeCount7d:    { type: Number, default: 0, min: 0 },
+      bankChangeCount30d:   { type: Number, default: 0, min: 0 },
+
+      captured_at:         { type: Date, default: null },
+      snapshot_delete_at:  { type: Date, default: null },
     },
 
     cancel_proposal: {
