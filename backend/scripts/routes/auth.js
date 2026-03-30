@@ -1,18 +1,20 @@
 "use strict";
-
 /**
- * Auth Route — SIWE + JWT + Secure Profile Update
+ * Auth Route — SIWE + JWT
  *
  * V3 notu:
- *   - Order / child-trade mimarisi auth authority sınırını değiştirmez.
+ *   - Order/child-trade mimarisi auth authority sınırını değiştirmez.
  *   - Cookie wallet authoritative olmaya devam eder.
- *   - Bu route kontrat authority üretmez; yalnız auth + profile coordination yapar.
  *
- * Bu dosyada özellikle korunan ilkeler:
- *   1. SIWE + JWT akışı sade ve okunabilir kalır
- *   2. /me endpoint'i session-wallet boundary'yi korur
- *   3. /profile yalnız PII şifrelemez; banka profili değişimini de güvenli işler
- *   4. Aktif child trade varken bankOwner / IBAN değişimi engellenir
+ * Bu sürümde:
+ *   - eski V2 profil validation / normalization katmanı geri alındı
+ *   - banka profili değişimi tespiti eklendi
+ *   - aktif child trade varken bankOwner / IBAN değişimi engellendi
+ *   - User.js içindeki profileVersion / bankChangeCount sayaçları entegre edildi
+ *
+ * Önemli ayrım:
+ *   - Telegram değişimi banka risk modeline dahil değildir
+ *   - Sadece bankOwner veya iban değişirse banka profili "değişti" sayılır
  */
 
 const express = require("express");
@@ -32,12 +34,9 @@ const {
   blacklistJWT,
 } = require("../services/siwe");
 const { encryptPII, decryptPII } = require("../services/encryption");
-
 const User = require("../models/User");
 const Trade = require("../models/Trade");
 const logger = require("../utils/logger");
-
-// ── Sabitler ──────────────────────────────────────────────────────────────────
 
 const COOKIE_OPTIONS_BASE = {
   httpOnly: true,
@@ -45,7 +44,7 @@ const COOKIE_OPTIONS_BASE = {
   path: "/",
 };
 
-const ACTIVE_TRADE_STATUSES = ["LOCKED", "PAID", "CHALLENGED"];
+const ACTIVE_TRADE_STATUSES_FOR_BANK_PROFILE_LOCK = ["LOCKED", "PAID", "CHALLENGED"];
 
 function _getJwtCookieOptions() {
   return {
@@ -64,99 +63,81 @@ function _getRefreshCookieOptions() {
   };
 }
 
-// ── Yardımcılar ───────────────────────────────────────────────────────────────
-
 /**
- * Profil body'sini normalize eder.
+ * Profil input'unu normalize eder.
  *
- * Amaç:
- *   - Aynı verinin farklı yazımlarını tek forma çekmek
- *   - Gerçek değişiklik tespitini daha güvenilir yapmak
+ * Not:
+ *   - Banka sahibi adı: fazla boşluklar tek boşluğa düşürülür
+ *   - IBAN: boşluklar silinir, uppercase yapılır
+ *   - Telegram: baştaki @ temizlenir
+ *
+ * Boş / undefined alanlar "" olarak normalize edilir;
+ * encryptPII() zaten boş string'i null'a indirger.
  */
-function normalizeProfileBody(body = {}) {
+function _normalizeProfileBody(rawBody = {}) {
   return {
     bankOwner:
-      typeof body.bankOwner === "string"
-        ? body.bankOwner.trim().replace(/\s+/g, " ")
-        : body.bankOwner,
-
-    iban:
-      typeof body.iban === "string"
-        ? body.iban.replace(/\s+/g, "").toUpperCase()
-        : body.iban,
-
-    telegram:
-      typeof body.telegram === "string"
-        ? body.telegram.trim().replace(/^@+/, "")
-        : body.telegram,
-  };
-}
-
-/**
- * DB'den çözülen mevcut profile aynı normalize kurallarını uygular.
- */
-function normalizeCurrentProfile(profile = {}) {
-  return {
-    bankOwner:
-      typeof profile.bankOwner === "string"
-        ? profile.bankOwner.trim().replace(/\s+/g, " ")
+      typeof rawBody.bankOwner === "string"
+        ? rawBody.bankOwner.trim().replace(/\s+/g, " ")
         : "",
-
     iban:
-      typeof profile.iban === "string"
-        ? profile.iban.replace(/\s+/g, "").toUpperCase()
+      typeof rawBody.iban === "string"
+        ? rawBody.iban.replace(/\s+/g, "").toUpperCase()
         : "",
-
     telegram:
-      typeof profile.telegram === "string"
-        ? profile.telegram.trim().replace(/^@+/, "")
+      typeof rawBody.telegram === "string"
+        ? rawBody.telegram.trim().replace(/^@+/, "")
         : "",
   };
 }
 
+const PROFILE_SCHEMA = Joi.object({
+  bankOwner: Joi.string()
+    .min(2)
+    .max(100)
+    .pattern(/^[a-zA-ZğüşöçİĞÜŞÖÇ\s]+$/, "geçerli isim karakterleri")
+    .allow("")
+    .required()
+    .messages({
+      "string.pattern.name": "Banka sahibi adı sadece harf içerebilir.",
+    }),
+
+  iban: Joi.string()
+    .pattern(/^TR\d{24}$/, "TR IBAN formatı")
+    .allow("")
+    .required()
+    .messages({
+      "string.pattern.name": "IBAN formatı geçersiz. Örnek: TR330006100519786457841326",
+    }),
+
+  telegram: Joi.string()
+    .max(50)
+    .pattern(/^[a-zA-Z0-9_]{5,}$/, "Telegram kullanıcı adı")
+    .allow("")
+    .required(),
+});
+
 /**
- * Partial patch'i mevcut profile uygular.
+ * JWT cookie içinden wallet decode etmeye çalışır.
+ * Refresh isteğinde body wallet yoksa fallback olarak kullanılır.
  *
- * Kural:
- *   - undefined gelen alan mevcut değeri korur
- *   - "" gelen alan bilinçli temizleme olarak kabul edilir
+ * Bu decode doğrulama yapmaz; yalnız UX kolaylığı için fallback üretir.
  */
-function mergeProfile(currentProfile, patch) {
-  return {
-    bankOwner:
-      patch.bankOwner !== undefined ? patch.bankOwner : currentProfile.bankOwner,
-    iban:
-      patch.iban !== undefined ? patch.iban : currentProfile.iban,
-    telegram:
-      patch.telegram !== undefined ? patch.telegram : currentProfile.telegram,
-  };
+function _tryDecodeWalletFromJwtCookie(jwtCookie) {
+  if (!jwtCookie || typeof jwtCookie !== "string") return null;
+
+  try {
+    const parts = jwtCookie.split(".");
+    if (parts.length !== 3) return null;
+
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString());
+    if (typeof payload?.sub !== "string") return null;
+
+    return payload.sub.toLowerCase();
+  } catch {
+    return null;
+  }
 }
-
-/**
- * Telegram değişimi şimdilik banka risk modeline dahil edilmez.
- * Yalnız bankOwner / iban değişimi "bank profile change" kabul edilir.
- */
-function hasBankProfileChanged(before, after) {
-  return before.bankOwner !== after.bankOwner || before.iban !== after.iban;
-}
-
-/**
- * Aktif child trade var mı kontrol eder.
- *
- * Kural:
- *   LOCKED / PAID / CHALLENGED durumundaki bir trade mevcutsa
- *   kullanıcı bankOwner veya IBAN değiştiremez.
- */
-async function hasActiveTradeBlockingBankChange(wallet) {
-  const count = await Trade.countDocuments({
-    $or: [{ maker_address: wallet }, { taker_address: wallet }],
-    status: { $in: ACTIVE_TRADE_STATUSES },
-  });
-
-  return count > 0;
-}
-
-// ── Route'lar ────────────────────────────────────────────────────────────────
 
 /**
  * GET /api/auth/nonce?wallet=0x...
@@ -175,6 +156,9 @@ router.get("/nonce", authLimiter, async (req, res, next) => {
 
     return res.json({ nonce, siweDomain, siweUri });
   } catch (err) {
+    if (/SIWE_/.test(err.message)) {
+      return res.status(503).json({ error: err.message });
+    }
     next(err);
   }
 });
@@ -199,10 +183,7 @@ router.post("/verify", authLimiter, async (req, res) => {
 
     const user = await User.findOneAndUpdate(
       { wallet_address: wallet },
-      {
-        $set: { last_login: new Date() },
-        $setOnInsert: { wallet_address: wallet },
-      },
+      { $set: { last_login: new Date() }, $setOnInsert: { wallet_address: wallet } },
       { upsert: true, new: true }
     );
 
@@ -218,19 +199,13 @@ router.post("/verify", authLimiter, async (req, res) => {
     return res.json({ wallet, profile: user.toPublicProfile() });
   } catch (err) {
     logger.warn(`[Auth] SIWE başarısız: ${err.message}`);
-    return res.status(401).json({
-      error: `Kimlik doğrulama başarısız: ${err.message}`,
-    });
+    return res.status(401).json({ error: `Kimlik doğrulama başarısız: ${err.message}` });
   }
 });
 
 /**
  * POST /api/auth/refresh
  * Refresh token ile yeni JWT ve yeni refresh token üretir.
- *
- * Not:
- *   Frontend wallet göndermese bile, mevcut JWT cookie içinden wallet okumayı deneriz.
- *   Bu davranış eski okunabilir auth iskeletinden korunmuştur.
  */
 router.post("/refresh", authLimiter, async (req, res) => {
   try {
@@ -241,21 +216,9 @@ router.post("/refresh", authLimiter, async (req, res) => {
 
     let wallet = req.body?.wallet;
 
+    // [TR] Body'de wallet yoksa JWT cookie payload'ından fallback dene.
     if (!wallet) {
-      const jwtCookie = req.cookies?.araf_jwt;
-      if (jwtCookie) {
-        try {
-          const parts = jwtCookie.split(".");
-          if (parts.length === 3) {
-            const payload = JSON.parse(
-              Buffer.from(parts[1], "base64url").toString()
-            );
-            wallet = payload.sub;
-          }
-        } catch {
-          // decode hatasında wallet null kalır
-        }
-      }
+      wallet = _tryDecodeWalletFromJwtCookie(req.cookies?.araf_jwt);
     }
 
     if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet)) {
@@ -271,13 +234,8 @@ router.post("/refresh", authLimiter, async (req, res) => {
     return res.json({ wallet: wallet.toLowerCase() });
   } catch (err) {
     logger.warn(`[Auth] Refresh başarısız: ${err.message}`);
-
     res.clearCookie("araf_jwt", { ...COOKIE_OPTIONS_BASE, path: "/" });
-    res.clearCookie("araf_refresh", {
-      ...COOKIE_OPTIONS_BASE,
-      path: "/api/auth",
-    });
-
+    res.clearCookie("araf_refresh", { ...COOKIE_OPTIONS_BASE, path: "/api/auth" });
     return res.status(401).json({ error: err.message });
   }
 });
@@ -296,10 +254,7 @@ router.post("/logout", requireAuth, async (req, res, next) => {
     await revokeRefreshToken(req.wallet);
 
     res.clearCookie("araf_jwt", { ...COOKIE_OPTIONS_BASE, path: "/" });
-    res.clearCookie("araf_refresh", {
-      ...COOKIE_OPTIONS_BASE,
-      path: "/api/auth",
-    });
+    res.clearCookie("araf_refresh", { ...COOKIE_OPTIONS_BASE, path: "/api/auth" });
 
     logger.info(`[Auth] Çıkış yapıldı: ${req.wallet}`);
     return res.json({ success: true, message: "Oturum kapatıldı." });
@@ -325,10 +280,7 @@ router.get("/me", requireAuth, async (req, res) => {
       );
 
       res.clearCookie("araf_jwt", { ...COOKIE_OPTIONS_BASE, path: "/" });
-      res.clearCookie("araf_refresh", {
-        ...COOKIE_OPTIONS_BASE,
-        path: "/api/auth",
-      });
+      res.clearCookie("araf_refresh", { ...COOKIE_OPTIONS_BASE, path: "/api/auth" });
 
       try {
         await revokeRefreshToken(req.wallet);
@@ -350,115 +302,99 @@ router.get("/me", requireAuth, async (req, res) => {
  * PUT /api/auth/profile
  * PII alanlarını şifreleyerek kullanıcının profilini günceller.
  *
- * V3 ek kuralı:
- *   - bankOwner veya iban gerçekten değişiyorsa bu bir "banka profil değişimi" sayılır
- *   - aktif child trade varken böyle bir değişiklik reddedilir
- *   - değişiklik başarılıysa User.js içindeki risk metadata helper'ları kullanılır
+ * Bu sürümde ek olarak:
+ *   - eski V2 validation/normalization korunur
+ *   - bankOwner / iban gerçekten değiştiyse User.js risk sayaçları güncellenir
+ *   - aktif LOCKED / PAID / CHALLENGED trade varken banka profili değişimi engellenir
  */
-router.put(
-  "/profile",
-  requireAuth,
-  requireSessionWalletMatch,
-  authLimiter,
-  async (req, res, next) => {
-    try {
-      const normalizedBody = normalizeProfileBody(req.body);
+router.put("/profile", requireAuth, requireSessionWalletMatch, authLimiter, async (req, res, next) => {
+  try {
+    const normalizedBody = _normalizeProfileBody(req.body);
+    const { error, value } = PROFILE_SCHEMA.validate(normalizedBody);
 
-      const schema = Joi.object({
-        bankOwner: Joi.string()
-          .min(2)
-          .max(100)
-          .pattern(/^[a-zA-ZğüşöçİĞÜŞÖÇ\s]+$/, "geçerli isim karakterleri")
-          .allow("")
-          .optional()
-          .messages({
-            "string.pattern.name":
-              "Banka sahibi adı sadece harf içerebilir.",
-          }),
-
-        iban: Joi.string()
-          .pattern(/^TR\d{24}$/, "TR IBAN formatı")
-          .allow("")
-          .optional()
-          .messages({
-            "string.pattern.name":
-              "IBAN formatı geçersiz. Örnek: TR330006100519786457841326",
-          }),
-
-        telegram: Joi.string()
-          .max(50)
-          .pattern(/^[a-zA-Z0-9_]{5,}$/, "Telegram kullanıcı adı")
-          .allow("")
-          .optional(),
-      });
-
-      const { error, value } = schema.validate(normalizedBody);
-      if (error) {
-        return res.status(400).json({ error: error.message });
-      }
-
-      // [TR] User document'i lean almıyoruz; çünkü model metodlarını kullanacağız.
-      let user = await User.findOne({ wallet_address: req.wallet });
-      if (!user) {
-        user = new User({ wallet_address: req.wallet });
-      }
-
-      // [TR] Mevcut şifreli profil varsa çöz; yoksa boş profil kabul et.
-      const currentDecrypted = user.pii_data
-        ? await decryptPII(user.pii_data, req.wallet)
-        : { bankOwner: "", iban: "", telegram: "" };
-
-      const currentProfile = normalizeCurrentProfile(currentDecrypted);
-      const nextProfile = mergeProfile(currentProfile, value);
-
-      const bankProfileChanged = hasBankProfileChanged(
-        currentProfile,
-        nextProfile
-      );
-
-      // [TR] Aktif child trade varken banka adı / IBAN oynatılamaz.
-      if (bankProfileChanged) {
-        const blocked = await hasActiveTradeBlockingBankChange(req.wallet);
-
-        if (blocked) {
-          logger.warn(
-            `[Auth] Bank profile change blocked بسبب active trade: wallet=${req.wallet}`
-          );
-          return res.status(409).json({
-            error:
-              "Aktif işlemin varken banka sahibi adı veya IBAN değiştirilemez. Önce aktif işlemin tamamlanmalı.",
-            code: "ACTIVE_TRADE_BANK_PROFILE_LOCK",
-          });
-        }
-      }
-
-      // [TR] Sayaçları stale bırakmamak için her profile update akışında normalize et.
-      user.recomputeBankChangeCounters();
-
-      if (bankProfileChanged) {
-        user.markBankProfileChanged();
-      }
-
-      const encrypted = await encryptPII(nextProfile, req.wallet);
-
-      user.pii_data.bankOwner_enc = encrypted.bankOwner_enc;
-      user.pii_data.iban_enc = encrypted.iban_enc;
-      user.pii_data.telegram_enc = encrypted.telegram_enc;
-
-      await user.save();
-
-      logger.info(
-        `[Auth] Profil güncellendi: ${req.wallet} | bankProfileChanged=${bankProfileChanged}`
-      );
-
-      return res.json({
-        success: true,
-        message: "Profil bilgilerin güncellendi.",
-      });
-    } catch (err) {
-      next(err);
+    if (error) {
+      return res.status(400).json({ error: error.message });
     }
+
+    let user = await User.findOne({ wallet_address: req.wallet })
+      .select(
+        "wallet_address pii_data profileVersion lastBankChangeAt " +
+        "bankChangeCount7d bankChangeCount30d bank_change_history"
+      );
+
+    if (!user) {
+      user = new User({ wallet_address: req.wallet });
+    }
+
+    // [TR] Eski şifreli profil varsa çözüp gerçek değişim olup olmadığını kıyaslıyoruz.
+    //      Çünkü encryptPII() random IV kullandığı için ciphertext kıyası yapılamaz.
+    let existingProfile = { bankOwner: "", iban: "", telegram: "" };
+
+    if (
+      user.pii_data?.bankOwner_enc ||
+      user.pii_data?.iban_enc ||
+      user.pii_data?.telegram_enc
+    ) {
+      const decrypted = await decryptPII(user.pii_data, req.wallet);
+      existingProfile = _normalizeProfileBody(decrypted);
+    }
+
+    const bankOwnerChanged = existingProfile.bankOwner !== value.bankOwner;
+    const ibanChanged = existingProfile.iban !== value.iban;
+    const bankProfileChanged = bankOwnerChanged || ibanChanged;
+
+    // [TR] Telegram değişimi serbest; banka bilgisi değişimi aktif trade sırasında kilitli.
+    if (bankProfileChanged) {
+      const activeTradeExists = await Trade.exists({
+        status: { $in: ACTIVE_TRADE_STATUSES_FOR_BANK_PROFILE_LOCK },
+        $or: [
+          { maker_address: req.wallet },
+          { taker_address: req.wallet },
+        ],
+      });
+
+      if (activeTradeExists) {
+        return res.status(409).json({
+          error:
+            "Aktif LOCKED / PAID / CHALLENGED trade varken banka sahibi adı veya IBAN değiştirilemez.",
+          code: "BANK_PROFILE_LOCKED_DURING_ACTIVE_TRADE",
+        });
+      }
+    }
+
+    // [TR] Sayaçlar rolling pencereye göre taze tutulur.
+    const now = new Date();
+    if (bankProfileChanged) {
+      user.markBankProfileChanged(now);
+    } else {
+      user.recomputeBankChangeCounters(now);
+    }
+
+    const encrypted = await encryptPII(value, req.wallet);
+
+    user.pii_data = user.pii_data || {};
+    user.pii_data.bankOwner_enc = encrypted.bankOwner_enc;
+    user.pii_data.iban_enc = encrypted.iban_enc;
+    user.pii_data.telegram_enc = encrypted.telegram_enc;
+
+    await user.save();
+
+    logger.info(
+      `[Auth] Profil güncellendi: ${req.wallet} bank_profile_changed=${bankProfileChanged}`
+    );
+
+    return res.json({
+      success: true,
+      message: "Profil bilgilerin güncellendi.",
+      bankProfileChanged,
+      profileVersion: user.profileVersion,
+      lastBankChangeAt: user.lastBankChangeAt,
+      bankChangeCount7d: user.bankChangeCount7d,
+      bankChangeCount30d: user.bankChangeCount30d,
+    });
+  } catch (err) {
+    next(err);
   }
-);
+});
 
 module.exports = router;
