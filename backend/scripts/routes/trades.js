@@ -16,6 +16,13 @@ const logger = require("../utils/logger");
  * V3'te bu route parent order değil, gerçek escrow lifecycle'ı taşıyan child trade'leri döndürür.
  * State-changing aksiyonlar yine kontrat üstünde gerçekleşir; backend burada yalnız
  * PII coordination, cancel signature coordination ve audit destek yüzeyi sağlar.
+ *
+ * Önemli kavramsal ayrım:
+ *   - orderId  = parent order kimliği
+ *   - tradeId  = child trade / escrow kimliği
+ *   - /by-escrow/:onchainId yalnız TRADE/ESCROW id ile çalışır
+ *
+ * Bu route, parent order authority üretmez ve order book kurallarını yeniden yorumlamaz.
  */
 
 const SAFE_TRADE_PROJECTION = [
@@ -46,16 +53,24 @@ const SAFE_TRADE_PROJECTION = [
   "chargeback_ack.acknowledged_at",
 ].join(" ");
 
+// ─── GET /api/trades/my ───────────────────────────────────────────────────────
 router.get("/my", requireAuth, tradesLimiter, async (req, res, next) => {
   try {
     const trades = await Trade.find({
       $or: [{ maker_address: req.wallet }, { taker_address: req.wallet }],
       status: { $nin: ["RESOLVED", "CANCELED", "BURNED"] },
-    }).select(SAFE_TRADE_PROJECTION).sort({ created_at: -1, onchain_escrow_id: -1 }).lean();
+    })
+      .select(SAFE_TRADE_PROJECTION)
+      .sort({ created_at: -1, onchain_escrow_id: -1 })
+      .lean();
+
     return res.json({ trades });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
+// ─── GET /api/trades/history ──────────────────────────────────────────────────
 router.get("/history", requireAuth, tradesLimiter, async (req, res, next) => {
   try {
     const schema = Joi.object({
@@ -70,6 +85,7 @@ router.get("/history", requireAuth, tradesLimiter, async (req, res, next) => {
       status: { $in: ["RESOLVED", "CANCELED", "BURNED"] },
     };
     const skip = (value.page - 1) * value.limit;
+
     const [trades, total] = await Promise.all([
       Trade.find(filter)
         .select(SAFE_TRADE_PROJECTION)
@@ -81,38 +97,70 @@ router.get("/history", requireAuth, tradesLimiter, async (req, res, next) => {
     ]);
 
     return res.json({ trades, total, page: value.page, limit: value.limit });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
+// ─── GET /api/trades/by-escrow/:onchainId ────────────────────────────────────
+// [TR] GET /:id'den önce tanımlanmalı — yoksa Express yanlış route'a girebilir.
+// [TR] Buradaki kimlik parent order id değil, child trade / escrow id'dir.
 router.get("/by-escrow/:onchainId", requireAuth, tradesLimiter, async (req, res, next) => {
   try {
     const onchainId = Number(req.params.onchainId);
     if (!Number.isInteger(onchainId) || onchainId <= 0) {
       return res.status(400).json({ error: "Geçersiz on-chain ID formatı." });
     }
-    const trade = await Trade.findOne({ onchain_escrow_id: onchainId }).select(SAFE_TRADE_PROJECTION).lean();
-    if (!trade) return res.status(404).json({ error: "Trade bulunamadı." });
+
+    const trade = await Trade.findOne({ onchain_escrow_id: onchainId })
+      .select(SAFE_TRADE_PROJECTION)
+      .lean();
+
+    if (!trade) {
+      return res.status(404).json({ error: "Trade bulunamadı." });
+    }
+
     if (trade.maker_address !== req.wallet && trade.taker_address !== req.wallet) {
       return res.status(403).json({ error: "Erişim reddedildi." });
     }
+
     return res.json({ trade });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
+// ─── GET /api/trades/:id ──────────────────────────────────────────────────────
 router.get("/:id", requireAuth, tradesLimiter, async (req, res, next) => {
   try {
-    const trade = await Trade.findById(req.params.id).select(SAFE_TRADE_PROJECTION).lean();
-    if (!trade) return res.status(404).json({ error: "İşlem bulunamadı." });
+    if (!/^[a-fA-F0-9]{24}$/.test(req.params.id)) {
+      return res.status(400).json({ error: "Geçersiz trade ID formatı." });
+    }
+
+    const trade = await Trade.findById(req.params.id)
+      .select(SAFE_TRADE_PROJECTION)
+      .lean();
+
+    if (!trade) {
+      return res.status(404).json({ error: "İşlem bulunamadı." });
+    }
+
     if (trade.maker_address !== req.wallet && trade.taker_address !== req.wallet) {
       return res.status(403).json({ error: "Erişim reddedildi." });
     }
+
     return res.json({ trade });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
+// ─── POST /api/trades/propose-cancel ─────────────────────────────────────────
 /**
  * propose-cancel backend'in kontrat adına iptal YAPTIĞI bir yüzey değildir.
  * Bu route yalnız iki tarafın imza koordinasyonunu ve audit izini tutar.
+ *
+ * Kontrat authoritative kalır; backend burada yalnız off-chain coordination sağlar.
  */
 router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, tradesLimiter, async (req, res, next) => {
   try {
@@ -126,7 +174,9 @@ router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, tradesLim
 
     const now = Math.floor(Date.now() / 1000);
     const MAX_DEADLINE_SECONDS = 7 * 24 * 60 * 60;
-    if (value.deadline <= now) return res.status(400).json({ error: "Deadline geçmiş bir zamana ayarlanamaz." });
+    if (value.deadline <= now) {
+      return res.status(400).json({ error: "Deadline geçmiş bir zamana ayarlanamaz." });
+    }
     if (value.deadline > now + MAX_DEADLINE_SECONDS) {
       return res.status(400).json({ error: "Deadline çok uzak. Maksimum 7 gün sonrası kabul edilir." });
     }
@@ -136,20 +186,29 @@ router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, tradesLim
 
     const isMaker = trade.maker_address === req.wallet;
     const isTaker = trade.taker_address === req.wallet;
-    if (!isMaker && !isTaker) return res.status(403).json({ error: "Bu işlemin tarafı değilsin." });
+    if (!isMaker && !isTaker) {
+      return res.status(403).json({ error: "Bu işlemin tarafı değilsin." });
+    }
 
+    // [TR] İlk teklif deadline'ı sabitler; ikinci taraf aynı deadline ile gelmelidir.
     const existingDeadline = trade.cancel_proposal.deadline;
     if (existingDeadline) {
       const existingTs = Math.floor(new Date(existingDeadline).getTime() / 1000);
       if (Math.abs(existingTs - value.deadline) > 60) {
-        logger.warn(`[Trades] Deadline manipülasyon denemesi: mevcut=${existingTs} gelen=${value.deadline} wallet=${req.wallet}`);
-        return res.status(400).json({ error: "Deadline mevcut teklifle uyuşmuyor. Manipülasyon girişimi tespit edildi." });
+        logger.warn(
+          `[Trades] Deadline manipülasyon denemesi: mevcut=${existingTs} gelen=${value.deadline} wallet=${req.wallet}`
+        );
+        return res.status(400).json({
+          error: "Deadline mevcut teklifle uyuşmuyor. Manipülasyon girişimi tespit edildi.",
+        });
       }
     } else {
       trade.cancel_proposal.deadline = new Date(value.deadline * 1000);
     }
 
-    if (!trade.cancel_proposal.proposed_by) trade.cancel_proposal.proposed_by = req.wallet;
+    if (!trade.cancel_proposal.proposed_by) {
+      trade.cancel_proposal.proposed_by = req.wallet;
+    }
     if (!trade.cancel_proposal.approved_by && trade.cancel_proposal.proposed_by !== req.wallet) {
       trade.cancel_proposal.approved_by = req.wallet;
     }
@@ -163,6 +222,7 @@ router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, tradesLim
     }
 
     await trade.save();
+
     const bothSigned = trade.cancel_proposal.maker_signed && trade.cancel_proposal.taker_signed;
     return res.json({
       success: true,
@@ -171,12 +231,25 @@ router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, tradesLim
         ? "Her iki taraf imzaladı. Kontrata gönderilebilir."
         : "Teklifin kaydedildi. Karşı tarafın imzası bekleniyor.",
     });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
+// ─── POST /api/trades/:id/chargeback-ack ─────────────────────────────────────
+// [TR] Bu endpoint yalnızca audit/log içindir. On-chain release akışına veto uygulamaz.
+//      Başarısızlığı kontrat çağrısını engelleyecek bir protocol gate olarak kullanılmamalıdır.
+
+/**
+ * Gerçek IP belirleme fonksiyonu.
+ * app.js'de trust proxy aktif olduğunda req.ip zaten doğru IP'yi döndürür.
+ * Bu fonksiyon ek güvence katmanı sağlar.
+ */
 function _getRealIP(req) {
   const forwarded = req.headers["x-forwarded-for"];
-  if (forwarded && process.env.NODE_ENV === "production") return forwarded.split(",")[0].trim();
+  if (forwarded && process.env.NODE_ENV === "production") {
+    return forwarded.split(",")[0].trim();
+  }
   return req.ip || req.socket?.remoteAddress || "unknown";
 }
 
@@ -208,11 +281,19 @@ router.post("/:id/chargeback-ack", requireAuth, requireSessionWalletMatch, trade
     );
 
     if (!updatedTrade) {
-      const existing = await Trade.findById(req.params.id).select("maker_address status chargeback_ack").lean();
+      const existing = await Trade.findById(req.params.id)
+        .select("maker_address status chargeback_ack")
+        .lean();
+
       if (!existing) return res.status(404).json({ error: "İşlem bulunamadı." });
-      if (existing.maker_address !== req.wallet) return res.status(403).json({ error: "Bu işlem için yetkiniz yok." });
+      if (existing.maker_address !== req.wallet) {
+        return res.status(403).json({ error: "Bu işlem için yetkiniz yok." });
+      }
       if (existing.chargeback_ack?.acknowledged) {
-        return res.status(409).json({ error: "Bu işlem için onay zaten kaydedildi.", acknowledged_at: existing.chargeback_ack.acknowledged_at });
+        return res.status(409).json({
+          error: "Bu işlem için onay zaten kaydedildi.",
+          acknowledged_at: existing.chargeback_ack.acknowledged_at,
+        });
       }
       return res.status(400).json({ error: `Chargeback onayı bu durumda yapılamaz (mevcut: ${existing.status}).` });
     }
@@ -223,7 +304,9 @@ router.post("/:id/chargeback-ack", requireAuth, requireSessionWalletMatch, trade
       acknowledged_at: updatedTrade.chargeback_ack.acknowledged_at,
       message: "Ters ibraz riski onayı kaydedildi.",
     });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;
