@@ -79,75 +79,93 @@ function makeSkipFn() {
   };
 }
 
-/**
- * Auth endpoint'leri için Redis yoksa in-memory fallback kullanılır.
- * Böylece auth yüzeyi tamamen korumasız kalmaz.
- */
-const _authInMemory = new Map(); // key -> { count, resetAt }
-const AUTH_INMEM_MAX = 10;
-const AUTH_INMEM_WINDOW = 60_000; // 1 dakika
-
-function _authInMemoryCheck(key) {
-  const now = Date.now();
-  const entry = _authInMemory.get(key);
-
-  if (!entry || now > entry.resetAt) {
-    _authInMemory.set(key, { count: 1, resetAt: now + AUTH_INMEM_WINDOW });
-    return false;
-  }
-
-  entry.count += 1;
-  return entry.count > AUTH_INMEM_MAX;
-}
-
-// Eski in-memory kayıtları temizler.
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of _authInMemory.entries()) {
-    if (now > entry.resetAt) _authInMemory.delete(key);
-  }
-}, 5 * 60 * 1000);
-
-/**
- * Auth yüzeyi için Redis yoksa istekleri tamamen serbest bırakmayız.
- * Limit aşılırsa burada doğrudan 429 döneriz.
- */
-function makeAuthSkipFn() {
-  return (req, res) => {
-    if (isReady()) {
-      return false;
-    }
-
-    const key = req.ip;
-    const blocked = _authInMemoryCheck(key);
-
-    if (blocked) {
-      logger.warn(`[RateLimit:AUTH-FALLBACK] In-memory limit aşıldı: ${req.ip}`);
-      res.status(429).json({
-        error: "Çok fazla auth isteği. 1 dakika sonra tekrar deneyin.",
-      });
-      return true;
-    }
-
-    logger.warn("[RateLimit:AUTH] Redis erişilemez — in-memory fallback aktif.");
-    return false;
-  };
-}
-
 function onLimitReached(req) {
   logger.warn(
     `[RateLimit] Engellendi: ${req.ip} | ${req.path} | wallet: ${req.wallet || "anon"}`
   );
 }
 
+/**
+ * In-memory fallback bucket yardımcıları.
+ *
+ * [TR] Redis down olduğunda auth / PII gibi hassas yüzeyleri tamamen serbest bırakmıyoruz.
+ *      Bunun yerine proses-içi geçici sayaç kullanıyoruz.
+ *
+ * [EN] When Redis is down, sensitive surfaces such as auth / PII do not fail-open.
+ *      They fall back to a process-local temporary counter.
+ */
+function makeInMemoryLimiter({
+  label,
+  windowMs,
+  max,
+  keyGenerator,
+  errorMessage,
+}) {
+  const bucket = new Map(); // key -> { count, resetAt }
+
+  function cleanupExpiredEntries() {
+    const now = Date.now();
+    for (const [key, entry] of bucket.entries()) {
+      if (now > entry.resetAt) {
+        bucket.delete(key);
+      }
+    }
+  }
+
+  // [TR] Cleanup timer prosesin kapanmasını engellemesin.
+  // [EN] Timer should not keep the process alive on shutdown.
+  const interval = setInterval(cleanupExpiredEntries, Math.max(windowMs, 60_000));
+  if (typeof interval.unref === "function") {
+    interval.unref();
+  }
+
+  return function inMemoryLimiter(req, res, next) {
+    const now = Date.now();
+    const key = keyGenerator(req);
+    const current = bucket.get(key);
+
+    if (!current || now > current.resetAt) {
+      bucket.set(key, { count: 1, resetAt: now + windowMs });
+      logger.warn(`[RateLimit:${label}] Redis erişilemez — in-memory fallback aktif.`);
+      return next();
+    }
+
+    current.count += 1;
+
+    if (current.count > max) {
+      logger.warn(`[RateLimit:${label}-FALLBACK] In-memory limit aşıldı: ${key}`);
+      return res.status(429).json(errorMessage(req));
+    }
+
+    logger.warn(`[RateLimit:${label}] Redis erişilemez — in-memory fallback aktif.`);
+    return next();
+  };
+}
+
+/**
+ * [TR] Redis varsa normal Redis-backed limiter, yoksa in-memory fallback çalıştırır.
+ * [EN] Uses Redis-backed limiter when Redis is ready, otherwise falls back to in-memory protection.
+ */
+function makeSensitiveLimiter({
+  label,
+  redisLimiter,
+  inMemoryLimiter,
+}) {
+  return (req, res, next) => {
+    if (isReady()) {
+      return redisLimiter(req, res, next);
+    }
+    return inMemoryLimiter(req, res, next);
+  };
+}
+
 // ─── PII / IBAN Endpoint — En Sıkı ───────────────────────────────────────────
 // 10 dakikada 3 istek — IP + wallet kombinasyonu
-const piiLimiter = rateLimit({
+const piiRedisLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   max: 3,
   keyGenerator: (req) => `${req.ip}:${req.wallet || "anon"}`,
   store: makeStore("pii"),
-  skip: makeSkipFn(),
   handler: (req, res) => {
     onLimitReached(req);
     res.status(429).json({
@@ -159,20 +177,52 @@ const piiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const piiInMemoryLimiter = makeInMemoryLimiter({
+  label: "PII",
+  windowMs: 10 * 60 * 1000,
+  max: 3,
+  keyGenerator: (req) => `${req.ip}:${req.wallet || "anon"}`,
+  errorMessage: () => ({
+    error: "Çok fazla PII isteği. 10 dakikada maksimum 3 istek.",
+    retryAfter: Math.ceil(10 * 60),
+  }),
+});
+
+const piiLimiter = makeSensitiveLimiter({
+  label: "PII",
+  redisLimiter: piiRedisLimiter,
+  inMemoryLimiter: piiInMemoryLimiter,
+});
+
 // ─── SIWE Auth — Brute Force Koruması ────────────────────────────────────────
 // 1 dakikada 10 istek — IP bazlı
-const authLimiter = rateLimit({
+const authRedisLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
   keyGenerator: (req) => req.ip,
   store: makeStore("auth"),
-  skip: makeAuthSkipFn(),
   handler: (req, res) => {
     onLimitReached(req);
     res.status(429).json({ error: "Çok fazla auth isteği. 1 dakika sonra tekrar deneyin." });
   },
   standardHeaders: true,
   legacyHeaders: false,
+});
+
+const authInMemoryLimiter = makeInMemoryLimiter({
+  label: "AUTH",
+  windowMs: 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.ip,
+  errorMessage: () => ({
+    error: "Çok fazla auth isteği. 1 dakika sonra tekrar deneyin.",
+  }),
+});
+
+const authLimiter = makeSensitiveLimiter({
+  label: "AUTH",
+  redisLimiter: authRedisLimiter,
+  inMemoryLimiter: authInMemoryLimiter,
 });
 
 // ─── Market Read Surface — Public Okuma ─────────────────────────────────────
