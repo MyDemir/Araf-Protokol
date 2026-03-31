@@ -14,7 +14,7 @@ const Joi = require("joi");
 const router = express.Router();
 
 const { requireAuth } = require("../middleware/auth");
-const { listingsReadLimiter, listingsWriteLimiter } = require("../middleware/rateLimiter");
+const { marketReadLimiter, ordersWriteLimiter } = require("../middleware/rateLimiter");
 const Order = require("../models/Order");
 const Trade = require("../models/Trade");
 const { getConfig } = require("../services/protocolConfig");
@@ -51,7 +51,7 @@ router.get("/config", async (_req, res, next) => {
   }
 });
 
-router.get("/", listingsReadLimiter, async (req, res, next) => {
+router.get("/", marketReadLimiter, async (req, res, next) => {
   try {
     const schema = Joi.object({
       side: Joi.string().valid("SELL_CRYPTO", "BUY_CRYPTO").optional(),
@@ -87,7 +87,7 @@ router.get("/", listingsReadLimiter, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get("/my", requireAuth, listingsWriteLimiter, async (req, res, next) => {
+router.get("/my", requireAuth, ordersWriteLimiter, async (req, res, next) => {
   try {
     const orders = await Order.find({ owner_address: req.wallet })
       .select(SAFE_ORDER_PROJECTION)
@@ -97,7 +97,7 @@ router.get("/my", requireAuth, listingsWriteLimiter, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get("/:id/trades", requireAuth, listingsWriteLimiter, async (req, res, next) => {
+router.get("/:id/trades", requireAuth, ordersWriteLimiter, async (req, res, next) => {
   try {
     const onchainOrderId = Number(req.params.id);
     if (!Number.isInteger(onchainOrderId) || onchainOrderId <= 0) {
@@ -117,7 +117,7 @@ router.get("/:id/trades", requireAuth, listingsWriteLimiter, async (req, res, ne
   } catch (err) { next(err); }
 });
 
-router.get("/:id", listingsReadLimiter, async (req, res, next) => {
+router.get("/:id", marketReadLimiter, async (req, res, next) => {
   try {
     const onchainOrderId = Number(req.params.id);
     if (!Number.isInteger(onchainOrderId) || onchainOrderId <= 0) {
