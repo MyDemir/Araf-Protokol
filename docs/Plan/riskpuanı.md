@@ -110,3 +110,91 @@ function _calculateTierAwareHealthScore(trade, makerUser) {
 2. **Alıcı (Taker) Açısından:** "Sistem bana IP sorunu, coğrafya, detaylı log gibi karmaşık veriler sunmuyor. Sadece net bir 'Güven Skoru' gösteriyor. Eğer karşımda Tier 4 bir balina varsa, onun banka hesabının yeni olması dolandırıcı olduğu anlamına gelmez, sistem bunu benim yerime hesaplayıp 'Yeşil' onayı vermiş."
 
 ***
+
+Harika bir ürün yöneticisi (Product Manager) dokunuşu. Bir satıcıya (Maker) "Puanın 40" deyip nedenini açıklamazsak, platforma küser ve bir daha işlem yapmaz. Kendi panosunda (Dashboard) nerede hata yaptığını, hangi cezanın silinmesi için ne kadar beklemesi gerektiğini kalem kalem görmesi mükemmel bir UX kurgusudur.
+
+Aynı zamanda alıcıya (Taker) da bu detayların *hiçbirini* göstermeyip sadece "Güvenli / Dikkatli Ol" sinyali vermeliyiz ki gereksiz bir önyargı oluşmasın.
+
+İki tarafın ekranlarını (App.jsx) tamamen birbirinden izole eden, şeffaf ve Kademe Uyumlu (Tier-Aware) Sağlık Skoru Teknik Raporu aşağıdadır:
+
+***
+
+# Araf V3: Şeffaf ve Kademe Uyumlu (Tier-Aware) Sağlık Skoru UI/UX Teknik Raporu
+
+## 1. Felsefe: İki Yüzlü Ayna (Bifrost Architecture)
+Araf Sağlık Skoru, alıcı ve satıcıya tamamen farklı iki arayüz sunar:
+* **Alıcı (Taker) Ekranı:** Detaylardan arındırılmış, salt **"Güven/Aksiyon"** odaklıdır. Suçlayıcı veriler (örn: "3 uyuşmazlık kaybetti") gösterilmez.
+* **Satıcı (Maker) Ekranı:** Eğitici, yönlendirici ve **"Şeffaf Döküm"** odaklıdır. Satıcı, puanının 100 üzerinden neden 60 olduğunu milimetrik olarak görür ve nasıl düzelteceğini bilir.
+
+---
+
+## 2. Satıcı (Maker) Görünümü: "Kendi Profilim" Merkezi
+
+Kullanıcı kendi profiline (`renderProfileModal`) girdiğinde, Sağlık Skorunu devasa bir dairesel grafik (Donut Chart) veya ilerleme çubuğu olarak görür. Hemen altında ise **"Puan Dökümü" (Score Breakdown)** yer alır.
+
+**UI Örneği (Kalem Kalem Döküm):**
+
+> ### 🟢 Araf Sağlık Skorunuz: 85 / 100
+> *Platformdaki güvenilirlik derecenizi gösterir. Puanınızı artırmak için işlemleri hızlı onaylayın ve profilinizi sabit tutun.*
+> 
+> **Puan Geçmişiniz:**
+> * **[+] Başlangıç Puanı:** `+40` (Herkesin başladığı nötr seviye)
+> * **[+] Deneyim Primi:** `+40` (20+ başarılı işlem)
+> * **[+] İstikrar Bonusu:** `+15` (Son 30 gündür banka hesabı değişmedi)
+> * **[-] Hız ve Zaman Aşımı:** `-10` (Son 20 işlemde 1 kez Ping cezası alındı)
+> * **[0] Rütbe Muafiyeti (Tier 4):** Profil güncellemelerinden doğan `-20` ceza, Elit Piyasa Yapıcı olduğunuz için silinmiştir.
+
+**Satıcı UX Kazanımları:**
+1. **Adalet Hissi:** Kullanıcı, neden 100 alamadığını görür (Ping cezası yemiştir). Sistem ona ne yapması gerektiğini gizliden gizliye öğretir.
+2. **Tier Muafiyetinin Gösterimi:** Tier 3 ve Tier 4 kullanıcılara, aldıkları muafiyet (0 Puan cezası) kalem olarak gösterilir. Bu, rütbenin (Tier) ne kadar değerli olduğunu hissettirir ve rütbeyi koruma motivasyonu sağlar.
+
+---
+
+## 3. Alıcı (Taker) Görünümü: "Market / Satıcı Profili" Ekranı
+
+Alıcı P2P tahtasında bir ilana tıkladığında veya `PIIDisplay.jsx` üzerinden IBAN'ı görmek istediğinde (`renderMakerModal`), karşısına **asla** satıcının yediği cezalar çıkmaz.
+
+Sadece 3 farklı renk kodundan biriyle karşılaşır:
+
+### 🟢 1. Yeşil Bölge (Skor: 75 - 100)
+* **Görsel:** Parlayan yeşil bir onay tiki ve "Güvenilir Satıcı" (Trusted Maker) rozeti.
+* **Alıcıya Gösterilen Metin:** *"Bu satıcının Araf Sağlık Skoru yüksektir. İşlemleri hızlı onaylar ve uyuşmazlık geçmişi temizdir."*
+* **Aksiyon:** IBAN direkt açık gelir. İşlem sıfır sürtünmeyle ilerler.
+
+### 🟡 2. Sarı Bölge (Skor: 40 - 74)
+* **Görsel:** Sarı bir ünlem veya "Yeni / Nötr Satıcı" rozeti.
+* **Alıcıya Gösterilen Metin:** *"Bu satıcı platformda yenidir veya profili yakın zamanda güncellenmiştir. Platformun standart güvenlik kurallarına uyunuz."*
+* **Aksiyon:** IBAN direkt açık gelir, ancak alıcıya ödeme yaparken dikkatli olması hafifçe hatırlatılır.
+
+### 🔴 3. Kırmızı Bölge (Skor: 0 - 39)
+* **Görsel:** Kırmızı bir kalkan ve "Dikkatli İşlem" uyarısı.
+* **Alıcıya Gösterilen Metin:** *"DİKKAT: Bu satıcının Sağlık Skoru düşüktür (Sık profil değişimi veya işlem gecikmeleri). Lütfen bankadan ödeme yaparken açıklama kısmına 'Araf İşlemi' yazmayı unutmayınız."*
+* **Aksiyon:** IBAN başlangıçta **Bulanık (Blurred)** gelir. Kullanıcı "Riski Anladım, IBAN'ı Göster" butonuna tıklamak zorundadır. Bu, alıcıyı olası bir üçgenleme (Triangulation) saldırısına karşı son saniyede uyandırır.
+
+---
+
+## 4. Teknik Entegrasyon Veri Paketi (Backend'den Frontend'e)
+
+Backend (`trades.js` veya `auth.js`) artık sadece `score` göndermeyecek, satıcının kendi profiline baktığını anladığında bir `breakdown` (döküm) objesi de gönderecek:
+
+```json
+// Satıcı (Maker) kendi profilini GET ettiğinde:
+{
+  "healthScore": 85,
+  "color": "GREEN",
+  "breakdown": [
+    { "label": "Başlangıç Puanı", "value": 40, "type": "neutral" },
+    { "label": "Deneyim Primi", "value": 40, "type": "positive" },
+    { "label": "İstikrar Bonusu", "value": 15, "type": "positive" },
+    { "label": "Zaman Aşımı (Ping)", "value": -10, "type": "negative" },
+    { "label": "Taze IBAN Cezası", "value": 0, "type": "exempt", "note": "Tier 4 Muafiyeti" }
+  ]
+}
+
+// Alıcı (Taker) satıcının profiline baktığında (Sadece özet gider, Döküm GİTMEZ!):
+{
+  "healthScore": 85,
+  "color": "GREEN",
+  "label": "Güvenilir Satıcı"
+}
+``'
