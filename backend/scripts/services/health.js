@@ -9,7 +9,13 @@ const LAST_SAFE_BLOCK_KEY = "worker:last_safe_block";
 
 // [TR] Worker ne kadar block gerideyse unhealthy sayılacağı.
 // [EN] Max acceptable worker lag in blocks before readiness turns false.
-const MAX_WORKER_LAG_BLOCKS = Number(process.env.WORKER_MAX_LAG_BLOCKS || 25);
+function _parseMaxWorkerLag(rawValue) {
+  const parsed = Number.parseInt(String(rawValue ?? ""), 10);
+  if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+  return 25;
+}
+
+const MAX_WORKER_LAG_BLOCKS = _parseMaxWorkerLag(process.env.WORKER_MAX_LAG_BLOCKS);
 
 async function getReadiness({ worker, provider } = {}) {
   const isProduction = process.env.NODE_ENV === "production";
