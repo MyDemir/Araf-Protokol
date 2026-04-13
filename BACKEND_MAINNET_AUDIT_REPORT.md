@@ -1,15 +1,12 @@
 # BACKEND_MAINNET_AUDIT_REPORT
 
 ## Executive summary
-Bu inceleme yalnız backend kodu + çalıştırılan test komut çıktıları ile yapılmıştır.
+Bu çalışma yalnız backend kodu ve test çıktılarından doğrulanabilen kanıtlara dayanır.
 
-Bu iterasyonda confirmed olarak **4 bulgu** sınıflandırıldı:
-- High: 2
-- Medium: 2
-- Blocker: 0
-- Low: 0
-
-Bu bulgulardan patch uygulanabilenler minimal blast radius ile düzeltildi ve test eklendi.
+- Kapsam: `backend/scripts/routes/**`, `services/**`, `middleware/**`, `models/**`, `utils/**`, `config/**`, `jobs/**`, `__tests__/**`
+- Confirmed bulgu: **4** (High: 2, Medium: 2)
+- Uygulanan patch: minimal blast radius, fail-closed tercihli
+- Eklenen/güncellenen test: 3 dosya
 
 ---
 
@@ -18,101 +15,140 @@ Bu bulgulardan patch uygulanabilenler minimal blast radius ile düzeltildi ve te
 
 ## High risks
 
-### HR-01 — Refresh rotasyonunda wallet parametresi istemciden geldiği için token-missing akışında hedefli session revoke yapılabiliyordu
+### HR-01 — Refresh token akışında wallet-targeted revoke DoS yüzeyi
 - **severity:** high
 - **status:** confirmed
 - **file(s):** `backend/scripts/services/siwe.js`, `backend/scripts/routes/auth.js`
 - **exact function / route:** `rotateRefreshToken`, `POST /api/auth/refresh`
-- **root cause:** `rotateRefreshToken(walletAddress, refreshToken)` akışında token key bulunamazsa (`getDel` null), verilen wallet için family key'ler taranıp toplu siliniyordu. Wallet değeri route seviyesinde body/JWT fallback kaynaklı kullanıcı girdisinden taşınabiliyordu.
-- **exploit / production impact:** Geçersiz refresh token denemeleri ile hedef wallet family revoke tetiklenebilir; kullanıcı oturumları zorla düşürülebilir (DoS/session disruption).
-- **minimal fix strategy:** Wallet authority’i refresh token payload’ından al. `rotateRefreshToken(refreshToken, expectedWallet)` imzasına geç; missing token durumunda family cleanup yapma; stored payload wallet'i doğrula ve yalnız bu wallet/family için rotate et.
+- **root cause:** Eski akışta missing token durumunda route'tan gelen wallet parametresiyle family revoke tetiklenebiliyordu.
+- **exploit / production impact:** Geçersiz token denemeleriyle hedef wallet session family’si düşürülebilir.
+- **minimal fix strategy:** Authority refresh payload wallet’ına taşındı; missing token’da revoke yok; route authoritative wallet ile döner.
 
-### HR-02 — PII token wallet ile session wallet eşleşmesi zorunlu değildi
+### HR-02 — PII token ile session wallet boundary eksikliği
 - **severity:** high
 - **status:** confirmed
 - **file(s):** `backend/scripts/middleware/auth.js`
 - **exact function / middleware:** `requirePIIToken`
-- **root cause:** Middleware token wallet’i (`payload.sub`) session wallet’e karşı zorunlu kontrol etmeden `req.wallet` overwrite ediyordu.
-- **exploit / production impact:** Token theft senaryosunda session-boundary zayıflar; bearer token ile yanlış oturum bağlamında PII erişim riski artar.
-- **minimal fix strategy:** `payload.sub === req.wallet` zorunlu kontrolü, mismatch’te fail-closed `403`, overwrite yerine `req.piiWallet`.
+- **root cause:** `payload.sub` ile `req.wallet` eşleşmesi zorunlu değildi.
+- **exploit / production impact:** Token theft senaryosunda session boundary zayıflar.
+- **minimal fix strategy:** strict equality check + mismatch fail-closed + `req.piiWallet` ayrımı.
 
 ## Medium risks
 
-### MR-01 — WORKER_MAX_LAG_BLOCKS invalid env değerinde readiness lag eşiği güvenilir parse edilmiyordu
+### MR-01 — Readiness lag threshold env parse hatası
 - **severity:** medium
 - **status:** confirmed
 - **file(s):** `backend/scripts/services/health.js`
-- **exact function:** `getReadiness` tarafından kullanılan `MAX_WORKER_LAG_BLOCKS`
-- **root cause:** `Number(process.env.WORKER_MAX_LAG_BLOCKS || 25)` invalid input’ta `NaN` üretebiliyordu.
-- **exploit / production impact:** Readiness sinyali operasyonda yanlış-negatif/kararsız olabilir.
-- **minimal fix strategy:** Güvenli integer parser + invalid değerde deterministic default (25).
+- **exact function:** module-level lag threshold parse, `getReadiness` tüketimi
+- **root cause:** Invalid env değeri `NaN` üretebiliyordu.
+- **exploit / production impact:** readiness sinyali kararsız/yanlış olabilir.
+- **minimal fix strategy:** güvenli integer parse + default 25.
 
-### MR-02 — Chargeback ACK IP hash için raw x-forwarded-for header’ı doğrudan güveniliyordu
+### MR-02 — Chargeback ACK IP hash için spoofable header trust
 - **severity:** medium
 - **status:** confirmed
 - **file(s):** `backend/scripts/routes/trades.js`
 - **exact function / route:** `_getRealIP`, `POST /api/trades/:id/chargeback-ack`
-- **root cause:** Production’da `x-forwarded-for` başlığı doğrudan parse edilerek kullanılıyordu.
-- **exploit / production impact:** Header spoofing ile audit IP hash değeri manipüle edilebilir; forensic doğruluk bozulur.
-- **minimal fix strategy:** `trust proxy` aktifken yalnız Express normalize edilmiş `req.ip` kullan.
+- **root cause:** Raw `x-forwarded-for` doğrudan tüketiliyordu.
+- **exploit / production impact:** Audit IP hash manipülasyonu/forensic zayıflığı.
+- **minimal fix strategy:** `req.ip` (trust proxy normalize) kullanımı.
 
 ## Low risks
 - None confirmed.
 
 ---
 
+## File-by-file review notes (backend + database related files)
+
+### `backend/scripts/config/db.js`
+- **Confirmed:** Mongo URI yoksa fail-fast (`throw`) uygulanıyor.
+- **Confirmed:** `disconnected` event’inde `process.exit(1)` ile clean restart stratejisi var.
+- **Unresolved/runtime:** Bu stratejinin orchestrator (PM2/K8s) ile uyumu runtime doğrulama gerektirir.
+
+### `backend/scripts/config/redis.js`
+- **Confirmed:** `isReady()` gate’i ve graceful close mevcut.
+- **Confirmed:** TLS (`rediss://`/`REDIS_TLS`) desteği var.
+- **Unresolved/runtime:** Managed Redis failover + reconnect pattern’i saha testine ihtiyaç duyar.
+
+### `backend/scripts/models/User.js`
+- **Confirmed:** PII allowlist dışı public profile leak etmiyor (`toPublicProfile`).
+- **Confirmed:** `bank_change_history` rolling recompute yardımcıları var.
+- **Unresolved/runtime:** TTL (`last_login`) operasyonel retention beklentisiyle doğrulanmalı.
+
+### `backend/scripts/models/Trade.js`
+- **Confirmed:** `onchain_escrow_id` unique index mevcut.
+- **Confirmed:** PII snapshot + receipt alanları modelde ayrıştırılmış.
+- **Unresolved/runtime:** TTL + cleanup job birlikte çalışması veri yaşam döngüsü testleriyle doğrulanmalı.
+
+### `backend/scripts/models/Order.js`
+- **Confirmed:** `onchain_order_id` ve `refs.order_ref` unique.
+- **Unresolved/runtime:** Büyük hacimde sort/index davranışı için query plan gözlemi gerekli.
+
+### `backend/scripts/routes/auth.js`
+- **Confirmed fix:** refresh wallet authority service’e taşındı; route authoritative wallet döndürüyor.
+- **Confirmed fix:** wallet body opsiyonel; doğrulama varsa strict format check.
+
+### `backend/scripts/routes/trades.js`
+- **Confirmed fix:** chargeback IP kaynağı header trust yerine `req.ip`.
+
+### `backend/scripts/services/siwe.js`
+- **Confirmed fix:** rotate authority artık stored refresh payload wallet.
+- **Confirmed fix:** missing token path wallet-family cleanup tetiklemiyor.
+
+### `backend/scripts/services/health.js`
+- **Confirmed fix:** worker lag parse deterministic fallback.
+
+### `backend/scripts/middleware/auth.js`
+- **Confirmed fix:** PII token/session wallet strict match.
+
+---
+
 ## Unresolved / runtime verification needed
-1. Provider/WS gerçek kesinti/failover davranışının canlı ortamda gözlemlenmesi.
-2. Mongo/Redis failover sırasında orchestrator restart stratejisinin runbook uyumu.
-3. DLQ throughput/backoff davranışının yük testinde doğrulanması.
+1. Provider WS/HTTP kesinti ve reconnect davranışları (saha koşulu).
+2. Mongo/Redis failover sırasında readiness + restart orchestration.
+3. DLQ throughput/backoff davranışı (yük testinde).
+4. Daily snapshot ve cleanup job’larının uzun süreli veri yaşam döngüsü etkisi.
 
 ---
 
 ## Patches applied
-1. **`backend/scripts/services/siwe.js`**
-   - `rotateRefreshToken` wallet authority modeli hardened edildi.
-   - Missing token artık toplu revoke tetiklemiyor.
-   - Stored payload wallet formatı doğrulanıyor.
-2. **`backend/scripts/routes/auth.js`**
-   - Refresh route yeni `rotateRefreshToken` imzasına uyarlandı.
-   - Response wallet artık service tarafından authoritative dönen değerden geliyor.
-3. **`backend/scripts/middleware/auth.js`**
-   - PII token/session wallet mismatch fail-closed.
-4. **`backend/scripts/services/health.js`**
-   - Worker lag threshold güvenli parse helper.
-5. **`backend/scripts/routes/trades.js`**
-   - Chargeback ack IP kaynağı `req.ip` ile sınırlandı.
+1. `backend/scripts/services/siwe.js`
+2. `backend/scripts/routes/auth.js`
+3. `backend/scripts/middleware/auth.js`
+4. `backend/scripts/services/health.js`
+5. `backend/scripts/routes/trades.js`
+6. `backend/scripts/__tests__/siwe.refresh.test.js`
 
 ---
 
 ## Tests added/updated
 - `backend/scripts/__tests__/auth.middleware.test.js`
 - `backend/scripts/__tests__/health.test.js`
-- `backend/scripts/__tests__/siwe.refresh.test.js` (yeni)
+- `backend/scripts/__tests__/siwe.refresh.test.js`
 
-Çalıştırılan test komutu:
+Çalıştırılan komut:
 - `cd backend && npm test -- --runInBand`
 
 ---
 
 ## Migration / rollout notes
-- `rotateRefreshToken` imzası değişti; route uyarlaması aynı commit içinde yapıldı.
-- Davranış değişikliği: invalid/missing refresh denemesi artık wallet-family toplu revoke yapmaz.
-- Session güvenliği artırıldı; backward compatibility API seviyesinde korunuyor.
+- `rotateRefreshToken` imzası `rotateRefreshToken(refreshToken, expectedWallet = null)` oldu.
+- Route uyarlaması aynı patch set içinde yapıldı.
+- Refresh akışında wallet body artık zorunlu değil; varsa doğrulanır.
 
 ## Residual risks
-- Runtime altyapı kesintilerinde (provider/redis/mongo) gerçek davranış için staging/prod gözlem şart.
-- Off-chain cancel signature validity doğrulaması backend’de hâlâ storage-level; chain call öncesi signer-validation pipeline’ı operational olarak ayrıca doğrulanmalı.
+- Runtime bağımlı entegrasyon riskleri (provider/db/redis) tamamen koddan kapanmaz.
+- Operasyonel alarm/playbook gereksinimi devam eder.
 
 ---
 
 ## Ship / no-ship
 ### Ship only if...
-- Tüm backend testleri CI’de geçerse,
-- Refresh/PII auth akışları staging’de cookie + wallet senaryolarıyla doğrulanırsa,
-- Readiness metricleri deploy sonrası izlenirse.
+- CI’da backend testleri tam geçiyorsa,
+- Staging’de refresh/session/PII akışları gerçek cookie-wallet senaryolarında doğrulanmışsa,
+- Readiness + worker lag metrikleri deploy sonrası izleniyorsa.
 
 ### Do not ship if...
-- Refresh rotasyonunda eski servis imzasını çağıran başka kod path’i kalmışsa,
-- Auth/session mismatch alarmları yükseliyorsa,
-- Runtime readiness drift gözleniyorsa.
+- Eski rotate imzasını kullanan çağrılar kalmışsa,
+- Auth/session mismatch oranı yükseliyorsa,
+- Worker lag/readiness drift gözleniyorsa.

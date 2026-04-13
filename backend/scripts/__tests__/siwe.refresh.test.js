@@ -68,4 +68,25 @@ describe("siwe rotateRefreshToken", () => {
 
     expect(redis.sMembers).toHaveBeenCalledWith("family:0x2222222222222222222222222222222222222222:fam-1");
   });
+
+  test("rotates successfully when expected wallet is not provided", async () => {
+    const familyMulti = createMultiMock();
+    const issueMulti = createMultiMock();
+
+    const redis = {
+      getDel: jest.fn().mockResolvedValue(JSON.stringify({
+        familyId: "fam-2",
+        wallet: "0x3333333333333333333333333333333333333333",
+      })),
+      sMembers: jest.fn().mockResolvedValue(["old-3"]),
+      multi: jest
+        .fn()
+        .mockReturnValueOnce(familyMulti)
+        .mockReturnValueOnce(issueMulti),
+    };
+    getRedisClient.mockReturnValue(redis);
+
+    const result = await rotateRefreshToken("valid-token-no-wallet");
+    expect(result.wallet).toBe("0x3333333333333333333333333333333333333333");
+  });
 });
