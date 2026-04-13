@@ -316,10 +316,10 @@ router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, tradesLim
  * Bu fonksiyon ek güvence katmanı sağlar.
  */
 function _getRealIP(req) {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (forwarded && process.env.NODE_ENV === "production") {
-    return forwarded.split(",")[0].trim();
-  }
+  // [TR] x-forwarded-for header'ını doğrudan güvenmeyiz.
+  //      app.js'de trust proxy açık; Express req.ip'i güvenli şekilde normalize eder.
+  // [EN] Do not trust raw x-forwarded-for header directly.
+  //      trust proxy is enabled in app.js, so req.ip is the normalized source.
   return req.ip || req.socket?.remoteAddress || "unknown";
 }
 

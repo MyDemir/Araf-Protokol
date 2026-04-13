@@ -302,13 +302,13 @@ router.post("/refresh", authLimiter, async (req, res) => {
       return res.status(400).json({ error: "Wallet adresi belirlenemedi." });
     }
 
-    const result = await rotateRefreshToken(wallet.toLowerCase(), refreshToken);
+    const result = await rotateRefreshToken(refreshToken, wallet.toLowerCase());
 
     res.cookie("araf_jwt", result.token, _getJwtCookieOptions());
     res.cookie("araf_refresh", result.refreshToken, _getRefreshCookieOptions());
 
-    logger.info(`[Auth] Token yenilendi: ${wallet}`);
-    return res.json({ wallet: wallet.toLowerCase() });
+    logger.info(`[Auth] Token yenilendi: ${result.wallet}`);
+    return res.json({ wallet: result.wallet });
   } catch (err) {
     logger.warn(`[Auth] Refresh başarısız: ${err.message}`);
     res.clearCookie("araf_jwt", { ...COOKIE_OPTIONS_BASE, path: "/" });

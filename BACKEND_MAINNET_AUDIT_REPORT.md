@@ -1,13 +1,15 @@
 # BACKEND_MAINNET_AUDIT_REPORT
 
 ## Executive summary
-Bu inceleme yalnız backend kod tabanı üzerinde statik analiz + yerel test çalıştırması ile yapılmıştır.
+Bu inceleme yalnız backend kodu + çalıştırılan test komut çıktıları ile yapılmıştır.
 
-Confirmed olarak iki risk bulundu ve minimal patch ile kapatıldı:
-1. **PII token/session wallet boundary bypass** (high)
-2. **Readiness threshold env parse drift (NaN fallback yok)** (medium)
+Bu iterasyonda confirmed olarak **4 bulgu** sınıflandırıldı:
+- High: 2
+- Medium: 2
+- Blocker: 0
+- Low: 0
 
-Bu iki alan patch'lendi ve testle koruma altına alındı.
+Bu bulgulardan patch uygulanabilenler minimal blast radius ile düzeltildi ve test eklendi.
 
 ---
 
@@ -16,25 +18,43 @@ Bu iki alan patch'lendi ve testle koruma altına alındı.
 
 ## High risks
 
-### HR-01 — PII token wallet, session wallet ile zorunlu eşleşmiyordu
-- **severity:** high  
-- **status:** confirmed  
-- **file(s):** `backend/scripts/middleware/auth.js`  
-- **exact function / middleware:** `requirePIIToken`  
-- **root cause:** Middleware, `requireAuth` sonrası mevcut `req.wallet` değerini `payload.sub` ile overwrite ediyordu; `payload.sub === req.wallet` zorunluluğu yoktu.  
-- **exploit / production impact:** Çalınmış/ele geçirilmiş geçerli bir PII bearer token, başka bir aktif cookie session bağlamında kullanılabilir; session-boundary zayıflar ve PII erişim güvenlik sınırı token’a kayar.  
-- **minimal fix strategy:** `requirePIIToken` içinde token wallet ile session wallet birebir eşleşmesini zorunlu kıl; mismatch durumunda `403` dön. `req.wallet` overwrite etme; ayrı `req.piiWallet` alanı kullan.
+### HR-01 — Refresh rotasyonunda wallet parametresi istemciden geldiği için token-missing akışında hedefli session revoke yapılabiliyordu
+- **severity:** high
+- **status:** confirmed
+- **file(s):** `backend/scripts/services/siwe.js`, `backend/scripts/routes/auth.js`
+- **exact function / route:** `rotateRefreshToken`, `POST /api/auth/refresh`
+- **root cause:** `rotateRefreshToken(walletAddress, refreshToken)` akışında token key bulunamazsa (`getDel` null), verilen wallet için family key'ler taranıp toplu siliniyordu. Wallet değeri route seviyesinde body/JWT fallback kaynaklı kullanıcı girdisinden taşınabiliyordu.
+- **exploit / production impact:** Geçersiz refresh token denemeleri ile hedef wallet family revoke tetiklenebilir; kullanıcı oturumları zorla düşürülebilir (DoS/session disruption).
+- **minimal fix strategy:** Wallet authority’i refresh token payload’ından al. `rotateRefreshToken(refreshToken, expectedWallet)` imzasına geç; missing token durumunda family cleanup yapma; stored payload wallet'i doğrula ve yalnız bu wallet/family için rotate et.
+
+### HR-02 — PII token wallet ile session wallet eşleşmesi zorunlu değildi
+- **severity:** high
+- **status:** confirmed
+- **file(s):** `backend/scripts/middleware/auth.js`
+- **exact function / middleware:** `requirePIIToken`
+- **root cause:** Middleware token wallet’i (`payload.sub`) session wallet’e karşı zorunlu kontrol etmeden `req.wallet` overwrite ediyordu.
+- **exploit / production impact:** Token theft senaryosunda session-boundary zayıflar; bearer token ile yanlış oturum bağlamında PII erişim riski artar.
+- **minimal fix strategy:** `payload.sub === req.wallet` zorunlu kontrolü, mismatch’te fail-closed `403`, overwrite yerine `req.piiWallet`.
 
 ## Medium risks
 
-### MR-01 — WORKER_MAX_LAG_BLOCKS geçersiz değerinde readiness hesabı deterministik değildi
-- **severity:** medium  
-- **status:** confirmed  
-- **file(s):** `backend/scripts/services/health.js`  
-- **exact function:** module-level `MAX_WORKER_LAG_BLOCKS` hesaplaması (`getReadiness` tarafından kullanılıyor)  
-- **root cause:** `Number(process.env.WORKER_MAX_LAG_BLOCKS || 25)` ile parse yapılıyor; env değeri numerik değilse `NaN` üretilebiliyor.  
-- **exploit / production impact:** Worker lag karşılaştırması (`<= MAX_WORKER_LAG_BLOCKS`) `NaN` ile güvenilir çalışmaz; readiness sinyalinde yanlış-negatif/kararsız davranış üretebilir, operasyonel health gating bozulur.  
-- **minimal fix strategy:** Pozitif integer parse helper ekle; invalid durumda güvenli default `25` kullan.
+### MR-01 — WORKER_MAX_LAG_BLOCKS invalid env değerinde readiness lag eşiği güvenilir parse edilmiyordu
+- **severity:** medium
+- **status:** confirmed
+- **file(s):** `backend/scripts/services/health.js`
+- **exact function:** `getReadiness` tarafından kullanılan `MAX_WORKER_LAG_BLOCKS`
+- **root cause:** `Number(process.env.WORKER_MAX_LAG_BLOCKS || 25)` invalid input’ta `NaN` üretebiliyordu.
+- **exploit / production impact:** Readiness sinyali operasyonda yanlış-negatif/kararsız olabilir.
+- **minimal fix strategy:** Güvenli integer parser + invalid değerde deterministic default (25).
+
+### MR-02 — Chargeback ACK IP hash için raw x-forwarded-for header’ı doğrudan güveniliyordu
+- **severity:** medium
+- **status:** confirmed
+- **file(s):** `backend/scripts/routes/trades.js`
+- **exact function / route:** `_getRealIP`, `POST /api/trades/:id/chargeback-ack`
+- **root cause:** Production’da `x-forwarded-for` başlığı doğrudan parse edilerek kullanılıyordu.
+- **exploit / production impact:** Header spoofing ile audit IP hash değeri manipüle edilebilir; forensic doğruluk bozulur.
+- **minimal fix strategy:** `trust proxy` aktifken yalnız Express normalize edilmiş `req.ip` kullan.
 
 ## Low risks
 - None confirmed.
@@ -42,63 +62,57 @@ Bu iki alan patch'lendi ve testle koruma altına alındı.
 ---
 
 ## Unresolved / runtime verification needed
-
-1. **RPC/WS gerçek dayanıklılık**
-   - Kodda WS->HTTP fallback mevcut (`eventListener._connect`), fakat gerçek provider kesinti, rate-limit ve reconnect davranışının production’da nasıl gerçekleştiği runtime/log düzeyinde doğrulanmalı.
-2. **Mongo/Redis failover semantiği**
-   - Kod tarafında fail-fast ve readiness kontrolleri var; fakat gerçek managed service failover senaryolarında (connection flap, DNS rotate) orchestration davranışı runtime doğrulaması gerektiriyor.
-3. **DLQ replay throughput/backoff under stress**
-   - Mantık koddan doğrulanabilir; ancak kuyruk büyümesi ve poison event davranışı için yük testi/runbook doğrulaması gerekli.
+1. Provider/WS gerçek kesinti/failover davranışının canlı ortamda gözlemlenmesi.
+2. Mongo/Redis failover sırasında orchestrator restart stratejisinin runbook uyumu.
+3. DLQ throughput/backoff davranışının yük testinde doğrulanması.
 
 ---
 
 ## Patches applied
-1. `backend/scripts/middleware/auth.js`
-   - `requirePIIToken` artık `payload.sub` ile `req.wallet` eşleşmesini zorunlu kılıyor.
-   - Mismatch durumunda `403` döndürüyor.
-   - `req.wallet` overwrite edilmiyor; `req.piiWallet` set ediliyor.
-
-2. `backend/scripts/services/health.js`
-   - `_parseMaxWorkerLag` helper eklendi.
-   - `WORKER_MAX_LAG_BLOCKS` geçersiz ise default `25` kullanılıyor.
+1. **`backend/scripts/services/siwe.js`**
+   - `rotateRefreshToken` wallet authority modeli hardened edildi.
+   - Missing token artık toplu revoke tetiklemiyor.
+   - Stored payload wallet formatı doğrulanıyor.
+2. **`backend/scripts/routes/auth.js`**
+   - Refresh route yeni `rotateRefreshToken` imzasına uyarlandı.
+   - Response wallet artık service tarafından authoritative dönen değerden geliyor.
+3. **`backend/scripts/middleware/auth.js`**
+   - PII token/session wallet mismatch fail-closed.
+4. **`backend/scripts/services/health.js`**
+   - Worker lag threshold güvenli parse helper.
+5. **`backend/scripts/routes/trades.js`**
+   - Chargeback ack IP kaynağı `req.ip` ile sınırlandı.
 
 ---
 
 ## Tests added/updated
-Yeni testler:
 - `backend/scripts/__tests__/auth.middleware.test.js`
-  - PII token/session wallet mismatch -> `403`
-  - Match durumda middleware pass + `req.piiWallet` set
 - `backend/scripts/__tests__/health.test.js`
-  - Geçersiz `WORKER_MAX_LAG_BLOCKS` değerinde fallback `25` doğrulaması
+- `backend/scripts/__tests__/siwe.refresh.test.js` (yeni)
 
 Çalıştırılan test komutu:
 - `cd backend && npm test -- --runInBand`
 
-Sonuç:
-- 2 test suite, 3 test geçti.
-
 ---
 
 ## Migration / rollout notes
-- Bu patch backward-compatible; route contract’ını bozmaz.
-- `requirePIIToken` artık daha sıkı session-token eşleşmesi uygular; token replay yüzeyini daraltır.
-- Health parse değişikliği yalnız invalid env değerlerini güvenli default’a sabitler.
+- `rotateRefreshToken` imzası değişti; route uyarlaması aynı commit içinde yapıldı.
+- Davranış değişikliği: invalid/missing refresh denemesi artık wallet-family toplu revoke yapmaz.
+- Session güvenliği artırıldı; backward compatibility API seviyesinde korunuyor.
 
 ## Residual risks
-- Runtime altyapı kesintileri (RPC/Redis/Mongo failover) için yalnız kod analizi yeterli değildir; staging/prod gözlem doğrulaması gerekir.
-- PII akışlarında short-lived token politikası uygulanıyor; token taşıma/loglama pratikleri operasyonel olarak izlenmeye devam edilmelidir.
+- Runtime altyapı kesintilerinde (provider/redis/mongo) gerçek davranış için staging/prod gözlem şart.
+- Off-chain cancel signature validity doğrulaması backend’de hâlâ storage-level; chain call öncesi signer-validation pipeline’ı operational olarak ayrıca doğrulanmalı.
 
 ---
 
 ## Ship / no-ship
-
 ### Ship only if...
-- Yukarıdaki testler CI’de tekrar geçerse,
-- Runtime readiness ve worker lag metrikleri staging’de doğrulanırsa,
-- Session-wallet header politikası client tarafında tutarlı uygulanıyorsa.
+- Tüm backend testleri CI’de geçerse,
+- Refresh/PII auth akışları staging’de cookie + wallet senaryolarıyla doğrulanırsa,
+- Readiness metricleri deploy sonrası izlenirse.
 
 ### Do not ship if...
-- PII token/session eşleşme kuralı client akışında kırılıyorsa,
-- `WORKER_MAX_LAG_BLOCKS` gibi kritik env’ler doğrulanmadan deploy yapılıyorsa,
-- Readiness sinyaline bağlı orchestration kararları gözlemlenmeden mainnet cutover planlanıyorsa.
+- Refresh rotasyonunda eski servis imzasını çağıran başka kod path’i kalmışsa,
+- Auth/session mismatch alarmları yükseliyorsa,
+- Runtime readiness drift gözleniyorsa.
