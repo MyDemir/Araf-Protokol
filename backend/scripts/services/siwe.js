@@ -282,27 +282,14 @@ async function issueRefreshToken(walletAddress, familyId = null) {
 
 // Normal rotasyonda yalnız ilgili aile temizlenir.
 // Reuse şüphesinde aynı wallet'a ait aileler kapatılır.
-async function rotateRefreshToken(walletAddress, refreshToken) {
+async function rotateRefreshToken(refreshToken, expectedWallet = null) {
   const redis = getRedisClient();
-  const normalizedWallet = walletAddress.toLowerCase();
   const tokenKey = `${REFRESH_TOKEN_PREFIX}${refreshToken}`;
 
   const stored = await redis.getDel(tokenKey);
 
   if (!stored) {
-    logger.warn(
-      `[Auth] Geçersiz/kullanılmış token denemesi: wallet=${walletAddress}. Aile oturumları temizleniyor.`
-    );
-
-    const familyKeys = await _scanKeys(redis, `${REFRESH_FAMILY_PREFIX}${normalizedWallet}:*`);
-    for (const familyKey of familyKeys) {
-      const members = await redis.sMembers(familyKey);
-      const multi = redis.multi();
-      members.forEach((m) => multi.del(`${REFRESH_TOKEN_PREFIX}${m}`));
-      multi.del(familyKey);
-      await multi.exec();
-    }
-
+    logger.warn("[Auth] Geçersiz/kullanılmış refresh token denemesi.");
     throw new Error("Refresh token geçersiz veya süresi dolmuş. Lütfen yeniden giriş yapın.");
   }
 
@@ -310,13 +297,19 @@ async function rotateRefreshToken(walletAddress, refreshToken) {
   try {
     storedData = JSON.parse(stored);
   } catch {
-    storedData = { familyId: stored, wallet: normalizedWallet };
+    storedData = { familyId: stored, wallet: null };
   }
 
-  if (storedData.wallet !== normalizedWallet) {
+  const normalizedWallet = String(storedData.wallet || "").toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(normalizedWallet)) {
+    logger.error("[Auth] KRİTİK: Refresh token payload wallet alanı geçersiz.");
+    throw new Error("Refresh token içeriği geçersiz.");
+  }
+
+  if (expectedWallet && expectedWallet.toLowerCase() !== normalizedWallet) {
     logger.error(
       `[Auth] KRİTİK: Token/wallet uyuşmazlığı — muhtemel hijack girişimi! ` +
-      `token_wallet=${storedData.wallet} istek_wallet=${walletAddress}`
+      `token_wallet=${normalizedWallet} istek_wallet=${expectedWallet}`
     );
     throw new Error("Token/wallet uyuşmazlığı. Güvenlik ihlali tespit edildi.");
   }
@@ -332,11 +325,11 @@ async function rotateRefreshToken(walletAddress, refreshToken) {
     await multi.exec();
   }
 
-  const newJWT = issueJWT(walletAddress);
-  const newRefreshToken = await issueRefreshToken(walletAddress, familyId);
+  const newJWT = issueJWT(normalizedWallet);
+  const newRefreshToken = await issueRefreshToken(normalizedWallet, familyId);
 
-  logger.info(`[Auth] Token rotasyonu tamamlandı: ${walletAddress}`);
-  return { token: newJWT, refreshToken: newRefreshToken };
+  logger.info(`[Auth] Token rotasyonu tamamlandı: ${normalizedWallet}`);
+  return { token: newJWT, refreshToken: newRefreshToken, wallet: normalizedWallet };
 }
 
 async function revokeRefreshToken(walletAddress) {
