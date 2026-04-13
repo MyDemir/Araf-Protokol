@@ -208,6 +208,9 @@ const tradeSchema = new mongoose.Schema(
         payout_details_enc: { type: String, default: null },
         fingerprint_hash_at_lock: { type: String, default: null },
         profile_version_at_lock: { type: Number, default: 0, min: 0 },
+        bank_change_count_7d_at_lock: { type: Number, default: null, min: 0 },
+        bank_change_count_30d_at_lock: { type: Number, default: null, min: 0 },
+        last_bank_change_at_at_lock: { type: Date, default: null },
       },
       taker: {
         rail: { type: String, default: null },
@@ -217,9 +220,14 @@ const tradeSchema = new mongoose.Schema(
         payout_details_enc: { type: String, default: null },
         fingerprint_hash_at_lock: { type: String, default: null },
         profile_version_at_lock: { type: Number, default: 0, min: 0 },
+        bank_change_count_7d_at_lock: { type: Number, default: null, min: 0 },
+        bank_change_count_30d_at_lock: { type: Number, default: null, min: 0 },
+        last_bank_change_at_at_lock: { type: Date, default: null },
       },
       captured_at: { type: Date, default: null },
       snapshot_delete_at: { type: Date, default: null },
+      is_complete: { type: Boolean, default: true },
+      incomplete_reason: { type: String, default: null },
     },
 
     cancel_proposal: {

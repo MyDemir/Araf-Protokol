@@ -67,25 +67,13 @@ function _getRefreshCookieOptions() {
   };
 }
 
-/**
- * Profil input'unu normalize eder.
- *
- * Not:
- *   - Banka sahibi adı: fazla boşluklar tek boşluğa düşürülür
- *   - IBAN: boşluklar silinir, uppercase yapılır
- *   - Telegram: baştaki @ temizlenir
- *
- * Boş / undefined alanlar "" olarak normalize edilir.
- */
 function _normalizeProfileBody(rawBody = {}) {
   const normalizedLegacyIban =
     typeof rawBody.iban === "string" ? rawBody.iban.replace(/\s+/g, "").toUpperCase() : "";
   const rail =
     typeof rawBody.rail === "string" && rawBody.rail.trim()
       ? rawBody.rail.trim().toUpperCase()
-      : normalizedLegacyIban.startsWith("TR")
-        ? "TR_IBAN"
-        : "";
+      : "";
   const country = typeof rawBody.country === "string" ? rawBody.country.trim().toUpperCase() : "";
   const contactChannel =
     typeof rawBody.contactChannel === "string" ? rawBody.contactChannel.trim().toLowerCase() : "";
@@ -157,6 +145,34 @@ const PROFILE_SCHEMA = Joi.object({
   bic: Joi.string().allow("").required(),
   bankName: Joi.string().max(120).allow("").required(),
 }).custom((value, helpers) => {
+  const hasAnyBankPayoutField = Boolean(
+    value.bankOwner ||
+      value.iban ||
+      value.routingNumber ||
+      value.accountNumber ||
+      value.accountType ||
+      value.bic ||
+      value.bankName
+  );
+
+  if (hasAnyBankPayoutField && !value.rail) {
+    return helpers.error("any.invalid", {
+      message: "Banka payout bilgisi gönderildiğinde rail zorunludur.",
+    });
+  }
+
+  if (hasAnyBankPayoutField && !value.country) {
+    return helpers.error("any.invalid", {
+      message: "Banka payout bilgisi gönderildiğinde country zorunludur.",
+    });
+  }
+
+  if (value.rail && !value.country) {
+    return helpers.error("any.invalid", {
+      message: "Rail gönderildiğinde country zorunludur.",
+    });
+  }
+
   if (!value.rail) return value;
 
   if (value.rail === "TR_IBAN" && value.iban && !/^TR\d{24}$/.test(value.iban)) {
@@ -448,7 +464,7 @@ router.put("/profile", requireAuth, requireSessionWalletMatch, authLimiter, asyn
       if (activeTradeExists) {
         return res.status(409).json({
           error:
-            "Aktif LOCKED / PAID / CHALLENGED trade varken banka sahibi adı veya IBAN değiştirilemez.",
+            "Aktif LOCKED / PAID / CHALLENGED trade varken payout profile değiştirilemez.",
           code: "BANK_PROFILE_LOCKED_DURING_ACTIVE_TRADE",
         });
       }
@@ -467,8 +483,8 @@ router.put("/profile", requireAuth, requireSessionWalletMatch, authLimiter, asyn
       : bankProfileChanged ? 1 : 0;
     const genericProfile = await encryptPayoutProfile(
       {
-        rail: value.rail || "TR_IBAN",
-        country: value.country || (value.rail === "US_ACH" ? "US" : value.rail === "SEPA_IBAN" ? "EU" : "TR"),
+        rail: value.rail || null,
+        country: value.country || null,
         contact: {
           channel: value.contactChannel || (value.telegram ? "telegram" : null),
           value: value.contactValue || value.telegram || null,

@@ -10,6 +10,7 @@ const { tradesLimiter } = require("../middleware/rateLimiter");
 const Trade = require("../models/Trade");
 const User = require("../models/User");
 const logger = require("../utils/logger");
+const { buildBankProfileRisk } = require("./tradeRisk");
 
 /**
  * Trades Route — V3 Child Trade Read Layer
@@ -31,8 +32,6 @@ const logger = require("../utils/logger");
  *   - amaç UI'a karar desteği vermektir; protocol authority üretmek değildir
  */
 
-const BANK_PROFILE_RISK_THRESHOLD_7D = 3;
-
 const SAFE_TRADE_PROJECTION = [
   "_id",
   "onchain_escrow_id",
@@ -53,6 +52,9 @@ const SAFE_TRADE_PROJECTION = [
   "payout_snapshot.maker.country",
   "payout_snapshot.maker.fingerprint_hash_at_lock",
   "payout_snapshot.maker.profile_version_at_lock",
+  "payout_snapshot.maker.bank_change_count_7d_at_lock",
+  "payout_snapshot.maker.bank_change_count_30d_at_lock",
+  "payout_snapshot.maker.last_bank_change_at_at_lock",
   "cancel_proposal.proposed_by",
   "cancel_proposal.proposed_at",
   "cancel_proposal.approved_by",
@@ -64,42 +66,6 @@ const SAFE_TRADE_PROJECTION = [
   "chargeback_ack.acknowledged",
   "chargeback_ack.acknowledged_at",
 ].join(" ");
-
-/**
- * Tek bir trade için banka profil risk sinyalini üretir.
- *
- * Kural:
- *   - lock anındaki bankChangeCount7d >= 3  → riskli
- *   - currentProfileVersion > profileVersionAtLock → çok riskli / profil lock sonrası oynatılmış
- */
-function _buildBankProfileRisk(trade, makerUser) {
-  const payoutSnapshot = trade?.payout_snapshot?.maker || {};
-
-  const profileVersionAtLock = Number(
-    payoutSnapshot.profile_version_at_lock ?? 0
-  );
-  const currentProfileVersion = Number(
-    makerUser?.payout_profile?.fingerprint?.version ?? makerUser?.profileVersion ?? 0
-  );
-  const changedAfterLock =
-    profileVersionAtLock > 0 && currentProfileVersion > profileVersionAtLock;
-  const frequentRecentChanges = false;
-  const highRiskBankProfile = changedAfterLock;
-
-  return {
-    highRiskBankProfile,
-    rail: payoutSnapshot.rail || "TR_IBAN",
-    country: payoutSnapshot.country || null,
-    changedAfterLock,
-    frequentRecentChanges,
-    threshold7d: BANK_PROFILE_RISK_THRESHOLD_7D,
-    profileVersionAtLock,
-    currentProfileVersion,
-    bankChangeCount7dAtLock: null,
-    bankChangeCount30dAtLock: null,
-    lastBankChangeAtAtLock: null,
-  };
-}
 
 /**
  * Trade listesine trade-scoped banka risk sinyalini ekler.
@@ -134,7 +100,7 @@ async function _attachBankProfileRisk(trades) {
 
   return trades.map((trade) => {
     const makerUser = makerMap.get(trade.maker_address) || null;
-    const bankProfileRisk = _buildBankProfileRisk(trade, makerUser);
+    const bankProfileRisk = buildBankProfileRisk(trade, makerUser);
 
     // [TR] Internal snapshot alanlarını response'ta doğrudan açmıyoruz;
     //      onun yerine türetilmiş risk nesnesi veriyoruz.

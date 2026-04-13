@@ -69,6 +69,8 @@ error FillAmountBelowMinimum();
 error InvalidMinFill();
 error OrderSideMismatch();
 error TokenDirectionNotAllowed();
+error FeeBpsExceedsUint16(uint256 value);
+error FeeBpsExceedsEconomicLimit(uint256 value);
 
 contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     using SafeERC20 for IERC20;
@@ -1555,6 +1557,11 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      *         existing active trades remain protected by fee snapshots.
      */
     function setFeeConfig(uint256 _takerFeeBps, uint256 _makerFeeBps) external onlyOwner {
+        if (_takerFeeBps > type(uint16).max) revert FeeBpsExceedsUint16(_takerFeeBps);
+        if (_makerFeeBps > type(uint16).max) revert FeeBpsExceedsUint16(_makerFeeBps);
+        if (_takerFeeBps > BPS_DENOMINATOR) revert FeeBpsExceedsEconomicLimit(_takerFeeBps);
+        if (_makerFeeBps > BPS_DENOMINATOR) revert FeeBpsExceedsEconomicLimit(_makerFeeBps);
+
         takerFeeBps = _takerFeeBps;
         makerFeeBps = _makerFeeBps;
         emit FeeConfigUpdated(_takerFeeBps, _makerFeeBps);

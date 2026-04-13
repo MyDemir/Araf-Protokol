@@ -53,6 +53,20 @@ function hasTakerNameSnapshot(trade) {
   return Boolean(trade?.payout_snapshot?.taker?.payout_details_enc);
 }
 
+function hasCompletePayoutSnapshot(trade) {
+  const completionFlag = trade?.payout_snapshot?.is_complete;
+  if (completionFlag === true) return true;
+  if (completionFlag === false) return false;
+
+  // [TR] Geriye dönük uyumluluk: legacy trade'lerde `is_complete` alanı yoktu.
+  //      Flag yoksa, route'un zaten kontrol ettiği gerekli snapshot alanının varlığını yeterli kabul ederiz.
+  // [EN] Backward compatibility: legacy trades may not have `is_complete`.
+  //      When the flag is absent, we keep legacy trades functional if required encrypted snapshot data exists.
+  const hasMaker = hasMakerPIISnapshot(trade);
+  const hasTaker = hasTakerNameSnapshot(trade);
+  return hasMaker || hasTaker;
+}
+
 // ─── GET /api/pii/my ─────────────────────────────────────────────────────────
 // [TR] Kullanıcının kendi kayıtlı PII profilini döndürür.
 //      V3'te economic authority üretmez; yalnız şifreli profil bilgisini çözer.
@@ -122,6 +136,14 @@ router.get("/taker-name/:onchainId", requireAuth, requireSessionWalletMatch, pii
       return respondSnapshotUnavailable(
         res,
         "Karşı taraf isim snapshot'ı bu trade için hazır değil."
+      );
+    }
+
+    if (!hasCompletePayoutSnapshot(trade)) {
+      logger.warn(`[PII] taker-name snapshot incomplete: onchain=#${onchainId}`);
+      return respondSnapshotUnavailable(
+        res,
+        `Karşı taraf payout snapshot'ı incomplete (${trade?.payout_snapshot?.incomplete_reason || "unknown"}).`
       );
     }
 
@@ -226,6 +248,14 @@ router.get(
         return respondSnapshotUnavailable(
           res,
           "Satıcı ödeme snapshot'ı bu trade için hazır değil."
+        );
+      }
+
+      if (!hasCompletePayoutSnapshot(trade)) {
+        logger.warn(`[PII] snapshot incomplete: trade=${tradeId.slice(0, 8)}...`);
+        return respondSnapshotUnavailable(
+          res,
+          `Satıcı payout snapshot'ı incomplete (${trade?.payout_snapshot?.incomplete_reason || "unknown"}).`
         );
       }
 
