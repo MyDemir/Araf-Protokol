@@ -51,8 +51,6 @@ const FAILURE_SCORE_WEIGHTS = {
   failed_dispute: 20,
 };
 
-const CID_PATTERN = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[A-Za-z2-7]{58}|[a-f0-9]{64})$/;
-
 const EVENT_NAMES = [
   "WalletRegistered",
   "EscrowCreated", "EscrowLocked", "PaymentReported",
@@ -183,6 +181,14 @@ function _setIfDefined(target, key, value) {
   if (value !== undefined) {
     target[key] = value;
   }
+}
+
+function _hasRequiredPayoutSnapshot(profile) {
+  return Boolean(
+    profile?.rail &&
+    profile?.country &&
+    profile?.payout_details_enc
+  );
 }
 
 class EventWorker {
@@ -1015,13 +1021,21 @@ class EventWorker {
     const [makerUser, takerUser] = await Promise.all([
       User.findOne({ wallet_address: trade.maker_address })
         .select(
-          "payout_profile"
+          "payout_profile bankChangeCount7d bankChangeCount30d lastBankChangeAt"
         )
         .lean(),
       User.findOne({ wallet_address: takerAddress })
-        .select("payout_profile")
+        .select("payout_profile bankChangeCount7d bankChangeCount30d lastBankChangeAt")
         .lean(),
     ]);
+
+    const makerProfile = makerUser?.payout_profile || null;
+    const takerProfile = takerUser?.payout_profile || null;
+    const snapshotComplete = _hasRequiredPayoutSnapshot(makerProfile) && _hasRequiredPayoutSnapshot(takerProfile);
+    const incompleteReasons = [];
+    if (!_hasRequiredPayoutSnapshot(makerProfile)) incompleteReasons.push("maker_payout_profile_missing");
+    if (!_hasRequiredPayoutSnapshot(takerProfile)) incompleteReasons.push("taker_payout_profile_missing");
+    const incompleteReason = incompleteReasons.length > 0 ? incompleteReasons.join(",") : null;
 
     await Trade.findOneAndUpdate(
       {
@@ -1034,36 +1048,50 @@ class EventWorker {
           taker_address: takerAddress,
           "timers.locked_at": lockedAt,
 
-          "payout_snapshot.maker.rail": makerUser?.payout_profile?.rail || "TR_IBAN",
-          "payout_snapshot.maker.country": makerUser?.payout_profile?.country || "TR",
-          "payout_snapshot.maker.contact_channel": makerUser?.payout_profile?.contact?.channel || null,
-          "payout_snapshot.maker.contact_value_enc": makerUser?.payout_profile?.contact?.value_enc || null,
-          "payout_snapshot.maker.payout_details_enc": makerUser?.payout_profile?.payout_details_enc || null,
+          "payout_snapshot.maker.rail": makerProfile?.rail || null,
+          "payout_snapshot.maker.country": makerProfile?.country || null,
+          "payout_snapshot.maker.contact_channel": makerProfile?.contact?.channel || null,
+          "payout_snapshot.maker.contact_value_enc": makerProfile?.contact?.value_enc || null,
+          "payout_snapshot.maker.payout_details_enc": makerProfile?.payout_details_enc || null,
           "payout_snapshot.maker.fingerprint_hash_at_lock":
-            makerUser?.payout_profile?.fingerprint?.hash || null,
+            makerProfile?.fingerprint?.hash || null,
           "payout_snapshot.maker.profile_version_at_lock":
-            makerUser?.payout_profile?.fingerprint?.version ?? 0,
+            makerProfile?.fingerprint?.version ?? 0,
+          "payout_snapshot.maker.bank_change_count_7d_at_lock": makerUser?.bankChangeCount7d ?? null,
+          "payout_snapshot.maker.bank_change_count_30d_at_lock": makerUser?.bankChangeCount30d ?? null,
+          "payout_snapshot.maker.last_bank_change_at_at_lock": makerUser?.lastBankChangeAt ?? null,
 
-          "payout_snapshot.taker.rail": takerUser?.payout_profile?.rail || null,
-          "payout_snapshot.taker.country": takerUser?.payout_profile?.country || null,
-          "payout_snapshot.taker.contact_channel": takerUser?.payout_profile?.contact?.channel || null,
-          "payout_snapshot.taker.contact_value_enc": takerUser?.payout_profile?.contact?.value_enc || null,
-          "payout_snapshot.taker.payout_details_enc": takerUser?.payout_profile?.payout_details_enc || null,
+          "payout_snapshot.taker.rail": takerProfile?.rail || null,
+          "payout_snapshot.taker.country": takerProfile?.country || null,
+          "payout_snapshot.taker.contact_channel": takerProfile?.contact?.channel || null,
+          "payout_snapshot.taker.contact_value_enc": takerProfile?.contact?.value_enc || null,
+          "payout_snapshot.taker.payout_details_enc": takerProfile?.payout_details_enc || null,
           "payout_snapshot.taker.fingerprint_hash_at_lock":
-            takerUser?.payout_profile?.fingerprint?.hash || null,
+            takerProfile?.fingerprint?.hash || null,
           "payout_snapshot.taker.profile_version_at_lock":
-            takerUser?.payout_profile?.fingerprint?.version ?? 0,
+            takerProfile?.fingerprint?.version ?? 0,
+          "payout_snapshot.taker.bank_change_count_7d_at_lock": takerUser?.bankChangeCount7d ?? null,
+          "payout_snapshot.taker.bank_change_count_30d_at_lock": takerUser?.bankChangeCount30d ?? null,
+          "payout_snapshot.taker.last_bank_change_at_at_lock": takerUser?.lastBankChangeAt ?? null,
           "payout_snapshot.captured_at": lockedAt,
           "payout_snapshot.snapshot_delete_at": new Date(lockedAt.getTime() + 30 * 24 * 3600 * 1000),
+          "payout_snapshot.is_complete": snapshotComplete,
+          "payout_snapshot.incomplete_reason": incompleteReason,
         },
       }
     );
+
+    if (!snapshotComplete) {
+      logger.error(
+        `[Worker] LOCKED snapshot incomplete: trade=${tradeIdNum} reason=${incompleteReason}`
+      );
+    }
   }
 
   async _onPaymentReported(event) {
     const { tradeId, ipfsHash, timestamp } = event.args;
     const reportedAt = await this._getEventDate(event, timestamp);
-    const safeHash = CID_PATTERN.test(ipfsHash) ? ipfsHash : null;
+    const canonicalHash = _toStr(ipfsHash);
 
     await Trade.findOneAndUpdate(
       {
@@ -1073,7 +1101,7 @@ class EventWorker {
       {
         $set: {
           status: "PAID",
-          "evidence.ipfs_receipt_hash": safeHash,
+          "evidence.ipfs_receipt_hash": canonicalHash,
           "evidence.receipt_timestamp": reportedAt,
           "timers.paid_at": reportedAt,
         },
