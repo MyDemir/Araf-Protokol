@@ -291,24 +291,29 @@ router.post("/refresh", authLimiter, async (req, res) => {
       return res.status(401).json({ error: "Refresh token bulunamadı." });
     }
 
-    let wallet = req.body?.wallet;
+    let expectedWallet = req.body?.wallet;
 
-    // [TR] Body'de wallet yoksa JWT cookie payload'ından fallback dene.
-    if (!wallet) {
-      wallet = _tryDecodeWalletFromJwtCookie(req.cookies?.araf_jwt);
+    // [TR] Body wallet opsiyoneldir.
+    //      Gönderilirse formatı doğrulanır ve token payload wallet ile eşleşmesi beklenir.
+    //      Gönderilmezse authority doğrudan refresh token payload'ından alınır.
+    if (expectedWallet == null || expectedWallet === "") {
+      expectedWallet = _tryDecodeWalletFromJwtCookie(req.cookies?.araf_jwt);
     }
 
-    if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet)) {
-      return res.status(400).json({ error: "Wallet adresi belirlenemedi." });
+    if (expectedWallet && !/^0x[a-fA-F0-9]{40}$/.test(expectedWallet)) {
+      return res.status(400).json({ error: "Wallet formatı geçersiz." });
     }
 
-    const result = await rotateRefreshToken(wallet.toLowerCase(), refreshToken);
+    const result = await rotateRefreshToken(
+      refreshToken,
+      expectedWallet ? expectedWallet.toLowerCase() : null
+    );
 
     res.cookie("araf_jwt", result.token, _getJwtCookieOptions());
     res.cookie("araf_refresh", result.refreshToken, _getRefreshCookieOptions());
 
-    logger.info(`[Auth] Token yenilendi: ${wallet}`);
-    return res.json({ wallet: wallet.toLowerCase() });
+    logger.info(`[Auth] Token yenilendi: ${result.wallet}`);
+    return res.json({ wallet: result.wallet });
   } catch (err) {
     logger.warn(`[Auth] Refresh başarısız: ${err.message}`);
     res.clearCookie("araf_jwt", { ...COOKIE_OPTIONS_BASE, path: "/" });

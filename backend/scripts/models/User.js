@@ -122,7 +122,6 @@ const userSchema = new mongoose.Schema(
 );
 
 // ── Index'ler ─────────────────────────────────────────────────────────────────
-userSchema.index({ wallet_address: 1 });
 userSchema.index({ is_banned: 1 });
 userSchema.index({ lastBankChangeAt: -1 });
 

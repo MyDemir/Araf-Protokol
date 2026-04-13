@@ -25,7 +25,13 @@ const logger = require("../utils/logger");
 const { getRedisClient } = require("../config/redis");
 
 const CONFIG_CACHE_KEY = "cache:protocol_config:v3";
-const CONFIG_CACHE_TTL = Number(process.env.CONFIG_CACHE_TTL_SECONDS || 3600);
+function _parseCacheTtlSeconds(rawValue) {
+  const parsed = Number.parseInt(String(rawValue ?? ""), 10);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  return 3600;
+}
+
+const CONFIG_CACHE_TTL = _parseCacheTtlSeconds(process.env.CONFIG_CACHE_TTL_SECONDS);
 
 const CONFIG_ABI = [
   "function MAKER_BOND_TIER0_BPS() view returns (uint256)",
@@ -241,4 +247,8 @@ module.exports = {
   updateCachedFeeConfig,
   updateCachedCooldownConfig,
   updateCachedTokenConfig,
+  __testables: {
+    _parseCacheTtlSeconds,
+    CONFIG_CACHE_TTL,
+  },
 };

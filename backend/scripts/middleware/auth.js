@@ -212,7 +212,20 @@ function requirePIIToken(req, res, next) {
       return res.status(403).json({ error: "Token bu işlem için geçerli değil." });
     }
 
-    req.wallet = payload.sub.toLowerCase();
+    const tokenWallet = payload.sub.toLowerCase();
+
+    // [TR] PII bearer token tek başına session authority üretmez.
+    //      Cookie session ile doğrulanan wallet ile birebir eşleşmelidir.
+    // [EN] PII bearer token is not session authority by itself.
+    //      It must match the cookie-authenticated wallet.
+    if (!req.wallet || req.wallet.toLowerCase() !== tokenWallet) {
+      logger.warn(
+        `[PIIAuth] Session/token wallet mismatch: session=${req.wallet || "none"} token=${tokenWallet}`
+      );
+      return res.status(403).json({ error: "PII token oturum cüzdanıyla eşleşmiyor." });
+    }
+
+    req.piiWallet = tokenWallet;
     next();
   } catch (err) {
     logger.warn(`[PIIAuth] Token doğrulaması başarısız: ${err.message}`);

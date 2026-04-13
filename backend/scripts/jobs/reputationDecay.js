@@ -27,8 +27,17 @@ const DECAY_ABI = [
 ];
 
 const CLEAN_SLATE_DAYS = 180;
-const DEFAULT_CANDIDATE_LIMIT = Number(process.env.REPUTATION_DECAY_CANDIDATE_LIMIT || 250);
-const DEFAULT_TX_LIMIT = Number(process.env.REPUTATION_DECAY_TX_LIMIT || 50);
+function _parsePositiveInt(rawValue, fallback) {
+  const parsed = Number.parseInt(String(rawValue ?? ""), 10);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  return fallback;
+}
+
+const DEFAULT_CANDIDATE_LIMIT = _parsePositiveInt(
+  process.env.REPUTATION_DECAY_CANDIDATE_LIMIT,
+  250
+);
+const DEFAULT_TX_LIMIT = _parsePositiveInt(process.env.REPUTATION_DECAY_TX_LIMIT, 50);
 
 let relayerWallet = null;
 let decayContract = null;
@@ -126,4 +135,11 @@ async function runReputationDecay() {
   }
 }
 
-module.exports = { runReputationDecay };
+module.exports = {
+  runReputationDecay,
+  __testables: {
+    _parsePositiveInt,
+    DEFAULT_CANDIDATE_LIMIT,
+    DEFAULT_TX_LIMIT,
+  },
+};
