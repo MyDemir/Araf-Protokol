@@ -1938,6 +1938,32 @@ describe("ArafEscrow V3", function () {
       expect(order.makerFeeBpsSnapshot).to.equal(25n);
     });
 
+    it("setFeeConfig rejects values above economic cap (10000 bps)", async () => {
+      await expect(escrow.connect(owner).setFeeConfig(10001, 0))
+        .to.be.revertedWithCustomError(escrow, "FeeBpsExceedsEconomicLimit");
+      await expect(escrow.connect(owner).setFeeConfig(0, 10001))
+        .to.be.revertedWithCustomError(escrow, "FeeBpsExceedsEconomicLimit");
+    });
+
+    it("setFeeConfig rejects values above uint16 range", async () => {
+      await expect(escrow.connect(owner).setFeeConfig(65536, 0))
+        .to.be.revertedWithCustomError(escrow, "FeeBpsExceedsUint16");
+      await expect(escrow.connect(owner).setFeeConfig(0, 65536))
+        .to.be.revertedWithCustomError(escrow, "FeeBpsExceedsUint16");
+    });
+
+    it("10000 bps fee snapshots do not freeze release path", async () => {
+      await escrow.connect(owner).setFeeConfig(10000, 10000);
+      const tradeId = await setupTrade(2, TRADE_AMOUNT, "fee-cap-release");
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmFeeCap");
+
+      await expect(escrow.connect(maker).releaseFunds(tradeId)).to.not.be.reverted;
+
+      const trade = await escrow.getTrade(tradeId);
+      expect(trade.state).to.equal(4);
+    });
+
     it("setCooldownConfig updates getter values", async () => {
       await escrow.connect(owner).setCooldownConfig(8 * 3600, 9 * 3600);
       const { tier0TradeCooldown, tier1TradeCooldown } = await getCooldownConfig();

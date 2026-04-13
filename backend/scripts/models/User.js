@@ -38,7 +38,7 @@ const userSchema = new mongoose.Schema(
     payout_profile: {
       rail: {
         type: String,
-        enum: ["TR_IBAN", "US_ACH", "SEPA_IBAN", "UK_FPS", "SWIFT", null],
+        enum: ["TR_IBAN", "US_ACH", "SEPA_IBAN", null],
         default: null,
       },
       country: { type: String, default: null, uppercase: true },
