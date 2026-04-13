@@ -145,6 +145,34 @@ const PROFILE_SCHEMA = Joi.object({
   bic: Joi.string().allow("").required(),
   bankName: Joi.string().max(120).allow("").required(),
 }).custom((value, helpers) => {
+  const hasAnyBankPayoutField = Boolean(
+    value.bankOwner ||
+      value.iban ||
+      value.routingNumber ||
+      value.accountNumber ||
+      value.accountType ||
+      value.bic ||
+      value.bankName
+  );
+
+  if (hasAnyBankPayoutField && !value.rail) {
+    return helpers.error("any.invalid", {
+      message: "Banka payout bilgisi gönderildiğinde rail zorunludur.",
+    });
+  }
+
+  if (hasAnyBankPayoutField && !value.country) {
+    return helpers.error("any.invalid", {
+      message: "Banka payout bilgisi gönderildiğinde country zorunludur.",
+    });
+  }
+
+  if (value.rail && !value.country) {
+    return helpers.error("any.invalid", {
+      message: "Rail gönderildiğinde country zorunludur.",
+    });
+  }
+
   if (!value.rail) return value;
 
   if (value.rail === "TR_IBAN" && value.iban && !/^TR\d{24}$/.test(value.iban)) {

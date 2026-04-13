@@ -54,7 +54,17 @@ function hasTakerNameSnapshot(trade) {
 }
 
 function hasCompletePayoutSnapshot(trade) {
-  return trade?.payout_snapshot?.is_complete === true;
+  const completionFlag = trade?.payout_snapshot?.is_complete;
+  if (completionFlag === true) return true;
+  if (completionFlag === false) return false;
+
+  // [TR] Geriye dönük uyumluluk: legacy trade'lerde `is_complete` alanı yoktu.
+  //      Flag yoksa, route'un zaten kontrol ettiği gerekli snapshot alanının varlığını yeterli kabul ederiz.
+  // [EN] Backward compatibility: legacy trades may not have `is_complete`.
+  //      When the flag is absent, we keep legacy trades functional if required encrypted snapshot data exists.
+  const hasMaker = hasMakerPIISnapshot(trade);
+  const hasTaker = hasTakerNameSnapshot(trade);
+  return hasMaker || hasTaker;
 }
 
 // ─── GET /api/pii/my ─────────────────────────────────────────────────────────
