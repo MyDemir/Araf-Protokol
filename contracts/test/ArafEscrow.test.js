@@ -39,6 +39,7 @@ describe("ArafEscrow V3", function () {
   const TEN_DAYS       = 10 * 24 * 3600;
   const THIRTY_DAYS    = 30 * 24 * 3600;
   const SIXTY_DAYS     = 60 * 24 * 3600;
+  const NINETY_DAYS    = 90 * 24 * 3600;
   const BPS_DENOM      = 10000n;
 
   let escrow, mockUSDT;
@@ -1003,13 +1004,13 @@ describe("ArafEscrow V3", function () {
       ).to.not.be.reverted;
     });
 
-    it("reputation decay resets consecutive bans after 180 clean days", async () => {
+    it("reputation decay resets consecutive bans after 90 clean days", async () => {
       await giveBanToMaker();
 
       const [, , bannedUntil, consecutiveBefore] = await escrow.getReputation(maker.address);
       expect(consecutiveBefore).to.equal(1n);
 
-      const cleanSlate = 180 * 24 * 3600;
+      const cleanSlate = NINETY_DAYS;
       await time.increase((bannedUntil - BigInt(await time.latest())) + BigInt(cleanSlate) + 3601n);
 
       await expect(escrow.decayReputation(maker.address))
@@ -1028,7 +1029,7 @@ describe("ArafEscrow V3", function () {
       await giveBanToMaker();
       const [, , bannedUntil] = await escrow.getReputation(maker.address);
 
-      await time.increase((bannedUntil - BigInt(await time.latest())) + BigInt(170 * 24 * 3600));
+      await time.increase((bannedUntil - BigInt(await time.latest())) + BigInt(89 * 24 * 3600));
       await expect(escrow.decayReputation(maker.address))
         .to.be.revertedWithCustomError(escrow, "CleanPeriodNotElapsed");
     });
@@ -1047,7 +1048,7 @@ describe("ArafEscrow V3", function () {
       let [, , bannedUntil, , effectiveTierBefore] = await escrow.getReputation(maker.address);
       expect(effectiveTierBefore).to.equal(3);
 
-      await time.increase((bannedUntil - BigInt(await time.latest())) + BigInt(180 * 24 * 3600) + 3601n);
+      await time.increase((bannedUntil - BigInt(await time.latest())) + BigInt(NINETY_DAYS) + 3601n);
       await escrow.decayReputation(maker.address);
 
       const [, , , , effectiveTierAfter] = await escrow.getReputation(maker.address);
@@ -1938,10 +1939,12 @@ describe("ArafEscrow V3", function () {
       expect(order.makerFeeBpsSnapshot).to.equal(25n);
     });
 
-    it("setFeeConfig rejects values above economic cap (10000 bps)", async () => {
-      await expect(escrow.connect(owner).setFeeConfig(10001, 0))
+    it("setFeeConfig allows boundary 2000/2000 and rejects values above economic cap (2000 bps)", async () => {
+      await expect(escrow.connect(owner).setFeeConfig(2000, 2000))
+        .to.not.be.reverted;
+      await expect(escrow.connect(owner).setFeeConfig(2001, 0))
         .to.be.revertedWithCustomError(escrow, "FeeBpsExceedsEconomicLimit");
-      await expect(escrow.connect(owner).setFeeConfig(0, 10001))
+      await expect(escrow.connect(owner).setFeeConfig(0, 2001))
         .to.be.revertedWithCustomError(escrow, "FeeBpsExceedsEconomicLimit");
     });
 
@@ -1952,8 +1955,8 @@ describe("ArafEscrow V3", function () {
         .to.be.revertedWithCustomError(escrow, "FeeBpsExceedsUint16");
     });
 
-    it("10000 bps fee snapshots do not freeze release path", async () => {
-      await escrow.connect(owner).setFeeConfig(10000, 10000);
+    it("2000 bps fee snapshots do not freeze release path", async () => {
+      await escrow.connect(owner).setFeeConfig(2000, 2000);
       const tradeId = await setupTrade(2, TRADE_AMOUNT, "fee-cap-release");
       await escrow.connect(taker).lockEscrow(tradeId);
       await escrow.connect(taker).reportPayment(tradeId, "QmFeeCap");

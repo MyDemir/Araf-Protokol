@@ -219,7 +219,15 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     uint256 public constant DUST_LIMIT = 0.001 ether;
 
     uint256 private constant BPS_DENOMINATOR  = 10_000;
+    // [TR] Fee modeli (taker/maker ayrı + snapshot) korunur.
+    //      Bu sabit "model"i değiştirmez; yalnız owner'ın ayarlayabileceği
+    //      ekonomik tavanı daraltır (admin authority restriction).
+    // [EN] The fee model (separate taker/maker + snapshots) stays unchanged.
+    //      This constant does not alter the model itself; it only narrows
+    //      the owner-adjustable economic ceiling (admin authority restriction).
+    uint256 private constant MAX_FEE_CONFIG_BPS = 2_000;
     uint256 private constant SECONDS_PER_HOUR = 3_600;
+    uint256 private constant REPUTATION_DECAY_CLEAN_PERIOD = 90 days;
 
     // ═══════════════════════════════════════════════════
     //  EIP-712 TYPEHASH
@@ -1339,7 +1347,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     function decayReputation(address _wallet) external nonReentrant {
         Reputation storage rep = reputation[_wallet];
         if (rep.bannedUntil == 0) revert NoPriorBanHistory();
-        if (block.timestamp <= rep.bannedUntil + 180 days) revert CleanPeriodNotElapsed();
+        if (block.timestamp <= rep.bannedUntil + REPUTATION_DECAY_CLEAN_PERIOD) revert CleanPeriodNotElapsed();
         if (rep.consecutiveBans == 0) revert NoBansToReset();
 
         rep.consecutiveBans = 0;
@@ -1552,15 +1560,21 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      * @notice Güncel fee config'ini owner seviyesinde günceller.
      *         Yeni trade / yeni order açılışları yeni değerleri kullanır;
      *         mevcut aktif trade'ler fee snapshot ile korunur.
+     *         Not: Bu fonksiyon fee modelini değiştirmez (taker/maker ayrı kalır,
+     *         snapshot davranışı korunur). Yalnız admin authority daha dar bir
+     *         ekonomik üst sınırla sınırlandırılır.
      * @notice Updates the current fee config at owner level.
      *         New trades / new orders use the new values;
      *         existing active trades remain protected by fee snapshots.
+     *         Note: This does not change the fee model (separate taker/maker,
+     *         snapshots preserved). It only restricts admin authority with a
+     *         tighter economic upper bound.
      */
     function setFeeConfig(uint256 _takerFeeBps, uint256 _makerFeeBps) external onlyOwner {
         if (_takerFeeBps > type(uint16).max) revert FeeBpsExceedsUint16(_takerFeeBps);
         if (_makerFeeBps > type(uint16).max) revert FeeBpsExceedsUint16(_makerFeeBps);
-        if (_takerFeeBps > BPS_DENOMINATOR) revert FeeBpsExceedsEconomicLimit(_takerFeeBps);
-        if (_makerFeeBps > BPS_DENOMINATOR) revert FeeBpsExceedsEconomicLimit(_makerFeeBps);
+        if (_takerFeeBps > MAX_FEE_CONFIG_BPS) revert FeeBpsExceedsEconomicLimit(_takerFeeBps);
+        if (_makerFeeBps > MAX_FEE_CONFIG_BPS) revert FeeBpsExceedsEconomicLimit(_makerFeeBps);
 
         takerFeeBps = _takerFeeBps;
         makerFeeBps = _makerFeeBps;
