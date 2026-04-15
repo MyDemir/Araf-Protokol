@@ -94,6 +94,23 @@ function App() {
     USDC: import.meta.env.VITE_USDC_ADDRESS || '',
   };
   const [makerToken, setMakerToken] = useState('USDT');
+  const [profileTab, setProfileTab] = useState('hesabim');
+  const [lang, setLang] = useState('TR');
+  const [loadingText, setLoadingText] = useState('');
+  const [isContractLoading, setIsContractLoading] = useState(false);
+  const [connectedWallet, setConnectedWallet] = useState(null);
+  const [filterTier1, setFilterTier1] = useState(false);
+  const [filterToken, setFilterToken] = useState('ALL');
+  const [searchAmount, setSearchAmount] = useState('');
+  const [toast, setToast] = useState(null);
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [activeTradesFilter, setActiveTradesFilter] = useState('all');
+  const [feedbackRating, setFeedbackRating] = useState(0);
+  const [feedbackCategory, setFeedbackCategory] = useState('');
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackError, setFeedbackError] = useState('');
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
 
   // ═══════════════════════════════════════════
   // 2. WEB3 BAĞLANTI VE KONTRAT HOOK'LARI
@@ -105,6 +122,10 @@ function App() {
   const { signMessageAsync } = useSignMessage();
   const chainId = useChainId();
   const publicClient = usePublicClient();
+
+  React.useEffect(() => {
+    setConnectedWallet(address?.toLowerCase?.() || null);
+  }, [address]);
 
   // [TR] Tüm kontrat metodları tek bir hook instance'ından alınır
   // [EN] All contract methods come from a single hook instance
@@ -349,7 +370,6 @@ function App() {
         }
         setIsAuthenticated(true);
         setAuthenticatedWallet(verifiedWallet);
-        authenticatedWalletRef.current = verifiedWallet;
         showToast(lang === 'TR' ? 'Sisteme başarıyla giriş yapıldı! 🚀' : 'Successfully signed in! 🚀', 'success');
       } else {
         const data = await verifyRes.json().catch(() => ({}));
