@@ -193,7 +193,7 @@ The 5-level system solves the **“Cold Start” problem**: new wallets cannot a
 
 > Limits are calculated **entirely in crypto assets (USDT/USDC)** — fiat exchange rates are not considered when determining limits, in order to prevent rate manipulation.
 
-The contract does not trust frontend or backend assumptions; tier access and bond logic are enforced directly on-chain. In `createSellOrder()` / `createBuyOrder()`, order owner tier rules are enforced; in `fillSellOrder()` / `fillBuyOrder()`, the filler’s effective tier must satisfy child-trade requirements. Maximum escrow amounts for Tiers 0–3 are fixed in the contract; Tier 4 is intentionally left unlimited. The clean reputation discount (`GOOD_REP_DISCOUNT_BPS`) and bad reputation penalty (`BAD_REP_PENALTY_BPS`) are also applied inside the contract to maker/taker bond calculations.
+The contract does not trust frontend or backend assumptions; tier access and bond logic are enforced directly on-chain. In `createEscrow()`, the maker cannot exceed the requested tier; in `lockEscrow()`, the taker’s effective tier must satisfy the relevant trade tier. Maximum escrow amounts for Tiers 0–3 are fixed in the contract; Tier 4 is intentionally left unlimited. The clean reputation discount (`GOOD_REP_DISCOUNT_BPS`) and bad reputation penalty (`BAD_REP_PENALTY_BPS`) are also applied inside the contract to maker/taker bond calculations.
 
 ### Effective Tier Calculation
 
@@ -226,7 +226,7 @@ These modifiers are applied on top of the base bond rates for Tiers 1–4; **the
 
 ## 5. Anti-Sybil Shield
 
-Four on-chain filters run before every child-trade fill entry (`fillSellOrder()` / `fillBuyOrder()`). The backend **cannot bypass or invalidate** them.
+Four on-chain filters run before every `lockEscrow()` call. The backend **cannot bypass or invalidate** them.
 
 | Filter | Rule | Purpose |
 |--------|------|---------|
@@ -235,15 +235,15 @@ Four on-chain filters run before every child-trade fill entry (`fillSellOrder()`
 | 💰 **Dust Limit** | Native balance ≥ `0.001 ether` | Blocks zero-balance disposable wallets |
 | ⏱️ **Tier 0 / 1 Cooldown** | Maximum 1 trade per 4 hours | Limits bot-scale spam attacks in low-bond tiers |
 | 🔔 **Challenge Ping Cooldown** | After `PAID`, `pingTakerForChallenge` requires a wait of ≥ 24 hours | Prevents erroneous challenges and instant harassment |
-| 🔒 **Ban Gate (taker role only)** | ban gate is enforced on order-fill entry (`fillSellOrder()` / `fillBuyOrder()`) | Prevents a banned wallet from entering a new trade as buyer; does not by itself freeze maker role or current trade closures |
+| 🔒 **Ban Gate (taker role only)** | `notBanned` is enforced only at `lockEscrow()` entry | Prevents a banned wallet from entering a new trade as buyer; does not by itself freeze maker role or current trade closures |
 
 <details>
 <summary>📄 Related Contract Functions</summary>
 
 | Function | Description |
 |----------|-------------|
-| `registerWallet()` | Allows a wallet to begin the 7-day “wallet aging” process. It is a mandatory prerequisite for the Anti-Sybil check inside order-fill entry (`fillSellOrder()` / `fillBuyOrder()`). |
-| `antiSybilCheck(address)` | An informational `view` helper that returns `aged`, `funded`, and `cooldownOk` fields. It exists for UX and pre-notification; the binding decision is still made inside order-fill entry (`fillSellOrder()` / `fillBuyOrder()`). |
+| `registerWallet()` | Allows a wallet to begin the 7-day “wallet aging” process. It is a mandatory prerequisite for the Anti-Sybil check inside `lockEscrow()`. |
+| `antiSybilCheck(address)` | An informational `view` helper that returns `aged`, `funded`, and `cooldownOk` fields. It exists for UX and pre-notification; the binding decision is still made inside `lockEscrow()`. |
 | `getCooldownRemaining(address)` | Returns the remaining time in the cooldown window. Useful to tell the user “how long do I need to wait?”; it does not itself enforce the cooldown rule. |
 
 </details>
@@ -259,14 +259,15 @@ sequenceDiagram
     participant T as 👤 Taker
     participant B as 🖥️ Backend
 
-    M->>SC: createSellOrder(...) or createBuyOrder(...)
-    SC-->>SC: Parent order created → OPEN
-    SC-->>B: emit OrderCreated
+    M->>B: POST /api/listings (generate listing_ref)
+    B-->>M: listing_ref ✓
+    M->>SC: createEscrow(token, amount, tier, listingRef)
+    SC-->>SC: USDT + Maker Bond locked → OPEN
+    SC-->>B: emit EscrowCreated
+    B-->>B: Listing → moves to OPEN state
 
-    T->>SC: fillSellOrder(...) or fillBuyOrder(...) [Anti-Sybil passes]
-    SC-->>SC: Child trade created → OPEN/LOCKED lifecycle
-    SC-->>B: emit OrderFilled (orderId, tradeId)
-    B-->>SC: read getTrade(tradeId) for canonical child snapshot
+    T->>SC: lockEscrow(tradeId) [Anti-Sybil passes]
+    SC-->>SC: Taker Bond locked → LOCKED
 
     T->>B: POST /api/receipts/upload (encrypted receipt)
     B-->>T: SHA-256 hash
@@ -284,8 +285,8 @@ sequenceDiagram
 
 | State | Trigger | Description |
 |-------|---------|-------------|
-| `OPEN` | `createSellOrder()` / `createBuyOrder()` + `fill*Order()` | Parent order is open; child trade lifecycle starts with fill and then progresses on-chain. |
-| `LOCKED` | Child-trade lifecycle transition | Bond/party lock semantics are enforced in child-trade state after canonical fill. |
+| `OPEN` | Maker `createEscrow()` | Listing is live. USDT + Maker bond are locked on-chain. |
+| `LOCKED` | Taker `lockEscrow()` | Anti-Sybil passed. Taker bond is locked on-chain. |
 | `PAID` | Taker `reportPayment()` | IPFS receipt hash was recorded on-chain. The 48-hour timer has started. |
 | `RESOLVED` ✅ | Maker `releaseFunds()` | 0.2% fee taken. USDT → Taker. Bonds returned. |
 | `CANCELED` 🔄 | 2/2 EIP-712 signature | In `LOCKED`: full refund, no fee. In `PAID` or `CHALLENGED`: 0.2% protocol fee is deducted from remaining amounts, net amounts are refunded. In both cases, no reputation penalty is applied. |
@@ -299,22 +300,23 @@ sequenceDiagram
 | Maker fee | 0.1% | From the Maker’s bond refund |
 | **Total** | **0.2%** | On every successfully resolved trade |
 
-### Listings Alias vs Canonical Order Lifecycle
+### Listing Lifecycle
 
-1. Canonical creation starts on-chain with `createSellOrder()` / `createBuyOrder()`.
-2. Canonical matching starts on-chain with `fillSellOrder()` / `fillBuyOrder()`.
-3. Child trade authority is established by `OrderFilled` + `getTrade(tradeId)`.
-4. `POST /api/listings` and `DELETE /api/listings/:id` are deprecated compatibility endpoints (HTTP 410), not write authority.
-5. `GET /api/listings` is a read alias projected from V3 order mirrors for compatibility UI feeds.
+1. The Maker calls `POST /api/listings`.
+2. The backend verifies session wallet consistency and the on-chain `effectiveTier` value.
+3. The listing is first created in MongoDB as `PENDING`; `listing_ref` is derived deterministically.
+4. The frontend/contract flow emits the `EscrowCreated` event.
+5. The event listener moves the relevant record to `OPEN` and makes it visible in the marketplace.
+6. If the listing never lands on-chain, a cleanup job sweeps the record to `DELETED` after 12 hours.
 
-This keeps market UX fast while authority remains strictly on-chain; backend cannot fabricate authoritative market/trade state.
+This flow keeps the marketplace display fast while leaving authority on-chain; the backend cannot fabricate a “real” open listing on its own.
 
 ### Canonical Creation Path and Pause Semantics
 
-Canonical V3 path is **Parent Order → Child Trade** (`create*Order` then `fill*Order`).
+The only valid way to create an escrow in the contract is the call `createEscrow(token, amount, tier, listingRef)`. The legacy three-parameter overload now intentionally reverts with `InvalidListingRef()`. This prevents the creation of escrows that are anonymous or detached from the canonical linkage.
 
 Also, the `pause()` state does not freeze the entire system:
-- **New** `create*Order()` and `fill*Order()` calls stop.
+- **New** `createEscrow()` and `lockEscrow()` calls stop.
 - Closure paths for existing trades such as `releaseFunds`, `autoRelease`, `proposeOrApproveCancel`, and `burnExpired` remain open.
 
 This choice prevents new risk from being taken in emergency mode while also preventing live trades from remaining locked forever and trapping users indefinitely.
@@ -440,7 +442,7 @@ The economic outcome is determined inside the contract via `_executeCancel()`:
 
 **Trigger:** The first ban starts at the threshold `failedDisputes >= 2`. Once the threshold is crossed, **every new failure** triggers punishment again; the model is not “once every two failures,” but rather follows a logic where the `consecutiveBans` counter increases again with each additional failure.
 
-> The ban is applied **only to the Taker** — ban gate enforcement is checked at canonical fill entry (`fillSellOrder()` / `fillBuyOrder()`). That means a banned wallet cannot enter a new trade as buyer, but opening orders as maker or closing existing trades is not automatically blocked by this gate.
+> The ban is applied **only to the Taker** — the `notBanned` modifier exists only on `lockEscrow()`. That means a banned wallet cannot enter a new trade as a buyer, but opening listings as a maker or closing existing trades is not automatically blocked by this modifier.
 
 | Ban Count | Duration | Tier Effect |
 |-----------|----------|-------------|
@@ -449,7 +451,7 @@ The economic outcome is determined inside the contract via `_executeCancel()`:
 | 3rd ban | 120 days | `maxAllowedTier −1` |
 | Nth ban | `30 × 2^(N−1)` days (max. 365) | `maxAllowedTier −1` on every ban (floor: Tier 0) |
 
-> **Tier Ceiling Enforcement:** If the requested tier in `createSellOrder()` / `createBuyOrder()` exceeds the user’s `maxAllowedTier`, the transaction reverts. For example, if a Tier 3 user receives their second ban, `maxAllowedTier` drops to 2, and they can no longer open Tier 3 or Tier 4 orders.
+> **Tier Ceiling Enforcement:** If the requested tier in `createEscrow()` exceeds the user’s `maxAllowedTier`, the transaction reverts. For example, if a Tier 3 user receives their second ban, `maxAllowedTier` drops to 2, and they can no longer open Tier 3 or Tier 4 listings.
 
 ### Clean Slate Rule (`decayReputation`)
 
@@ -561,7 +563,7 @@ flowchart LR
 - **Safe Checkpoint:** Only blocks for which all events have been successfully acked are checkpointed
 - **DLQ:** Failed events are kept in the Redis list `worker:dlq`; exponential backoff (max. 30 min)
 - **Poison Event Policy:** Not auto-deleted — remains visible for manual inspection
-- **Authoritative Linkage:** Child-trade linkage is canonicalized with `OrderFilled(orderId, tradeId)` + `getTrade(tradeId)`; no heuristic fallback
+- **Authoritative Linkage:** `EscrowCreated` is matched only through canonical `listing_ref` — zero ref is a critical integrity violation, with no heuristic fallback
 - **Atomic Binding:** `Listing.onchain_escrow_id` is bound only via atomic update
 - **Atomic Finalization:** `EscrowReleased` and `EscrowBurned` flows run through a Mongo transaction
 - **Mirror warning:** `EscrowReleased` and `EscrowCanceled` event names do not by themselves carry full economic context; backend analytics must interpret state and call context together.
@@ -727,7 +729,7 @@ server.close() → stop worker → close Mongo → Redis quit()
 | Function | Description |
 |----------|-------------|
 | `setTreasury(address)` | Callable only by owner; updates the treasury address where protocol fees and decay/burn revenue will flow. |
-| `setTokenConfig(address,bool,bool,bool)` | Manages token direction authority (`supported`, `allowSellOrders`, `allowBuyOrders`) for order entry. |
+| `setSupportedToken(address, bool)` | Manages the supported ERC-20 list; determines which tokens the create/lock surface is open for. |
 | `pause()` / `unpause()` | Stops or re-opens only new create/lock flows; does not lock the closure functions of existing trades. |
 
 > The treasury address is supplied at deployment, but it is not immutable; it can be updated by the owner. Therefore, the economic-flow trust model cannot rely only on an assumption of a fixed deploy-time address.
@@ -769,15 +771,15 @@ server.close() → stop worker → close Mongo → Redis quit()
 | Backend interpretation layer overtaking contract authority | Critical | Regular contract-authoritative review is required |
 | Mutual cancel narrative being mistaken for a batch model | High | Each side must call `proposeOrApproveCancel()` from its own account; off-chain signature coordination is not authority |
 | `EscrowReleased` / `EscrowCanceled` event names being assumed singular | Medium | The same event name is used across different closure paths |
-| Underestimating the owner governance surface | High | `setTreasury`, `setTokenConfig`, and `pause` directly affect economic flow |
+| Underestimating the owner governance surface | High | `setTreasury`, `setSupportedToken`, and `pause` directly affect economic flow |
 | Assuming `getReputation()` output covers full state | Medium | Additional reads are required for `hasTierPenalty`, `maxAllowedTier`, `consecutiveBans` |
 | Frontend EIP-712 domain drift risk | High | The hook defines the domain statically; if the contract changes, signatures become invalid |
-| Assuming a banned wallet is fully excluded from the protocol | Medium | The ban gate is enforced at canonical order-fill entry (`fillSellOrder` / `fillBuyOrder`) |
+| Assuming a banned wallet is fully excluded from the protocol | Medium | The ban gate is enforced only on taker-side `lockEscrow()` entry |
 | Assuming `decayReputation()` is full reputation amnesty | High | It resets only `consecutiveBans` and the tier ceiling penalty; the historical trace remains |
 | Assuming off-chain stored mutual-cancel signatures are always valid | Medium | `sigNonces` are global per wallet; another cancel flow may stale the signature |
 | Assuming `burnExpired()` can be called only by the parties | Medium | Once the timer expires, permissionless finalization is possible |
 | Assuming the treasury address is immutable | Medium | Owner can update it via `setTreasury()` |
-| Assuming the supported token set is static | Medium | `tokenConfigs(token)` can be changed by the owner at runtime |
+| Assuming the supported token set is static | Medium | `supportedTokens` can be changed by the owner at runtime |
 | Assuming terms modal / toast / banners are enforcement | Medium | These are UX guidance layers; the decision authority is the contract and backend guards |
 
 </details>
@@ -816,7 +818,7 @@ server.close() → stop worker → close Mongo → Redis quit()
 | 1st ban duration | 30 days | Escalation: `30 × 2^(N−1)` days |
 | Maximum ban duration | 365 days | Upper bound in contract |
 | Initial treasury address | Supplied at deployment, owner-updatable | `treasury` + `setTreasury()` |
-| Supported token direction map | Not static, owner-managed | `tokenConfigs` + `setTokenConfig()` |
+| Supported token list | Not static, owner-managed | `supportedTokens` + `setSupportedToken()` |
 
 **Build profile:** `Solidity 0.8.24 + optimizer(runs=200) + viaIR + evmVersion=cancun`
 
@@ -829,7 +831,7 @@ server.close() → stop worker → close Mongo → Redis quit()
 ### Deployment and Setup Security
 
 - In production, real token addresses must be supplied through env; if missing or zero-address, deployment hard fails.
-- After `setTokenConfig(token, supported, allowSellOrders, allowBuyOrders)`, ownership transfer must not be completed before values are re-read and verified on-chain.
+- After `setSupportedToken(token, true)`, ownership transfer must not be completed before the value is re-read and verified on-chain.
 - ABI copying and frontend env auto-write are developer ergonomics; they are not the core of the trust model.
 - The order of token support verification and ownership transfer, however, is directly part of the trust model.
 
@@ -871,7 +873,7 @@ timeline
 
 This layer has been updated in a way that steers users away from high-cost error flows without introducing arbitration.
 
-### App.jsx Data Flow (Non-Authoritative UI Orchestration)
+### App.jsx Data Flow
 
 ```mermaid
 flowchart TD
@@ -888,7 +890,7 @@ flowchart TD
         B3[fetchListings — market cards]
     end
 
-    subgraph APP ["🌐 App.jsx — UI Orchestrator (Not Authority)"]
+    subgraph APP ["🌐 App.jsx — Root Orchestrator"]
         P[Polling — interval-based re-sync]
         V[onVisibilityChange — tab refresh]
         TX[araf_pending_tx — recovery]
