@@ -1,4 +1,5 @@
 import React from 'react';
+import PIIDisplay from '../components/PIIDisplay';
 
 // [TR] App ana görünüm/render katmanı burada tutulur.
 // [EN] Main application view/render layer lives here.
