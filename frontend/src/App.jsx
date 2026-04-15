@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState } from 'react';
 import { useAccount, useConnect, useDisconnect, useSignMessage, useChainId, usePublicClient } from 'wagmi';
 import { SiweMessage } from 'siwe';
 import { formatUnits } from 'viem';
 import { useArafContract } from './hooks/useArafContract';
-import { useCountdown } from './hooks/useCountdown';
 import PIIDisplay from './components/PIIDisplay';
 import { buildAppViews } from './app/AppViews';
 import { EnvWarningBanner, buildAppModals } from './app/AppModals';
+import { useAppSessionData } from './app/useAppSessionData';
 
 // ─────────────────────────────────────────────
 // [TR] API URL: DEV modunda localhost, prod'da VITE_API_URL zorunlu
@@ -78,15 +78,6 @@ function App() {
   // [EN] Sidebar auto-close timer ref (resets on hover)
   const sidebarTimerRef = React.useRef(null);
 
-  // [TR] Geliştirme / demo amaçlı trade state toggle'ları
-  // [EN] Dev/demo trade state toggles
-  const [tradeState, setTradeState] = useState('LOCKED');
-  const [userRole, setUserRole] = useState('taker');
-  const [isBanned, setIsBanned] = useState(false);
-  const [cancelStatus, setCancelStatus] = useState(null);
-  const [chargebackAccepted, setChargebackAccepted] = useState(false);
-
-
   // [TR] Maker ilan formu state'leri
   // [EN] Maker listing form states
   const [makerTier, setMakerTier]         = useState(1);
@@ -147,867 +138,110 @@ function App() {
     getFirstSuccessfulTradeAt,
   } = useArafContract();
 
-  // ═══════════════════════════════════════════
-  // 3. KİMLİK DOĞRULAMA STATE'LERİ
-  //    Auth + wallet registration status
-  // ═══════════════════════════════════════════
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [authChecked, setAuthChecked] = useState(false);
-  const [authenticatedWallet, setAuthenticatedWallet] = useState(null);
-
-  // [TR] Cüzdan on-chain kayıt durumu — null: bilinmiyor, true/false: kayıtlı/değil
-  // [EN] Wallet on-chain registration status — null: unknown, true/false: registered/not
-  const [isWalletRegistered, setIsWalletRegistered] = useState(null);
-  const [isRegisteringWallet, setIsRegisteringWallet] = useState(false);
-
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const authenticatedWalletRef = React.useRef(null);
-  const pendingTxCheckedRef = React.useRef(false);
-  const autoTradeResumeRef = React.useRef(false);
-  const connectedWallet = address?.toLowerCase() || null;
-
-  // [TR] Kontrat işlemleri sırasında çift tıklamayı önleme ve iki aşamalı UX için
-  // [EN] Prevents double-clicks during contract tx; shows two-phase loading text
-  const [isContractLoading, setIsContractLoading] = useState(false);
-  const [loadingText, setLoadingText] = useState('');
-
-  // ═══════════════════════════════════════════
-  // 4. KULLANICI TERCİHLERİ VE VERİ STATE'LERİ
-  //    Language, filters, PII form, reputation
-  // ═══════════════════════════════════════════
-  const [lang, setLang] = useState('EN');
-  const [filterTier1, setFilterTier1] = useState(false);
-  const [filterToken, setFilterToken] = useState('ALL');
-  const [activeTradesFilter, setActiveTradesFilter] = useState('ALL');
-  const [searchAmount, setSearchAmount] = useState('');
-  const [profileTab, setProfileTab] = useState('ayarlar');
-
-  const [userReputation, setUserReputation] = useState(null);
-  const [piiBankOwner, setPiiBankOwner] = useState('');
-  const [piiIban, setPiiIban] = useState('');
-  const [piiTelegram, setPiiTelegram] = useState('');
-
-  const [tradeHistory, setTradeHistory] = useState([]);
-  const [historyLoading, setHistoryLoading] = useState(true);
-  const [tradeHistoryPage, setTradeHistoryPage] = useState(1);
-  const [tradeHistoryTotal, setTradeHistoryTotal] = useState(0);
-  const [tradeHistoryLimit, setTradeHistoryLimit] = useState(10);
-
-  // [TR] Aktif işlem ve ödeme kanıtı hash state'leri
-  // [EN] Active trade and payment proof hash states
-  const [activeTrade, setActiveTrade] = useState(null);
-  // [TR] Trade room render state'i için tekil kaynak:
-  //      activeTrade.state varsa önceliklidir; yoksa local tradeState kullanılır.
-  // [EN] Single source for trade-room render state:
-  //      prefer activeTrade.state, fallback to local tradeState.
-  const resolvedTradeState = activeTrade?.state || tradeState;
-  const [paymentIpfsHash, setPaymentIpfsHash] = useState('');
-
-  const [sybilStatus, setSybilStatus] = useState(null);
-  const [walletAgeRemainingDays, setWalletAgeRemainingDays] = useState(null);
-  const [takerName, setTakerName] = useState('');
-
-  const [isPaused, setIsPaused] = useState(false);
-  const [termsAccepted, setTermsAccepted] = useState(localStorage.getItem('araf_terms_accepted') === 'true');
-
-  const [feedbackText, setFeedbackText] = useState('');
-  const [feedbackRating, setFeedbackRating] = useState(0);
-  const [feedbackCategory, setFeedbackCategory] = useState('');
-  const [feedbackError, setFeedbackError] = useState('');
-  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
-
-  // [TR] Protokol istatistikleri — /api/stats endpoint'inden çekilir
-  // [EN] Protocol stats — fetched from /api/stats endpoint
-  const [protocolStats, setProtocolStats] = useState(null);
-  const [statsLoading, setStatsLoading]   = useState(true);
-  const [statsError, setStatsError] = useState(false);
-
-  // [TR] On-chain bond oranları — tier bazında maker/taker BPS değerleri
-  // [EN] On-chain bond rates — maker/taker BPS values per tier
-  const [onchainBondMap, setOnchainBondMap] = useState(null);
-  const [takerFeeBps, setTakerFeeBps] = useState(10);
-  const [tokenDecimalsMap, setTokenDecimalsMap] = useState({ USDT: DEFAULT_TOKEN_DECIMALS, USDC: DEFAULT_TOKEN_DECIMALS });
-
-  // [TR] CHALLENGED aşamasında teminat erime miktarları
-  // [EN] Collateral decay amounts in CHALLENGED phase
-  const [bleedingAmounts, setBleedingAmounts] = useState(null);
-
-  const [orders, setOrders] = useState([]);
-  const [activeEscrows, setActiveEscrows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
-
-  // ═══════════════════════════════════════════
-  // 5. VERİ ÇEKME: API ÇAĞRILARI VE POLLİNG
-  //    All data fetching effects and callbacks
-  // ═══════════════════════════════════════════
-
-  // [TR] Protokol yapılandırması (bond oranları) — uygulama başlangıcında bir kez çekilir
-  // [EN] Protocol config (bond rates) — fetched once on app start
-  useEffect(() => {
-    fetch(`${API_URL}/api/listings/config`, { credentials: 'include' })
-      .then(r => r.json())
-      .then(data => {
-        if (data.bondMap) setOnchainBondMap(data.bondMap);
-      })
-      .catch(err => console.error('[ProtocolConfig] fetch failed:', err));
-  }, []);
-
-  // [TR] Protokol ücretini kontrattan dinamik okur (fee drift önleme)
-  // [EN] Reads protocol fee dynamically from contract (prevents fee drift)
-  useEffect(() => {
-    if (!getTakerFeeBps) return;
-    const fetchFeeBps = async () => {
-      try {
-        const fee = await getTakerFeeBps();
-        setTakerFeeBps(Number(fee));
-      } catch (_) {}
-    };
-    fetchFeeBps();
-  }, [getTakerFeeBps]);
-
-  useEffect(() => {
-    const loadTokenDecimals = async () => {
-      try {
-        const [usdtDecimals, usdcDecimals] = await Promise.all([
-          SUPPORTED_TOKEN_ADDRESSES.USDT ? getTokenDecimals(SUPPORTED_TOKEN_ADDRESSES.USDT) : DEFAULT_TOKEN_DECIMALS,
-          SUPPORTED_TOKEN_ADDRESSES.USDC ? getTokenDecimals(SUPPORTED_TOKEN_ADDRESSES.USDC) : DEFAULT_TOKEN_DECIMALS,
-        ]);
-        setTokenDecimalsMap({
-          USDT: Number.isFinite(usdtDecimals) ? usdtDecimals : DEFAULT_TOKEN_DECIMALS,
-          USDC: Number.isFinite(usdcDecimals) ? usdcDecimals : DEFAULT_TOKEN_DECIMALS,
-        });
-      } catch {
-        setTokenDecimalsMap({ USDT: DEFAULT_TOKEN_DECIMALS, USDC: DEFAULT_TOKEN_DECIMALS });
-      }
-    };
-    if (getTokenDecimals) loadTokenDecimals();
-  }, [getTokenDecimals, SUPPORTED_TOKEN_ADDRESSES.USDT, SUPPORTED_TOKEN_ADDRESSES.USDC]);
-
-  // [TR] CHALLENGED aşamasında bleeding escrow decay miktarlarını her 30 sn'de günceller
-  // [EN] Updates bleeding escrow decay amounts every 30s during CHALLENGED phase
-  useEffect(() => {
-    if (resolvedTradeState !== 'CHALLENGED' || !activeTrade?.onchainId || !getCurrentAmounts) {
-      setBleedingAmounts(null);
-      return;
-    }
-    const fetchAmounts = async () => {
-      const result = await getCurrentAmounts(activeTrade.onchainId);
-      if (result) setBleedingAmounts(result);
-    };
-    fetchAmounts();
-    const interval = setInterval(fetchAmounts, 30000);
-    return () => clearInterval(interval);
-  }, [resolvedTradeState, activeTrade?.onchainId, getCurrentAmounts]);
-
-  const clearLocalSessionState = React.useCallback(() => {
-    setIsAuthenticated(false);
-    setAuthenticatedWallet(null);
-    authenticatedWalletRef.current = null;
-    setShowMakerModal(false);
-    setShowProfileModal(false);
-    setCurrentView('home');
-    setActiveTrade(null);
-    setActiveEscrows([]);
-    setCancelStatus(null);
-    setChargebackAccepted(false);
-    setPaymentIpfsHash('');
-    setIsLoggingIn(false);
-    setIsContractLoading(false);
-    setLoadingText('');
-    pendingTxCheckedRef.current = false;
-    autoTradeResumeRef.current = false;
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('araf_pending_tx');
-    }
-  }, []);
-
-  const bestEffortBackendLogout = React.useCallback(async () => {
-    try {
-      await fetch(`${API_URL}/api/auth/logout`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-    } catch (_) {}
-  }, []);
-
-  // [TR] HTTP-Only Cookie tabanlı kimlik doğrulamalı fetch wrapper.
-  //      401 alırsa refresh token ile yeniler, başarısızsa oturumu sona erdirir.
-  // [EN] Cookie-based authenticated fetch wrapper.
-  //      On 401, attempts token refresh; on failure, ends the session.
-  const authenticatedFetch = React.useCallback(async (url, options = {}) => {
-  const walletHeader = connectedWallet ? { 'x-wallet-address': connectedWallet } : {};
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-      ...walletHeader,
-    },
-    credentials: 'include',
+  const {
+    isAuthenticated,
+    setIsAuthenticated,
+    authChecked,
+    authenticatedWallet,
+    setAuthenticatedWallet,
+    isWalletRegistered,
+    setIsWalletRegistered,
+    isRegisteringWallet,
+    setIsRegisteringWallet,
+    isLoggingIn,
+    setIsLoggingIn,
+    userReputation,
+    piiBankOwner,
+    setPiiBankOwner,
+    piiIban,
+    setPiiIban,
+    piiTelegram,
+    setPiiTelegram,
+    tradeHistory,
+    historyLoading,
+    tradeHistoryPage,
+    setTradeHistoryPage,
+    tradeHistoryTotal,
+    tradeHistoryLimit,
+    activeTrade,
+    setActiveTrade,
+    resolvedTradeState,
+    paymentIpfsHash,
+    setPaymentIpfsHash,
+    sybilStatus,
+    walletAgeRemainingDays,
+    takerName,
+    isPaused,
+    protocolStats,
+    statsLoading,
+    statsError,
+    onchainBondMap,
+    takerFeeBps,
+    tokenDecimalsMap,
+    bleedingAmounts,
+    orders,
+    setOrders,
+    activeEscrows,
+    loading,
+    setLoading,
+    clearLocalSessionState,
+    bestEffortBackendLogout,
+    authenticatedFetch,
+    fetchStats,
+    fetchMyTrades,
+    tradeState,
+    setTradeState,
+    userRole,
+    setUserRole,
+    isBanned,
+    setIsBanned,
+    cancelStatus,
+    setCancelStatus,
+    chargebackAccepted,
+    setChargebackAccepted,
+    formatAddress,
+    filteredOrders,
+    activeEscrowCounts,
+    gracePeriodTimer,
+    bleedingTimer,
+    principalProtectionTimer,
+    makerPingTimer,
+    canMakerPing,
+    makerChallengePingTimer,
+    canMakerStartChallengeFlow,
+    makerChallengeTimer,
+    canMakerChallenge,
+  } = useAppSessionData({
+    address,
+    isConnected,
+    connector,
+    chainId,
+    publicClient,
+    currentView,
+    showProfileModal,
+    profileTab,
+    lang,
+    userRole,
+    isContractLoading,
+    connectedWallet,
+    setShowMakerModal,
+    setShowProfileModal,
+    setCurrentView,
+    showToast,
+    getTakerFeeBps,
+    getTokenDecimals,
+    getCurrentAmounts,
+    getWalletRegisteredAt,
+    getReputation,
+    getFirstSuccessfulTradeAt,
+    antiSybilCheck,
+    getCooldownRemaining,
+    getPaused,
+    SUPPORTED_TOKEN_ADDRESSES,
+    filterTier1,
+    filterToken,
+    searchAmount,
   });
-
-  // Wallet mismatch yalnız UI temizliği değildir.
-  // Önce backend session'ı kapatmayı dener, sonra local state temizlenir.
-  if (res.status === 409) {
-    try {
-      await fetch(`${API_URL}/api/auth/logout`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-    } catch (_) {
-      // Logout başarısız olsa bile local session yine temizlenir.
-    }
-
-    clearLocalSessionState();
-    showToast(
-      lang === 'TR'
-        ? 'Oturum cüzdan uyuşmazlığı nedeniyle sonlandırıldı. Lütfen yeniden giriş yapın.'
-        : 'Session ended due to wallet mismatch. Please sign in again.',
-      'error'
-    );
-    return res;
-  }
-
-  if (res.status !== 401) return res;
-
-  try {
-    const refreshRes = await fetch(`${API_URL}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ wallet: address?.toLowerCase() }),
-    });
-
-    if (!refreshRes.ok) {
-      console.warn('[Auth] Refresh token expired — re-login required');
-      clearLocalSessionState();
-      showToast(
-        lang === 'TR'
-          ? 'Oturumunuz sona erdi. Lütfen tekrar imzalayın.'
-          : 'Session expired. Please sign in again.',
-        'error'
-      );
-      return res;
-    }
-
-    return fetch(url, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-        ...walletHeader,
-      },
-      credentials: 'include',
-    });
-  } catch (err) {
-    console.error('[Auth] Refresh failed:', err);
-    return res;
-  }
-}, [connectedWallet, address, lang, clearLocalSessionState]);
-
-  // [TR] Sayfa yüklendiğinde mevcut oturumu kontrol eder
-  // [EN] Checks existing session on page load
-  useEffect(() => {
-  if (!isConnected || !connectedWallet) {
-    clearLocalSessionState();
-    setAuthChecked(true);
-    return;
-  }
-
-  fetch(`${API_URL}/api/auth/me`, {
-    credentials: 'include',
-    headers: { 'x-wallet-address': connectedWallet },
-  })
-    .then(async (res) => {
-      // Backend mismatch'i açıkça 409 ile bildirirse bunu sessizce restore etmeyiz.
-      if (res.status === 409) {
-        clearLocalSessionState();
-        setAuthChecked(true);
-        showToast(
-          lang === 'TR'
-            ? 'Oturum cüzdanınızla eşleşmiyor. Lütfen yeniden giriş yapın.'
-            : 'Session does not match your wallet. Please sign in again.',
-          'info'
-        );
-        return;
-      }
-
-      if (!res.ok) {
-        clearLocalSessionState();
-        setAuthChecked(true);
-        return;
-      }
-
-      const data = await res.json().catch(() => ({}));
-      const sessionWallet = data?.wallet?.toLowerCase?.() || null;
-
-      // Session yalnız exact wallet match varsa geçerli kabul edilir.
-      if (!sessionWallet) {
-        await bestEffortBackendLogout();
-        clearLocalSessionState();
-        setAuthChecked(true);
-        return;
-      }
-
-      if (sessionWallet !== connectedWallet) {
-        await bestEffortBackendLogout();
-        clearLocalSessionState();
-        showToast(
-          lang === 'TR'
-            ? 'Bağlı cüzdan oturumla eşleşmiyor. Lütfen yeniden imzalayın.'
-            : 'Connected wallet does not match session. Please sign in again.',
-          'info'
-        );
-        setAuthChecked(true);
-        return;
-      }
-
-      setIsAuthenticated(true);
-      setAuthenticatedWallet(sessionWallet);
-      authenticatedWalletRef.current = sessionWallet;
-      setAuthChecked(true);
-    })
-    .catch(() => {
-      clearLocalSessionState();
-      setAuthChecked(true);
-    });
-}, [isConnected, connectedWallet, clearLocalSessionState, bestEffortBackendLogout, lang]);
-
-  // [TR] Pazar yeri ilanlarını çeker — herkese açık endpoint
-  // [EN] Fetches marketplace listings — public endpoint
-  useEffect(() => {
-    const fetchListings = async () => {
-      try {
-        setLoading(true);
-        const res = await fetch(`${API_URL}/api/listings`, { credentials: 'include' });
-        const data = await res.json();
-        if (data.listings) {
-          setOrders(data.listings.map(l => ({
-            id:          l._id,
-            onchainId:   l.onchain_escrow_id || null,
-            makerFull:   l.maker_address,
-            maker:       formatAddress(l.maker_address),
-            crypto:      l.crypto_asset || 'USDT',
-            fiat:        l.fiat_currency || 'TRY',
-            rate:        l.exchange_rate,
-            min:         l.limits?.min || 0,
-            max:         l.limits?.max || 0,
-            tier:        l.tier_rules?.required_tier ?? 1,
-            bond:        (l.tier_rules?.maker_bond_pct ?? 0) + '%',
-            successRate: 100,
-            txCount:     0,
-          })));
-        }
-      } catch (err) {
-        console.error('Listing fetch error:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchListings();
-  }, [lang]);
-
-  // [TR] Protokol istatistiklerini çeker — retry butonu için useCallback ile sarıldı
-  // [EN] Fetches protocol stats — wrapped in useCallback for retry button access
-  const fetchStats = React.useCallback(async () => {
-    try {
-      setStatsError(false);
-      setStatsLoading(true);
-      const res  = await fetch(`${API_URL}/api/stats`, { credentials: 'include' });
-      const data = await res.json();
-      if (data.stats) setProtocolStats(data.stats);
-      else setStatsError(true);
-    } catch (err) {
-      console.error('Stats fetch error:', err);
-      setStatsError(true);
-    } finally {
-      setStatsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { fetchStats(); }, [fetchStats]);
-
-  // [TR] Cüzdan bağlandığında on-chain kayıt durumunu kontrol eder
-  // [EN] Checks on-chain wallet registration status when wallet connects
-  useEffect(() => {
-    if (!isConnected || !address || !getWalletRegisteredAt) {
-      setIsWalletRegistered(null);
-      setWalletAgeRemainingDays(null);
-      return;
-    }
-    const checkRegistration = async () => {
-      try {
-        const regAt = await getWalletRegisteredAt(address);
-        setIsWalletRegistered(regAt > 0n);
-        if (regAt > 0n) {
-          const nowSec = Math.floor(Date.now() / 1000);
-          const remainingSec = Math.max(0, Number(regAt) + 7 * 24 * 3600 - nowSec);
-          setWalletAgeRemainingDays(Math.ceil(remainingSec / (24 * 3600)));
-        } else {
-          setWalletAgeRemainingDays(null);
-        }
-      } catch {
-        setIsWalletRegistered(null);
-        setWalletAgeRemainingDays(null);
-      }
-    };
-    checkRegistration();
-  }, [isConnected, address, getWalletRegisteredAt]);
-
-  // [TR] Kullanıcının on-chain itibar verisini ve efektif tier'ını çeker
-  // [EN] Fetches user's on-chain reputation data and effective tier
-  useEffect(() => {
-    if (!isConnected || !address || !getReputation) {
-      setUserReputation(null);
-      return;
-    }
-    const fetchUserReputation = async () => {
-      try {
-        const repData = await getReputation(address);
-        const successful     = typeof repData.successful     !== 'undefined' ? repData.successful     : repData[0];
-        const failed         = typeof repData.failed         !== 'undefined' ? repData.failed         : repData[1];
-        const bannedUntil    = typeof repData.bannedUntil    !== 'undefined' ? repData.bannedUntil    : repData[2];
-        const consecutiveBans= typeof repData.consecutiveBans!== 'undefined' ? repData.consecutiveBans: repData[3];
-        const effectiveTier  = typeof repData.effectiveTier  !== 'undefined' ? repData.effectiveTier  : repData[4];
-        const firstTradeAt   = getFirstSuccessfulTradeAt ? await getFirstSuccessfulTradeAt(address) : 0n;
-
-        setUserReputation({
-          successful: Number(successful),
-          failed: Number(failed),
-          bannedUntil: Number(bannedUntil),
-          consecutiveBans: Number(consecutiveBans),
-          effectiveTier: Number(effectiveTier),
-          firstSuccessfulTradeAt: Number(firstTradeAt),
-        });
-        setIsBanned(Number(bannedUntil) > Date.now() / 1000);
-      } catch (err) {
-        console.error('Kullanıcı itibar verisi çekilemedi:', err);
-      }
-    };
-    fetchUserReputation();
-  }, [isConnected, address, getReputation, getFirstSuccessfulTradeAt]);
-
-  // [TR] Anti-Sybil cooldown ve bakiye durumunu her 30 sn'de kontrol eder
-  // [EN] Checks anti-sybil cooldown and balance status every 30s
-  useEffect(() => {
-    if (!isConnected || !address || !antiSybilCheck) return;
-    const fetchSybil = async () => {
-      const res = await antiSybilCheck(address);
-      if (res) {
-        const cooldownOk = typeof res.cooldownOk !== 'undefined' ? res.cooldownOk : res[2];
-        const remaining = (!cooldownOk && getCooldownRemaining) ? await getCooldownRemaining(address) : 0n;
-        setSybilStatus({
-          aged:              typeof res.aged !== 'undefined' ? res.aged : res[0],
-          funded:            typeof res.balanceOk   !== 'undefined' ? res.balanceOk   : (typeof res.funded       !== 'undefined' ? res.funded       : res[1]),
-          cooldownOk,
-          cooldownRemaining: Number(remaining),
-        });
-      }
-    };
-    fetchSybil();
-    const interval = setInterval(fetchSybil, 30000);
-    return () => clearInterval(interval);
-  }, [isConnected, address, antiSybilCheck, getCooldownRemaining]);
-
-  // [TR] Kontratın bakım/paused durumunu her 60 sn'de kontrol eder
-  // [EN] Checks contract paused/maintenance status every 60s
-  useEffect(() => {
-    if (!getPaused) return;
-    const fetchPausedStatus = async () => {
-      try {
-        const paused = await getPaused();
-        setIsPaused(paused);
-      } catch (err) {
-        console.error('Paused durumu çekilemedi:', err);
-      }
-    };
-    fetchPausedStatus();
-    const interval = setInterval(fetchPausedStatus, 60000);
-    return () => clearInterval(interval);
-  }, [getPaused]);
-
-  // [TR] Üçgen dolandırıcılık önlemi: trade odasında maker için taker'ın banka sahibi adını çeker
-  // [EN] Triangulation fraud prevention: fetches taker's bank owner name for maker in trade room
-  useEffect(() => {
-    if (currentView === 'tradeRoom' && ['LOCKED', 'PAID', 'CHALLENGED'].includes(resolvedTradeState) && userRole === 'maker' && activeTrade?.id && isAuthenticated) {
-      authenticatedFetch(`${API_URL}/api/pii/taker-name/${activeTrade.onchainId}`)
-        .then(res => res.json())
-        .then(data => { if (data.bankOwner) setTakerName(data.bankOwner); })
-        .catch(err => console.error('Taker name fetch error', err));
-    }
-  }, [currentView, resolvedTradeState, userRole, activeTrade?.onchainId, activeTrade?.id, isAuthenticated, authenticatedFetch]);
-
-  // [TR] Polling/geçiş yarışlarında tradeState ile activeTrade.state ayrışmasını kapatır.
-  // [EN] Prevents drift between tradeState and activeTrade.state during polling/races.
-  useEffect(() => {
-    if (activeTrade?.state && activeTrade.state !== tradeState) {
-      setTradeState(activeTrade.state);
-    }
-  }, [activeTrade?.state, tradeState]);
-
-  // [TR] Kullanıcının aktif işlemlerini çeker. İlk yüklemede ve polling'de kullanılır.
-  //      activeTrade'i her döngüde güncelleyerek zamanlayıcı tutarlılığını sağlar.
-  // [EN] Fetches user's active trades. Used on initial load and polling.
-  //      Updates activeTrade each cycle to keep timers consistent.
-  const fetchMyTrades = React.useCallback(async () => {
-  if (!isAuthenticated || !isConnected) {
-    setActiveEscrows([]);
-    return;
-  }
-
-  try {
-    const res = await authenticatedFetch(`${API_URL}/api/trades/my`);
-    const data = await res.json();
-
-    if (data.trades) {
-      setActiveEscrows(data.trades.map(t => {
-        const cryptoAmtRaw = t.financials?.crypto_amount || "0";
-        const cryptoAsset = t.financials?.crypto_asset || 'USDT';
-        const tokenDecimals = tokenDecimalsMap[cryptoAsset] ?? DEFAULT_TOKEN_DECIMALS;
-        const cryptoAmtNum = rawTokenToDisplayNumber(cryptoAmtRaw, tokenDecimals);
-        const rate = t.financials?.exchange_rate || 1;
-        const fiatAmt = cryptoAmtNum * rate;
-
-        return {
-          id: `#${t.onchain_escrow_id}`,
-          role: t.maker_address.toLowerCase() === address?.toLowerCase() ? 'maker' : 'taker',
-          counterparty: formatAddress(
-            t.maker_address.toLowerCase() === address?.toLowerCase()
-              ? (t.taker_address || '')
-              : t.maker_address
-          ),
-          state: t.status,
-          paidAt: t.timers?.paid_at,
-          lockedAt: t.timers?.locked_at,
-          pingedAt: t.timers?.pinged_at,
-          challengePingedAt: t.timers?.challenge_pinged_at,
-          challengedAt: t.timers?.challenged_at,
-          onchainId: t.onchain_escrow_id,
-          amount: `${formatTokenAmountFromRaw(cryptoAmtRaw, tokenDecimals)} ${cryptoAsset}`,
-          action: t.status === 'PAID'
-            ? (lang === 'TR' ? 'Onay Bekliyor' : 'Pending Approval')
-            : (lang === 'TR' ? 'İşlemde' : 'In Progress'),
-          rawTrade: {
-            id: t._id,
-            onchainId: t.onchain_escrow_id,
-            maker: formatAddress(t.maker_address),
-            makerFull: t.maker_address,
-            takerFull: t.taker_address,
-            crypto: cryptoAsset,
-            cryptoAmountRaw: cryptoAmtRaw,
-            cryptoAmountUi: cryptoAmtNum,
-            fiat: t.financials?.fiat_currency || 'TRY',
-            rate,
-            max: fiatAmt,
-            tokenDecimals,
-            paidAt: t.timers?.paid_at,
-            lockedAt: t.timers?.locked_at,
-            pingedAt: t.timers?.pinged_at,
-            challengePingedAt: t.timers?.challenge_pinged_at,
-            challengedAt: t.timers?.challenged_at,
-            cancelProposedBy: t.cancel_proposal?.proposed_by,
-            chargebackAcked: t.chargeback_ack?.acknowledged === true,
-          }
-        };
-      }));
-
-      // activeTrade polling ile canlı kalır.
-      // Pending-sync durumundaysa gerçek trade kaydı gelince canonical ID'ye geçilir.
-      setActiveTrade(prev => {
-        if (!prev) return prev;
-
-        const updated = data.trades.find(t => t.onchain_escrow_id === prev.onchainId);
-        if (!updated) return prev;
-
-        const wasPendingSync = prev._pendingBackendSync && !prev.id;
-        if (wasPendingSync && updated._id) {
-          showToast(
-            lang === 'TR' ? '✅ İşlem odası hazır!' : '✅ Trade room ready!',
-            'success'
-          );
-        }
-
-        if (updated.status !== prev.state) {
-          setTradeState(updated.status);
-        }
-        setChargebackAccepted(updated.chargeback_ack?.acknowledged === true);
-
-        return {
-          ...prev,
-          id: prev.id || updated._id,
-          _pendingBackendSync: false,
-          state: updated.status,
-          paidAt: updated.timers?.paid_at ?? prev.paidAt,
-          lockedAt: updated.timers?.locked_at ?? prev.lockedAt,
-          pingedAt: updated.timers?.pinged_at ?? prev.pingedAt,
-          challengePingedAt: updated.timers?.challenge_pinged_at ?? prev.challengePingedAt,
-          challengedAt: updated.timers?.challenged_at ?? prev.challengedAt,
-          cancelProposedBy: updated.cancel_proposal?.proposed_by ?? prev.cancelProposedBy,
-          chargebackAcked: updated.chargeback_ack?.acknowledged === true,
-        };
-      });
-    }
-  } catch (err) {
-    console.error('Trades fetch error:', err);
-  }
-}, [isAuthenticated, isConnected, address, lang, authenticatedFetch, tokenDecimalsMap]);
-
-  // [TR] cancelStatus'u activeEscrows'dan reaktif olarak hesaplar
-  // [EN] Reactively derives cancelStatus from activeEscrows
-  useEffect(() => {
-    if (!activeTrade?.onchainId || !activeEscrows.length) return;
-    const currentTrade = activeEscrows.find(e => e.onchainId === activeTrade.onchainId);
-    if (currentTrade?.rawTrade?.cancelProposedBy) {
-      const isMyProposal = currentTrade.rawTrade.cancelProposedBy.toLowerCase() === address?.toLowerCase();
-      setCancelStatus(isMyProposal ? 'proposed_by_me' : 'proposed_by_other');
-    } else {
-      setCancelStatus(prev => prev ? null : prev);
-    }
-  }, [activeTrade?.onchainId, activeEscrows, address]);
-
-  useEffect(() => { fetchMyTrades(); }, [fetchMyTrades]);
-
-  // [TR] Trade room açıkken aktif işlemleri 15 sn'de bir yeniler
-  // [EN] Refreshes active trades every 15s while trade room is open
-  useEffect(() => {
-    if (currentView !== 'tradeRoom' || !isAuthenticated || isContractLoading || document.hidden) return;
-    const interval = setInterval(fetchMyTrades, 15000);
-    return () => clearInterval(interval);
-  }, [currentView, isAuthenticated, isContractLoading, fetchMyTrades]);
-
-  // [TR] Sekme tekrar görünür olduğunda trade poll'ü hemen tetiklenir.
-  // [EN] Triggers immediate trade poll when the tab becomes visible again.
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    const onVisibilityChange = () => {
-      if (!document.hidden && currentView === "tradeRoom") {
-        fetchMyTrades();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, [isAuthenticated, currentView, fetchMyTrades]);
-
-  // [TR] Profil modalı açıldığında mevcut PII verilerini çekip formu doldurur
-  // [EN] Pre-fills PII form when profile modal opens
-  useEffect(() => {
-    if (!showProfileModal || !isAuthenticated) return;
-    const fetchMyPII = async () => {
-      try {
-        const res = await authenticatedFetch(`${API_URL}/api/pii/my`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.pii?.fields) {
-          setPiiBankOwner(data.pii.fields.account_holder_name || '');
-          setPiiIban(data.pii.fields.iban || '');
-          setPiiTelegram(
-            data.pii?.contact?.channel === 'telegram' ? (data.pii?.contact?.value || '') : ''
-          );
-        }
-      } catch (err) {
-        console.error('Mevcut PII verisi çekilemedi:', err);
-      }
-    };
-    if (profileTab === 'ayarlar') fetchMyPII();
-  }, [showProfileModal, profileTab, isAuthenticated, authenticatedFetch]);
-
-  // [TR] Geçmiş sekmesi açıkken işlem geçmişini çeker ve sayfalandırır
-  // [EN] Fetches and paginates trade history when history tab is active
-  useEffect(() => {
-    if (profileTab !== 'gecmis' || !isAuthenticated) return;
-    const fetchHistory = async (page) => {
-      try {
-        setHistoryLoading(true);
-        const res = await authenticatedFetch(`${API_URL}/api/trades/history?page=${page}&limit=5`);
-        if (!res.ok) throw new Error('History fetch failed');
-        const data = await res.json();
-        if (data.trades) {
-          setTradeHistory(data.trades);
-          setTradeHistoryTotal(data.total);
-          setTradeHistoryPage(data.page);
-          setTradeHistoryLimit(data.limit);
-        }
-      } catch (err) {
-        console.error('İşlem geçmişi çekilemedi:', err);
-        setTradeHistory([]);
-        setTradeHistoryTotal(0);
-      } finally {
-        setHistoryLoading(false);
-      }
-    };
-    fetchHistory(tradeHistoryPage);
-  }, [showProfileModal, profileTab, isAuthenticated, tradeHistoryPage, authenticatedFetch]);
-
-  // [TR] Cüzdan bağlantısı kesildiğinde oturumu sona erdirir
-  // [EN] Ends session when wallet disconnects
-  useEffect(() => {
-    if (!isConnected) {
-      clearLocalSessionState();
-    }
-  }, [isConnected, clearLocalSessionState]);
-
-  // [TR] Yenileme sonrası bekleyen tx hash'i varsa sonucu yakalamayı dener.
-  // [EN] On refresh, tries to recover status of a pending tx hash from localStorage.
-  useEffect(() => {
-    if (!publicClient || !isConnected) return;
-    if (pendingTxCheckedRef.current) return;
-    pendingTxCheckedRef.current = true;
-    const raw = localStorage.getItem('araf_pending_tx');
-    if (!raw) return;
-
-    let parsed = null;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      localStorage.removeItem('araf_pending_tx');
-      return;
-    }
-
-    if (!parsed?.hash) {
-      localStorage.removeItem('araf_pending_tx');
-      return;
-    }
-    const isValidHash = /^0x[a-fA-F0-9]{64}$/.test(parsed.hash);
-    if (!isValidHash) {
-      localStorage.removeItem('araf_pending_tx');
-      return;
-    }
-    if (parsed.createdAt && (Date.now() - Number(parsed.createdAt) > 24 * 3600 * 1000)) {
-      localStorage.removeItem('araf_pending_tx');
-      return;
-    }
-    if (parsed.chainId && Number(parsed.chainId) !== Number(chainId)) {
-      return;
-    }
-
-    publicClient.getTransactionReceipt({ hash: parsed.hash })
-      .then(() => {
-        localStorage.removeItem('araf_pending_tx');
-        fetchMyTrades();
-        showToast(
-          lang === 'TR'
-            ? 'Bekleyen işlem bulundu ve onaylandı. Veriler yenilendi.'
-            : 'Recovered pending transaction and confirmed it. Data refreshed.',
-          'success'
-        );
-      })
-      .catch(() => {});
-  }, [publicClient, isConnected, fetchMyTrades, chainId, lang]);
-
-  // [TR] SIWE yenilemesi/yeniden giriş sonrası tek aktif trade varsa odaya otomatik döndürür.
-  // [EN] After SIWE refresh/re-login, auto-returns to trade room if exactly one active trade exists.
-  useEffect(() => {
-    if (!isAuthenticated) {
-      autoTradeResumeRef.current = false;
-      return;
-    }
-    if (autoTradeResumeRef.current) return;
-    if (currentView !== 'home') return;
-    if (activeEscrows.length !== 1) return;
-
-    const escrow = activeEscrows[0];
-    autoTradeResumeRef.current = true;
-    setActiveTrade({ ...escrow.rawTrade, onchainId: escrow.onchainId, state: escrow.state });
-    setTradeState(escrow.state);
-    setUserRole(escrow.role);
-    setChargebackAccepted(escrow.rawTrade?.chargebackAcked === true);
-    setCurrentView('tradeRoom');
-    showToast(
-      lang === 'TR' ? 'Aktif işleminize otomatik geri dönüldü.' : 'Automatically returned to your active trade.',
-      'info'
-    );
-  }, [isAuthenticated, currentView, activeEscrows, lang]);
-
-  // [TR] Wallet / connector / chain event'lerinde auth drift'i güvenli şekilde sıfırlar.
-  // [EN] On wallet / connector / chain events, resets auth drift safely.
-  useEffect(() => {
-    if (!isConnected || !connectedWallet || !isAuthenticated || !authenticatedWallet) return;
-    if (authenticatedWallet !== connectedWallet) {
-      bestEffortBackendLogout();
-      clearLocalSessionState();
-      showToast(
-        lang === 'TR'
-          ? 'Cüzdan değişikliği algılandı. Güvenlik için yeniden giriş yapmanız gerekiyor.'
-          : 'Wallet change detected. For security, please sign in again.',
-        'info'
-      );
-    }
-  }, [isConnected, connectedWallet, isAuthenticated, authenticatedWallet, lang, bestEffortBackendLogout, clearLocalSessionState]);
-
-  useEffect(() => {
-    if (!connector?.getProvider) return undefined;
-    let provider = null;
-    const handleWalletRuntimeEvent = () => {
-      if (!isAuthenticated || !authenticatedWallet) return;
-      const runtimeWallet = provider?.selectedAddress?.toLowerCase?.() || connectedWallet;
-      if (runtimeWallet && runtimeWallet !== authenticatedWallet) {
-        bestEffortBackendLogout();
-        clearLocalSessionState();
-        showToast(
-          lang === 'TR'
-            ? 'Wallet oturumu değişti. Güvenlik için tekrar imza gerekli.'
-            : 'Wallet session changed. Re-sign is required for security.',
-          'info'
-        );
-      }
-    };
-
-    const bind = async () => {
-      provider = await connector.getProvider();
-      if (!provider?.on) return;
-      provider.on('accountsChanged', handleWalletRuntimeEvent);
-      provider.on('disconnect', handleWalletRuntimeEvent);
-      provider.on('chainChanged', handleWalletRuntimeEvent);
-    };
-    bind().catch(() => {});
-
-    return () => {
-      if (!provider?.removeListener) return;
-      provider.removeListener('accountsChanged', handleWalletRuntimeEvent);
-      provider.removeListener('disconnect', handleWalletRuntimeEvent);
-      provider.removeListener('chainChanged', handleWalletRuntimeEvent);
-    };
-  }, [connector, connectedWallet, isAuthenticated, authenticatedWallet, lang, bestEffortBackendLogout, clearLocalSessionState]);
-
-  // ═══════════════════════════════════════════
-  // 6. TÜRETILMIŞ STATE (COMPUTED VALUES)
-  //    Filtered lists, countdown timers, counts
-  // ═══════════════════════════════════════════
-
-  const filteredOrders = orders.filter(order => {
-    const amountMatch = searchAmount === '' || (Number(searchAmount) >= order.min && Number(searchAmount) <= order.max);
-    const tierMatch   = filterTier1 ? order.tier === 0 : true;
-    const tokenMatch  = filterToken === 'ALL' || order.crypto === filterToken;
-    return amountMatch && tierMatch && tokenMatch;
-  });
-
-  const activeEscrowCounts = {
-    LOCKED:    activeEscrows.filter(e => e.state === 'LOCKED').length,
-    PAID:      activeEscrows.filter(e => e.state === 'PAID').length,
-    CHALLENGED:activeEscrows.filter(e => e.state === 'CHALLENGED').length,
-  };
-
-  // [TR] Geri sayım hook'ları — React kuralı gereği component gövdesinde tanımlanır,
-  //      renderTradeRoom gibi render fonksiyonlarının içinde çağrılamaz.
-  // [EN] Countdown hooks — must be at component body level per React rules;
-  //      cannot be called inside render helper functions like renderTradeRoom.
-  const gracePeriodEndDate          = useMemo(() => activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000) : null, [activeTrade?.paidAt]);
-  const gracePeriodTimer            = useCountdown(gracePeriodEndDate);
-  const bleedingEndDate             = useMemo(() => activeTrade?.challengedAt ? new Date(new Date(activeTrade.challengedAt).getTime() + 240 * 3600 * 1000) : null, [activeTrade?.challengedAt]);
-  const bleedingTimer               = useCountdown(bleedingEndDate);
-  const principalProtectionEndDate  = useMemo(() => activeTrade?.challengedAt ? new Date(new Date(activeTrade.challengedAt).getTime() + (48 + 96) * 3600 * 1000) : null, [activeTrade?.challengedAt]);
-  const principalProtectionTimer    = useCountdown(principalProtectionEndDate);
-  const makerPingEndDate            = useMemo(() => activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000) : null, [activeTrade?.paidAt]);
-  const makerPingTimer              = useCountdown(makerPingEndDate);
-  const canMakerPing                = makerPingTimer.isFinished;
-  const makerChallengePingEndDate   = useMemo(() => activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 24 * 3600 * 1000) : null, [activeTrade?.paidAt]);
-  const makerChallengePingTimer     = useCountdown(makerChallengePingEndDate);
-  const canMakerStartChallengeFlow  = makerChallengePingTimer.isFinished;
-  const makerChallengeEndDate       = useMemo(() => activeTrade?.challengePingedAt ? new Date(new Date(activeTrade.challengePingedAt).getTime() + 24 * 3600 * 1000) : null, [activeTrade?.challengePingedAt]);
-  const makerChallengeTimer         = useCountdown(makerChallengeEndDate);
-  const canMakerChallenge           = makerChallengeTimer.isFinished;
 
   // ═══════════════════════════════════════════
   // 7. YARDIMCI FONKSİYONLAR
@@ -1016,10 +250,10 @@ function App() {
 
   // [TR] Toast bildirimi gösterir — 4 sn sonra otomatik kapanır
   // [EN] Shows toast notification — auto-closes after 4s
-  const showToast = (message, type = 'success') => {
+  function showToast(message, type = 'success') {
     setToast({ id: Date.now(), message, type });
     setTimeout(() => setToast(null), 4000);
-  };
+  }
 
   // [TR] Sidebar'ı açar ve 5 sn sonra otomatik kapatır; hover timer'ı sıfırlar
   // [EN] Opens sidebar, auto-closes after 5s; hover resets the timer
@@ -1050,10 +284,6 @@ function App() {
     clearLocalSessionState();
     disconnect();
   };
-
-  // [TR] Cüzdan adresini kısaltır (0x1234...5678 formatı)
-  // [EN] Shortens wallet address to 0x1234...5678 format
-  const formatAddress = (addr) => addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : '—';
 
   const getWalletIcon = (name) => {
     const n = name.toLowerCase();
