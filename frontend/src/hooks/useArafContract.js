@@ -20,6 +20,9 @@ import { usePublicClient, useWalletClient, useChainId } from 'wagmi';
 import { parseAbi, getAddress, decodeEventLog } from 'viem';
 
 const ArafEscrowABI = parseAbi([
+  // --- Events (receipt log decoding for V3 flows) ---
+  'event OrderFilled(uint256 indexed orderId, uint256 indexed tradeId, address indexed filler, uint256 fillAmount, uint256 remainingAmount)',
+
   // --- Write Fonksiyonları (App.jsx'te kullanılanlar) ---
   'function registerWallet()',
   'function createSellOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef) returns (uint256)',
