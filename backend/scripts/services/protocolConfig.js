@@ -40,7 +40,6 @@ const CONFIG_ABI = [
   "function TAKER_BOND_TIER4_BPS() view returns (uint256)",
   "function getFeeConfig() view returns (uint256 currentTakerFeeBps, uint256 currentMakerFeeBps)",
   "function getCooldownConfig() view returns (uint256 currentTier0TradeCooldown, uint256 currentTier1TradeCooldown)",
-  "function supportedTokens(address) view returns (bool)",
   "function tokenConfigs(address) view returns (bool supported, bool allowSellOrders, bool allowBuyOrders)",
 ];
 
@@ -129,13 +128,10 @@ async function loadProtocolConfig() {
 
   for (const token of trackedTokens) {
     try {
-      const [supportedByMap, cfg] = await Promise.all([
-        contract.supportedTokens(token),
-        contract.tokenConfigs(token),
-      ]);
+      const cfg = await contract.tokenConfigs(token);
 
       tokenMap[token] = {
-        supported: Boolean(cfg.supported ?? supportedByMap),
+        supported: Boolean(cfg.supported),
         allowSellOrders: Boolean(cfg.allowSellOrders),
         allowBuyOrders: Boolean(cfg.allowBuyOrders),
       };

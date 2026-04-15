@@ -108,13 +108,9 @@ async function deployMockToken(name, symbol, decimals) {
 }
 
 async function getTokenConfigSnapshot(escrow, tokenAddress) {
-  const [supportedLegacy, cfg] = await Promise.all([
-    escrow.supportedTokens(tokenAddress),
-    escrow.tokenConfigs(tokenAddress),
-  ]);
+  const cfg = await escrow.tokenConfigs(tokenAddress);
 
   return {
-    supportedLegacy,
     supported: cfg.supported,
     allowSellOrders: cfg.allowSellOrders,
     allowBuyOrders: cfg.allowBuyOrders,
@@ -141,10 +137,6 @@ async function setAndVerifyTokenConfig(escrow, tokenAddress, symbol, config) {
       `❌ ${symbol} tokenConfig doğrulaması başarısız. ` +
       `Beklenen=${JSON.stringify(config)} Gerçek=${JSON.stringify(snapshot)}`
     );
-  }
-
-  if (config.supported && !snapshot.supportedLegacy) {
-    throw new Error(`❌ ${symbol} supportedTokens mirror doğrulaması başarısız.`);
   }
 
   console.log(

@@ -63,7 +63,7 @@ export const buildAppModals = (ctx) => {
     onchainBondMap,
     userReputation,
     SUPPORTED_TOKEN_ADDRESSES,
-    handleCreateEscrow,
+    handleCreateSellOrder,
     isContractLoading,
     setIsContractLoading,
     loadingText,
@@ -215,8 +215,8 @@ export const buildAppModals = (ctx) => {
     );
   };
 
-  // [TR] Maker ilan oluşturma modalı — tier seçimi, form validasyonu ve bond hesabı
-  // [EN] Maker listing creation modal — tier selection, form validation and bond calculation
+  // [TR] Maker sell order oluşturma modalı — tier seçimi, form validasyonu ve bond hesabı
+  // [EN] Maker sell-order creation modal — tier selection, validation and bond preview
   const renderMakerModal = () => {
     if (!showMakerModal) return null;
 
@@ -242,10 +242,10 @@ export const buildAppModals = (ctx) => {
 
     let validationError = null;
     if (!makerAmount || cryptoAmtNum <= 0)                    validationError = lang === 'TR' ? 'Satılacak miktarı giriniz.' : 'Enter amount to sell.';
-    else if (makerTier === 0 && cryptoAmtNum > 150)           validationError = lang === 'TR' ? 'Tier 0 maksimum ilan limiti 150 USDT/USDC.' : 'Tier 0 max limit is 150 USDT/USDC.';
-    else if (makerTier === 1 && cryptoAmtNum > 1500)          validationError = lang === 'TR' ? 'Tier 1 maksimum ilan limiti 1.500 USDT/USDC.' : 'Tier 1 max limit is 1500 USDT/USDC.';
-    else if (makerTier === 2 && cryptoAmtNum > 7500)          validationError = lang === 'TR' ? 'Tier 2 maksimum ilan limiti 7.500 USDT/USDC.' : 'Tier 2 max limit is 7500 USDT/USDC.';
-    else if (makerTier === 3 && cryptoAmtNum > 30000)         validationError = lang === 'TR' ? 'Tier 3 maksimum ilan limiti 30.000 USDT/USDC.' : 'Tier 3 max limit is 30000 USDT/USDC.';
+    else if (makerTier === 0 && cryptoAmtNum > 150)           validationError = lang === 'TR' ? 'Tier 0 maksimum order limiti 150 USDT/USDC.' : 'Tier 0 max order limit is 150 USDT/USDC.';
+    else if (makerTier === 1 && cryptoAmtNum > 1500)          validationError = lang === 'TR' ? 'Tier 1 maksimum order limiti 1.500 USDT/USDC.' : 'Tier 1 max order limit is 1500 USDT/USDC.';
+    else if (makerTier === 2 && cryptoAmtNum > 7500)          validationError = lang === 'TR' ? 'Tier 2 maksimum order limiti 7.500 USDT/USDC.' : 'Tier 2 max order limit is 7500 USDT/USDC.';
+    else if (makerTier === 3 && cryptoAmtNum > 30000)         validationError = lang === 'TR' ? 'Tier 3 maksimum order limiti 30.000 USDT/USDC.' : 'Tier 3 max order limit is 30000 USDT/USDC.';
     else if (!makerRate || rateNum <= 0)                      validationError = lang === 'TR' ? 'Kur fiyatını giriniz.' : 'Enter exchange rate.';
     else if (!makerMinLimit || minLimNum <= 0)                validationError = lang === 'TR' ? 'Minimum işlem limitini giriniz.' : 'Enter min limit.';
     else if (!makerMaxLimit || maxLimNum <= 0)                validationError = lang === 'TR' ? 'Maksimum işlem limitini giriniz.' : 'Enter max limit.';
@@ -299,7 +299,7 @@ export const buildAppModals = (ctx) => {
               </div>
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'İlan Tier Seviyesi' : 'Listing Tier'}</label>
+              <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Order Tier Seviyesi' : 'Order Tier'}</label>
               <select value={makerTier} onChange={e => setMakerTier(Number(e.target.value))} className="w-full bg-[#151518] text-white px-3 py-2 rounded-xl border border-[#2a2a2e] outline-none">
                 {[0, 1, 2, 3, 4].map(t => (
                   <option key={t} value={t} disabled={t > effectiveUserTier}>
@@ -327,14 +327,14 @@ export const buildAppModals = (ctx) => {
               <p className="text-red-400 text-[11px] font-medium text-center bg-red-950/30 py-2 rounded-lg border border-red-900/50 mt-2">{validationError}</p>
             )}
             <button
-              onClick={handleCreateEscrow}
+              onClick={handleCreateSellOrder}
               disabled={isContractLoading || validationError !== null}
               className={`w-full py-3 rounded-xl font-bold mt-2 shadow-lg transition ${
                 isContractLoading || validationError !== null
                   ? 'bg-[#151518] text-slate-500 border border-[#2a2a2e] cursor-not-allowed'
                   : 'bg-white hover:bg-slate-200 text-black shadow-white/10'
               }`}>
-              {isContractLoading ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : (lang === 'TR' ? '🔒 Onayla ve Kilitle' : '🔒 Approve & Lock')}
+              {isContractLoading ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : (lang === 'TR' ? '🧾 Onayla ve Sell Order Aç' : '🧾 Approve & Open Sell Order')}
             </button>
           </div>
         </div>
@@ -342,8 +342,8 @@ export const buildAppModals = (ctx) => {
     );
   };
 
-  // [TR] Profil merkezi modalı — ayarlar, itibar, ilanlarım, aktif ve geçmiş sekmeleri
-  // [EN] Profile center modal — settings, reputation, my ads, active and history tabs
+  // [TR] Profil merkezi modalı — ayarlar, itibar, orderlarım, aktif ve geçmiş sekmeleri
+  // [EN] Profile center modal — settings, reputation, my orders, active and history tabs
   const renderProfileModal = () => {
     if (!showProfileModal) return null;
     if (!isConnected || !isAuthenticated) {
@@ -363,7 +363,7 @@ export const buildAppModals = (ctx) => {
           <div className="flex border-b border-[#222] shrink-0 overflow-x-auto hide-scrollbar">
             {['ayarlar', 'itibar', 'ilanlarim', 'aktif', 'gecmis'].map(tab => (
               <button key={tab} onClick={() => setProfileTab(tab)} className={`px-4 py-3 text-sm font-medium capitalize transition whitespace-nowrap ${profileTab === tab ? 'text-emerald-400 border-b-2 border-emerald-400 bg-[#1a1a1f]/50' : 'text-slate-400 hover:text-white'}`}>
-                {tab === 'ayarlar' ? (lang === 'TR' ? 'Ayarlar' : 'Settings') : tab === 'itibar' ? (lang === 'TR' ? 'İtibar' : 'Reputation') : tab === 'ilanlarim' ? (lang === 'TR' ? 'İlanlarım' : 'My Ads') : tab === 'aktif' ? (lang === 'TR' ? 'Aktif İşlemler' : 'Active Trades') : (lang === 'TR' ? 'Geçmiş' : 'History')}
+                {tab === 'ayarlar' ? (lang === 'TR' ? 'Ayarlar' : 'Settings') : tab === 'itibar' ? (lang === 'TR' ? 'İtibar' : 'Reputation') : tab === 'ilanlarim' ? (lang === 'TR' ? 'Orderlarım' : 'My Orders') : tab === 'aktif' ? (lang === 'TR' ? 'Aktif İşlemler' : 'Active Trades') : (lang === 'TR' ? 'Geçmiş' : 'History')}
               </button>
             ))}
           </div>
@@ -376,7 +376,7 @@ export const buildAppModals = (ctx) => {
                     <span className="text-2xl">🚫</span>
                     <div>
                       <p className="font-bold text-red-400">{lang === 'TR' ? 'Taker Kısıtlaması Aktif' : 'Taker Restriction Active'}</p>
-                      <p className="text-red-300/80 text-xs mt-1">{lang === 'TR' ? 'Sadece Maker olarak ilan açabilirsiniz.' : 'You can only create listings as Maker.'}</p>
+                      <p className="text-red-300/80 text-xs mt-1">{lang === 'TR' ? 'Sadece Maker olarak sell order açabilirsiniz.' : 'You can only open sell orders as Maker.'}</p>
                     </div>
                   </div>
                 )}
@@ -571,7 +571,7 @@ export const buildAppModals = (ctx) => {
                       </div>
                     )}
                   </div>
-                )) : <p className="text-center text-slate-500 text-xs mt-4">{lang === 'TR' ? 'İlan bulunamadı.' : 'No ads found.'}</p>}
+                )) : <p className="text-center text-slate-500 text-xs mt-4">{lang === 'TR' ? 'Order bulunamadı.' : 'No orders found.'}</p>}
               </div>
             )}
 

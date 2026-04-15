@@ -5,7 +5,9 @@
  * frontend/src/abi/ArafEscrow.json'dan okunur.
  *
  * Desteklenen işlemler:
- * - registerWallet / createEscrow / cancelOpenEscrow / lockEscrow
+ * - registerWallet
+ * - createSellOrder / fillSellOrder / cancelSellOrder
+ * - createBuyOrder / fillBuyOrder / cancelBuyOrder
  * - reportPayment / releaseFunds / challengeTrade / autoRelease / burnExpired
  * - EIP-712 cancel: signCancelProposal → proposeOrApproveCancel
  *
@@ -15,14 +17,17 @@
 
 import { useCallback } from 'react';
 import { usePublicClient, useWalletClient, useChainId } from 'wagmi';
-import { parseAbi, getAddress } from 'viem';
+import { parseAbi, getAddress, decodeEventLog } from 'viem';
 
 const ArafEscrowABI = parseAbi([
   // --- Write Fonksiyonları (App.jsx'te kullanılanlar) ---
   'function registerWallet()',
-  'function createEscrow(address _token, uint256 _cryptoAmount, uint8 _tier, bytes32 _listingRef)',
-  'function cancelOpenEscrow(uint256 _tradeId)',
-  'function lockEscrow(uint256 _tradeId)',
+  'function createSellOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef) returns (uint256)',
+  'function fillSellOrder(uint256 _orderId, uint256 _fillAmount, bytes32 _childListingRef) returns (uint256)',
+  'function cancelSellOrder(uint256 _orderId)',
+  'function createBuyOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef) returns (uint256)',
+  'function fillBuyOrder(uint256 _orderId, uint256 _fillAmount, bytes32 _childListingRef) returns (uint256)',
+  'function cancelBuyOrder(uint256 _orderId)',
   'function reportPayment(uint256 _tradeId, string calldata _ipfsHash)',
   'function releaseFunds(uint256 _tradeId)',
   'function challengeTrade(uint256 _tradeId)',
@@ -38,10 +43,11 @@ const ArafEscrowABI = parseAbi([
   'function antiSybilCheck(address _wallet) view returns (bool aged, bool funded, bool cooldownOk)',
   'function getCooldownRemaining(address _wallet) view returns (uint256)',
   'function walletRegisteredAt(address _wallet) view returns (uint256)',
-  'function TAKER_FEE_BPS() view returns (uint256)',
+  'function getFeeConfig() view returns (uint256 currentTakerFeeBps, uint256 currentMakerFeeBps)',
   // [TR] firstSuccessfulTradeAt artık ayrı kontrat fonksiyonundan okunur
   'function getFirstSuccessfulTradeAt(address _wallet) view returns (uint256)',
-  'function getTrade(uint256 _tradeId) view returns ((uint256 id, address maker, address taker, address tokenAddress, uint256 cryptoAmount, uint256 makerBond, uint256 takerBond, uint8 tier, uint8 state, uint256 lockedAt, uint256 paidAt, uint256 challengedAt, string ipfsReceiptHash, bool cancelProposedByMaker, bool cancelProposedByTaker, uint256 pingedAt, bool pingedByTaker, uint256 challengePingedAt, bool challengePingedByMaker))',
+  'function getTrade(uint256 _tradeId) view returns ((uint256 id, uint256 parentOrderId, address maker, address taker, address tokenAddress, uint256 cryptoAmount, uint256 makerBond, uint256 takerBond, uint16 takerFeeBpsSnapshot, uint16 makerFeeBpsSnapshot, uint8 tier, uint8 state, uint256 lockedAt, uint256 paidAt, uint256 challengedAt, string ipfsReceiptHash, bool cancelProposedByMaker, bool cancelProposedByTaker, uint256 pingedAt, bool pingedByTaker, uint256 challengePingedAt, bool challengePingedByMaker))',
+  'function getOrder(uint256 _orderId) view returns ((uint256 id, address owner, uint8 side, address tokenAddress, uint256 totalAmount, uint256 remainingAmount, uint256 minFillAmount, uint256 remainingMakerBondReserve, uint256 remainingTakerBondReserve, uint16 takerFeeBpsSnapshot, uint16 makerFeeBpsSnapshot, uint8 tier, uint8 state, bytes32 orderRef))',
 
   // --- EIP-712 için Gerekli View Fonksiyonları ---
   'function sigNonces(address) view returns (uint256)',
@@ -50,7 +56,7 @@ const ArafEscrowABI = parseAbi([
   'function paused() view returns (bool)',
 ]);
 
-// ERC-20 approve ABI — createEscrow ve lockEscrow öncesi safeTransferFrom için zorunlu.
+// ERC-20 approve ABI — create/fill order akışlarında safeTransferFrom için zorunlu.
 // Escrow kontratına izin vermeden transferFrom çağrısı revert eder.
 const ERC20_ABI = parseAbi([
   'function approve(address spender, uint256 amount) returns (bool)',
@@ -74,6 +80,32 @@ export function useArafContract() {
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
   const chainId = useChainId();
+
+  /**
+   * [TR] Receipt içinden hedef event'i decode eder.
+   *      Frontend contract kararını üretmez; yalnız on-chain event'ten kimlik çıkarır.
+   * [EN] Decodes a target event from receipt logs.
+   */
+  const extractEventArgs = useCallback((receipt, targetEventName) => {
+    if (!receipt?.logs?.length) return null;
+
+    for (const log of receipt.logs) {
+      try {
+        const decoded = decodeEventLog({
+          abi: ArafEscrowABI,
+          data: log.data,
+          topics: log.topics,
+          strict: false,
+        });
+        if (decoded?.eventName === targetEventName) {
+          return decoded.args || null;
+        }
+      } catch (_) {
+        // log bu ABI event'i değilse devam
+      }
+    }
+    return null;
+  }, []);
 
   /*
    * @throws {Error} Desteklenmeyen ağ algılandığında
@@ -166,15 +198,51 @@ export function useArafContract() {
   const registerWallet = useCallback(() =>
     writeContract("registerWallet"), [writeContract]);
 
-  const createEscrow = useCallback((token, cryptoAmount, tier, listingRef) =>
-    writeContract("createEscrow", [token, cryptoAmount, tier, listingRef]), [writeContract]);
+  const createSellOrder = useCallback(
+    (token, totalAmount, minFillAmount, tier, orderRef) =>
+      writeContract("createSellOrder", [token, totalAmount, minFillAmount, tier, orderRef]),
+    [writeContract]
+  );
 
-  //OPEN escrow'u iptal etmek için
-  const cancelOpenEscrow = useCallback((tradeId) =>
-    writeContract("cancelOpenEscrow", [tradeId]), [writeContract]);
+  const fillSellOrder = useCallback(
+    async (orderId, fillAmount, childListingRef) => {
+      const receipt = await writeContract("fillSellOrder", [orderId, fillAmount, childListingRef]);
+      const args = extractEventArgs(receipt, "OrderFilled");
+      return {
+        receipt,
+        tradeId: args?.tradeId ? BigInt(args.tradeId) : null,
+      };
+    },
+    [writeContract, extractEventArgs]
+  );
 
-  const lockEscrow = useCallback((tradeId) =>
-    writeContract("lockEscrow", [tradeId]), [writeContract]);
+  const cancelSellOrder = useCallback(
+    (orderId) => writeContract("cancelSellOrder", [orderId]),
+    [writeContract]
+  );
+
+  const createBuyOrder = useCallback(
+    (token, totalAmount, minFillAmount, tier, orderRef) =>
+      writeContract("createBuyOrder", [token, totalAmount, minFillAmount, tier, orderRef]),
+    [writeContract]
+  );
+
+  const fillBuyOrder = useCallback(
+    async (orderId, fillAmount, childListingRef) => {
+      const receipt = await writeContract("fillBuyOrder", [orderId, fillAmount, childListingRef]);
+      const args = extractEventArgs(receipt, "OrderFilled");
+      return {
+        receipt,
+        tradeId: args?.tradeId ? BigInt(args.tradeId) : null,
+      };
+    },
+    [writeContract, extractEventArgs]
+  );
+
+  const cancelBuyOrder = useCallback(
+    (orderId) => writeContract("cancelBuyOrder", [orderId]),
+    [writeContract]
+  );
 
   const reportPayment = useCallback((tradeId, ipfsHash) =>
     writeContract("reportPayment", [tradeId, ipfsHash]), [writeContract]);
@@ -202,7 +270,7 @@ export function useArafContract() {
 
   // ── ERC-20 Token Onayı ──
   /**
-   *ERC-20 approve — createEscrow ve lockEscrow öncesi zorunlu.
+   *ERC-20 approve — create/fill order akışlarında zorunlu.
    *
    * Kontrat safeTransferFrom kullanır; bu işlem için önce token sahibinin
    * ESCROW_ADDRESS'e yeterli allowance vermesi gerekir.
@@ -392,9 +460,12 @@ export function useArafContract() {
   return {
     // Temel işlemler
     registerWallet,
-    createEscrow,
-    cancelOpenEscrow,
-    lockEscrow,
+    createSellOrder,
+    fillSellOrder,
+    cancelSellOrder,
+    createBuyOrder,
+    fillBuyOrder,
+    cancelBuyOrder,
     reportPayment,
     releaseFunds,
     challengeTrade,
@@ -494,11 +565,15 @@ export function useArafContract() {
       async () => {
         if (!_isValidAddress) return 10n;
         try {
-          return await publicClient.readContract({
+          const feeConfig = await publicClient.readContract({
             address: getAddress(ESCROW_ADDRESS),
             abi: ArafEscrowABI,
-            functionName: 'TAKER_FEE_BPS',
+            functionName: 'getFeeConfig',
           });
+          const takerFee = typeof feeConfig.currentTakerFeeBps !== 'undefined'
+            ? feeConfig.currentTakerFeeBps
+            : feeConfig[0];
+          return BigInt(takerFee ?? 10);
         } catch {
           return 10n;
         }
@@ -547,7 +622,7 @@ export function useArafContract() {
       },
       [publicClient]
     ),
-    //Token onayı — createEscrow ve lockEscrow öncesi zorunlu
+    //Token onayı — create/fill order akışlarında zorunlu
     mintToken,
     approveToken,
     getAllowance,
@@ -565,6 +640,23 @@ export function useArafContract() {
           });
         } catch (err) {
           console.error('[ArafContract] getTrade hatası:', err.message);
+          return null;
+        }
+      },
+      [publicClient]
+    ),
+    getOrder: useCallback(
+      async (orderId) => {
+        if (!_isValidAddress) return null;
+        try {
+          return await publicClient.readContract({
+            address: getAddress(ESCROW_ADDRESS),
+            abi: ArafEscrowABI,
+            functionName: 'getOrder',
+            args: [BigInt(orderId)],
+          });
+        } catch (err) {
+          console.error('[ArafContract] getOrder hatası:', err.message);
           return null;
         }
       },

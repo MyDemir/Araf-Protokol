@@ -95,6 +95,7 @@ export const buildAppViews = (ctx) => {
     fetchMyTrades,
     setIsContractLoading,
     getSafeTelegramUrl,
+    authenticatedFetch,
     showToast,
   
   } = ctx;
@@ -123,9 +124,9 @@ export const buildAppViews = (ctx) => {
   );
 
   // [TR] Bağlamsal yan panel — 5 sn sonra kapanır, hover timer'ı sıfırlar.
-  //      Filtreler, durum akordiyonu ve ilan oluşturma butonu içerir.
+  //      Filtreler, durum akordiyonu ve sell order oluşturma butonu içerir.
   // [EN] Context sidebar — closes after 5s, hover resets timer.
-  //      Contains filters, status accordion and listing creation button.
+  //      Contains filters, status accordion and sell-order creation button.
   const renderContextSidebar = () => (
     <>
       {sidebarOpen && <div className="md:hidden fixed inset-0 bg-black/60 z-[55] backdrop-blur-sm transition-opacity" onClick={() => setSidebarOpen(false)} />}
@@ -264,12 +265,12 @@ export const buildAppViews = (ctx) => {
           </div>
         </div>
         <div className="bg-[#111113] border border-[#222] p-4 md:p-5 rounded-2xl">
-          <p className="text-slate-500 text-[10px] font-bold tracking-widest uppercase mb-2">{lang === 'TR' ? 'AKTİF İLAN' : 'ACTIVE ADS'}</p>
-          <span className="text-2xl font-bold text-white">{(protocolStats?.active_listings ?? 0).toLocaleString()}</span>
+          <p className="text-slate-500 text-[10px] font-bold tracking-widest uppercase mb-2">{lang === 'TR' ? 'AÇIK SELL ORDER' : 'OPEN SELL ORDERS'}</p>
+          <span className="text-2xl font-bold text-white">{(protocolStats?.open_sell_orders ?? 0).toLocaleString()}</span>
         </div>
         <div className="bg-[#111113] border border-[#222] p-4 md:p-5 rounded-2xl">
           <p className="text-slate-500 text-[10px] font-bold tracking-widest uppercase mb-2">{lang === 'TR' ? 'ORT. SÜRE' : 'AVG TIME'}</p>
-          <span className="text-2xl font-bold text-yellow-500">{protocolStats?.avg_trade_hours ?? '—'}s</span>
+          <span className="text-2xl font-bold text-yellow-500">{protocolStats?.avg_trade_hours ?? '—'}h</span>
         </div>
         <div className="bg-[#1a0a0a] border border-[#4a1010] p-4 md:p-5 rounded-2xl relative overflow-hidden group">
           <div className="absolute -right-4 -bottom-4 text-red-500/10 text-6xl group-hover:scale-110 transition-transform">🔥</div>
@@ -322,8 +323,8 @@ export const buildAppViews = (ctx) => {
     </div>
   );
 
-  // [TR] Pazar yeri — ilan listesi, filtreler, test faucet butonları
-  // [EN] Marketplace — listing list, filters, test faucet buttons
+  // [TR] Pazar yeri — sell order listesi, filtreler, test faucet butonları
+  // [EN] Marketplace — sell-order list, filters, test faucet buttons
   const renderMarket = () => (
     <div className="p-4 md:p-8 max-w-[1200px] w-full">
       <div className="mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -725,7 +726,12 @@ if (activeTrade?._pendingBackendSync && !activeTrade?.id) {
             {/* PII bölümü: taker şifreli banka bilgilerini görür, maker ödeme beklediğini bilir */}
             {isTaker && roomState !== 'RESOLVED' && (
               <div className="border border-[#222] rounded-xl overflow-hidden mt-6 bg-[#0a0a0c] p-1">
-                <PIIDisplay tradeId={activeTrade?.id} lang={lang} getSafeTelegramUrl={getSafeTelegramUrl} />
+                <PIIDisplay
+                  tradeId={activeTrade?.id}
+                  lang={lang}
+                  getSafeTelegramUrl={getSafeTelegramUrl}
+                  authenticatedFetch={authenticatedFetch}
+                />
               </div>
             )}
             {isMaker && roomState !== 'RESOLVED' && (

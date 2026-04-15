@@ -102,8 +102,10 @@ export function usePII(tradeId, authenticatedFetch) {
       // [TR] İptal edildiyse devam etme
       if (signal.aborted) return;
 
-      // ADIM 2: Kısa ömürlü PII token ile şifreli veriyi çöz
-      const piiRes = await fetch(`${API_BASE}/api/pii/${tradeId}`, {
+      // ADIM 2: Trade-scoped PII endpoint'i hem Bearer token
+      //         hem de cookie/session-wallet guard ister.
+      //         Bu nedenle authenticatedFetch kullanmak zorunludur.
+      const piiRes = await doFetch(`${API_BASE}/api/pii/${tradeId}`, {
         headers: { 'Authorization': `Bearer ${piiToken}` },
         signal,
       });

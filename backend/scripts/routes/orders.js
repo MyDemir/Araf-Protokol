@@ -36,6 +36,35 @@ const SAFE_ORDER_PROJECTION = [
   "timers",
 ].join(" ");
 
+// [TR] Order sahibine ait child trade listesinde veri minimizasyonu.
+//      Backend bu endpoint'te hakemlik üretmez; yalnız UI için gereken alanları döner.
+//      PII snapshot, şifreli dekont payload ve ham imza alanları response'a girmez.
+// [EN] Data minimization for child trades returned to order owners.
+//      This endpoint remains read-only and non-authoritative.
+const SAFE_ORDER_TRADES_PROJECTION = [
+  "_id",
+  "onchain_escrow_id",
+  "parent_order_id",
+  "maker_address",
+  "taker_address",
+  "status",
+  "tier",
+  "token_address",
+  "financials",
+  "fee_snapshot",
+  "timers",
+  "cancel_proposal.proposed_by",
+  "cancel_proposal.proposed_at",
+  "cancel_proposal.approved_by",
+  "cancel_proposal.deadline",
+  "cancel_proposal.maker_signed",
+  "cancel_proposal.taker_signed",
+  "evidence.ipfs_receipt_hash",
+  "evidence.receipt_timestamp",
+  "chargeback_ack.acknowledged",
+  "chargeback_ack.acknowledged_at",
+].join(" ");
+
 router.get("/config", async (_req, res, next) => {
   try {
     const config = getConfig();
@@ -111,6 +140,7 @@ router.get("/:id/trades", requireAuth, ordersWriteLimiter, async (req, res, next
     if (order.owner_address !== req.wallet) return res.status(403).json({ error: "Bu order sana ait değil." });
 
     const trades = await Trade.find({ parent_order_id: onchainOrderId })
+      .select(SAFE_ORDER_TRADES_PROJECTION)
       .sort({ created_at: -1, onchain_escrow_id: -1 })
       .lean();
     return res.json({ trades });

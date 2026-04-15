@@ -436,7 +436,11 @@ export function useAppSessionData({
         if (data.listings) {
           setOrders(data.listings.map((l) => ({
             id: l._id,
-            onchainId: l.onchain_escrow_id || null,
+            // [TR] V3 listings alias'i parent order feed döndürür.
+            //      Bu yüzden on-chain kimlik escrow değil order id olmalıdır.
+            // [EN] V3 listings alias returns parent order feed.
+            //      Therefore the on-chain id here must be order id, not escrow id.
+            onchainId: l.onchain_order_id || null,
             makerFull: l.maker_address,
             maker: formatAddress(l.maker_address),
             crypto: l.crypto_asset || 'USDT',
