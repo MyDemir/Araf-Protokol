@@ -34,7 +34,6 @@ error TakerBanActive();
 error OnlyMaker();
 error OnlyTaker();
 error AlreadyRegistered();
-error TokenNotSupported();
 error ZeroAmount();
 error InvalidTier();
 error InvalidListingRef();
@@ -108,6 +107,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
     struct Trade {
         uint256 id;
+        // [TR] V3'te her child trade bir parent order fill'inden doğar; bu alan artık nullable semantik taşımaz.
+        // [EN] In V3 every child trade is born from a parent order fill; this field no longer carries nullable semantics.
         uint256 parentOrderId;
         address maker;
         address taker;
@@ -256,7 +257,6 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     mapping(address => bool)  public hasTierPenalty;
 
     mapping(address => uint256) public firstSuccessfulTradeAt;
-    mapping(address => bool) public supportedTokens;
     mapping(address => TokenConfig) public tokenConfigs;
     mapping(address => uint256) public sigNonces;
 
@@ -272,8 +272,6 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     // ═══════════════════════════════════════════════════
 
     event WalletRegistered(address indexed wallet, uint256 timestamp);
-    event EscrowCreated(uint256 indexed tradeId, address indexed maker, address token, uint256 amount, uint8 tier, bytes32 listingRef);
-    event EscrowLocked(uint256 indexed tradeId, address indexed taker, uint256 takerBond);
     event PaymentReported(uint256 indexed tradeId, string ipfsHash, uint256 timestamp);
     event EscrowReleased(uint256 indexed tradeId, address indexed maker, address indexed taker, uint256 takerFee, uint256 makerFee);
     event DisputeOpened(uint256 indexed tradeId, address indexed challenger, uint256 timestamp);
@@ -284,8 +282,6 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     event EscrowBurned(uint256 indexed tradeId, uint256 burnedAmount);
     event ReputationUpdated(address indexed wallet, uint256 successful, uint256 failed, uint256 bannedUntil, uint8 effectiveTier);
     event TreasuryUpdated(address indexed newTreasury);
-    event TokenSupportUpdated(address indexed token, bool supported);
-
     // [TR] V3 Order / Config event'leri
     // [EN] V3 Order / Config events
     event OrderCreated(
@@ -334,12 +330,6 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         _;
     }
 
-    modifier notBanned() {
-        Reputation storage rep = reputation[msg.sender];
-        if (rep.bannedUntil != 0 && block.timestamp <= rep.bannedUntil) revert TakerBanActive();
-        _;
-    }
-
     // ═══════════════════════════════════════════════════
     //  CONSTRUCTOR
     // ═══════════════════════════════════════════════════
@@ -374,97 +364,6 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (walletRegisteredAt[msg.sender] != 0) revert AlreadyRegistered();
         walletRegisteredAt[msg.sender] = block.timestamp;
         emit WalletRegistered(msg.sender, block.timestamp);
-    }
-
-    // ═══════════════════════════════════════════════════
-    //  MAKER AKIŞI — Escrow Oluşturma
-    //  MAKER FLOW — Create Escrow
-    // ═══════════════════════════════════════════════════
-
-    /**
-     * @notice Legacy overload artık desteklenmiyor.
-     *         Canonical create akışı authoritative listingRef gerektirir.
-     * @notice Legacy overload is no longer supported.
-     *         Canonical create flow requires an authoritative listingRef.
-     */
-    function createEscrow(
-        address _token,
-        uint256 _cryptoAmount,
-        uint8   _tier
-    ) external nonReentrant whenNotPaused returns (uint256 tradeId) {
-        revert InvalidListingRef();
-    }
-
-    /**
-     * @notice Canonical escrow oluşturma yoludur.
-     *         Off-chain listing kimliği on-chain event'e listingRef olarak yazılır.
-     * @notice Canonical escrow creation path.
-     *         The off-chain listing identity is written into the on-chain event as listingRef.
-     */
-    function createEscrow(
-        address _token,
-        uint256 _cryptoAmount,
-        uint8   _tier,
-        bytes32 _listingRef
-    ) external nonReentrant whenNotPaused returns (uint256 tradeId) {
-        return _createEscrow(_token, _cryptoAmount, _tier, _listingRef);
-    }
-
-    /**
-     * @notice Escrow oluşturma mantığının tek authoritative girişidir.
-     *         Zero listingRef kabul edilmez; contract kimliksiz escrow üretmez.
-     * @notice This is the single authoritative creation entrypoint.
-     *         Zero listingRef is rejected; the contract does not create identity-less escrows.
-     */
-    function _createEscrow(
-        address _token,
-        uint256 _cryptoAmount,
-        uint8   _tier,
-        bytes32 _listingRef
-    ) internal returns (uint256 tradeId) {
-        if (!_isSupportedToken(_token)) revert TokenNotSupported();
-        if (_cryptoAmount == 0) revert ZeroAmount();
-        if (_tier > 4) revert InvalidTier();
-        if (_listingRef == bytes32(0)) revert InvalidListingRef();
-
-        uint8 effectiveTier = _getEffectiveTier(msg.sender);
-        if (_tier > effectiveTier) revert TierNotAllowed();
-
-        uint256 tierMax = _getTierMaxAmount(_tier);
-        if (tierMax > 0 && _cryptoAmount > tierMax) revert AmountExceedsTierLimit();
-
-        uint256 bondBps   = _getMakerBondBps(msg.sender, _tier);
-        uint256 makerBond = (_cryptoAmount * bondBps) / BPS_DENOMINATOR;
-        uint256 totalLock = _cryptoAmount + makerBond;
-
-        tradeId = ++tradeCounter;
-        trades[tradeId] = Trade({
-            id:                     tradeId,
-            parentOrderId:          0,
-            maker:                  msg.sender,
-            taker:                  address(0),
-            tokenAddress:           _token,
-            cryptoAmount:           _cryptoAmount,
-            makerBond:              makerBond,
-            takerBond:              0,
-            takerFeeBpsSnapshot:    uint16(_getCurrentTakerFeeBps(_tier)),
-            makerFeeBpsSnapshot:    uint16(_getCurrentMakerFeeBps(_tier)),
-            tier:                   _tier,
-            state:                  TradeState.OPEN,
-            ipfsReceiptHash:        "",
-            lockedAt:               0,
-            paidAt:                 0,
-            challengedAt:           0,
-            cancelProposedByMaker:  false,
-            cancelProposedByTaker:  false,
-            pingedAt:               0,
-            pingedByTaker:          false,
-            challengePingedAt:      0,
-            challengePingedByMaker: false
-        });
-
-        IERC20(_token).safeTransferFrom(msg.sender, address(this), totalLock);
-        emit EscrowCreated(tradeId, msg.sender, _token, _cryptoAmount, _tier, _listingRef);
     }
 
     // ═══════════════════════════════════════════════════
@@ -548,6 +447,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (o.side != OrderSide.SELL_CRYPTO) revert OrderSideMismatch();
         if (o.state != OrderState.OPEN && o.state != OrderState.PARTIALLY_FILLED) revert InvalidOrderState();
         if (_fillAmount == 0) revert ZeroAmount();
+        // [TR] Child trade linkage için listingRef zorunludur; zero ref event-consumer bütünlüğünü bozar.
+        // [EN] listingRef is mandatory for child-trade linkage; zero ref breaks event-consumer integrity.
         if (_childListingRef == bytes32(0)) revert InvalidListingRef();
         if (msg.sender == o.owner) revert SelfTradeForbidden();
         if (_fillAmount > o.remainingAmount) revert FillAmountExceedsRemaining();
@@ -602,12 +503,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         emit OrderFilled(_orderId, tradeId, msg.sender, _fillAmount, o.remainingAmount);
 
-        // [TR] Child trade doğrudan LOCKED oluşsa da, backend/event mirror katmanı ile
-        //      geriye uyumluluk için create + lock event zinciri aynı tx içinde korunur.
-        // [EN] Even though the child trade is created directly as LOCKED, the create + lock
-        //      event chain is preserved in the same tx for backend/event mirror compatibility.
-        emit EscrowCreated(tradeId, o.owner, o.tokenAddress, _fillAmount, o.tier, _childListingRef);
-        emit EscrowLocked(tradeId, msg.sender, takerBond);
+        // [TR] V3 saf modelde child trade otoritesi OrderFilled + getTrade() kombinasyonudur.
+        //      Legacy create/lock mirror event zinciri artık üretilmez.
+        // [EN] In pure V3, child trade authority is OrderFilled + getTrade().
+        //      The legacy create/lock mirror event chain is no longer emitted.
     }
 
     /**
@@ -717,6 +616,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (o.side != OrderSide.BUY_CRYPTO) revert OrderSideMismatch();
         if (o.state != OrderState.OPEN && o.state != OrderState.PARTIALLY_FILLED) revert InvalidOrderState();
         if (_fillAmount == 0) revert ZeroAmount();
+        // [TR] Child trade linkage için listingRef zorunludur; zero ref event-consumer bütünlüğünü bozar.
+        // [EN] listingRef is mandatory for child-trade linkage; zero ref breaks event-consumer integrity.
         if (_childListingRef == bytes32(0)) revert InvalidListingRef();
         if (msg.sender == o.owner) revert SelfTradeForbidden();
         if (_fillAmount > o.remainingAmount) revert FillAmountExceedsRemaining();
@@ -777,12 +678,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         emit OrderFilled(_orderId, tradeId, msg.sender, _fillAmount, o.remainingAmount);
 
-        // [TR] Child trade doğrudan LOCKED oluşsa da, geriye uyumluluk için
-        //      create + lock event zinciri aynı tx içinde korunur.
-        // [EN] Even though the child trade is created directly as LOCKED, the
-        //      create + lock event chain is preserved in the same tx for backward compatibility.
-        emit EscrowCreated(tradeId, msg.sender, o.tokenAddress, _fillAmount, o.tier, _childListingRef);
-        emit EscrowLocked(tradeId, o.owner, takerBondSlice);
+        // [TR] V3 saf modelde child trade otoritesi OrderFilled + getTrade() kombinasyonudur.
+        //      Legacy create/lock mirror event zinciri artık üretilmez.
+        // [EN] In pure V3, child trade authority is OrderFilled + getTrade().
+        //      The legacy create/lock mirror event chain is no longer emitted.
     }
 
     /**
@@ -811,75 +710,6 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         }
 
         emit OrderCanceled(_orderId, o.side, remainingAmount, makerBondRefund, takerBondRefund);
-    }
-
-    // ═══════════════════════════════════════════════════
-    //  MAKER AKIŞI — OPEN Escrow İptali
-    //  MAKER FLOW — Cancel OPEN Escrow
-    // ═══════════════════════════════════════════════════
-
-    /**
-     * @notice Eşleşmemiş escrow'u maker iptal edebilir.
-     *         OPEN durumunda tam iade yapılır; karşı taraf henüz oluşmamıştır.
-     * @notice Allows the maker to cancel an unmatched escrow.
-     *         In OPEN state the full amount is refunded because no counterparty exists yet.
-     */
-    function cancelOpenEscrow(uint256 _tradeId)
-        external
-        nonReentrant
-        inState(_tradeId, TradeState.OPEN)
-    {
-        Trade storage t = trades[_tradeId];
-        if (msg.sender != t.maker) revert OnlyMaker();
-
-        uint256 refundAmount = t.cryptoAmount + t.makerBond;
-
-        t.state = TradeState.CANCELED;
-        emit EscrowCanceled(_tradeId, refundAmount, 0);
-
-        IERC20(t.tokenAddress).safeTransfer(t.maker, refundAmount);
-    }
-
-    // ═══════════════════════════════════════════════════
-    //  TAKER AKIŞI — Escrow Kilitleme (Anti-Sybil Kalkanı)
-    //  TAKER FLOW — Lock Escrow (Anti-Sybil Shield)
-    // ═══════════════════════════════════════════════════
-
-    /**
-     * @notice Taker escrow'u kilitler ve anti-sybil kontrollerinden geçer.
-     *         Contract bu aşamada frontend varsayımlarına güvenmez; kuralları kendisi zorlar.
-     * @notice The taker locks the escrow and passes anti-sybil checks.
-     *         The contract does not trust frontend assumptions here; it enforces the rules itself.
-     */
-    function lockEscrow(uint256 _tradeId)
-        external
-        nonReentrant
-        notBanned
-        whenNotPaused
-        inState(_tradeId, TradeState.OPEN)
-    {
-        Trade storage t = trades[_tradeId];
-
-        if (msg.sender == t.maker) revert SelfTradeForbidden();
-
-        _enforceTakerEntry(msg.sender, t.tier);
-
-        uint8 takerEffectiveTier = _getEffectiveTier(msg.sender);
-        if (t.tier > takerEffectiveTier) revert TierNotAllowed();
-
-        uint256 takerBondBps = _getTakerBondBps(msg.sender, t.tier);
-        uint256 takerBond    = (t.cryptoAmount * takerBondBps) / BPS_DENOMINATOR;
-
-        t.taker     = msg.sender;
-        t.takerBond = takerBond;
-        t.state     = TradeState.LOCKED;
-        t.lockedAt  = block.timestamp;
-        lastTradeAt[msg.sender] = block.timestamp;
-
-        if (takerBond > 0) {
-            IERC20(t.tokenAddress).safeTransferFrom(msg.sender, address(this), takerBond);
-        }
-        emit EscrowLocked(_tradeId, msg.sender, takerBond);
     }
 
     // ═══════════════════════════════════════════════════
@@ -1594,26 +1424,6 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     }
 
     /**
-     * @notice Desteklenen token ekler veya çıkarır.
-     *         supportedTokens mapping'i güncellenir — önceki versiyonda bu satır eksikti.
-     * @notice Add or remove a supported token.
-     *         Correctly updates the supportedTokens mapping.
-     */
-    function setSupportedToken(address _token, bool _supported) external onlyOwner {
-        if (_token == address(0)) revert OwnableInvalidOwner(address(0));
-
-        supportedTokens[_token] = _supported;
-        tokenConfigs[_token] = TokenConfig({
-            supported: _supported,
-            allowSellOrders: _supported,
-            allowBuyOrders: _supported
-        });
-
-        emit TokenSupportUpdated(_token, _supported);
-        emit TokenConfigUpdated(_token, _supported, _supported, _supported);
-    }
-
-    /**
      * @notice Token yön izinlerini owner seviyesinde günceller.
      *         Sell / buy order yüzeyleri ayrı ayrı açılıp kapatılabilir.
      * @notice Updates token direction permissions at owner level.
@@ -1627,14 +1437,12 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     ) external onlyOwner {
         if (_token == address(0)) revert OwnableInvalidOwner(address(0));
 
-        supportedTokens[_token] = _supported;
         tokenConfigs[_token] = TokenConfig({
             supported: _supported,
             allowSellOrders: _allowSellOrders,
             allowBuyOrders: _allowBuyOrders
         });
 
-        emit TokenSupportUpdated(_token, _supported);
         emit TokenConfigUpdated(_token, _supported, _allowSellOrders, _allowBuyOrders);
     }
 
@@ -1704,9 +1512,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
     /**
      * @notice Taker giriş kapısını tek yerden zorlar.
-     *         lockEscrow, fillSellOrder ve fillBuyOrder bu helper'ı ortak kullanır.
+     *         V3 order child-trade girişleri (fillSellOrder/fillBuyOrder) bu helper'ı ortak kullanır.
      * @notice Enforces the taker entry gate in one place.
-     *         lockEscrow, fillSellOrder and fillBuyOrder share this helper.
+     *         V3 order child-trade entries (fillSellOrder/fillBuyOrder) share this helper.
      */
     function _enforceTakerEntry(address _wallet, uint8 _tier) internal view {
         Reputation storage rep = reputation[_wallet];
@@ -1729,24 +1537,13 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     }
 
     /**
-     * @notice Token destekli mi helper'ı.
-     *         Geriye uyumluluk için supportedTokens ve tokenConfigs birlikte okunur.
-     * @notice Supported-token helper.
-     *         For backward compatibility, both supportedTokens and tokenConfigs are read.
-     */
-    function _isSupportedToken(address _token) internal view returns (bool) {
-        if (tokenConfigs[_token].supported) return true;
-        return supportedTokens[_token];
-    }
-
-    /**
      * @notice Sell order yönünde token açık mı helper'ı.
      * @notice Helper that checks if a token is enabled for sell orders.
      */
     function _isTokenAllowedForSellOrder(address _token) internal view returns (bool) {
         TokenConfig memory cfg = tokenConfigs[_token];
-        if (cfg.supported) return cfg.allowSellOrders;
-        return supportedTokens[_token];
+        if (!cfg.supported) return false;
+        return cfg.allowSellOrders;
     }
 
     /**
@@ -1755,8 +1552,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      */
     function _isTokenAllowedForBuyOrder(address _token) internal view returns (bool) {
         TokenConfig memory cfg = tokenConfigs[_token];
-        if (cfg.supported) return cfg.allowBuyOrders;
-        return supportedTokens[_token];
+        if (!cfg.supported) return false;
+        return cfg.allowBuyOrders;
     }
 
     /**
