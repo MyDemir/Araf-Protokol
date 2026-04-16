@@ -34,10 +34,6 @@ const { runReputationDecay } = require("./jobs/reputationDecay");
 // [EN] Daily V3 order + child-trade snapshot job
 const { runStatsSnapshot } = require("./jobs/statsSnapshot");
 
-// [TR] V2 listing cleanup mirası — V3'te no-op/compatibility olabilir.
-//      app.js yine de bu job'u schedule edebilir; authoritative market state artık Order'dır.
-// [EN] V2 listing cleanup legacy — may be a no-op/compatibility layer in V3.
-const { runPendingListingCleanup } = require("./jobs/cleanupPendingListings");
 
 // [TR] Hassas veri retention cleanup job'ları
 // [EN] Sensitive data retention cleanup jobs
@@ -138,8 +134,6 @@ async function bootstrap() {
   let reputationDecayInterval = null;
   let statsSnapshotDelay = null;
   let statsSnapshotInterval = null;
-  let pendingCleanupDelay = null;
-  let pendingCleanupInterval = null;
   let sensitiveCleanupDelay = null;
   let sensitiveCleanupInterval = null;
   let userBankRiskCleanupDelay = null;
@@ -151,7 +145,6 @@ async function bootstrap() {
     dlq: false,
     reputationDecay: false,
     statsSnapshot: false,
-    pendingCleanup: false,
     sensitiveCleanup: false,
     userBankRiskCleanup: false,
   };
@@ -162,8 +155,6 @@ async function bootstrap() {
     if (reputationDecayInterval) clearInterval(reputationDecayInterval);
     if (statsSnapshotDelay) clearTimeout(statsSnapshotDelay);
     if (statsSnapshotInterval) clearInterval(statsSnapshotInterval);
-    if (pendingCleanupDelay) clearTimeout(pendingCleanupDelay);
-    if (pendingCleanupInterval) clearInterval(pendingCleanupInterval);
     if (sensitiveCleanupDelay) clearTimeout(sensitiveCleanupDelay);
     if (sensitiveCleanupInterval) clearInterval(sensitiveCleanupInterval);
     if (userBankRiskCleanupDelay) clearTimeout(userBankRiskCleanupDelay);
@@ -326,18 +317,6 @@ async function bootstrap() {
       runScheduledJob("statsSnapshot", runStatsSnapshot);
     }, 24 * 60 * 60 * 1000);
 
-    // [TR] Legacy/compat listing cleanup — V3 market authority Order olsa da
-    //      elde eski/yardımcı kayıtlar varsa onları süpürür. No-op olabilir.
-    // [EN] Legacy/compat listing cleanup.
-    pendingCleanupDelay = setTimeout(() => {
-      runScheduledJob("pendingCleanup", runPendingListingCleanup);
-      logger.info("Periyodik compatibility listing cleanup görevi zamanlandı (her 1 saatte bir).");
-    }, 90_000);
-
-    pendingCleanupInterval = setInterval(() => {
-      runScheduledJob("pendingCleanup", runPendingListingCleanup);
-    }, 60 * 60 * 1000);
-
     // [TR] Hassas veri retention cleanup — her 30 dakikada bir
     //      Trade üzerindeki:
     //        - şifreli dekont payload
@@ -377,7 +356,6 @@ async function bootstrap() {
     const logRoutes = require("./routes/logs");
 
     const authRoutes = require("./routes/auth");
-    const listingRoutes = require("./routes/listings");
     const orderRoutes = require("./routes/orders");
     const tradeRoutes = require("./routes/trades");
     const piiRoutes = require("./routes/pii");
@@ -389,7 +367,6 @@ async function bootstrap() {
     app.use("/api/logs", logRoutes);
 
     app.use("/api/auth", authRoutes);
-    app.use("/api/listings", listingRoutes);
     app.use("/api/orders", orderRoutes);
     app.use("/api/trades", tradeRoutes);
     app.use("/api/pii", piiRoutes);

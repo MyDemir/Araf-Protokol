@@ -6,7 +6,7 @@
  *   - ArafEscrow.sol authoritative kaynaktır.
  *   - Backend order/trade state üretmez; yalnız mirror eder.
  *   - Parent order ve child trade explicit bağlarla tutulur.
- *   - same-tx OrderFilled -> EscrowCreated -> EscrowLocked zinciri güvenli işlenir.
+ *   - V3 order fill path'inde child trade authority, OrderFilled + getTrade() ile mirror edilir.
  *
  * V3 ilkeleri:
  *   - Parent order canonical katmandır.
@@ -952,6 +952,22 @@ class EventWorker {
         session,
       });
 
+      // [TR] V3 child trade LOCKED snapshot'i artık OrderFilled akışında da capture edilir.
+      //      Böylece EscrowLocked event'i gelmese bile mirror LOCKED + payout snapshot
+      //      alanları eksiksiz oluşur.
+      // [EN] Capture LOCKED snapshot directly in OrderFilled flow for V3-native child trades.
+      await this._captureLockedTradeSnapshot({
+        tradeId: _toNum(tradeId),
+        lockedAt: _toDateOrNull(tradeData.lockedAt) || fillEventAt,
+        makerAddress: tradeUpsert?.doc?.maker_address || tradeData.maker?.toLowerCase?.() || null,
+        takerAddress:
+          tradeUpsert?.doc?.taker_address ||
+          (tradeData.taker && tradeData.taker !== ethers.ZeroAddress
+            ? tradeData.taker.toLowerCase()
+            : null),
+        session,
+      });
+
       if (tradeUpsert.inserted) {
         await this._incrementOrderFillStatsAtomically(
           _toNum(orderId),
@@ -1015,76 +1031,95 @@ class EventWorker {
       );
       return;
     }
+    await this._captureLockedTradeSnapshot({
+      tradeId: tradeIdNum,
+      lockedAt,
+      makerAddress: trade.maker_address,
+      takerAddress: taker.toLowerCase(),
+    });
+  }
 
-    const takerAddress = taker.toLowerCase();
+  async _captureLockedTradeSnapshot({
+    tradeId,
+    lockedAt,
+    makerAddress,
+    takerAddress,
+    session,
+  }) {
+    const tradeIdNum = _toNum(tradeId);
+    if (!tradeIdNum) return;
+
+    const normalizedMaker = makerAddress?.toLowerCase?.() || null;
+    const normalizedTaker = takerAddress?.toLowerCase?.() || null;
 
     const [makerUser, takerUser] = await Promise.all([
-      User.findOne({ wallet_address: trade.maker_address })
-        .select(
-          "payout_profile bankChangeCount7d bankChangeCount30d lastBankChangeAt"
-        )
-        .lean(),
-      User.findOne({ wallet_address: takerAddress })
-        .select("payout_profile bankChangeCount7d bankChangeCount30d lastBankChangeAt")
-        .lean(),
+      normalizedMaker
+        ? User.findOne({ wallet_address: normalizedMaker })
+            .select("payout_profile bankChangeCount7d bankChangeCount30d lastBankChangeAt")
+            .lean()
+        : null,
+      normalizedTaker
+        ? User.findOne({ wallet_address: normalizedTaker })
+            .select("payout_profile bankChangeCount7d bankChangeCount30d lastBankChangeAt")
+            .lean()
+        : null,
     ]);
 
     const makerProfile = makerUser?.payout_profile || null;
     const takerProfile = takerUser?.payout_profile || null;
-    const snapshotComplete = _hasRequiredPayoutSnapshot(makerProfile) && _hasRequiredPayoutSnapshot(takerProfile);
+
+    const snapshotComplete =
+      _hasRequiredPayoutSnapshot(makerProfile) && _hasRequiredPayoutSnapshot(takerProfile);
     const incompleteReasons = [];
     if (!_hasRequiredPayoutSnapshot(makerProfile)) incompleteReasons.push("maker_payout_profile_missing");
     if (!_hasRequiredPayoutSnapshot(takerProfile)) incompleteReasons.push("taker_payout_profile_missing");
     const incompleteReason = incompleteReasons.length > 0 ? incompleteReasons.join(",") : null;
+
+    const updateSet = {
+      status: "LOCKED",
+      "timers.locked_at": lockedAt,
+      "payout_snapshot.maker.rail": makerProfile?.rail || null,
+      "payout_snapshot.maker.country": makerProfile?.country || null,
+      "payout_snapshot.maker.contact_channel": makerProfile?.contact?.channel || null,
+      "payout_snapshot.maker.contact_value_enc": makerProfile?.contact?.value_enc || null,
+      "payout_snapshot.maker.payout_details_enc": makerProfile?.payout_details_enc || null,
+      "payout_snapshot.maker.fingerprint_hash_at_lock": makerProfile?.fingerprint?.hash || null,
+      "payout_snapshot.maker.profile_version_at_lock": makerProfile?.fingerprint?.version ?? 0,
+      "payout_snapshot.maker.bank_change_count_7d_at_lock": makerUser?.bankChangeCount7d ?? null,
+      "payout_snapshot.maker.bank_change_count_30d_at_lock": makerUser?.bankChangeCount30d ?? null,
+      "payout_snapshot.maker.last_bank_change_at_at_lock": makerUser?.lastBankChangeAt ?? null,
+
+      "payout_snapshot.taker.rail": takerProfile?.rail || null,
+      "payout_snapshot.taker.country": takerProfile?.country || null,
+      "payout_snapshot.taker.contact_channel": takerProfile?.contact?.channel || null,
+      "payout_snapshot.taker.contact_value_enc": takerProfile?.contact?.value_enc || null,
+      "payout_snapshot.taker.payout_details_enc": takerProfile?.payout_details_enc || null,
+      "payout_snapshot.taker.fingerprint_hash_at_lock": takerProfile?.fingerprint?.hash || null,
+      "payout_snapshot.taker.profile_version_at_lock": takerProfile?.fingerprint?.version ?? 0,
+      "payout_snapshot.taker.bank_change_count_7d_at_lock": takerUser?.bankChangeCount7d ?? null,
+      "payout_snapshot.taker.bank_change_count_30d_at_lock": takerUser?.bankChangeCount30d ?? null,
+      "payout_snapshot.taker.last_bank_change_at_at_lock": takerUser?.lastBankChangeAt ?? null,
+      "payout_snapshot.captured_at": lockedAt,
+      "payout_snapshot.snapshot_delete_at": new Date(lockedAt.getTime() + 30 * 24 * 3600 * 1000),
+      "payout_snapshot.is_complete": snapshotComplete,
+      "payout_snapshot.incomplete_reason": incompleteReason,
+    };
+
+    if (normalizedTaker) {
+      updateSet.taker_address = normalizedTaker;
+    }
 
     await Trade.findOneAndUpdate(
       {
         onchain_escrow_id: tradeIdNum,
         status: { $nin: ["RESOLVED", "CANCELED", "BURNED"] },
       },
-      {
-        $set: {
-          status: "LOCKED",
-          taker_address: takerAddress,
-          "timers.locked_at": lockedAt,
-
-          "payout_snapshot.maker.rail": makerProfile?.rail || null,
-          "payout_snapshot.maker.country": makerProfile?.country || null,
-          "payout_snapshot.maker.contact_channel": makerProfile?.contact?.channel || null,
-          "payout_snapshot.maker.contact_value_enc": makerProfile?.contact?.value_enc || null,
-          "payout_snapshot.maker.payout_details_enc": makerProfile?.payout_details_enc || null,
-          "payout_snapshot.maker.fingerprint_hash_at_lock":
-            makerProfile?.fingerprint?.hash || null,
-          "payout_snapshot.maker.profile_version_at_lock":
-            makerProfile?.fingerprint?.version ?? 0,
-          "payout_snapshot.maker.bank_change_count_7d_at_lock": makerUser?.bankChangeCount7d ?? null,
-          "payout_snapshot.maker.bank_change_count_30d_at_lock": makerUser?.bankChangeCount30d ?? null,
-          "payout_snapshot.maker.last_bank_change_at_at_lock": makerUser?.lastBankChangeAt ?? null,
-
-          "payout_snapshot.taker.rail": takerProfile?.rail || null,
-          "payout_snapshot.taker.country": takerProfile?.country || null,
-          "payout_snapshot.taker.contact_channel": takerProfile?.contact?.channel || null,
-          "payout_snapshot.taker.contact_value_enc": takerProfile?.contact?.value_enc || null,
-          "payout_snapshot.taker.payout_details_enc": takerProfile?.payout_details_enc || null,
-          "payout_snapshot.taker.fingerprint_hash_at_lock":
-            takerProfile?.fingerprint?.hash || null,
-          "payout_snapshot.taker.profile_version_at_lock":
-            takerProfile?.fingerprint?.version ?? 0,
-          "payout_snapshot.taker.bank_change_count_7d_at_lock": takerUser?.bankChangeCount7d ?? null,
-          "payout_snapshot.taker.bank_change_count_30d_at_lock": takerUser?.bankChangeCount30d ?? null,
-          "payout_snapshot.taker.last_bank_change_at_at_lock": takerUser?.lastBankChangeAt ?? null,
-          "payout_snapshot.captured_at": lockedAt,
-          "payout_snapshot.snapshot_delete_at": new Date(lockedAt.getTime() + 30 * 24 * 3600 * 1000),
-          "payout_snapshot.is_complete": snapshotComplete,
-          "payout_snapshot.incomplete_reason": incompleteReason,
-        },
-      }
+      { $set: updateSet },
+      { session }
     );
 
     if (!snapshotComplete) {
-      logger.error(
-        `[Worker] LOCKED snapshot incomplete: trade=${tradeIdNum} reason=${incompleteReason}`
-      );
+      logger.error(`[Worker] LOCKED snapshot incomplete: trade=${tradeIdNum} reason=${incompleteReason}`);
     }
   }
 

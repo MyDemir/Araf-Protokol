@@ -75,8 +75,14 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
   const [copyState, setCopyState] = useState('idle');
 
   const handleReveal = async () => {
-    if (!pii) await fetchPII();
-    setRevealed(true);
+    if (pii?.payoutProfile) {
+      setRevealed(true);
+      return;
+    }
+    const payload = await fetchPII();
+    if (payload?.payoutProfile) {
+      setRevealed(true);
+    }
   };
 
   const handleHide = () => {
@@ -267,6 +273,16 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
             <p className="text-[10px] text-slate-400 leading-tight">{t.notice}</p>
           </div>
         </>
+      ) : error ? (
+        <div className="text-center py-4">
+          <p className="text-red-400 text-sm mb-2">⚠ {error}</p>
+          <button
+            onClick={handleHide}
+            className="px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-2 rounded-lg transition border border-slate-600"
+          >
+            {t.hideBtn}
+          </button>
+        </div>
       ) : (
         <div className="text-center py-4">
           <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mx-auto mb-2" />

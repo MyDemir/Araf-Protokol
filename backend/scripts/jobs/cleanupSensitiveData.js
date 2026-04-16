@@ -62,6 +62,9 @@ async function runPIISnapshotCleanup(now = new Date()) {
           "payout_snapshot.maker.payout_details_enc": null,
           "payout_snapshot.maker.fingerprint_hash_at_lock": null,
           "payout_snapshot.maker.profile_version_at_lock": 0,
+          "payout_snapshot.maker.bank_change_count_7d_at_lock": null,
+          "payout_snapshot.maker.bank_change_count_30d_at_lock": null,
+          "payout_snapshot.maker.last_bank_change_at_at_lock": null,
 
           "payout_snapshot.taker.rail": null,
           "payout_snapshot.taker.country": null,
@@ -70,8 +73,13 @@ async function runPIISnapshotCleanup(now = new Date()) {
           "payout_snapshot.taker.payout_details_enc": null,
           "payout_snapshot.taker.fingerprint_hash_at_lock": null,
           "payout_snapshot.taker.profile_version_at_lock": 0,
+          "payout_snapshot.taker.bank_change_count_7d_at_lock": null,
+          "payout_snapshot.taker.bank_change_count_30d_at_lock": null,
+          "payout_snapshot.taker.last_bank_change_at_at_lock": null,
           "payout_snapshot.captured_at": null,
           "payout_snapshot.snapshot_delete_at": null,
+          "payout_snapshot.is_complete": true,
+          "payout_snapshot.incomplete_reason": null,
         },
       }
     );

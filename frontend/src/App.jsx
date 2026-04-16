@@ -136,6 +136,7 @@ function App() {
     pingMaker,
     pingTakerForChallenge,
     fillSellOrder,
+    fillBuyOrder,
     cancelSellOrder,
     signCancelProposal,
     proposeOrApproveCancel,
@@ -417,10 +418,10 @@ function App() {
     }
   };
 
-  // [TR] Taker "Satın Al" akışı (V3): approve() → fillSellOrder().
+  // [TR] Taker fill akışı (V3): order side'a göre fillSellOrder / fillBuyOrder seçilir.
   //      Frontend trade authority üretmez; parent order verisini kontrattan okur
   //      ve child trade kimliğini yalnız OrderFilled event'inden alır.
-  // [EN] Taker buy flow (V3): approve() -> fillSellOrder().
+  // [EN] Taker fill flow (V3): select fillSellOrder / fillBuyOrder by order side.
   //      Frontend never authors trade authority; it reads parent order state from
   //      chain and derives child trade id only from OrderFilled event.
   const handleStartTrade = async (order) => {
@@ -470,8 +471,8 @@ function App() {
       ? (typeof onchainOrder.tokenAddress !== 'undefined' ? onchainOrder.tokenAddress : onchainOrder[3])
       : null;
 
-    const fillAmountRaw = BigInt(orderRemaining || 0n);
-    if (fillAmountRaw <= 0n) {
+    const remainingAmountRaw = BigInt(orderRemaining || 0n);
+    if (remainingAmountRaw <= 0n) {
       showToast(
         lang === 'TR'
           ? 'Order dolu veya geçersiz görünüyor. Lütfen listeyi yenileyin.'
@@ -480,6 +481,23 @@ function App() {
       );
       return;
     }
+    // [TR] Minimal partial-fill altyapısı: order nesnesi fillAmountRaw sağlarsa kullan,
+    //      yoksa mevcut davranışla remaining amount doldur.
+    // [EN] Minimal partial-fill support: use order.fillAmountRaw if provided, else fill remaining.
+    let fillAmountRaw = remainingAmountRaw;
+    if (order.fillAmountRaw !== undefined && order.fillAmountRaw !== null && order.fillAmountRaw !== '') {
+      try {
+        const requested = BigInt(order.fillAmountRaw);
+        if (requested > 0n && requested <= remainingAmountRaw) {
+          fillAmountRaw = requested;
+        }
+      } catch (_) {
+        // Geçersiz partial miktarda fail-closed yerine remaining fallback.
+      }
+    }
+
+    const side = String(order.side || '').toUpperCase();
+    const fillOrderFn = side === 'BUY_CRYPTO' ? fillBuyOrder : fillSellOrder;
     if (tokenFromChain && tokenFromChain !== '0x0000000000000000000000000000000000000000') {
       tokenAddress = tokenFromChain;
     }
@@ -509,7 +527,7 @@ function App() {
     const childListingRef = `fill:${order.onchainId}:${Date.now()}:${Math.random()}`;
     const { keccak256, stringToHex } = await import('viem');
     const childRefHash = keccak256(stringToHex(childListingRef));
-    const fillResult = await fillSellOrder(BigInt(order.onchainId), fillAmountRaw, childRefHash);
+    const fillResult = await fillOrderFn(BigInt(order.onchainId), fillAmountRaw, childRefHash);
     const onchainTradeId = fillResult?.tradeId ? Number(fillResult.tradeId) : null;
 
     // [TR] Trade odası state'i order id ile değil child trade id ile açılmalıdır.

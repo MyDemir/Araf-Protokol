@@ -312,7 +312,7 @@ export function useAppSessionData({
 
   // Protocol configuration and read models
   useEffect(() => {
-    fetch(`${API_URL}/api/listings/config`, { credentials: 'include' })
+    fetch(`${API_URL}/api/orders/config`, { credentials: 'include' })
       .then((r) => r.json())
       .then((data) => {
         if (data.bondMap) setOnchainBondMap(data.bondMap);
@@ -428,40 +428,68 @@ export function useAppSessionData({
   }, [isConnected, connectedWallet, clearLocalSessionState, bestEffortBackendLogout, lang, showToast]);
 
   useEffect(() => {
-    const fetchListings = async () => {
+    const fetchOrders = async () => {
       try {
         setLoading(true);
-        const res = await fetch(`${API_URL}/api/listings`, { credentials: 'include' });
+        const res = await fetch(`${API_URL}/api/orders`, { credentials: 'include' });
         const data = await res.json();
-        if (data.listings) {
-          setOrders(data.listings.map((l) => ({
-            id: l._id,
-            // [TR] V3 listings alias'i parent order feed döndürür.
-            //      Bu yüzden on-chain kimlik escrow değil order id olmalıdır.
-            // [EN] V3 listings alias returns parent order feed.
-            //      Therefore the on-chain id here must be order id, not escrow id.
-            onchainId: l.onchain_order_id || null,
-            makerFull: l.maker_address,
-            maker: formatAddress(l.maker_address),
-            crypto: l.crypto_asset || 'USDT',
-            fiat: l.fiat_currency || 'TRY',
-            rate: l.exchange_rate,
-            min: l.limits?.min || 0,
-            max: l.limits?.max || 0,
-            tier: l.tier_rules?.required_tier ?? 1,
-            bond: `${l.tier_rules?.maker_bond_pct ?? 0}%`,
-            successRate: 100,
-            txCount: 0,
-          })));
+        if (data.orders) {
+          setOrders(data.orders.map((o) => {
+            const side = o.side || 'SELL_CRYPTO';
+            const crypto = o.market?.crypto_asset || 'USDT';
+            const fiat = o.market?.fiat_currency || 'TRY';
+            const rate = Number(o.market?.exchange_rate || 0);
+            const minFillAmount = Number(o.amounts?.min_fill_amount_num || 0);
+            const remainingAmount = Number(o.amounts?.remaining_amount_num || 0);
+            const makerBondPct = Number(onchainBondMap?.[o.tier]?.maker ?? 0);
+            const takerBondPct = Number(onchainBondMap?.[o.tier]?.taker ?? 0);
+            const sideBondPct = side === 'BUY_CRYPTO' ? takerBondPct : makerBondPct;
+
+            // [TR] ArafEscrow.sol authoritative olduğu için order kartında kesin olmayan
+            //      fiat min/max türetmiyoruz. Yalnız zincirden gelen token miktarlarını gösteriyoruz.
+            // [EN] No inferred fiat min/max. Show only contract-authoritative token amounts.
+            const limitLabel = lang === 'TR'
+              ? `Min Fill ${minFillAmount} ${crypto} • Kalan ${remainingAmount} ${crypto}`
+              : `Min Fill ${minFillAmount} ${crypto} • Remaining ${remainingAmount} ${crypto}`;
+
+            return {
+              id: o._id,
+              onchainId: o.onchain_order_id || null,
+              side,
+              makerFull: o.owner_address,
+              maker: formatAddress(o.owner_address),
+              crypto,
+              fiat,
+              rate,
+              min: null,
+              max: null,
+              minFillAmount,
+              remainingAmount,
+              limitLabel,
+              tier: o.tier ?? 1,
+              bond: sideBondPct > 0 ? `${sideBondPct}%` : '0%',
+              bondLabel: sideBondPct > 0 ? `${sideBondPct}%` : '—',
+              successRate: 100,
+              txCount: 0,
+            };
+          }));
         }
       } catch (err) {
-        console.error('Listing fetch error:', err);
+        console.error('Order fetch error:', err);
       } finally {
         setLoading(false);
       }
     };
-    fetchListings();
-  }, [lang]);
+    fetchOrders();
+  }, [lang, onchainBondMap]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !isConnected) return;
+    authenticatedFetch(`${API_URL}/api/orders/my`)
+      .catch((err) => {
+        console.error('My orders fetch error:', err);
+      });
+  }, [isAuthenticated, isConnected, authenticatedFetch]);
 
   useEffect(() => { fetchStats(); }, [fetchStats]);
 
@@ -761,7 +789,8 @@ export function useAppSessionData({
   }, [connector, connectedWallet, isAuthenticated, authenticatedWallet, lang, bestEffortBackendLogout, clearLocalSessionState, showToast]);
 
   const filteredOrders = orders.filter((order) => {
-    const amountMatch = searchAmount === '' || (Number(searchAmount) >= order.min && Number(searchAmount) <= order.max);
+    const hasAuthoritativeFiatRange = Number.isFinite(order.min) && Number.isFinite(order.max);
+    const amountMatch = searchAmount === '' || !hasAuthoritativeFiatRange || (Number(searchAmount) >= order.min && Number(searchAmount) <= order.max);
     const tierMatch = filterTier1 ? order.tier === 0 : true;
     const tokenMatch = filterToken === 'ALL' || order.crypto === filterToken;
     return amountMatch && tierMatch && tokenMatch;

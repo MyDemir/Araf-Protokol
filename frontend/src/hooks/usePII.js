@@ -119,10 +119,13 @@ export function usePII(tradeId, authenticatedFetch) {
 
       // [TR] Sadece hâlâ mount ve iptal edilmemişse state güncelle
       if (mountedRef.current && !signal.aborted) {
-        setPii({
+        const payload = {
           payoutProfile: data.payoutProfile || null,
-        });
+        };
+        setPii(payload);
+        return payload;
       }
+      return null;
     } catch (err) {
       // [TR] AbortError beklenen bir iptal — state'e hata yazma
       // [EN] AbortError is an expected cancellation — don't write error to state
@@ -131,6 +134,7 @@ export function usePII(tradeId, authenticatedFetch) {
       if (mountedRef.current) {
         setError(err.message);
       }
+      return null;
     } finally {
       if (mountedRef.current && !signal.aborted) {
         setLoading(false);

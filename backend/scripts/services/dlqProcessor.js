@@ -8,8 +8,7 @@
  * başarısızları exponential backoff ile kuyrukta tutar.
  *
  * V3 notu:
- *   - same-tx OrderFilled -> EscrowCreated -> EscrowLocked zinciri nedeniyle
- *     tek bir tx içinde birden fazla önemli event görülebilir.
+ *   - Tek bir tx içinde birden fazla önemli event görülebilir.
  *   - Bu nedenle logIndex eksikse kör şekilde `-1` kullanmak istemiyoruz;
  *     farklı event'lerin aynı fallback key'de çakışmasını azaltmak için
  *     deterministik sentetik replay logIndex'i üretiyoruz.

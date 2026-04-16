@@ -393,8 +393,13 @@ export const buildAppViews = (ctx) => {
                 </div>
 
                 <div className="w-full md:w-1/3 text-left md:text-center border-t border-[#222] md:border-none pt-3 md:pt-0">
-                  <p className="text-sm font-bold text-slate-300">{order.min} - {order.max} {order.fiat}</p>
-                  <p className="text-[10px] text-emerald-500/80 mt-0.5 uppercase tracking-wider">{order.bond} {lang === 'TR' ? 'Teminat' : 'Bond'}</p>
+                  <p className="text-sm font-bold text-slate-300">{order.limitLabel}</p>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    {lang === 'TR' ? 'Minimum Fill:' : 'Min Fill:'} {order.minFillAmount ?? 0} {order.crypto}
+                  </p>
+                  <p className="text-[10px] text-emerald-500/80 mt-0.5 uppercase tracking-wider">
+                    {order.bondLabel} {lang === 'TR' ? 'Teminat' : 'Bond'}
+                  </p>
                 </div>
 
                 <div className="w-full md:w-1/3 flex flex-col items-start md:items-end justify-center relative">
@@ -724,7 +729,7 @@ if (activeTrade?._pendingBackendSync && !activeTrade?.id) {
             )}
 
             {/* PII bölümü: taker şifreli banka bilgilerini görür, maker ödeme beklediğini bilir */}
-            {isTaker && roomState !== 'RESOLVED' && (
+            {isTaker && !['RESOLVED', 'CANCELED', 'BURNED'].includes(roomState) && (
               <div className="border border-[#222] rounded-xl overflow-hidden mt-6 bg-[#0a0a0c] p-1">
                 <PIIDisplay
                   tradeId={activeTrade?.id}
@@ -734,7 +739,7 @@ if (activeTrade?._pendingBackendSync && !activeTrade?.id) {
                 />
               </div>
             )}
-            {isMaker && roomState !== 'RESOLVED' && (
+            {isMaker && !['RESOLVED', 'CANCELED', 'BURNED'].includes(roomState) && (
               <div className="bg-[#0a0a0c] p-6 rounded-xl border border-[#222] text-center mt-6">
                 <div className="text-3xl mb-2">🏦</div>
                 <p className="text-slate-300 font-medium text-sm">{lang === 'TR' ? 'Banka hesabınıza ödeme bekleniyor.' : 'Waiting for fiat payment.'}</p>
@@ -768,7 +773,7 @@ if (activeTrade?._pendingBackendSync && !activeTrade?.id) {
                         setIsContractLoading(true);
                         showToast(lang === 'TR' ? 'Yakma işlemi gönderiliyor... Cüzdanınızdan onaylayın.' : 'Burn transaction sent... Confirm in wallet.', 'info');
                         await burnExpired(BigInt(activeTrade.onchainId));
-                        setTradeState('RESOLVED');
+                        setTradeState('BURNED');
                         setActiveTrade(null);
                         setCancelStatus(null);
                         setChargebackAccepted(false);
