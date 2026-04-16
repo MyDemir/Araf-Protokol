@@ -7,6 +7,7 @@ import PIIDisplay from './components/PIIDisplay';
 import { buildAppViews } from './app/AppViews';
 import { EnvWarningBanner, buildAppModals } from './app/AppModals';
 import { useAppSessionData } from './app/useAppSessionData';
+import { resolveOrderActionFns, normalizeOrderSide, removeOrderByOnchainId } from './app/orderModel';
 
 // ─────────────────────────────────────────────
 // [TR] API URL: DEV modunda localhost, prod'da VITE_API_URL zorunlu
@@ -78,8 +79,8 @@ function App() {
   // [EN] Sidebar auto-close timer ref (resets on hover)
   const sidebarTimerRef = React.useRef(null);
 
-  // [TR] Maker sell-order formu state'leri
-  // [EN] Maker sell-order form states
+  // [TR] Maker order formu state'leri (SELL/BUY side-aware)
+  // [EN] Maker order form states (SELL/BUY side-aware)
   const [makerTier, setMakerTier]         = useState(1);
   const [makerAmount, setMakerAmount]     = useState('');
   const [makerRate, setMakerRate]         = useState('');
@@ -94,6 +95,7 @@ function App() {
     USDC: import.meta.env.VITE_USDC_ADDRESS || '',
   };
   const [makerToken, setMakerToken] = useState('USDT');
+  const [makerSide, setMakerSide] = useState('SELL_CRYPTO');
   const [profileTab, setProfileTab] = useState('hesabim');
   const [lang, setLang] = useState('TR');
   const [loadingText, setLoadingText] = useState('');
@@ -138,11 +140,13 @@ function App() {
     fillSellOrder,
     fillBuyOrder,
     cancelSellOrder,
+    cancelBuyOrder,
     signCancelProposal,
     proposeOrApproveCancel,
     getReputation,
     getCurrentAmounts,
     createSellOrder,
+    createBuyOrder,
     registerWallet,
     reportPayment,
     burnExpired,
@@ -198,10 +202,13 @@ function App() {
     statsLoading,
     statsError,
     onchainBondMap,
+    onchainTokenMap,
     takerFeeBps,
     tokenDecimalsMap,
     bleedingAmounts,
     orders,
+    myOrders,
+    setMyOrders,
     setOrders,
     activeEscrows,
     loading,
@@ -496,8 +503,11 @@ function App() {
       }
     }
 
-    const side = String(order.side || '').toUpperCase();
-    const fillOrderFn = side === 'BUY_CRYPTO' ? fillBuyOrder : fillSellOrder;
+    const side = normalizeOrderSide(String(order.side || '').toUpperCase());
+    if (side === 'UNKNOWN') {
+      throw new Error(lang === 'TR' ? 'Geçersiz order side. İşlem başlatılamadı.' : 'Invalid order side. Cannot start trade.');
+    }
+    const { fillFn: fillOrderFn } = resolveOrderActionFns(side, { fillBuyOrder, fillSellOrder, createBuyOrder, createSellOrder, cancelBuyOrder, cancelSellOrder });
     if (tokenFromChain && tokenFromChain !== '0x0000000000000000000000000000000000000000') {
       tokenAddress = tokenFromChain;
     }
@@ -922,7 +932,7 @@ function App() {
       showToast(lang === 'TR' ? 'Uyarı işlemi cüzdanınıza gönderiliyor...' : 'Pinging maker, please confirm in wallet...', 'info');
       await pingMaker(BigInt(tradeId));
       setActiveTrade(prev => ({ ...prev, pingedAt: new Date().toISOString() }));
-      showToast(lang === 'TR' ? 'Satıcı uyarıldı. Yanıt için 24 saati var.' : 'Maker has been pinged. They have 24h to respond.', 'success');
+      showToast(lang === 'TR' ? 'Maker uyarıldı. Yanıt için 24 saati var.' : 'Maker has been pinged. They have 24h to respond.', 'success');
     } catch (err) {
       console.error('pingMaker error:', err);
       const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Ping işlemi başarısız oldu.' : 'Ping failed.');
@@ -1042,7 +1052,7 @@ function App() {
 
   const handleOpenMakerModal = () => {
     if (isPaused) {
-      showToast(lang === 'TR' ? 'Sistem şu an bakım modundadır. Yeni sell order açılamaz.' : 'System is paused. Cannot create sell order.', 'error');
+      showToast(lang === 'TR' ? 'Sistem şu an bakım modundadır. Yeni order açılamaz.' : 'System is paused. Cannot create orders.', 'error');
       return;
     }
     if (!requireSignedSessionForActiveWallet()) return;
@@ -1055,7 +1065,7 @@ function App() {
   // [EN] Maker order creation (V3): approve() -> createSellOrder().
   //      Backend is not an arbiter; order authority is on-chain.
   //      orderRef is generated client-side as an auditable deterministic hash.
-const handleCreateSellOrder = async () => {
+const handleCreateOrder = async () => {
   if (!requireSignedSessionForActiveWallet()) return;
 
   let tokenAddress = SUPPORTED_TOKEN_ADDRESSES[makerToken];
@@ -1115,17 +1125,24 @@ const handleCreateSellOrder = async () => {
       didIncreaseAllowance = true;
     }
 
+    const normalizedSide = normalizeOrderSide(makerSide);
+    if (normalizedSide === 'UNKNOWN') {
+      throw new Error(lang === 'TR' ? 'Geçersiz order side. Order oluşturulamadı.' : 'Invalid order side. Order creation blocked.');
+    }
+    const { createFn } = resolveOrderActionFns(normalizedSide, { fillBuyOrder, fillSellOrder, createBuyOrder, createSellOrder, cancelBuyOrder, cancelSellOrder });
+    const createLabel = normalizedSide === 'BUY_CRYPTO' ? 'Buy' : 'Sell';
+
     setLoadingText(
       lang === 'TR'
-        ? 'Adım 2/2: Sell order oluşturuluyor...'
-        : 'Step 2/2: Creating sell order...'
+        ? `Adım 2/2: ${createLabel} order oluşturuluyor...`
+        : `Step 2/2: Creating ${createLabel.toLowerCase()} order...`
     );
-    await createSellOrder(tokenAddress, cryptoAmountRaw, boundedMinFill, makerTier, orderRef);
+    await createFn(tokenAddress, cryptoAmountRaw, boundedMinFill, makerTier, orderRef);
 
     showToast(
       lang === 'TR'
-        ? '✅ Sell order başarıyla oluşturuldu.'
-        : '✅ Sell order created successfully.',
+        ? `✅ ${createLabel} order başarıyla oluşturuldu.`
+        : `✅ ${createLabel} order created successfully.`,
       'success'
     );
 
@@ -1135,14 +1152,15 @@ const handleCreateSellOrder = async () => {
     setMakerMinLimit('');
     setMakerMaxLimit('');
     setMakerFiat('TRY');
+    setMakerSide('SELL_CRYPTO');
   } catch (err) {
-    console.error('handleCreateSellOrder error:', err);
+    console.error('handleCreateOrder error:', err);
 
     if (didIncreaseAllowance && tokenAddress) {
       try { await approveToken(tokenAddress, 0n); } catch (_) {}
     }
 
-    let errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Sell order oluşturulamadı.' : 'Failed to create sell order.');
+    let errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Order oluşturulamadı.' : 'Failed to create order.');
     if (errorMessage.includes('Efektif tier') || errorMessage.includes('effective tier')) {
       errorMessage += lang === 'TR'
         ? ' Not: Tier 1+ için ilk başarılı işlemden sonra 15 gün aktif dönem şartı da aranır.'
@@ -1160,10 +1178,10 @@ const handleCreateSellOrder = async () => {
   }
 };
 
-  // [TR] "İlanlarım" ekranından maker sell order'ını iptal eder.
-  //      İptal authority'si kontrattadır; frontend yalnız cancelSellOrder çağrısını tetikler.
-  // [EN] Cancels maker sell order from "My Listings".
-  //      Cancellation authority lives on-chain; frontend only triggers cancelSellOrder.
+  // [TR] "Orderlarım" ekranından maker order'ını iptal eder.
+  //      İptal authority'si kontrattadır; frontend yalnız side-aware cancel çağrısını tetikler.
+  // [EN] Cancels maker order from "My Orders".
+  //      Cancellation authority lives on-chain; frontend only triggers side-aware cancel calls.
   const handleDeleteOrder = async (order) => {
     if (order?.onchainId == null || isContractLoading) return;
     if (!requireSignedSessionForActiveWallet()) return;
@@ -1177,13 +1195,19 @@ const handleCreateSellOrder = async () => {
           : 'Cancelling order on-chain... Confirm in wallet.',
         'info'
       );
-      await cancelSellOrder(BigInt(order.onchainId));
+      const normalizedSide = normalizeOrderSide(order?.side);
+      if (normalizedSide === 'UNKNOWN') {
+        throw new Error(lang === 'TR' ? 'Geçersiz order side. İptal işlemi durduruldu.' : 'Invalid order side. Cancel blocked.');
+      }
+      const { cancelFn } = resolveOrderActionFns(normalizedSide, { fillBuyOrder, fillSellOrder, createBuyOrder, createSellOrder, cancelBuyOrder, cancelSellOrder });
+      await cancelFn(BigInt(order.onchainId));
 
-      setOrders(prev => prev.filter(o => o.onchainId !== order.onchainId));
+      setOrders(prev => removeOrderByOnchainId(prev, order.onchainId));
+      setMyOrders(prev => removeOrderByOnchainId(prev, order.onchainId));
       setConfirmDeleteId(null);
 
       showToast(
-        lang === 'TR' ? '✅ Sell order iptal edildi.' : '✅ Sell order canceled.',
+        lang === 'TR' ? '✅ Order iptal edildi.' : '✅ Order canceled.',
         'success'
       );
     } catch (err) {
@@ -1242,13 +1266,13 @@ const handleCreateSellOrder = async () => {
     trades:          lang === 'TR' ? 'Başarılı İşlem' : 'Success Trades',
     users:           lang === 'TR' ? 'Aktif Kullanıcı' : 'Active Users',
     burn:            lang === 'TR' ? 'Eriyen Kasa' : 'Burned Treasury',
-    tableSeller:     lang === 'TR' ? 'Satıcı' : 'Seller',
+    tableSeller:     lang === 'TR' ? 'Order Sahibi' : 'Order Owner',
     tableRate:       lang === 'TR' ? 'Kur' : 'Rate',
     tableLimit:      lang === 'TR' ? 'Limit' : 'Limit',
     tableBond:       lang === 'TR' ? 'Bond' : 'Bond',
     tableAction:     lang === 'TR' ? 'İşlem' : 'Action',
     buyBtn:          lang === 'TR' ? 'Satın Al' : 'Buy',
-    createAd:        lang === 'TR' ? '+ İlan Aç' : '+ Create Ad',
+    createAd:        lang === 'TR' ? '+ Order Aç' : '+ Create Order',
   };
 
   // ═══════════════════════════════════════════
@@ -1300,6 +1324,7 @@ const handleCreateSellOrder = async () => {
     activeEscrows,
     loading,
     SUPPORTED_TOKEN_ADDRESSES,
+    onchainTokenMap,
     handleStartTrade,
     handleMint,
     handleOpenMakerModal,
@@ -1394,6 +1419,8 @@ const handleCreateSellOrder = async () => {
     setMakerTier,
     makerToken,
     setMakerToken,
+    makerSide,
+    setMakerSide,
     makerAmount,
     setMakerAmount,
     makerRate,
@@ -1405,9 +1432,10 @@ const handleCreateSellOrder = async () => {
     makerFiat,
     setMakerFiat,
     onchainBondMap,
+    onchainTokenMap,
     userReputation,
     SUPPORTED_TOKEN_ADDRESSES,
-    handleCreateSellOrder,
+    handleCreateOrder,
     isContractLoading,
     setIsContractLoading,
     loadingText,
@@ -1423,6 +1451,7 @@ const handleCreateSellOrder = async () => {
     tradeHistoryTotal,
     tradeHistoryLimit,
     orders,
+    myOrders,
     address,
     confirmDeleteId,
     setConfirmDeleteId,

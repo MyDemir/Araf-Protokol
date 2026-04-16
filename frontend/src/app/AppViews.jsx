@@ -124,9 +124,9 @@ export const buildAppViews = (ctx) => {
   );
 
   // [TR] Bağlamsal yan panel — 5 sn sonra kapanır, hover timer'ı sıfırlar.
-  //      Filtreler, durum akordiyonu ve sell order oluşturma butonu içerir.
+  //      Filtreler, durum akordiyonu ve yeni order oluşturma butonu içerir.
   // [EN] Context sidebar — closes after 5s, hover resets timer.
-  //      Contains filters, status accordion and sell-order creation button.
+  //      Contains filters, status accordion and create-order button.
   const renderContextSidebar = () => (
     <>
       {sidebarOpen && <div className="md:hidden fixed inset-0 bg-black/60 z-[55] backdrop-blur-sm transition-opacity" onClick={() => setSidebarOpen(false)} />}
@@ -144,7 +144,7 @@ export const buildAppViews = (ctx) => {
           <p className="text-[10px] font-bold text-slate-500 mb-3 tracking-widest">{lang === 'TR' ? 'PAZAR YERİ' : 'MARKETPLACE'}</p>
           <div className="space-y-1">
             <button onClick={() => { setFilterToken('ALL'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'ALL' && currentView === 'market' ? 'bg-[#1a1a1f] text-white border border-[#2a2a2e]' : 'text-slate-400 hover:text-white hover:bg-[#1a1a1f]/50'}`}>
-              <div className="flex items-center gap-2"><span className="text-slate-500">⛓️</span> {lang === 'TR' ? 'TÜM İLANLAR' : 'ALL LISTINGS'}</div>
+              <div className="flex items-center gap-2"><span className="text-slate-500">⛓️</span> {lang === 'TR' ? 'TÜM ORDERLAR' : 'ALL ORDERS'}</div>
               <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-300">{orders.length}</span>
             </button>
             <button onClick={() => { setFilterToken('USDT'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'USDT' && currentView === 'market' ? 'bg-[#1a1a1f] text-white border border-[#2a2a2e]' : 'text-slate-400 hover:text-white hover:bg-[#1a1a1f]/50'}`}>
@@ -226,7 +226,7 @@ export const buildAppViews = (ctx) => {
             <button onClick={() => setLang('EN')} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition ${lang === 'EN' ? 'bg-[#222] text-white' : 'text-slate-500 hover:text-white'}`}>🇬🇧 EN</button>
           </div>
           <button onClick={handleOpenMakerModal} disabled={isPaused} className={`w-full py-3 bg-gradient-to-r ${isPaused ? 'from-slate-700 to-slate-600 cursor-not-allowed text-slate-400' : 'from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:shadow-[0_0_20px_rgba(16,185,129,0.5)] text-white'} rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2`}>
-            <span className="text-lg leading-none">+</span> {lang === 'TR' ? 'YENİ İLAN AÇ' : 'CREATE AD'}
+            <span className="text-lg leading-none">+</span> {lang === 'TR' ? 'YENİ ORDER AÇ' : 'CREATE ORDER'}
           </button>
         </div>
       </div>
@@ -323,8 +323,8 @@ export const buildAppViews = (ctx) => {
     </div>
   );
 
-  // [TR] Pazar yeri — sell order listesi, filtreler, test faucet butonları
-  // [EN] Marketplace — sell-order list, filters, test faucet buttons
+  // [TR] Pazar yeri — side-aware order listesi, filtreler, test faucet butonları
+  // [EN] Marketplace — side-aware order list, filters, test faucet buttons
   const renderMarket = () => (
     <div className="p-4 md:p-8 max-w-[1200px] w-full">
       <div className="mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -362,6 +362,8 @@ export const buildAppViews = (ctx) => {
             const isFunded          = sybilStatus ? sybilStatus.funded : true;
             const isCooldownOk      = sybilStatus ? sybilStatus.cooldownOk : true;
             const finalCanTakeOrder = canTakeOrder && isCooldownOk && isFunded && !isPaused && isTokenConfigured && isCorrectChain;
+            const isSellSide = order.side === 'SELL_CRYPTO';
+            const sideBadgeClass = isSellSide ? 'bg-emerald-900/20 text-emerald-400 border-emerald-800/40' : 'bg-blue-900/20 text-blue-400 border-blue-800/40';
 
             return (
               <div key={order.id} className="bg-[#111113] hover:bg-[#151518] border border-[#222] p-4 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between transition-colors group relative gap-4 md:gap-0">
@@ -370,9 +372,10 @@ export const buildAppViews = (ctx) => {
                   <div className="relative group/tooltip">
                     <p className="text-white font-medium text-sm cursor-help">{order.maker}</p>
                     <p className="text-xs text-slate-500">{order.rate} {order.fiat} / 1 {order.crypto}</p>
+                    <span className={`inline-flex mt-1 text-[10px] px-2 py-0.5 rounded border ${sideBadgeClass}`}>{order.sideLabel || order.side}</span>
                     <div className="absolute left-0 sm:-left-4 md:left-1/2 md:-translate-x-1/2 bottom-full mb-2 hidden group-hover/tooltip:block z-50">
                       <div className="bg-[#111] border border-[#333] p-5 rounded-2xl shadow-2xl w-64 backdrop-blur-xl">
-                        <p className="text-[10px] text-slate-400 mb-3 tracking-widest">{lang === 'TR' ? 'SATICI PROFİLİ' : 'SELLER PROFILE'}</p>
+                        <p className="text-[10px] text-slate-400 mb-3 tracking-widest">{lang === 'TR' ? 'ORDER OWNER PROFİLİ' : 'ORDER OWNER PROFILE'}</p>
                         <div className="flex items-center gap-4 mb-4">
                           <div className="w-16 h-16 rounded-full border-[3px] border-emerald-500/30 flex items-center justify-center relative">
                             <span className="text-emerald-400 font-bold text-xl">{order.successRate}%</span>
@@ -384,7 +387,7 @@ export const buildAppViews = (ctx) => {
                           </div>
                         </div>
                         <div className="space-y-2 text-xs border-t border-[#333] pt-3">
-                          <div className="flex justify-between"><span className="text-slate-500">{lang === 'TR' ? 'SATIŞ HACMİ' : 'TRADE VOL'}</span><span className="text-white font-mono">{order.txCount} Tx</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500">{lang === 'TR' ? 'İŞLEM HACMİ' : 'TRADE VOL'}</span><span className="text-white font-mono">{order.txCount} Tx</span></div>
                           <div className="flex justify-between"><span className="text-slate-500">{lang === 'TR' ? 'TIER DÜZEYİ' : 'TIER LEVEL'}</span><span className="text-yellow-500 font-bold">T{order.tier} 🛡️</span></div>
                         </div>
                       </div>
@@ -396,6 +399,9 @@ export const buildAppViews = (ctx) => {
                   <p className="text-sm font-bold text-slate-300">{order.limitLabel}</p>
                   <p className="text-[10px] text-slate-500 mt-1">
                     {lang === 'TR' ? 'Minimum Fill:' : 'Min Fill:'} {order.minFillAmount ?? 0} {order.crypto}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5 uppercase tracking-wider">
+                    {order.statusLabel || order.status}
                   </p>
                   <p className="text-[10px] text-emerald-500/80 mt-0.5 uppercase tracking-wider">
                     {order.bondLabel} {lang === 'TR' ? 'Teminat' : 'Bond'}
@@ -410,7 +416,7 @@ export const buildAppViews = (ctx) => {
                      !canTakeOrder       ? <><span>🔒</span> {lang === 'TR' ? 'Kilitli' : 'Locked'}</> :
                      !isFunded           ? <><span>⚠️</span> {lang === 'TR' ? 'Bakiye Yetersiz' : 'Low Balance'}</> :
                      !isCooldownOk       ? <><span>⏳</span> {lang === 'TR' ? `Cooldown: ${Math.ceil((sybilStatus?.cooldownRemaining || 0) / 60)} dk` : `Cooldown: ${Math.ceil((sybilStatus?.cooldownRemaining || 0) / 60)} min`}</> :
-                     (isContractLoading  ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : (lang === 'TR' ? 'Satın Al' : 'Buy'))}
+                     (isContractLoading  ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : (order.ctaLabel || (lang === 'TR' ? 'İşlem Yap' : 'Trade')))}
                   </button>
                   {!isFunded && isConnected && canTakeOrder && !isPaused && (
                     <p className="text-[10px] text-red-500 mt-2 text-center md:text-right w-full leading-tight">
@@ -429,7 +435,7 @@ export const buildAppViews = (ctx) => {
             );
           })
         ) : (
-          <div className="p-8 text-center text-slate-500">{lang === 'TR' ? 'İlan bulunamadı.' : 'No ads found.'}</div>
+          <div className="p-8 text-center text-slate-500">{lang === 'TR' ? 'Order bulunamadı.' : 'No orders found.'}</div>
         )}
       </div>
     </div>
@@ -595,7 +601,7 @@ if (activeTrade?._pendingBackendSync && !activeTrade?.id) {
                 </div>
                 {isTaker ? (
                   <div className="w-full max-w-md flex flex-col items-center">
-                    <p className="text-slate-400 text-sm mb-4">{lang === 'TR' ? 'Satıcının onayı bekleniyor.' : 'Waiting for seller release.'}</p>
+                    <p className="text-slate-400 text-sm mb-4">{lang === 'TR' ? 'Maker onayı bekleniyor.' : 'Waiting for maker release.'}</p>
                     {(() => {
                       if (!activeTrade?.paidAt) return null;
                       if (activeTrade.pingedAt) {
@@ -605,7 +611,7 @@ if (activeTrade?._pendingBackendSync && !activeTrade?.id) {
                           return (
                             <div className="w-full mt-2 flex flex-col items-center">
                               <p className="text-[11px] text-red-400 font-bold mb-1 text-center leading-tight">
-                                {lang === 'TR' ? 'Dikkat: Satıcı pasif kaldığı için her iki tarafın teminatından %2 ihmal cezası kesilecektir (Maker: %2, Taker: %2).' : 'Warning: Due to maker inaction, a 2% negligence penalty will be deducted from both parties\' bonds (Maker: 2%, Taker: 2%).'}
+                                {lang === 'TR' ? 'Dikkat: Maker pasif kaldığı için her iki tarafın teminatından %2 ihmal cezası kesilecektir (Maker: %2, Taker: %2).' : 'Warning: Due to maker inaction, a 2% negligence penalty will be deducted from both parties\' bonds (Maker: 2%, Taker: 2%).'}
                               </p>
                               <button onClick={() => handleAutoRelease(activeTrade.onchainId)} disabled={isContractLoading} className="w-full text-sm font-bold py-3 rounded-xl transition bg-emerald-600/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500 hover:text-white shadow-lg">
                                 {isContractLoading ? '...' : (lang === 'TR' ? '✅ Fonları Otomatik Serbest Bırak' : '✅ Auto-Release Funds')}
@@ -613,7 +619,7 @@ if (activeTrade?._pendingBackendSync && !activeTrade?.id) {
                             </div>
                           );
                         }
-                        return <div className="mt-2 text-center text-xs text-emerald-400 bg-emerald-900/20 p-3 rounded-lg border border-emerald-900/50 w-full"><p className="font-bold">✓ {lang === 'TR' ? 'Satıcı Uyarıldı' : 'Maker Pinged'}</p></div>;
+                        return <div className="mt-2 text-center text-xs text-emerald-400 bg-emerald-900/20 p-3 rounded-lg border border-emerald-900/50 w-full"><p className="font-bold">✓ {lang === 'TR' ? 'Maker Uyarıldı' : 'Maker Pinged'}</p></div>;
                       }
                       const gracePeriodEnds = new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000);
                       const canPing = new Date() > gracePeriodEnds;
@@ -621,15 +627,15 @@ if (activeTrade?._pendingBackendSync && !activeTrade?.id) {
                         return (
                           <div className="w-full mt-2 flex flex-col items-center">
                             <button disabled className="w-full text-sm font-bold py-3 rounded-xl transition bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed">
-                              {lang === 'TR' ? '🔔 Satıcıyı Uyar' : '🔔 Ping Maker'}
+                              {lang === 'TR' ? '🔔 Maker’ı Uyar' : '🔔 Ping Maker'}
                             </button>
                             <p className="text-[11px] text-red-400 mt-2 text-center leading-tight">
-                              ⚠️ {lang === 'TR' ? 'Satıcı itiraz uyarı sürecini başlattı. Artık otomatik serbest bırakma (Auto-Release) yolunu kullanamazsınız.' : 'Maker has initiated the challenge warning process. You can no longer use Auto-Release.'}
+                              ⚠️ {lang === 'TR' ? 'Maker itiraz uyarı sürecini başlattı. Artık otomatik serbest bırakma (Auto-Release) yolunu kullanamazsınız.' : 'Maker has initiated the challenge warning process. You can no longer use Auto-Release.'}
                             </p>
                           </div>
                         );
                       }
-                      return <button onClick={() => handlePingMaker(activeTrade.onchainId)} disabled={!canPing || isContractLoading} className={`w-full mt-2 text-sm font-bold py-3 rounded-xl transition ${!canPing || isContractLoading ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-orange-600/20 text-orange-400 border border-orange-500/40 hover:bg-orange-500 hover:text-white'}`}>{isContractLoading ? '...' : canPing ? (lang === 'TR' ? '🔔 Satıcıyı Uyar' : '🔔 Ping Maker') : (lang === 'TR' ? '⏱️ Onay Bekleniyor' : '⏱️ Awaiting Confirmation')}</button>;
+                      return <button onClick={() => handlePingMaker(activeTrade.onchainId)} disabled={!canPing || isContractLoading} className={`w-full mt-2 text-sm font-bold py-3 rounded-xl transition ${!canPing || isContractLoading ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-orange-600/20 text-orange-400 border border-orange-500/40 hover:bg-orange-500 hover:text-white'}`}>{isContractLoading ? '...' : canPing ? (lang === 'TR' ? '🔔 Maker’ı Uyar' : '🔔 Ping Maker') : (lang === 'TR' ? '⏱️ Onay Bekleniyor' : '⏱️ Awaiting Confirmation')}</button>;
                     })()}
                   </div>
                 ) : (
