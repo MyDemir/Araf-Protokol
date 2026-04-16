@@ -2,6 +2,8 @@ import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import fs from 'node:fs';
+import path from 'node:path';
 import { buildAppModals } from '../app/AppModals';
 
 const makeCtx = (overrides = {}) => ({
@@ -95,6 +97,7 @@ const makeCtx = (overrides = {}) => ({
   isWalletRegistered: true,
   sybilStatus: null,
   walletAgeRemainingDays: null,
+  decayReputation: vi.fn(),
   tokenDecimalsMap: { USDT: 6 },
   DEFAULT_TOKEN_DECIMALS: 6,
   formatTokenAmountFromRaw: () => '0',
@@ -140,5 +143,12 @@ describe('AppModals side-aware behaviors', () => {
     expect(screen.getByText(/BUY_CRYPTO · OPEN/)).toBeInTheDocument();
     expect(screen.getByText(/Remaining: 50 USDT/)).toBeInTheDocument();
     expect(screen.getByText(/Min Fill: 10 USDT/)).toBeInTheDocument();
+  });
+
+  it('uses 90-day clean-slate copy and wires decayReputation handler from context', async () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/app/AppModals.jsx'), 'utf8');
+    expect(source).toContain('const cleanSlateTime = bannedUntil + (90 * 24 * 60 * 60);');
+    expect(source).toContain('90 days have passed');
+    expect(source).toContain('decayReputation,');
   });
 });

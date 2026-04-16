@@ -72,6 +72,22 @@ const ERC20_ABI = parseAbi([
 
 const ESCROW_ADDRESS = import.meta.env.VITE_ESCROW_ADDRESS;
 
+/**
+ * [TR] Log endpoint tabanı normalize edilir:
+ *      - VITE_API_URL = https://api.example.com      => https://api.example.com/api
+ *      - VITE_API_URL = https://api.example.com/api  => https://api.example.com/api
+ *      - DEV fallback                                => http://localhost:4000/api
+ * [EN] Normalize log endpoint base:
+ *      avoids /api duplication and missing /api mismatch.
+ */
+const resolveApiBaseForLogs = () => {
+  const raw = (import.meta.env.VITE_API_URL || "").trim();
+  if (raw) {
+    return raw.endsWith("/api") ? raw : `${raw}/api`;
+  }
+  return "http://localhost:4000/api";
+};
+
 // Desteklenen chain ID'ler — Base Mainnet ve Base Sepolia
 const SUPPORTED_CHAINS = {
   8453:  "Base Mainnet",
@@ -182,7 +198,7 @@ export function useArafContract() {
       const errorMessage = error.shortMessage || error.reason || error.message || "Bilinmeyen Kontrat Hatası";
       
       //Hatayı sessizce backend log dosyasına gönder (Kullanıcı arayüzünü dondurmaz)
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+      const apiUrl = resolveApiBaseForLogs();
       fetch(`${apiUrl}/logs/client-error`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -301,7 +317,7 @@ export function useArafContract() {
     } catch (error) {
       // Token Onayı iptallerini backend'e logla
       const errorMessage = error.shortMessage || error.message || "Bilinmeyen Onay Hatası";
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+      const apiUrl = resolveApiBaseForLogs();
       fetch(`${apiUrl}/logs/client-error`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -333,7 +349,7 @@ export function useArafContract() {
     } catch (error) {
        // Faucet iptallerini backend'e logla
        const errorMessage = error.shortMessage || error.message || "Bilinmeyen Faucet Hatası";
-       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+       const apiUrl = resolveApiBaseForLogs();
        fetch(`${apiUrl}/logs/client-error`, {
          method: 'POST',
          headers: { 'Content-Type': 'application/json' },

@@ -1,138 +1,118 @@
-# Araf Protocol - Güncel Dosya Yapısı
+# Araf Protocol UX Canonical (TR, V3 Order/Trade)
 
-```
-araf-protocol/
-│
-├── 📄 .gitignore
-├── 📄 README.md
-│
-├── 📁 contracts/                          # Solidity Smart Contract Katmanı
-│   ├── 📄 hardhat.config.js               # Hardhat yapılandırması (Base L2, Solidity 0.8.24)
-│   ├── 📄 package.json
-│   ├── 📄 .env.example                    # Kontrat ortam değişkenleri şablonu
-│   │
-│   ├── 📁 src/
-│   │   ├── 📄 ArafEscrow.sol              # Ana kontrat v2.1 (Bleeding Escrow + Anti-Sybil + EIP-712 + Tier Limits)
-│   │   └── 📄 MockERC20.sol               # Test token'ı — faucet mint() + admin mint(address,uint256)
-│   │
-│   ├── 📁 scripts/
-│   │   └── 📄 deploy.js                   # Deploy scripti (ABI otomatik frontend'e kopyalar, ownership devri)
-│   │
-│   └── 📁 test/
-│       └── 📄 ArafEscrow.test.js          # Tam test suite v2.1 (Happy path, Tier Limits K-05, Anti-Sybil, Bleeding, Cancel)
-│
-├── 📁 backend/                            # Node.js + Express Web2.5 API
-│   ├── 📄 package.json
-│   ├── 📄 .env.example                    # Ortam değişkenleri şablonu
-│   ├── 📄 env.example                     # Alternatif env şablonu (duplicate)
-│   ├── 📄 Dockerfile                      # Alpine Node.js üretim imajı
-│   ├── 📄 fly.toml                        # Fly.io deploy yapılandırması
-│   ├── 📄 .dockerignore
-│   │
-│   └── 📁 scripts/
-│       ├── 📄 app.js                      # Ana uygulama (Bootstrap + Routes + DLQ + Graceful Shutdown)
-│       │
-│       ├── 📁 config/
-│       │   ├── 📄 db.js                   # MongoDB bağlantı yöneticisi (connection pool)
-│       │   └── 📄 redis.js                # Redis bağlantı yöneticisi (rate limiting + nonces + DLQ)
-│       │
-│       ├── 📁 models/
-│       │   ├── 📄 User.js                 # Kullanıcı modeli (şifreli PII + reputation cache + ban state)
-│       │   ├── 📄 Trade.js                # Listing + Trade şemaları (evidence + receipt TTL + chargeback ack)
-│       │   ├── 📄 Feedback.js             # Geri bildirim şeması (kategori + GDPR TTL)
-│       │   └── 📄 HistoricalStat.js       # Günlük protokol istatistik anlık görüntüsü (stats endpoint için)
-│       │
-│       ├── 📁 routes/
-│       │   ├── 📄 auth.js                 # SIWE + JWT + httpOnly cookie + profil güncelleme
-│       │   ├── 📄 listings.js             # Pazar yeri CRUD (on-chain tier doğrulama + bond config)
-│       │   ├── 📄 trades.js               # İşlem odası + EIP-712 cancel + chargeback ack + by-escrow
-│       │   ├── 📄 pii.js                  # 🔐 2-adımlı IBAN fetch + /my + /taker-name triangulation
-│       │   ├── 📄 receipts.js             # 🔐 Şifreli dekont yükleme (AES-256-GCM + SHA-256 hash)
-│       │   ├── 📄 feedback.js             # Kullanıcı geri bildirimi (kategori zorunlu)
-│       │   └── 📄 stats.js                # Protokol istatistikleri (Redis 1s cache + 30 günlük karşılaştırma)
-│       │   └── 📄 logs.js                # Lig yönetimi 
-│       │
-│       ├── 📁 middleware/
-│       │   ├── 📄 auth.js                 # requireAuth (httpOnly cookie) + requirePIIToken (Bearer)
-│       │   ├── 📄 rateLimiter.js          # Redis sliding window (6 seviye: PII/Auth/Listings/Trades/Feedback)
-│       │   └── 📄 errorHandler.js         # Global hata yakalayıcı (Mongoose + JWT + generic)
-│       │
-│       ├── 📁 services/
-│       │   ├── 📄 siwe.js                 # SIWE akışı + JWT + refresh token rotation (Redis SCAN)
-│       │   ├── 📄 encryption.js           # AES-256-GCM envelope encryption (HKDF + KMS-ready: env/aws/vault)
-│       │   ├── 📄 eventListener.js        # Zincir dinleyici (on-chain → MongoDB + FIFO DLQ + checkpoint)
-│       │   ├── 📄 dlqProcessor.js         # Dead Letter Queue monitörü (arşiv + alert cooldown)
-│       │   └── 📄 protocolConfig.js       # On-chain bond parametrelerini başlangıçta yükler (Redis cache)
-│       │
-│       ├── 📁 jobs/
-│       │   ├── 📄 reputationDecay.js      # 180 günlük temiz sayfa kuralını on-chain'de tetikler (Relayer)
-│       │   └── 📄 statsSnapshot.js        # Günlük istatistik anlık görüntüsü (aggregation pipeline)
-│       │
-│       └── 📁 utils/
-│           └── 📄 logger.js               # Winston logger (JSON format, ortama göre log seviyesi)
-│
-├── 📁 frontend/                           # React + Vite + Tailwind
-│   ├── 📄 index.html
-│   ├── 📄 package.json
-│   ├── 📄 vite.config.js
-│   ├── 📄 tailwind.config.js
-│   ├── 📄 postcss.config.js
-│   ├── 📄 vercel.json                     # Vercel deploy (API proxy + security headers)
-│   ├── 📄 .env.example                    # Frontend ortam değişkenleri şablonu
-│   │
-│   └── 📁 src/
-│       ├── 📄 main.jsx                    # Wagmi + React Query Provider (ErrorBoundary sarmalı)
-│       ├── 📄 App.jsx                     # 🎨 Ana UI (Marketplace + Trade Room + Profil + SIWE + Cookie auth)
-│       ├── 📄 index.css                   # Tailwind + custom animasyonlar (bounce-in, pulse-slow)
-│       │
-│       ├── 📁 components/
-│       │   ├── 📄 ErrorBoundary.jsx       # Global render hata sınırı
-│       │   └── 📄 PIIDisplay.jsx          # 🔐 Şifreli IBAN görüntüleme (2-adım + kopyala + Telegram)
-│       │
-│       ├── 📁 hooks/
-│       │   ├── 📄 usePII.js               # 2-adımlı PII fetch (auto-cleanup, cookie-only auth)
-│       │   ├── 📄 useArafContract.js      # Tüm kontrat etkileşimleri (write/read/EIP-712, chain guard)
-│       │   └── 📄 useCountdown.js         # Hedef tarihe geri sayım hook'u (saniye bazlı)
-│       │
-│       └── 📁 abi/
-│           └── 📄 ArafEscrow.json         # Deploy scripti tarafından otomatik oluşturulur
-│
-└── 📁 docs/                               # Mimari & Operasyonel Dokümantasyon
-│   ├── 📁 tr/                             # Türkçe Dokümantasyon
-│   │   ├── 📄 ARCHITECTURE.md             # Protokol mimarisi (Teknik referans)
-│   │   ├── 📄 API_DOCUMENTATION.md        # Backend API endpoint referansı
-│   │   ├── 📄 LOCAL_DEVELOPMENT.md        # Yerel geliştirme kurulum rehberi
-│   │   ├── 📄 GAME_THEORY.md              # Oyun teorisi ve Bleeding Escrow akışı
-│   │   └── 📄 UX_FLOW.md                  # Kullanıcı deneyimi ve akış şemaları
-│   │
-│   ├── 📁 en/                             # English Documentation
-│   │   ├── 📄 ARCHITECTURE.md             # Protocol architecture
-│   │   ├── 📄 API_DOCUMENTATION.md        # Backend API endpoint reference
-│   │   ├── 📄 LOCAL_DEVELOPMENT.md        # Local setup guide
-│   │   ├── 📄 GAME_THEORY.md              # Game theory & Bleeding Escrow logic
-│   │   └── 📄 UX_FLOW.md                  # UX flow and diagrams
+Bu doküman **authority değildir**; canlı kodun (özellikle `contracts/src/ArafEscrow.sol`) davranışını UX seviyesinde eşler.
+
+## 1) Canlı repo ağacı (UX için kanonik, doğrulanmış)
+
+```text
+contracts/src/ArafEscrow.sol
+contracts/test/ArafEscrow.test.js
+contracts/scripts/deploy.js
+backend/scripts/app.js
+backend/scripts/routes/orders.js
+backend/scripts/routes/trades.js
+backend/scripts/routes/auth.js
+backend/scripts/routes/pii.js
+backend/scripts/routes/receipts.js
+backend/scripts/routes/stats.js
+backend/scripts/routes/logs.js
+backend/scripts/services/protocolConfig.js
+backend/scripts/services/eventListener.js
+backend/scripts/services/siwe.js
+backend/scripts/middleware/auth.js
+backend/scripts/jobs/reputationDecay.js
+frontend/src/App.jsx
+frontend/src/app/useAppSessionData.jsx
+frontend/src/app/AppModals.jsx
+frontend/src/app/AppViews.jsx
+frontend/src/app/orderModel.js
+frontend/src/hooks/useArafContract.js
+frontend/src/hooks/usePII.js
+frontend/src/components/PIIDisplay.jsx
+frontend/.env.example
+frontend/vercel.json
+docs/TR/ux.md
+docs/EN/ux.md
 ```
 
----
+## 2) V3 otorite modeli
 
-## Dosya Sayıları
+- **Tek hakem (code is law):** `contracts/src/ArafEscrow.sol`
+- Backend (`orders/trades/auth/pii/...`) yalnız mirror/read + session/PII güvenlik katmanıdır.
+- Frontend yalnızca:
+  - kontrat ABI + event decode (`useArafContract.js`)
+  - backend response mapping (`useAppSessionData.jsx`, `orderModel.js`)
+  - UI state yönetir.
 
-| Katman | Dosya Sayısı |
-|--------|-------------|
-| Kontrat (`contracts/`) | 5 |
-| Backend (`backend/scripts/`) | 18 |
-| Frontend (`frontend/src/`) | 9 |
-| Dokümantasyon (`docs/`) | 14 |
-| **Toplam** | **~46** |
+## 3) Ağ/Deploy önkoşulları
 
----
+### Desteklenen chain ID
+- `8453` Base Mainnet
+- `84532` Base Sepolia
+- `31337` Hardhat local
 
-## Kritik Dosyalar (Dokunmadan Önce Düşün)
+### Frontend zorunlu env
+- `VITE_ESCROW_ADDRESS` (sıfır adres olamaz)
+- `VITE_USDT_ADDRESS`, `VITE_USDC_ADDRESS` (trade akışlarında gerekli)
+- `VITE_API_URL` opsiyonel ama kritik:
+  - varsa backend base URL (ör: `https://api.example.com`) olmalı
+  - yoksa frontend `/api/*` aynı-origin proxy bekler (`frontend/vercel.json`)
 
-| Dosya | Neden Kritik |
-|-------|-------------|
-| `contracts/src/ArafEscrow.sol` | Ana kontrat — deploy sonrası değiştirilemez |
-| `backend/scripts/services/encryption.js` | Master key yönetimi — yanlış değişiklik PII veri kaybına yol açar |
-| `backend/scripts/services/eventListener.js` | On-chain senkronizasyon — FIFO sırası bozulursa state tutarsızlığı |
-| `frontend/src/hooks/useArafContract.js` | Tüm kontrat etkileşimleri — ABI uyumsuzluğu tüm tx'leri kırar |
-| `backend/scripts/services/siwe.js` | JWT gizliliği — entropy kontrolü başlangıçta çalışır |
+### Backend zorunlu env (özet)
+- `ARAF_ESCROW_ADDRESS`, `BASE_RPC_URL`, `ALLOWED_ORIGINS`
+- SIWE/cookie için domain + secure ayarları (`services/siwe.js`, `routes/auth.js`)
+- Listener/Protocol config için RPC erişimi (`eventListener.js`, `protocolConfig.js`)
+
+## 4) V3 UX akışı (happy + blocker)
+
+1. **App boot:** `App.jsx` + `useAppSessionData.jsx` yüklenir; env banner ve ilk fetchler başlar.
+2. **Production env validation:** `VITE_ESCROW_ADDRESS` yoksa kontrat write/read bloklanır.
+3. **Vercel deploy/API routing:** `frontend/vercel.json` `/api/*` isteklerini backend’e rewrite eder.
+4. **Wallet connect:** wagmi connect + adres state senkronu.
+5. **Wrong network guard:** chain id destek dışıysa kontrat çağrısı reddedilir.
+6. **SIWE login/session restore:** `/api/auth/nonce` → imza → `/api/auth/verify`; restore `/api/auth/me`.
+7. **Wallet registration (anti-sybil):** `registerWallet()` ve `antiSybilCheck()`.
+8. **Maker SELL order:** `approveToken` → `createSellOrder`.
+9. **Maker BUY order:** `approveToken` (reserve) → `createBuyOrder`.
+10. **Marketplace fetch/render:** `/api/orders` + `/api/orders/config`.
+11. **Taker fill SELL:** `fillSellOrder`.
+12. **Taker fill BUY:** `fillBuyOrder`.
+13. **Child trade ID authority:** yalnız `OrderFilled` event decode + gerekirse `getTrade(tradeId)` doğrulaması.
+14. **Trade room open/resume:** `/api/trades/my` + aktif trade state.
+15. **Receipt upload:** `/api/receipts/upload`.
+16. **Report payment:** `reportPayment(tradeId, ipfsHash)`.
+17. **Maker release:** `releaseFunds(tradeId)`.
+18. **Ping/challenge/auto-release/burn:** `pingMaker`, `pingTakerForChallenge`, `challengeTrade`, `autoRelease`, `burnExpired`.
+19. **Mutual cancel:** `signCancelProposal` + `proposeOrApproveCancel`.
+20. **Profile/my orders/active/history:** `/api/orders/my`, `/api/trades/my`, `/api/trades/history`.
+21. **PII akışı:** `/api/pii/request-token/:tradeId` → `/api/pii/:tradeId`; taker adı `/api/pii/taker-name/:onchainId`.
+22. **Feedback:** `/api/feedback`.
+23. **Pause mode:** kontrat `paused()` state’i UI guard’da kullanılır.
+24. **Client error logging:** `/api/logs/client-error`.
+25. **Testnet→Mainnet readiness:** token/address/cors/siwe/proxy/listener checklist.
+26. **Recovery after refresh:** `localStorage.araf_pending_tx` + yeniden sorgu.
+
+## 5) Testnet vs Mainnet
+
+- Testnette düşük güvenlik konfigleri tolere edilebilir (ör. gevşek origin/cookie domain).
+- Mainnette aşağıdakiler zorunlu:
+  - `ALLOWED_ORIGINS` production domainlerle tam eşleşmeli
+  - `SIWE_DOMAIN` gerçek domain olmalı
+  - secure cookie (`https`) zorunlu
+  - token/address map production adresleriyle eşleşmeli
+  - listener + protocol config canlı RPC ile senkron çalışmalı
+
+## 6) Known blockers / failure gates
+
+1. **Vercel root yanlış seçimi:** deploy root `frontend/` değilse `frontend/vercel.json` rewrite devreye girmeyebilir → `/api/*` 404.
+2. **`VITE_API_URL` ve proxy tutarsızlığı:** proxy yok + env boş ise frontend API çağrıları başarısız.
+3. **CORS yanlış origin:** backend ayrı origin’deyse `ALLOWED_ORIGINS` eksikliği login/PII/trade fetch bloklar.
+4. **SIWE domain/cookie yanlış:** auth restore döngüsü ve 401/409 artışı.
+5. **Chain/address mismatch:** yanlış chain ID veya sıfır escrow adresiyle write path kapalı.
+6. **Mainnet token config eksik:** tracked token/pair map yanlışsa order create/fill pratikte kilitlenir.
+
+## 7) Ekonomik kural notu (kontratla senkron)
+
+- Clean-slate (`decayReputation`) eşiği: **90 gün** (`REPUTATION_DECAY_CLEAN_PERIOD = 90 days`).
+- UX kopyaları ve backend decay job eşiği bu değere eşit olmalıdır.
+

@@ -13,7 +13,7 @@
  * Bu görev:
  *   1. Geniş bir aday havuzu çıkarır (mirror/cache yardımcıdır)
  *   2. Her aday için kontrattan güncel bannedUntil + consecutiveBans okur
- *   3. 180 günlük clean-slate eşiği dolmuşsa decayReputation() çağırır
+ *   3. 90 günlük clean-slate eşiği dolmuşsa decayReputation() çağırır
  *   4. ReputationUpdated event'i eventListener tarafından mirror'a yansıtılır
  */
 
@@ -26,7 +26,7 @@ const DECAY_ABI = [
   "function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier)",
 ];
 
-const CLEAN_SLATE_DAYS = 180;
+const CLEAN_SLATE_DAYS = 90;
 const DEFAULT_CANDIDATE_LIMIT = Number(process.env.REPUTATION_DECAY_CANDIDATE_LIMIT || 250);
 const DEFAULT_TX_LIMIT = Number(process.env.REPUTATION_DECAY_TX_LIMIT || 50);
 
