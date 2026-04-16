@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { buildAppModals } from './AppModals';
+import { buildAppModals } from '../app/AppModals';
 
 const makeCtx = (overrides = {}) => ({
   lang: 'EN',

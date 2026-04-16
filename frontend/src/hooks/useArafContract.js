@@ -54,6 +54,12 @@ const ArafEscrowABI = parseAbi([
   'function domainSeparator() view returns (bytes32)',
   'function getCurrentAmounts(uint256 _tradeId) view returns (uint256 cryptoRemaining, uint256 makerBondRemaining, uint256 takerBondRemaining, uint256 totalDecayed)',
   'function paused() view returns (bool)',
+
+  // [TR] fillSellOrder/fillBuyOrder sonrası tradeId authority'si yalnız OrderFilled event'indedir.
+  //      decodeEventLog() bu event ABI'si olmadan tradeId üretemez ve null döner.
+  // [EN] Post fillSellOrder/fillBuyOrder, tradeId authority is only in OrderFilled.
+  //      Without this event ABI decodeEventLog() cannot extract tradeId and returns null.
+  'event OrderFilled(uint256 indexed orderId, uint256 indexed tradeId, address indexed filler, uint256 fillAmount, uint256 remainingAmount)',
 ]);
 
 // ERC-20 approve ABI — create/fill order akışlarında safeTransferFrom için zorunlu.
