@@ -144,7 +144,7 @@ export const buildAppViews = (ctx) => {
           <p className="text-[10px] font-bold text-slate-500 mb-3 tracking-widest">{lang === 'TR' ? 'PAZAR YERİ' : 'MARKETPLACE'}</p>
           <div className="space-y-1">
             <button onClick={() => { setFilterToken('ALL'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'ALL' && currentView === 'market' ? 'bg-[#1a1a1f] text-white border border-[#2a2a2e]' : 'text-slate-400 hover:text-white hover:bg-[#1a1a1f]/50'}`}>
-              <div className="flex items-center gap-2"><span className="text-slate-500">⛓️</span> {lang === 'TR' ? 'TÜM İLANLAR' : 'ALL LISTINGS'}</div>
+              <div className="flex items-center gap-2"><span className="text-slate-500">⛓️</span> {lang === 'TR' ? 'TÜM ORDERLAR' : 'ALL ORDERS'}</div>
               <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-300">{orders.length}</span>
             </button>
             <button onClick={() => { setFilterToken('USDT'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'USDT' && currentView === 'market' ? 'bg-[#1a1a1f] text-white border border-[#2a2a2e]' : 'text-slate-400 hover:text-white hover:bg-[#1a1a1f]/50'}`}>
@@ -323,8 +323,8 @@ export const buildAppViews = (ctx) => {
     </div>
   );
 
-  // [TR] Pazar yeri — sell order listesi, filtreler, test faucet butonları
-  // [EN] Marketplace — sell-order list, filters, test faucet buttons
+  // [TR] Pazar yeri — side-aware order listesi, filtreler, test faucet butonları
+  // [EN] Marketplace — side-aware order list, filters, test faucet buttons
   const renderMarket = () => (
     <div className="p-4 md:p-8 max-w-[1200px] w-full">
       <div className="mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -362,6 +362,8 @@ export const buildAppViews = (ctx) => {
             const isFunded          = sybilStatus ? sybilStatus.funded : true;
             const isCooldownOk      = sybilStatus ? sybilStatus.cooldownOk : true;
             const finalCanTakeOrder = canTakeOrder && isCooldownOk && isFunded && !isPaused && isTokenConfigured && isCorrectChain;
+            const isSellSide = order.side === 'SELL_CRYPTO';
+            const sideBadgeClass = isSellSide ? 'bg-emerald-900/20 text-emerald-400 border-emerald-800/40' : 'bg-blue-900/20 text-blue-400 border-blue-800/40';
 
             return (
               <div key={order.id} className="bg-[#111113] hover:bg-[#151518] border border-[#222] p-4 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between transition-colors group relative gap-4 md:gap-0">
@@ -370,9 +372,10 @@ export const buildAppViews = (ctx) => {
                   <div className="relative group/tooltip">
                     <p className="text-white font-medium text-sm cursor-help">{order.maker}</p>
                     <p className="text-xs text-slate-500">{order.rate} {order.fiat} / 1 {order.crypto}</p>
+                    <span className={`inline-flex mt-1 text-[10px] px-2 py-0.5 rounded border ${sideBadgeClass}`}>{order.sideLabel || order.side}</span>
                     <div className="absolute left-0 sm:-left-4 md:left-1/2 md:-translate-x-1/2 bottom-full mb-2 hidden group-hover/tooltip:block z-50">
                       <div className="bg-[#111] border border-[#333] p-5 rounded-2xl shadow-2xl w-64 backdrop-blur-xl">
-                        <p className="text-[10px] text-slate-400 mb-3 tracking-widest">{lang === 'TR' ? 'SATICI PROFİLİ' : 'SELLER PROFILE'}</p>
+                        <p className="text-[10px] text-slate-400 mb-3 tracking-widest">{lang === 'TR' ? 'ORDER OWNER PROFİLİ' : 'ORDER OWNER PROFILE'}</p>
                         <div className="flex items-center gap-4 mb-4">
                           <div className="w-16 h-16 rounded-full border-[3px] border-emerald-500/30 flex items-center justify-center relative">
                             <span className="text-emerald-400 font-bold text-xl">{order.successRate}%</span>
@@ -384,7 +387,7 @@ export const buildAppViews = (ctx) => {
                           </div>
                         </div>
                         <div className="space-y-2 text-xs border-t border-[#333] pt-3">
-                          <div className="flex justify-between"><span className="text-slate-500">{lang === 'TR' ? 'SATIŞ HACMİ' : 'TRADE VOL'}</span><span className="text-white font-mono">{order.txCount} Tx</span></div>
+                          <div className="flex justify-between"><span className="text-slate-500">{lang === 'TR' ? 'İŞLEM HACMİ' : 'TRADE VOL'}</span><span className="text-white font-mono">{order.txCount} Tx</span></div>
                           <div className="flex justify-between"><span className="text-slate-500">{lang === 'TR' ? 'TIER DÜZEYİ' : 'TIER LEVEL'}</span><span className="text-yellow-500 font-bold">T{order.tier} 🛡️</span></div>
                         </div>
                       </div>
@@ -396,6 +399,9 @@ export const buildAppViews = (ctx) => {
                   <p className="text-sm font-bold text-slate-300">{order.limitLabel}</p>
                   <p className="text-[10px] text-slate-500 mt-1">
                     {lang === 'TR' ? 'Minimum Fill:' : 'Min Fill:'} {order.minFillAmount ?? 0} {order.crypto}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5 uppercase tracking-wider">
+                    {order.statusLabel || order.status}
                   </p>
                   <p className="text-[10px] text-emerald-500/80 mt-0.5 uppercase tracking-wider">
                     {order.bondLabel} {lang === 'TR' ? 'Teminat' : 'Bond'}
@@ -410,7 +416,7 @@ export const buildAppViews = (ctx) => {
                      !canTakeOrder       ? <><span>🔒</span> {lang === 'TR' ? 'Kilitli' : 'Locked'}</> :
                      !isFunded           ? <><span>⚠️</span> {lang === 'TR' ? 'Bakiye Yetersiz' : 'Low Balance'}</> :
                      !isCooldownOk       ? <><span>⏳</span> {lang === 'TR' ? `Cooldown: ${Math.ceil((sybilStatus?.cooldownRemaining || 0) / 60)} dk` : `Cooldown: ${Math.ceil((sybilStatus?.cooldownRemaining || 0) / 60)} min`}</> :
-                     (isContractLoading  ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : (lang === 'TR' ? 'Satın Al' : 'Buy'))}
+                     (isContractLoading  ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : (order.ctaLabel || (lang === 'TR' ? 'İşlem Yap' : 'Trade')))}
                   </button>
                   {!isFunded && isConnected && canTakeOrder && !isPaused && (
                     <p className="text-[10px] text-red-500 mt-2 text-center md:text-right w-full leading-tight">
@@ -429,7 +435,7 @@ export const buildAppViews = (ctx) => {
             );
           })
         ) : (
-          <div className="p-8 text-center text-slate-500">{lang === 'TR' ? 'İlan bulunamadı.' : 'No ads found.'}</div>
+          <div className="p-8 text-center text-slate-500">{lang === 'TR' ? 'Order bulunamadı.' : 'No orders found.'}</div>
         )}
       </div>
     </div>

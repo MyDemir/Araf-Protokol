@@ -1,4 +1,5 @@
 import React from 'react';
+import { getMakerModalCopy } from './orderModel';
 
 // [TR] Eksik env değişkenleri için kapatılabilir uyarı şeridi.
 // [EN] Dismissible warning strip for missing env variables.
@@ -50,6 +51,8 @@ export const buildAppModals = (ctx) => {
     setMakerTier,
     makerToken,
     setMakerToken,
+    makerSide,
+    setMakerSide,
     makerAmount,
     setMakerAmount,
     makerRate,
@@ -63,7 +66,8 @@ export const buildAppModals = (ctx) => {
     onchainBondMap,
     userReputation,
     SUPPORTED_TOKEN_ADDRESSES,
-    handleCreateSellOrder,
+    onchainTokenMap,
+    handleCreateOrder,
     isContractLoading,
     setIsContractLoading,
     loadingText,
@@ -79,6 +83,7 @@ export const buildAppModals = (ctx) => {
     tradeHistoryTotal,
     tradeHistoryLimit,
     orders,
+    myOrders,
     address,
     confirmDeleteId,
     setConfirmDeleteId,
@@ -215,8 +220,8 @@ export const buildAppModals = (ctx) => {
     );
   };
 
-  // [TR] Maker sell order oluşturma modalı — tier seçimi, form validasyonu ve bond hesabı
-  // [EN] Maker sell-order creation modal — tier selection, validation and bond preview
+  // [TR] Maker order oluşturma modalı — side seçimi, tier validasyonu ve reserve önizlemesi
+  // [EN] Maker order creation modal — side selection, tier validation and reserve preview
   const renderMakerModal = () => {
     if (!showMakerModal) return null;
 
@@ -228,7 +233,7 @@ export const buildAppModals = (ctx) => {
       4: lang === 'TR' ? 'Tier 4 — %2 Bond (Premium)'   : 'Tier 4 — 2% Bond (Premium)',
     };
 
-    const bondPct = onchainBondMap ? (onchainBondMap[makerTier]?.maker ?? 0) : 0;
+    const bondPct = onchainBondMap ? (makerSide === 'BUY_CRYPTO' ? (onchainBondMap[makerTier]?.taker ?? 0) : (onchainBondMap[makerTier]?.maker ?? 0)) : 0;
     const cryptoAmt  = parseFloat(makerAmount) || 0;
     const bondAmt    = Math.ceil(cryptoAmt * bondPct / 100);
     const totalLock  = cryptoAmt + bondAmt;
@@ -239,6 +244,7 @@ export const buildAppModals = (ctx) => {
     const minLimNum    = parseFloat(makerMinLimit) || 0;
     const maxLimNum    = parseFloat(makerMaxLimit) || 0;
     const totalFiatValue = cryptoAmtNum * rateNum;
+    const modalCopy = getMakerModalCopy(makerSide, lang);
 
     let validationError = null;
     if (!makerAmount || cryptoAmtNum <= 0)                    validationError = lang === 'TR' ? 'Satılacak miktarı giriniz.' : 'Enter amount to sell.';
@@ -278,7 +284,14 @@ export const buildAppModals = (ctx) => {
               </div>
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Satılacak Miktar' : 'Amount'}</label>
+              <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Order Side' : 'Order Side'}</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setMakerSide('SELL_CRYPTO')} className={`py-2 rounded-xl text-xs font-bold border transition ${makerSide === 'SELL_CRYPTO' ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40' : 'bg-[#151518] text-slate-300 border-[#2a2a2e]'}`}>SELL_CRYPTO</button>
+                <button type="button" onClick={() => setMakerSide('BUY_CRYPTO')} className={`py-2 rounded-xl text-xs font-bold border transition ${makerSide === 'BUY_CRYPTO' ? 'bg-blue-600/20 text-blue-400 border-blue-500/40' : 'bg-[#151518] text-slate-300 border-[#2a2a2e]'}`}>BUY_CRYPTO</button>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Order Miktarı' : 'Order Amount'}</label>
               <input type="number" placeholder="Örn: 1000" value={makerAmount} onChange={e => setMakerAmount(e.target.value)} className="w-full bg-[#151518] text-white px-3 py-2 rounded-xl border border-[#2a2a2e] outline-none" />
             </div>
             <div className="flex space-x-2">
@@ -309,10 +322,10 @@ export const buildAppModals = (ctx) => {
               </select>
             </div>
             <div className="mt-4 p-3 bg-emerald-900/20 border border-emerald-500/30 rounded-xl">
-              <p className="text-xs text-emerald-400 mb-2 font-medium">🛡️ {TIER_LABELS[makerTier]} {lang === 'TR' ? 'Kuralları' : 'Rules'}</p>
+              <p className="text-xs text-emerald-400 mb-2 font-medium">🛡️ {modalCopy.previewTitle} • {TIER_LABELS[makerTier]}</p>
               {bondPct > 0 ? (
                 <div className="flex justify-between text-xs text-slate-300 mb-1">
-                  <span>{lang === 'TR' ? 'Satıcı Teminatı' : 'Maker Bond'} (%{bondPct}):</span>
+                  <span>{modalCopy.bondRoleLabel} (%{bondPct}):</span>
                   <span>{bondAmt > 0 ? `${bondAmt} Kripto` : '—'}</span>
                 </div>
               ) : (
@@ -327,14 +340,14 @@ export const buildAppModals = (ctx) => {
               <p className="text-red-400 text-[11px] font-medium text-center bg-red-950/30 py-2 rounded-lg border border-red-900/50 mt-2">{validationError}</p>
             )}
             <button
-              onClick={handleCreateSellOrder}
+              onClick={handleCreateOrder}
               disabled={isContractLoading || validationError !== null}
               className={`w-full py-3 rounded-xl font-bold mt-2 shadow-lg transition ${
                 isContractLoading || validationError !== null
                   ? 'bg-[#151518] text-slate-500 border border-[#2a2a2e] cursor-not-allowed'
                   : 'bg-white hover:bg-slate-200 text-black shadow-white/10'
               }`}>
-              {isContractLoading ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : (lang === 'TR' ? '🧾 Onayla ve Sell Order Aç' : '🧾 Approve & Open Sell Order')}
+              {isContractLoading ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : modalCopy.submitLabel}
             </button>
           </div>
         </div>
@@ -350,7 +363,7 @@ export const buildAppModals = (ctx) => {
       setShowProfileModal(false);
       return null;
     }
-    const myOrders = address ? orders.filter(o => o.makerFull?.toLowerCase() === address.toLowerCase()) : [];
+    const resolvedMyOrders = myOrders || (address ? orders.filter(o => o.ownerAddress?.toLowerCase() === address.toLowerCase()) : []);
 
     return (
       <div className="fixed inset-0 bg-[#060608]/90 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 z-[100]">
@@ -376,7 +389,7 @@ export const buildAppModals = (ctx) => {
                     <span className="text-2xl">🚫</span>
                     <div>
                       <p className="font-bold text-red-400">{lang === 'TR' ? 'Taker Kısıtlaması Aktif' : 'Taker Restriction Active'}</p>
-                      <p className="text-red-300/80 text-xs mt-1">{lang === 'TR' ? 'Sadece Maker olarak sell order açabilirsiniz.' : 'You can only open sell orders as Maker.'}</p>
+                      <p className="text-red-300/80 text-xs mt-1">{lang === 'TR' ? 'Sadece maker olarak order açabilirsiniz.' : 'You can only open sell orders as Maker.'}</p>
                     </div>
                   </div>
                 )}
@@ -555,12 +568,13 @@ export const buildAppModals = (ctx) => {
 
             {profileTab === 'ilanlarim' && (
               <div className="space-y-3">
-                {myOrders.length > 0 ? myOrders.map(order => (
+                {resolvedMyOrders.length > 0 ? resolvedMyOrders.map(order => (
                   <div key={order.id} className={`bg-[#151518] border rounded-xl p-4 transition-all duration-200 ${confirmDeleteId === order.id ? 'border-red-900/60 bg-red-950/20' : 'border-[#2a2a2e] flex flex-col'}`}>
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="font-bold text-white text-sm">{order.crypto} → {order.fiat}</p>
-                        <p className="text-xs text-slate-400 mt-0.5">{order.rate} {order.fiat} · {order.min}–{order.max}</p>
+                        <p className="font-bold text-white text-sm">{order.side} · {order.status}</p>
+                        <p className="text-xs text-slate-400 mt-0.5">{order.crypto}/{order.fiat} @ {order.rate}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">Remaining: {order.remainingAmount} {order.crypto} • Min Fill: {order.minFillAmount} {order.crypto} • Tier: {order.tier}</p>
                       </div>
                       {confirmDeleteId !== order.id && <button onClick={() => setConfirmDeleteId(order.id)} className="text-xs text-red-500 border border-red-900/40 hover:bg-red-900/20 px-3 py-1.5 rounded-lg transition font-medium">{lang === 'TR' ? 'Sil' : 'Delete'}</button>}
                     </div>

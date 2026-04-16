@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { formatUnits } from 'viem';
 import { useCountdown } from '../hooks/useCountdown';
+import { mapApiOrderToUi } from './orderModel';
 
 const API_URL = import.meta.env.VITE_API_URL || (
   import.meta.env.DEV ? 'http://localhost:4000' : ''
@@ -96,11 +97,13 @@ export function useAppSessionData({
   const [statsError, setStatsError] = useState(false);
 
   const [onchainBondMap, setOnchainBondMap] = useState(null);
+  const [onchainTokenMap, setOnchainTokenMap] = useState({});
   const [takerFeeBps, setTakerFeeBps] = useState(10);
   const [tokenDecimalsMap, setTokenDecimalsMap] = useState({ USDT: DEFAULT_TOKEN_DECIMALS, USDC: DEFAULT_TOKEN_DECIMALS });
   const [bleedingAmounts, setBleedingAmounts] = useState(null);
 
   const [orders, setOrders] = useState([]);
+  const [myOrders, setMyOrders] = useState([]);
   const [activeEscrows, setActiveEscrows] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -316,6 +319,7 @@ export function useAppSessionData({
       .then((r) => r.json())
       .then((data) => {
         if (data.bondMap) setOnchainBondMap(data.bondMap);
+        if (data.tokenMap) setOnchainTokenMap(data.tokenMap);
       })
       .catch((err) => console.error('[ProtocolConfig] fetch failed:', err));
   }, []);
@@ -428,51 +432,21 @@ export function useAppSessionData({
   }, [isConnected, connectedWallet, clearLocalSessionState, bestEffortBackendLogout, lang, showToast]);
 
   useEffect(() => {
+    const mapOrders = (apiOrders = []) => apiOrders.map((o) => mapApiOrderToUi({
+      order: o,
+      lang,
+      bondMap: onchainBondMap || {},
+      tokenMap: onchainTokenMap || {},
+      formatAddress,
+    }));
+
     const fetchOrders = async () => {
       try {
         setLoading(true);
         const res = await fetch(`${API_URL}/api/orders`, { credentials: 'include' });
         const data = await res.json();
         if (data.orders) {
-          setOrders(data.orders.map((o) => {
-            const side = o.side || 'SELL_CRYPTO';
-            const crypto = o.market?.crypto_asset || 'USDT';
-            const fiat = o.market?.fiat_currency || 'TRY';
-            const rate = Number(o.market?.exchange_rate || 0);
-            const minFillAmount = Number(o.amounts?.min_fill_amount_num || 0);
-            const remainingAmount = Number(o.amounts?.remaining_amount_num || 0);
-            const makerBondPct = Number(onchainBondMap?.[o.tier]?.maker ?? 0);
-            const takerBondPct = Number(onchainBondMap?.[o.tier]?.taker ?? 0);
-            const sideBondPct = side === 'BUY_CRYPTO' ? takerBondPct : makerBondPct;
-
-            // [TR] ArafEscrow.sol authoritative olduğu için order kartında kesin olmayan
-            //      fiat min/max türetmiyoruz. Yalnız zincirden gelen token miktarlarını gösteriyoruz.
-            // [EN] No inferred fiat min/max. Show only contract-authoritative token amounts.
-            const limitLabel = lang === 'TR'
-              ? `Min Fill ${minFillAmount} ${crypto} • Kalan ${remainingAmount} ${crypto}`
-              : `Min Fill ${minFillAmount} ${crypto} • Remaining ${remainingAmount} ${crypto}`;
-
-            return {
-              id: o._id,
-              onchainId: o.onchain_order_id || null,
-              side,
-              makerFull: o.owner_address,
-              maker: formatAddress(o.owner_address),
-              crypto,
-              fiat,
-              rate,
-              min: null,
-              max: null,
-              minFillAmount,
-              remainingAmount,
-              limitLabel,
-              tier: o.tier ?? 1,
-              bond: sideBondPct > 0 ? `${sideBondPct}%` : '0%',
-              bondLabel: sideBondPct > 0 ? `${sideBondPct}%` : '—',
-              successRate: 100,
-              txCount: 0,
-            };
-          }));
+          setOrders(mapOrders(data.orders));
         }
       } catch (err) {
         console.error('Order fetch error:', err);
@@ -481,15 +455,34 @@ export function useAppSessionData({
       }
     };
     fetchOrders();
-  }, [lang, onchainBondMap]);
+  }, [lang, onchainBondMap, onchainTokenMap]);
 
   useEffect(() => {
-    if (!isAuthenticated || !isConnected) return;
-    authenticatedFetch(`${API_URL}/api/orders/my`)
-      .catch((err) => {
+    if (!isAuthenticated || !isConnected) {
+      setMyOrders([]);
+      return;
+    }
+
+    const fetchMyOrders = async () => {
+      try {
+        const res = await authenticatedFetch(`${API_URL}/api/orders/my`);
+        const data = await res.json();
+        if (data.orders) {
+          setMyOrders(data.orders.map((o) => mapApiOrderToUi({
+            order: o,
+            lang,
+            bondMap: onchainBondMap || {},
+            tokenMap: onchainTokenMap || {},
+            formatAddress,
+          })));
+        }
+      } catch (err) {
         console.error('My orders fetch error:', err);
-      });
-  }, [isAuthenticated, isConnected, authenticatedFetch]);
+      }
+    };
+
+    fetchMyOrders();
+  }, [isAuthenticated, isConnected, authenticatedFetch, lang, onchainBondMap, onchainTokenMap]);
 
   useEffect(() => { fetchStats(); }, [fetchStats]);
 
@@ -789,8 +782,7 @@ export function useAppSessionData({
   }, [connector, connectedWallet, isAuthenticated, authenticatedWallet, lang, bestEffortBackendLogout, clearLocalSessionState, showToast]);
 
   const filteredOrders = orders.filter((order) => {
-    const hasAuthoritativeFiatRange = Number.isFinite(order.min) && Number.isFinite(order.max);
-    const amountMatch = searchAmount === '' || !hasAuthoritativeFiatRange || (Number(searchAmount) >= order.min && Number(searchAmount) <= order.max);
+    const amountMatch = searchAmount === '' || Number(searchAmount) <= Number(order.remainingAmount || 0);
     const tierMatch = filterTier1 ? order.tier === 0 : true;
     const tokenMatch = filterToken === 'ALL' || order.crypto === filterToken;
     return amountMatch && tierMatch && tokenMatch;
@@ -856,10 +848,12 @@ export function useAppSessionData({
     statsLoading,
     statsError,
     onchainBondMap,
+    onchainTokenMap,
     takerFeeBps,
     tokenDecimalsMap,
     bleedingAmounts,
     orders,
+    myOrders,
     setOrders,
     activeEscrows,
     loading,
