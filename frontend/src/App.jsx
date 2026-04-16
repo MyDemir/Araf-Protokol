@@ -21,7 +21,7 @@ const API_URL = import.meta.env.VITE_API_URL || (
 // [EN] Validate critical env variables on app start
 const ENV_ERRORS = [];
 if (!import.meta.env.VITE_API_URL && import.meta.env.PROD) {
-  ENV_ERRORS.push('VITE_API_URL tanımlı değil — API çağrıları çalışmayacak');
+  ENV_ERRORS.push('VITE_API_URL tanımlı değil — yalnızca aynı origin /api proxy (frontend/vercel.json) varsa çağrılar çalışır');
 }
 if (!import.meta.env.VITE_ESCROW_ADDRESS ||
     import.meta.env.VITE_ESCROW_ADDRESS === '0x0000000000000000000000000000000000000000') {
@@ -107,7 +107,7 @@ function App() {
   const [toast, setToast] = useState(null);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
-  const [activeTradesFilter, setActiveTradesFilter] = useState('all');
+  const [activeTradesFilter, setActiveTradesFilter] = useState('ALL');
   const [feedbackRating, setFeedbackRating] = useState(0);
   const [feedbackCategory, setFeedbackCategory] = useState('');
   const [feedbackText, setFeedbackText] = useState('');

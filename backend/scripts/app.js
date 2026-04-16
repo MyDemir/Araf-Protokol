@@ -26,8 +26,8 @@ const { loadProtocolConfig } = require("./services/protocolConfig");
 // [EN] DLQ monitor that re-drives failed events
 const { processDLQ } = require("./services/dlqProcessor");
 
-// [TR] 180 günlük temiz sayfa kuralını on-chain'de tetikleyen periyodik görev
-// [EN] Periodic job that triggers the 180-day clean slate rule on-chain
+// [TR] 90 günlük temiz sayfa kuralını on-chain'de tetikleyen periyodik görev
+// [EN] Periodic job that triggers the 90-day clean slate rule on-chain
 const { runReputationDecay } = require("./jobs/reputationDecay");
 
 // [TR] Günlük V3 order + child-trade istatistik snapshot görevi
