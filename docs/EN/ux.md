@@ -1,133 +1,133 @@
+# Araf Protocol UX (Canonical, V3)
+
+This document is **not authority** by itself; it canonicalizes UX by explicitly mapping to live code.
+Single source of truth is `contracts/src/ArafEscrow.sol`.
+
+## 1) Live repo tree (UX-critical)
+
+```text
+contracts/
+  src/ArafEscrow.sol
+  test/ArafEscrow.test.js
+  scripts/deploy.js
+backend/scripts/
+  app.js
+  middleware/auth.js
+  routes/{auth,orders,trades,pii,receipts,stats,logs}.js
+  services/{eventListener,protocolConfig,siwe}.js
+frontend/
+  .env.example
+  vercel.json
+  src/
+    App.jsx
+    app/{useAppSessionData,AppViews,AppModals,orderModel,apiConfig}.jsx|.js
+    hooks/{useArafContract,usePII}.js|.jsx
+    components/PIIDisplay.jsx
+docs/
+  TR/ux.md
+  EN/ux.md
 ```
-araf-protocol/
-│
-├── 📄 .gitignore
-├── 📄 README.md
-│
-├── 📁 contracts/                          # Solidity Smart Contract Layer
-│   ├── 📄 hardhat.config.js               # Hardhat configuration (Base L2, Solidity 0.8.24)
-│   ├── 📄 package.json
-│   ├── 📄 .env.example                    # Contract environment variables template
-│   │
-│   ├── 📁 src/
-│   │   ├── 📄 ArafEscrow.sol              # Main contract v2.1 (Bleeding Escrow + Anti-Sybil + EIP-712 + Tier Limits)
-│   │   └── 📄 MockERC20.sol               # Test token — faucet mint() + admin mint(address,uint256)
-│   │
-│   ├── 📁 scripts/
-│   │   └── 📄 deploy.js                   # Deploy script (Auto-copies ABI to frontend, ownership transfer)
-│   │
-│   └── 📁 test/
-│       └── 📄 ArafEscrow.test.js          # Full test suite v2.1 (Happy path, Tier Limits K-05, Anti-Sybil, Bleeding, Cancel)
-│
-├── 📁 backend/                            # Node.js + Express Web2.5 API
-│   ├── 📄 package.json
-│   ├── 📄 .env.example                    # Environment variables template
-│   ├── 📄 env.example                     # Alternative env template (duplicate)
-│   ├── 📄 Dockerfile                      # Alpine Node.js production image
-│   ├── 📄 fly.toml                        # Fly.io deploy configuration
-│   ├── 📄 .dockerignore
-│   │
-│   └── 📁 scripts/
-│       ├── 📄 app.js                      # Main application (Bootstrap + Routes + DLQ + Graceful Shutdown)
-│       │
-│       ├── 📁 config/
-│       │   ├── 📄 db.js                   # MongoDB connection manager (connection pool)
-│       │   └── 📄 redis.js                # Redis connection manager (rate limiting + nonces + DLQ)
-│       │
-│       ├── 📁 models/
-│       │   ├── 📄 User.js                 # User model (encrypted PII + reputation cache + ban state)
-│       │   ├── 📄 Trade.js                # Listing + Trade schemas (evidence + receipt TTL + chargeback ack)
-│       │   ├── 📄 Feedback.js             # Feedback schema (category + GDPR TTL)
-│       │   └── 📄 HistoricalStat.js       # Daily protocol statistics snapshot (for stats endpoint)
-│       │
-│       ├── 📁 routes/
-│       │   ├── 📄 auth.js                 # SIWE + JWT + httpOnly cookie + profile update
-│       │   ├── 📄 listings.js             # Marketplace CRUD (on-chain tier validation + bond config)
-│       │   ├── 📄 trades.js               # Trade room + EIP-712 cancel + chargeback ack + by-escrow
-│       │   ├── 📄 pii.js                  # 🔐 2-step IBAN fetch + /my + /taker-name triangulation
-│       │   ├── 📄 receipts.js             # 🔐 Encrypted receipt upload (AES-256-GCM + SHA-256 hash)
-│       │   ├── 📄 feedback.js             # User feedback (category required)
-│       │   └── 📄 stats.js                # Protocol statistics (Redis 1s cache + 30-day comparison)
-│       │   └── 📄 logs.js                 # League management 
-│       │
-│       ├── 📁 middleware/
-│       │   ├── 📄 auth.js                 # requireAuth (httpOnly cookie) + requirePIIToken (Bearer)
-│       │   ├── 📄 rateLimiter.js          # Redis sliding window (6 levels: PII/Auth/Listings/Trades/Feedback)
-│       │   └── 📄 errorHandler.js         # Global error handler (Mongoose + JWT + generic)
-│       │
-│       ├── 📁 services/
-│       │   ├── 📄 siwe.js                 # SIWE flow + JWT + refresh token rotation (Redis SCAN)
-│       │   ├── 📄 encryption.js           # AES-256-GCM envelope encryption (HKDF + KMS-ready: env/aws/vault)
-│       │   ├── 📄 eventListener.js        # Chain listener (on-chain → MongoDB + FIFO DLQ + checkpoint)
-│       │   ├── 📄 dlqProcessor.js         # Dead Letter Queue monitor (archive + alert cooldown)
-│       │   └── 📄 protocolConfig.js       # Loads on-chain bond parameters on startup (Redis cache)
-│       │
-│       ├── 📁 jobs/
-│       │   ├── 📄 reputationDecay.js      # Triggers 180-day clean slate rule on-chain (Relayer)
-│       │   └── 📄 statsSnapshot.js        # Daily statistics snapshot (aggregation pipeline)
-│       │
-│       └── 📁 utils/
-│           └── 📄 logger.js               # Winston logger (JSON format, log level based on environment)
-│
-├── 📁 frontend/                           # React + Vite + Tailwind
-│   ├── 📄 index.html
-│   ├── 📄 package.json
-│   ├── 📄 vite.config.js
-│   ├── 📄 tailwind.config.js
-│   ├── 📄 postcss.config.js
-│   ├── 📄 vercel.json                     # Vercel deploy (API proxy + security headers)
-│   ├── 📄 .env.example                    # Frontend environment variables template
-│   │
-│   └── 📁 src/
-│       ├── 📄 main.jsx                    # Wagmi + React Query Provider (ErrorBoundary wrapper)
-│       ├── 📄 App.jsx                     # 🎨 Main UI (Marketplace + Trade Room + Profile + SIWE + Cookie auth)
-│       ├── 📄 index.css                   # Tailwind + custom animations (bounce-in, pulse-slow)
-│       │
-│       ├── 📁 components/
-│       │   ├── 📄 ErrorBoundary.jsx       # Global render error boundary
-│       │   └── 📄 PIIDisplay.jsx          # 🔐 Encrypted IBAN display (2-step + copy + Telegram)
-│       │
-│       ├── 📁 hooks/
-│       │   ├── 📄 usePII.js               # 2-step PII fetch (auto-cleanup, cookie-only auth)
-│       │   ├── 📄 useArafContract.js      # All contract interactions (write/read/EIP-712, chain guard)
-│       │   └── 📄 useCountdown.js         # Countdown hook to target date (second-based)
-│       │
-│       └── 📁 abi/
-│           └── 📄 ArafEscrow.json         # Auto-generated by deploy script
-│
-└── 📁 docs/                               # Architectural & Operational Documentation
-│   ├── 📁 tr/                             # Turkish Documentation
-│   │   ├── 📄 ARCHITECTURE.md             # Protocol architecture (Technical reference)
-│   │   ├── 📄 API_DOCUMENTATION.md        # Backend API endpoint reference
-│   │   ├── 📄 LOCAL_DEVELOPMENT.md        # Local development setup guide
-│   │   ├── 📄 GAME_THEORY.md              # Game theory and Bleeding Escrow flow
-│   │   └── 📄 UX_FLOW.md                  # User experience and flowcharts
-│   │
-│   ├── 📁 en/                             # English Documentation
-│   │   ├── 📄 ARCHITECTURE.md             # Protocol architecture (Technical reference)
-│   │   ├── 📄 API_DOCUMENTATION.md        # Backend API endpoint reference
-│   │   ├── 📄 LOCAL_DEVELOPMENT.md        # Local development setup guide
-│   │   ├── 📄 GAME_THEORY.md              # Game theory & Bleeding Escrow logic
-│   │   └── 📄 UX_FLOW.md                  # UX flow and diagrams
+
+## 2) V3 authority model
+
+- **Contract authority:** `ArafEscrow.sol` mutates state (`create*Order`, `fill*Order`, `cancel*Order`, `getOrder`, `getTrade`, `OrderFilled`).
+- **Backend mirror/read authority:** `routes/*.js` + `eventListener.js` + `protocolConfig.js` are read/coordination only.
+- **Frontend authority:** ABI + backend response mapping + UI state. It does not redefine protocol rules.
+- **Child trade ID authority:** only `OrderFilled` event + `getTrade` chain after fill.
+
+## 3) Deploy/env/network prerequisites
+
+- Supported chain IDs: `8453 (Base)`, `84532 (Base Sepolia)`, `31337 (local)`.
+- Frontend required env:
+  - `VITE_ESCROW_ADDRESS` (must not be zero address)
+  - `VITE_USDT_ADDRESS`, `VITE_USDC_ADDRESS` (required for create/fill flows)
+  - `VITE_API_URL` (optional, but strongly recommended in prod as explicit backend origin)
+- Backend required env (prod-critical):
+  - `ALLOWED_ORIGINS`, `SIWE_DOMAIN`, `SIWE_URI`, `JWT_SECRET`
+  - `ARAF_ESCROW_ADDRESS`, `BASE_RPC_URL`, `ARAF_TRACKED_TOKENS`
+- Vercel:
+  - Rewrite config exists at `frontend/vercel.json`.
+  - If deployed from monorepo root, rewrite fails unless root-level Vercel config/project root is correctly set.
+
+## 4) Canonical UX flow (happy path + blocker path)
+
+1. **App boot** → `App.jsx` render, env warnings, ErrorBoundary active.
+2. **Production env validation** → `VITE_API_URL`/`VITE_ESCROW_ADDRESS` checks.
+3. **Vercel/API routing** → frontend `/api/*` calls via rewrite or explicit backend URL.
+4. **Wallet connect** → wagmi connector selection.
+5. **Wrong network guard** → chain whitelist enforcement.
+6. **SIWE login/session restore/wallet mismatch** → `/api/auth/*` + cookie refresh.
+7. **Wallet registration (anti-sybil)** → `registerWallet`, `antiSybilCheck`.
+8. **Maker SELL order create** → `createSellOrder`.
+9. **Maker BUY order create** → `createBuyOrder`.
+10. **Marketplace fetch/render** → `/api/orders`, `/api/orders/config`.
+11. **Taker fill SELL** → `fillSellOrder`, `OrderFilled` decode.
+12. **Taker fill BUY** → `fillBuyOrder`, `OrderFilled` decode.
+13. **Child trade authority** → event tradeId + `/api/trades/by-escrow/:id` + `getTrade`.
+14. **Trade room open/resume** → active trade restore.
+15. **Receipt upload** → `/api/receipts/upload` (LOCKED + taker only).
+16. **Report payment** → `reportPayment`.
+17. **Maker release** → `releaseFunds`.
+18. **Maker/taker ping + challenge + auto-release + burnExpired**.
+19. **Mutual cancel** → off-chain signature coordination + on-chain `proposeOrApproveCancel`.
+20. **Profile/my orders/active/history** → `/api/orders/my`, `/api/trades/my`, `/api/trades/history`.
+21. **PII flows** → `/api/pii/my`, `/api/pii/taker-name/:onchainId`, token-scoped fetch.
+22. **Feedback** → `/api/feedback`.
+23. **Pause/maintenance** → `paused()` + UI banner.
+24. **Client logging** → `/api/logs/client-error`.
+25. **Testnet→mainnet readiness** → CORS/SIWE/RPC/token config/treasury validation.
+26. **Refresh recovery/pending tx restore** → `localStorage.araf_pending_tx`.
+
+## 5) Testnet/Mainnet differences
+
+- Often silent on testnet, blocking on mainnet:
+  - SIWE domain/URI strictness
+  - CORS wildcard bans
+  - missing or wrong token config
+  - treasury/final owner controls
+  - event listener RPC reliability
+  - cookie security flags (secure/sameSite)
+
+## 6) Known blockers / failure gates
+
+1. `VITE_API_URL` format drift (`.../api`) + path join mismatch can break log endpoint.
+2. `frontend/vercel.json` exists, but root deployment may ignore it.
+3. Backend hard-fails if `ALLOWED_ORIGINS` is missing/invalid in production.
+4. `SIWE_DOMAIN/SIWE_URI` mismatch blocks production login.
+5. Empty `ARAF_TRACKED_TOKENS` reduces `/api/orders/config` token visibility.
+
+### 6.1 File-by-file blocker matrix (testnet/mainnet)
+
+| File | Root cause | Risk | Testnet impact | Mainnet impact | Fix | Test status |
+|---|---|---|---|---|---|---|
+| contracts/src/ArafEscrow.sol | `REPUTATION_DECAY_CLEAN_PERIOD = 90 days` | Med | If UI says 180 days, drift is silent | Wrong user economic expectation | Lock UI text/math to 90 days | ✅ |
+| frontend/src/app/AppModals.jsx | clean-slate math/text drift | Med | often unnoticed | incorrect UX guidance | 90-day update + `decayReputation` call | ✅ |
+| frontend/src/App.jsx | case mismatch (`all` vs `ALL`) | Med | filtered list can look empty | active trades may appear missing | default to `ALL` | ✅ |
+| frontend/src/hooks/useArafContract.js | log endpoint path assembly drift | Med | may pass locally | production observability degrades | canonical `/api/logs/client-error` | ✅ |
+| frontend/src/components/ErrorBoundary.jsx | API base resolution drift | Med | fallback may mask issue | prod wrong-origin/log-drop | shared API resolver | ✅ |
+| frontend/.env.example | Vercel proxy note misses deploy-scope caveat | High | tolerated in test setup | wrong deploy mode can cause API downtime | add root/project-scope warning | ⚠ manual ops |
+| frontend/vercel.json | rewrite only in frontend scope | High | works if frontend is project root | `/api/*` may 404 in monorepo root deploy | set project root / add root config | ⚠ manual ops |
+| backend/scripts/app.js | prod CORS/SIWE guards hard-fail | High | usually passes in dev | production boot failure | env checklist + smoke script | ✅ |
+| backend/scripts/services/siwe.js | strict SIWE domain/URI match | High | local defaults may pass | production login fully blocked | CI validation for domain/uri | ⚠ ops |
+| backend/scripts/services/protocolConfig.js | missing `BASE_RPC_URL`/`ARAF_ESCROW_ADDRESS` | High | can return 503 for config | read model unavailability | startup env validation | ⚠ ops |
+| backend/scripts/services/eventListener.js | RPC outage delays mirror | Med | delayed sync | stale order/trade read model | monitor readiness + retry | ⚠ ops |
+| contracts/scripts/deploy.js | wrong token/treasury/owner env | High | masked by mocks on testnet | persistent ownership/config risk | deploy manifest review + checklist | ⚠ ops |
+
+## 7) Documentation maintenance rule
+
+Run this check after every relevant change:
+
+```bash
+node scripts/verify-ux-docs-tree.mjs
+node scripts/mainnet-readiness-smoke.mjs
 ```
-## File Counts
 
-| Layer | File Count |
-|--------|-------------|
-| Contract (`contracts/`) | 5 |
-| Backend (`backend/scripts/`) | 18 |
-| Frontend (`frontend/src/`) | 9 |
-| Documentation (`docs/`) | 14 |
-| **Total** | **~46** |
+## 8) Validation marker list (for script)
 
----
-
-## Critical Files (Think Before Touching)
-
-| File | Why It's Critical |
-|-------|-------------|
-| `contracts/src/ArafEscrow.sol` | Main contract — immutable after deployment |
-| `backend/scripts/services/encryption.js` | Master key management — wrong changes lead to PII data loss |
-| `backend/scripts/services/eventListener.js` | On-chain synchronization — state inconsistency if FIFO order breaks |
-| `frontend/src/hooks/useArafContract.js` | All contract interactions — ABI mismatch breaks all txs |
-| `backend/scripts/services/siwe.js` | JWT secrecy — entropy check runs on startup |
+- backend/scripts/app.js
+- frontend/src/App.jsx
+- backend/scripts/routes/{auth,orders,trades,pii,receipts,stats,logs}.js
+- backend/scripts/services/{eventListener,protocolConfig,siwe}.js
+- frontend/src/hooks/{useArafContract,usePII}.js|.jsx
+- docs/TR/ux.md
+- docs/EN/ux.md

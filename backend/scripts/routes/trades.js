@@ -3,6 +3,7 @@
 const express = require("express");
 const Joi = require("joi");
 const crypto = require("crypto");
+const { ethers } = require("ethers");
 const router = express.Router();
 
 const { requireAuth, requireSessionWalletMatch } = require("../middleware/auth");
@@ -11,6 +12,82 @@ const Trade = require("../models/Trade");
 const User = require("../models/User");
 const logger = require("../utils/logger");
 const { buildBankProfileRisk } = require("./tradeRisk");
+
+const CANCEL_VERIFY_ABI = [
+  "function sigNonces(address) view returns (uint256)",
+];
+const CANCEL_TYPES = {
+  CancelProposal: [
+    { name: "tradeId", type: "uint256" },
+    { name: "proposer", type: "address" },
+    { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint256" },
+  ],
+};
+
+let cancelVerifyProvider = null;
+let cancelVerifyContract = null;
+
+function _getCancelVerifyContract() {
+  if (cancelVerifyContract && cancelVerifyProvider) {
+    return { provider: cancelVerifyProvider, contract: cancelVerifyContract };
+  }
+
+  const rpcUrl = process.env.BASE_RPC_URL;
+  const contractAddress = process.env.ARAF_ESCROW_ADDRESS;
+  if (!rpcUrl || !contractAddress || contractAddress === "0x0000000000000000000000000000000000000000") {
+    return null;
+  }
+
+  cancelVerifyProvider = new ethers.JsonRpcProvider(rpcUrl);
+  cancelVerifyContract = new ethers.Contract(contractAddress, CANCEL_VERIFY_ABI, cancelVerifyProvider);
+  return { provider: cancelVerifyProvider, contract: cancelVerifyContract };
+}
+
+async function _verifyCancelSignatureOrThrow({
+  wallet,
+  signature,
+  tradeOnchainId,
+  deadline,
+}) {
+  if (!/^0x[a-fA-F0-9]{130}$/.test(signature)) {
+    const err = new Error("İmza formatı geçersiz.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const verifier = _getCancelVerifyContract();
+  if (!verifier) {
+    const err = new Error("Cancel signature doğrulaması için RPC/contract yapılandırması eksik.");
+    err.statusCode = 503;
+    throw err;
+  }
+
+  const { provider, contract } = verifier;
+  const network = await provider.getNetwork();
+  const nonce = await contract.sigNonces(wallet);
+
+  const domain = {
+    name: "ArafEscrow",
+    version: "1",
+    chainId: Number(network.chainId),
+    verifyingContract: process.env.ARAF_ESCROW_ADDRESS,
+  };
+
+  const value = {
+    tradeId: BigInt(tradeOnchainId),
+    proposer: wallet,
+    nonce: BigInt(nonce),
+    deadline: BigInt(deadline),
+  };
+
+  const recovered = ethers.verifyTypedData(domain, CANCEL_TYPES, value, signature);
+  if (recovered.toLowerCase() !== wallet.toLowerCase()) {
+    const err = new Error("İmza doğrulaması başarısız. İmza oturum cüzdanıyla eşleşmiyor.");
+    err.statusCode = 400;
+    throw err;
+  }
+}
 
 /**
  * Trades Route — V3 Child Trade Read Layer
@@ -253,12 +330,22 @@ router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, tradesLim
 
     const trade = await Trade.findById(value.tradeId);
     if (!trade) return res.status(404).json({ error: "İşlem bulunamadı." });
+    if (!Number.isInteger(trade.onchain_escrow_id) || trade.onchain_escrow_id <= 0) {
+      return res.status(409).json({ error: "Trade on-chain kimliği bulunamadı. İptal imzası doğrulanamaz." });
+    }
 
     const isMaker = trade.maker_address === req.wallet;
     const isTaker = trade.taker_address === req.wallet;
     if (!isMaker && !isTaker) {
       return res.status(403).json({ error: "Bu işlemin tarafı değilsin." });
     }
+
+    await _verifyCancelSignatureOrThrow({
+      wallet: req.wallet,
+      signature: value.signature,
+      tradeOnchainId: trade.onchain_escrow_id,
+      deadline: value.deadline,
+    });
 
     // [TR] İlk teklif deadline'ı sabitler; ikinci taraf aynı deadline ile gelmelidir.
     const existingDeadline = trade.cancel_proposal.deadline;

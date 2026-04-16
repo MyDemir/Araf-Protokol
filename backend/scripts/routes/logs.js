@@ -9,8 +9,13 @@ function scrubClientErrorText(value) {
   if (!value || typeof value !== "string") return value;
   return value
     .replace(/TR\d{24}/gi, "[REDACTED]")
+    .replace(/\b[A-Z]{2}[A-Z0-9]{13,32}\b/g, "[REDACTED]")
     .replace(/\b\d{9}\b/g, "[REDACTED]")
-    .replace(/\b\d{4,17}\b/g, "[REDACTED]");
+    .replace(/\b\d{4,17}\b/g, "[REDACTED]")
+    .replace(/0x[a-fA-F0-9]{40}/g, "[REDACTED]")
+    .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, "[REDACTED]")
+    .replace(/(bearer\s+)[a-zA-Z0-9\-\._~\+\/]+=*/gi, "$1[REDACTED]")
+    .replace(/\b(eyJ[^\s]+)\b/g, "[REDACTED]");
 }
 
 router.post("/client-error", logRateLimiter, (req, res) => {
@@ -27,3 +32,4 @@ router.post("/client-error", logRateLimiter, (req, res) => {
   res.status(204).end();
 });
 module.exports = router;
+module.exports.scrubClientErrorText = scrubClientErrorText;

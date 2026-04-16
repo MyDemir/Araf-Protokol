@@ -119,6 +119,7 @@ export const buildAppModals = (ctx) => {
     DEFAULT_TOKEN_DECIMALS,
     formatTokenAmountFromRaw,
     showToast,
+    decayReputation,
   
   } = ctx;
 
@@ -512,7 +513,7 @@ export const buildAppModals = (ctx) => {
                       )}
                       {consecutiveBans > 0 && (() => {
                         const now = Date.now() / 1000;
-                        const cleanSlateTime = bannedUntil + (180 * 24 * 60 * 60);
+                        const cleanSlateTime = bannedUntil + (90 * 24 * 60 * 60);
                         const isEligible = now > cleanSlateTime && bannedUntil > 0;
                         const isBanActive = now < bannedUntil;
                         return (
@@ -520,12 +521,12 @@ export const buildAppModals = (ctx) => {
                             <p className="text-blue-400 text-xs font-bold mb-2">🛡️ {lang === 'TR' ? 'Temiz Sayfa Hakkı' : 'Clean Slate Right'}</p>
                             {isBanActive ? (
                               <p className="text-slate-400 text-[11px]">
-                                {lang === 'TR' ? 'Cezanız devam ediyor. Ardışık yasak sayacınızı sıfırlamak için cezanız bittikten sonra 180 gün beklemelisiniz.' : 'Your ban is active. You must wait 180 days after your ban expires to reset your consecutive bans counter.'}
+                                {lang === 'TR' ? 'Cezanız devam ediyor. Ardışık yasak sayacınızı sıfırlamak için cezanız bittikten sonra 90 gün beklemelisiniz.' : 'Your ban is active. You must wait 90 days after your ban expires to reset your consecutive bans counter.'}
                               </p>
                             ) : isEligible ? (
                               <>
                                 <p className="text-emerald-400 text-[11px] mb-3">
-                                  {lang === 'TR' ? 'Tebrikler! Son yasağınızın üzerinden 180 gün geçti. Sicilinizi şimdi temizleyebilirsiniz.' : 'Congratulations! 180 days have passed since your last ban. You can clear your record now.'}
+                                  {lang === 'TR' ? 'Tebrikler! Son yasağınızın üzerinden 90 gün geçti. Sicilinizi şimdi temizleyebilirsiniz.' : 'Congratulations! 90 days have passed since your last ban. You can clear your record now.'}
                                 </p>
                                 <button
                                   onClick={async () => {
@@ -550,7 +551,7 @@ export const buildAppModals = (ctx) => {
                               </>
                             ) : (
                               <p className="text-slate-400 text-[11px]">
-                                {lang === 'TR' ? 'Ardışık yasak sayacınızı sıfırlamak için son cezanızın üzerinden 180 gün geçmesi gerekir.' : 'You must wait 180 days after your last ban to reset your consecutive bans counter.'}
+                                {lang === 'TR' ? 'Ardışık yasak sayacınızı sıfırlamak için son cezanızın üzerinden 90 gün geçmesi gerekir.' : 'You must wait 90 days after your last ban to reset your consecutive bans counter.'}
                                 <br/>
                                 <span className="text-slate-300 font-bold mt-1 block">
                                   {lang === 'TR' ? 'Açılış Tarihi:' : 'Unlock Date:'} {new Date(cleanSlateTime * 1000).toLocaleDateString()}

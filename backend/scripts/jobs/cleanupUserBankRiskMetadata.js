@@ -60,34 +60,40 @@ async function runUserBankRiskMetadataCleanup(now = new Date()) {
     for await (const user of cursor) {
       scanned += 1;
 
-      const beforeHistoryLength = Array.isArray(user.bank_change_history)
-        ? user.bank_change_history.length
-        : 0;
-      const beforeLastBankChangeAt = user.lastBankChangeAt?.getTime?.() || null;
-      const beforeCount7d = user.bankChangeCount7d || 0;
-      const beforeCount30d = user.bankChangeCount30d || 0;
+      try {
+        const beforeHistoryLength = Array.isArray(user.bank_change_history)
+          ? user.bank_change_history.length
+          : 0;
+        const beforeLastBankChangeAt = user.lastBankChangeAt?.getTime?.() || null;
+        const beforeCount7d = user.bankChangeCount7d || 0;
+        const beforeCount30d = user.bankChangeCount30d || 0;
 
-      user.recomputeBankChangeCounters(now);
+        user.recomputeBankChangeCounters(now);
 
-      const afterHistoryLength = Array.isArray(user.bank_change_history)
-        ? user.bank_change_history.length
-        : 0;
-      const afterLastBankChangeAt = user.lastBankChangeAt?.getTime?.() || null;
-      const afterCount7d = user.bankChangeCount7d || 0;
-      const afterCount30d = user.bankChangeCount30d || 0;
+        const afterHistoryLength = Array.isArray(user.bank_change_history)
+          ? user.bank_change_history.length
+          : 0;
+        const afterLastBankChangeAt = user.lastBankChangeAt?.getTime?.() || null;
+        const afterCount7d = user.bankChangeCount7d || 0;
+        const afterCount30d = user.bankChangeCount30d || 0;
 
-      const changed =
-        beforeHistoryLength !== afterHistoryLength ||
-        beforeLastBankChangeAt !== afterLastBankChangeAt ||
-        beforeCount7d !== afterCount7d ||
-        beforeCount30d !== afterCount30d;
+        const changed =
+          beforeHistoryLength !== afterHistoryLength ||
+          beforeLastBankChangeAt !== afterLastBankChangeAt ||
+          beforeCount7d !== afterCount7d ||
+          beforeCount30d !== afterCount30d;
 
-      if (!changed) {
-        continue;
+        if (!changed) {
+          continue;
+        }
+
+        await user.save();
+        updated += 1;
+      } catch (perUserErr) {
+        logger.warn(
+          `[Job:UserBankRiskCleanup] Kullanıcı atlandı: wallet=${user.wallet_address || "unknown"} err=${perUserErr.message}`
+        );
       }
-
-      await user.save();
-      updated += 1;
     }
 
     if (updated > 0) {

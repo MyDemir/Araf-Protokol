@@ -18,6 +18,7 @@
 import { useCallback } from 'react';
 import { usePublicClient, useWalletClient, useChainId } from 'wagmi';
 import { parseAbi, getAddress, decodeEventLog } from 'viem';
+import { resolveClientErrorLogUrl } from '../app/apiConfig';
 
 const ArafEscrowABI = parseAbi([
   // --- Write Fonksiyonları (App.jsx'te kullanılanlar) ---
@@ -71,6 +72,7 @@ const ERC20_ABI = parseAbi([
 ]);
 
 const ESCROW_ADDRESS = import.meta.env.VITE_ESCROW_ADDRESS;
+const CLIENT_ERROR_LOG_URL = resolveClientErrorLogUrl();
 
 // Desteklenen chain ID'ler — Base Mainnet ve Base Sepolia
 const SUPPORTED_CHAINS = {
@@ -182,8 +184,7 @@ export function useArafContract() {
       const errorMessage = error.shortMessage || error.reason || error.message || "Bilinmeyen Kontrat Hatası";
       
       //Hatayı sessizce backend log dosyasına gönder (Kullanıcı arayüzünü dondurmaz)
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
-      fetch(`${apiUrl}/logs/client-error`, {
+      fetch(CLIENT_ERROR_LOG_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -301,8 +302,7 @@ export function useArafContract() {
     } catch (error) {
       // Token Onayı iptallerini backend'e logla
       const errorMessage = error.shortMessage || error.message || "Bilinmeyen Onay Hatası";
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
-      fetch(`${apiUrl}/logs/client-error`, {
+      fetch(CLIENT_ERROR_LOG_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -333,8 +333,7 @@ export function useArafContract() {
     } catch (error) {
        // Faucet iptallerini backend'e logla
        const errorMessage = error.shortMessage || error.message || "Bilinmeyen Faucet Hatası";
-       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
-       fetch(`${apiUrl}/logs/client-error`, {
+       fetch(CLIENT_ERROR_LOG_URL, {
          method: 'POST',
          headers: { 'Content-Type': 'application/json' },
          body: JSON.stringify({

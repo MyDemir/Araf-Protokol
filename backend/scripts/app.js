@@ -10,7 +10,7 @@ const cookieParser = require("cookie-parser");
 
 // [TR] Yapılandırma ve yardımcı araçlar
 // [EN] Configuration and utility helpers
-const { connectDB } = require("./config/db");
+const { connectDB, setAllowProcessExitOnDisconnect } = require("./config/db");
 const { connectRedis, closeRedis } = require("./config/redis");
 const logger = require("./utils/logger");
 
@@ -26,8 +26,8 @@ const { loadProtocolConfig } = require("./services/protocolConfig");
 // [EN] DLQ monitor that re-drives failed events
 const { processDLQ } = require("./services/dlqProcessor");
 
-// [TR] 180 günlük temiz sayfa kuralını on-chain'de tetikleyen periyodik görev
-// [EN] Periodic job that triggers the 180-day clean slate rule on-chain
+// [TR] 90 günlük temiz sayfa kuralını on-chain'de tetikleyen periyodik görev
+// [EN] Periodic job that triggers the 90-day clean slate rule on-chain
 const { runReputationDecay } = require("./jobs/reputationDecay");
 
 // [TR] Günlük V3 order + child-trade istatistik snapshot görevi
@@ -233,6 +233,7 @@ async function bootstrap() {
       logger.info("[ORCHESTRATOR] Worker stop tamamlandı.");
 
       if (mongoose.connection.readyState !== 0) {
+        setAllowProcessExitOnDisconnect(false);
         await mongoose.connection.close();
         logger.info("[ORCHESTRATOR] MongoDB bağlantısı kapatıldı.");
       }

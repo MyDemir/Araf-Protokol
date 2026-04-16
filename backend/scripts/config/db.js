@@ -6,6 +6,7 @@ const logger   = require("../utils/logger");
 
 let isConnected = false;
 let listenersAttached = false;
+let allowProcessExitOnDisconnect = true;
 
 /**
  * MongoDB bağlantısını kurar.
@@ -70,9 +71,13 @@ async function connectDB() {
     // ŞİMDİ: process.exit(1) → PM2 veya Docker container'ı otomatik yeniden başlatır
     mongoose.connection.on("disconnected", () => {
       isConnected = false;
-      logger.error("[DB] MongoDB bağlantısı koptu — süreç sonlandırılıyor (Fail-Fast).");
-      logger.error("[DB] PM2 veya Docker bu süreci otomatik yeniden başlatmalı.");
-      process.exit(1);
+      if (allowProcessExitOnDisconnect) {
+        logger.error("[DB] MongoDB bağlantısı koptu — süreç sonlandırılıyor (Fail-Fast).");
+        logger.error("[DB] PM2 veya Docker bu süreci otomatik yeniden başlatmalı.");
+        process.exit(1);
+      } else {
+        logger.warn("[DB] MongoDB disconnected during graceful shutdown; fail-fast exit suppressed.");
+      }
     });
 
     listenersAttached = true;
@@ -81,4 +86,8 @@ async function connectDB() {
   return mongoose.connection;
 }
 
-module.exports = { connectDB };
+function setAllowProcessExitOnDisconnect(allow) {
+  allowProcessExitOnDisconnect = Boolean(allow);
+}
+
+module.exports = { connectDB, setAllowProcessExitOnDisconnect };

@@ -40,9 +40,6 @@ const JWT_EXPIRES = process.env.JWT_EXPIRES_IN || "15m";
 const PII_EXPIRES = process.env.PII_TOKEN_EXPIRES_IN || "15m";
 const NONCE_TTL_SECS = 5 * 60; // 5 dakika
 
-// JWT blacklist TTL hesabı için kullanılır.
-const JWT_EXPIRES_MS = 15 * 60 * 1000; // 15 dakika
-
 const REFRESH_TOKEN_TTL_SECS = 7 * 24 * 60 * 60; // 7 gün
 const REFRESH_TOKEN_PREFIX = "refresh:";
 const REFRESH_FAMILY_PREFIX = "family:";
@@ -243,9 +240,11 @@ async function blacklistJWT(token) {
   try {
     const payload = jwt.decode(token);
     if (!payload?.jti) return;
+    if (!payload?.exp) return;
 
     const redis = getRedisClient();
-    const ttlSecs = Math.ceil(JWT_EXPIRES_MS / 1000);
+    const nowSecs = Math.floor(Date.now() / 1000);
+    const ttlSecs = Math.max(1, Number(payload.exp) - nowSecs);
 
     await redis.setEx(`${JWT_BLACKLIST_PREFIX}${payload.jti}`, ttlSecs, "1");
     logger.debug(`[Auth] JWT blacklist'e alındı: jti=${payload.jti}`);

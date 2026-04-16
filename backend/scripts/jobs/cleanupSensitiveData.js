@@ -9,12 +9,14 @@
 
 const Trade = require("../models/Trade");
 const logger = require("../utils/logger");
+const TERMINAL_STATES = ["RESOLVED", "CANCELED", "BURNED"];
 
 async function runReceiptCleanup(now = new Date()) {
   try {
     const result = await Trade.updateMany(
       {
         "evidence.receipt_delete_at": { $lte: now },
+        status: { $in: TERMINAL_STATES },
         $or: [
           { "evidence.receipt_encrypted": { $ne: null } },
           { "evidence.receipt_timestamp": { $ne: null } },
@@ -47,6 +49,7 @@ async function runPIISnapshotCleanup(now = new Date()) {
     const result = await Trade.updateMany(
       {
         "payout_snapshot.snapshot_delete_at": { $lte: now },
+        status: { $in: TERMINAL_STATES },
         $or: [
           { "payout_snapshot.maker.payout_details_enc": { $ne: null } },
           { "payout_snapshot.taker.payout_details_enc": { $ne: null } },

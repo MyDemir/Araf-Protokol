@@ -6,6 +6,7 @@ const logger = require("../utils/logger");
 
 let redisClient = null;
 let listenersAttached = false;
+let connectPromise = null;
 
 /**
  * Redis bağlantısını kurar.
@@ -32,6 +33,10 @@ let listenersAttached = false;
 async function connectRedis() {
   if (redisClient?.isReady) {
     return redisClient;
+  }
+
+  if (connectPromise) {
+    return connectPromise;
   }
 
   if (redisClient?.isOpen && !redisClient.isReady) {
@@ -66,7 +71,13 @@ async function connectRedis() {
     listenersAttached = true;
   }
 
-  await redisClient.connect();
+  connectPromise = redisClient.connect()
+    .then(() => redisClient)
+    .finally(() => {
+      connectPromise = null;
+    });
+
+  await connectPromise;
   return redisClient;
 }
 
@@ -112,6 +123,7 @@ async function closeRedis() {
   } finally {
     redisClient = null;
     listenersAttached = false;
+    connectPromise = null;
   }
 }
 
