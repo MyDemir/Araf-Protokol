@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapApiOrderToUi } from './orderModel';
+import { mapApiOrderToUi } from '../app/orderModel';
 
 describe('session mapping authoritative model', () => {
   const bondMap = { 1: { maker: 8, taker: 10 } };

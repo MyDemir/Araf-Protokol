@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { removeOrderByOnchainId, resolveOrderActionFns } from './orderModel';
+import { removeOrderByOnchainId, resolveOrderActionFns } from '../app/orderModel';
 
 describe('App routing side-aware contract selection', () => {
   const fns = {
