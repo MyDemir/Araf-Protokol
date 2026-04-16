@@ -118,6 +118,21 @@ describe('AppModals side-aware behaviors', () => {
     expect(setMakerSide).toHaveBeenCalledWith('SELL_CRYPTO');
   });
 
+
+  it('buy preview accounting differs from sell preview accounting', () => {
+    const buyModals = buildAppModals(makeCtx({ profileTab: 'ayarlar', showProfileModal: false, makerSide: 'BUY_CRYPTO', makerAmount: '100' }));
+    const { rerender } = render(<div>{buyModals.renderMakerModal()}</div>);
+
+    expect(screen.getAllByText(/Total Reserve:/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/10 USDT/).length).toBeGreaterThan(0);
+
+    const sellModals = buildAppModals(makeCtx({ profileTab: 'ayarlar', showProfileModal: false, makerSide: 'SELL_CRYPTO', makerAmount: '100' }));
+    rerender(<div>{sellModals.renderMakerModal()}</div>);
+
+    expect(screen.getAllByText(/Total Locked:/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/108 USDT/).length).toBeGreaterThan(0);
+  });
+
   it('renders authoritative my orders fields', () => {
     const modals = buildAppModals(makeCtx({ showMakerModal: false }));
     render(<div>{modals.renderProfileModal()}</div>);

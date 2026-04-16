@@ -1,5 +1,5 @@
 import React from 'react';
-import { getMakerModalCopy } from './orderModel';
+import { buildMakerPreview, getMakerModalCopy } from './orderModel';
 
 // [TR] Eksik env değişkenleri için kapatılabilir uyarı şeridi.
 // [EN] Dismissible warning strip for missing env variables.
@@ -235,8 +235,7 @@ export const buildAppModals = (ctx) => {
 
     const bondPct = onchainBondMap ? (makerSide === 'BUY_CRYPTO' ? (onchainBondMap[makerTier]?.taker ?? 0) : (onchainBondMap[makerTier]?.maker ?? 0)) : 0;
     const cryptoAmt  = parseFloat(makerAmount) || 0;
-    const bondAmt    = Math.ceil(cryptoAmt * bondPct / 100);
-    const totalLock  = cryptoAmt + bondAmt;
+    const preview = buildMakerPreview({ side: makerSide, amountUi: cryptoAmt, bondPct });
     const effectiveUserTier = userReputation?.effectiveTier ?? 0;
 
     const cryptoAmtNum = parseFloat(makerAmount) || 0;
@@ -247,7 +246,7 @@ export const buildAppModals = (ctx) => {
     const modalCopy = getMakerModalCopy(makerSide, lang);
 
     let validationError = null;
-    if (!makerAmount || cryptoAmtNum <= 0)                    validationError = lang === 'TR' ? 'Satılacak miktarı giriniz.' : 'Enter amount to sell.';
+    if (!makerAmount || cryptoAmtNum <= 0)                    validationError = lang === 'TR' ? 'Order miktarını giriniz.' : 'Enter order amount.';
     else if (makerTier === 0 && cryptoAmtNum > 150)           validationError = lang === 'TR' ? 'Tier 0 maksimum order limiti 150 USDT/USDC.' : 'Tier 0 max order limit is 150 USDT/USDC.';
     else if (makerTier === 1 && cryptoAmtNum > 1500)          validationError = lang === 'TR' ? 'Tier 1 maksimum order limiti 1.500 USDT/USDC.' : 'Tier 1 max order limit is 1500 USDT/USDC.';
     else if (makerTier === 2 && cryptoAmtNum > 7500)          validationError = lang === 'TR' ? 'Tier 2 maksimum order limiti 7.500 USDT/USDC.' : 'Tier 2 max order limit is 7500 USDT/USDC.';
@@ -268,7 +267,7 @@ export const buildAppModals = (ctx) => {
           <div className="space-y-4">
             <div className="flex space-x-2">
               <div className="w-1/2">
-                <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Satılacak Kripto' : 'Crypto to Sell'}</label>
+                <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Order Kripto' : 'Order Crypto'}</label>
                 <select value={makerToken} onChange={e => setMakerToken(e.target.value)} className="w-full bg-[#151518] text-white px-3 py-2 rounded-xl border border-[#2a2a2e] outline-none">
                   <option value="USDT">USDT</option>
                   <option value="USDC">USDC</option>
@@ -326,15 +325,16 @@ export const buildAppModals = (ctx) => {
               {bondPct > 0 ? (
                 <div className="flex justify-between text-xs text-slate-300 mb-1">
                   <span>{modalCopy.bondRoleLabel} (%{bondPct}):</span>
-                  <span>{bondAmt > 0 ? `${bondAmt} Kripto` : '—'}</span>
+                  <span>{preview.reserveAmount > 0 ? `${preview.reserveAmount} ${makerToken}` : '—'}</span>
                 </div>
               ) : (
                 <p className="text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Tier 0: Teminat yok' : 'Tier 0: No bond'}</p>
               )}
               <div className="flex justify-between text-sm font-bold text-white border-t border-emerald-500/30 pt-2">
-                <span>{lang === 'TR' ? 'Toplam Kilitlenecek:' : 'Total Locked:'}</span>
-                <span>{totalLock > 0 ? `${totalLock} Kripto` : '—'}</span>
+                <span>{modalCopy.totalLabel}:</span>
+                <span>{preview.totalAmount > 0 ? `${preview.totalAmount} ${makerToken}` : '—'}</span>
               </div>
+              <p className="text-[11px] text-slate-400 mt-2">{modalCopy.previewHint}</p>
             </div>
             {validationError && (
               <p className="text-red-400 text-[11px] font-medium text-center bg-red-950/30 py-2 rounded-lg border border-red-900/50 mt-2">{validationError}</p>

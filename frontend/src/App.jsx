@@ -7,7 +7,7 @@ import PIIDisplay from './components/PIIDisplay';
 import { buildAppViews } from './app/AppViews';
 import { EnvWarningBanner, buildAppModals } from './app/AppModals';
 import { useAppSessionData } from './app/useAppSessionData';
-import { resolveOrderActionFns, normalizeOrderSide } from './app/orderModel';
+import { resolveOrderActionFns, normalizeOrderSide, removeOrderByOnchainId } from './app/orderModel';
 
 // ─────────────────────────────────────────────
 // [TR] API URL: DEV modunda localhost, prod'da VITE_API_URL zorunlu
@@ -208,6 +208,7 @@ function App() {
     bleedingAmounts,
     orders,
     myOrders,
+    setMyOrders,
     setOrders,
     activeEscrows,
     loading,
@@ -503,6 +504,9 @@ function App() {
     }
 
     const side = normalizeOrderSide(String(order.side || '').toUpperCase());
+    if (side === 'UNKNOWN') {
+      throw new Error(lang === 'TR' ? 'Geçersiz order side. İşlem başlatılamadı.' : 'Invalid order side. Cannot start trade.');
+    }
     const { fillFn: fillOrderFn } = resolveOrderActionFns(side, { fillBuyOrder, fillSellOrder, createBuyOrder, createSellOrder, cancelBuyOrder, cancelSellOrder });
     if (tokenFromChain && tokenFromChain !== '0x0000000000000000000000000000000000000000') {
       tokenAddress = tokenFromChain;
@@ -1122,6 +1126,9 @@ const handleCreateOrder = async () => {
     }
 
     const normalizedSide = normalizeOrderSide(makerSide);
+    if (normalizedSide === 'UNKNOWN') {
+      throw new Error(lang === 'TR' ? 'Geçersiz order side. Order oluşturulamadı.' : 'Invalid order side. Order creation blocked.');
+    }
     const { createFn } = resolveOrderActionFns(normalizedSide, { fillBuyOrder, fillSellOrder, createBuyOrder, createSellOrder, cancelBuyOrder, cancelSellOrder });
     const createLabel = normalizedSide === 'BUY_CRYPTO' ? 'Buy' : 'Sell';
 
@@ -1189,14 +1196,18 @@ const handleCreateOrder = async () => {
         'info'
       );
       const normalizedSide = normalizeOrderSide(order?.side);
+      if (normalizedSide === 'UNKNOWN') {
+        throw new Error(lang === 'TR' ? 'Geçersiz order side. İptal işlemi durduruldu.' : 'Invalid order side. Cancel blocked.');
+      }
       const { cancelFn } = resolveOrderActionFns(normalizedSide, { fillBuyOrder, fillSellOrder, createBuyOrder, createSellOrder, cancelBuyOrder, cancelSellOrder });
       await cancelFn(BigInt(order.onchainId));
 
-      setOrders(prev => prev.filter(o => o.onchainId !== order.onchainId));
+      setOrders(prev => removeOrderByOnchainId(prev, order.onchainId));
+      setMyOrders(prev => removeOrderByOnchainId(prev, order.onchainId));
       setConfirmDeleteId(null);
 
       showToast(
-        lang === 'TR' ? '✅ Sell order iptal edildi.' : '✅ Sell order canceled.',
+        lang === 'TR' ? '✅ Order iptal edildi.' : '✅ Order canceled.',
         'success'
       );
     } catch (err) {

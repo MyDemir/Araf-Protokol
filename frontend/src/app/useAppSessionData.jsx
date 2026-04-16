@@ -854,6 +854,7 @@ export function useAppSessionData({
     bleedingAmounts,
     orders,
     myOrders,
+    setMyOrders,
     setOrders,
     activeEscrows,
     loading,

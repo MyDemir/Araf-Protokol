@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mapApiOrderToUi, resolveOrderActionFns } from './orderModel';
+import {
+  assertOrderSide,
+  buildMakerPreview,
+  mapApiOrderToUi,
+  resolveOrderActionFns,
+} from './orderModel';
 
 describe('orderModel mapping', () => {
   const bondMap = {
@@ -49,7 +54,6 @@ describe('orderModel mapping', () => {
     expect(ui.bondLabel).toBe('10%');
   });
 
-
   it('keeps tokenMap policy from /api/orders/config mirror', () => {
     const ui = mapApiOrderToUi({
       order: { ...baseOrder, side: 'SELL_CRYPTO', token_address: '0xAbCd000000000000000000000000000000000000' },
@@ -63,7 +67,35 @@ describe('orderModel mapping', () => {
     expect(ui.tokenPolicy?.allowBuyOrders).toBe(false);
   });
 
-  it('resolves side-aware action functions', () => {
+  it('invalid side is non-actionable and does not fake bond side', () => {
+    const ui = mapApiOrderToUi({
+      order: { ...baseOrder, side: 'MALFORMED_SIDE' },
+      lang: 'EN',
+      bondMap,
+      tokenMap: {},
+      formatAddress: (a) => a,
+    });
+
+    expect(ui.side).toBe('UNKNOWN');
+    expect(ui.isActionable).toBe(false);
+    expect(ui.ctaLabel).toBe('Unavailable');
+    expect(ui.bondLabel).toBe('—');
+  });
+
+  it('builds sell vs buy maker preview with contract-aligned accounting', () => {
+    const sell = buildMakerPreview({ side: 'SELL_CRYPTO', amountUi: 100, bondPct: 8 });
+    const buy = buildMakerPreview({ side: 'BUY_CRYPTO', amountUi: 100, bondPct: 10 });
+
+    expect(sell.reserveAmount).toBe(8);
+    expect(sell.totalAmount).toBe(108);
+    expect(sell.includesInventory).toBe(true);
+
+    expect(buy.reserveAmount).toBe(10);
+    expect(buy.totalAmount).toBe(10);
+    expect(buy.includesInventory).toBe(false);
+  });
+
+  it('resolves side-aware action functions and fails closed on invalid side', () => {
     const fns = {
       createSellOrder: vi.fn(),
       createBuyOrder: vi.fn(),
@@ -73,8 +105,10 @@ describe('orderModel mapping', () => {
       fillBuyOrder: vi.fn(),
     };
 
+    expect(assertOrderSide('SELL_CRYPTO')).toBe('SELL_CRYPTO');
     expect(resolveOrderActionFns('SELL_CRYPTO', fns).createFn).toBe(fns.createSellOrder);
     expect(resolveOrderActionFns('BUY_CRYPTO', fns).cancelFn).toBe(fns.cancelBuyOrder);
     expect(resolveOrderActionFns('BUY_CRYPTO', fns).fillFn).toBe(fns.fillBuyOrder);
+    expect(() => resolveOrderActionFns('UNKNOWN', fns)).toThrow(/Invalid order side/);
   });
 });
