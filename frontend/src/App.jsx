@@ -79,8 +79,8 @@ function App() {
   // [EN] Sidebar auto-close timer ref (resets on hover)
   const sidebarTimerRef = React.useRef(null);
 
-  // [TR] Maker sell-order formu state'leri
-  // [EN] Maker sell-order form states
+  // [TR] Maker order formu state'leri (SELL/BUY side-aware)
+  // [EN] Maker order form states (SELL/BUY side-aware)
   const [makerTier, setMakerTier]         = useState(1);
   const [makerAmount, setMakerAmount]     = useState('');
   const [makerRate, setMakerRate]         = useState('');
@@ -932,7 +932,7 @@ function App() {
       showToast(lang === 'TR' ? 'Uyarı işlemi cüzdanınıza gönderiliyor...' : 'Pinging maker, please confirm in wallet...', 'info');
       await pingMaker(BigInt(tradeId));
       setActiveTrade(prev => ({ ...prev, pingedAt: new Date().toISOString() }));
-      showToast(lang === 'TR' ? 'Satıcı uyarıldı. Yanıt için 24 saati var.' : 'Maker has been pinged. They have 24h to respond.', 'success');
+      showToast(lang === 'TR' ? 'Maker uyarıldı. Yanıt için 24 saati var.' : 'Maker has been pinged. They have 24h to respond.', 'success');
     } catch (err) {
       console.error('pingMaker error:', err);
       const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'Ping işlemi başarısız oldu.' : 'Ping failed.');
@@ -1052,7 +1052,7 @@ function App() {
 
   const handleOpenMakerModal = () => {
     if (isPaused) {
-      showToast(lang === 'TR' ? 'Sistem şu an bakım modundadır. Yeni sell order açılamaz.' : 'System is paused. Cannot create sell order.', 'error');
+      showToast(lang === 'TR' ? 'Sistem şu an bakım modundadır. Yeni order açılamaz.' : 'System is paused. Cannot create orders.', 'error');
       return;
     }
     if (!requireSignedSessionForActiveWallet()) return;
@@ -1178,10 +1178,10 @@ const handleCreateOrder = async () => {
   }
 };
 
-  // [TR] "İlanlarım" ekranından maker sell order'ını iptal eder.
-  //      İptal authority'si kontrattadır; frontend yalnız cancelSellOrder çağrısını tetikler.
-  // [EN] Cancels maker sell order from "My Listings".
-  //      Cancellation authority lives on-chain; frontend only triggers cancelSellOrder.
+  // [TR] "Orderlarım" ekranından maker order'ını iptal eder.
+  //      İptal authority'si kontrattadır; frontend yalnız side-aware cancel çağrısını tetikler.
+  // [EN] Cancels maker order from "My Orders".
+  //      Cancellation authority lives on-chain; frontend only triggers side-aware cancel calls.
   const handleDeleteOrder = async (order) => {
     if (order?.onchainId == null || isContractLoading) return;
     if (!requireSignedSessionForActiveWallet()) return;
@@ -1266,13 +1266,13 @@ const handleCreateOrder = async () => {
     trades:          lang === 'TR' ? 'Başarılı İşlem' : 'Success Trades',
     users:           lang === 'TR' ? 'Aktif Kullanıcı' : 'Active Users',
     burn:            lang === 'TR' ? 'Eriyen Kasa' : 'Burned Treasury',
-    tableSeller:     lang === 'TR' ? 'Satıcı' : 'Seller',
+    tableSeller:     lang === 'TR' ? 'Order Sahibi' : 'Order Owner',
     tableRate:       lang === 'TR' ? 'Kur' : 'Rate',
     tableLimit:      lang === 'TR' ? 'Limit' : 'Limit',
     tableBond:       lang === 'TR' ? 'Bond' : 'Bond',
     tableAction:     lang === 'TR' ? 'İşlem' : 'Action',
     buyBtn:          lang === 'TR' ? 'Satın Al' : 'Buy',
-    createAd:        lang === 'TR' ? '+ İlan Aç' : '+ Create Ad',
+    createAd:        lang === 'TR' ? '+ Order Aç' : '+ Create Order',
   };
 
   // ═══════════════════════════════════════════

@@ -124,9 +124,9 @@ export const buildAppViews = (ctx) => {
   );
 
   // [TR] Bağlamsal yan panel — 5 sn sonra kapanır, hover timer'ı sıfırlar.
-  //      Filtreler, durum akordiyonu ve sell order oluşturma butonu içerir.
+  //      Filtreler, durum akordiyonu ve yeni order oluşturma butonu içerir.
   // [EN] Context sidebar — closes after 5s, hover resets timer.
-  //      Contains filters, status accordion and sell-order creation button.
+  //      Contains filters, status accordion and create-order button.
   const renderContextSidebar = () => (
     <>
       {sidebarOpen && <div className="md:hidden fixed inset-0 bg-black/60 z-[55] backdrop-blur-sm transition-opacity" onClick={() => setSidebarOpen(false)} />}
@@ -226,7 +226,7 @@ export const buildAppViews = (ctx) => {
             <button onClick={() => setLang('EN')} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition ${lang === 'EN' ? 'bg-[#222] text-white' : 'text-slate-500 hover:text-white'}`}>🇬🇧 EN</button>
           </div>
           <button onClick={handleOpenMakerModal} disabled={isPaused} className={`w-full py-3 bg-gradient-to-r ${isPaused ? 'from-slate-700 to-slate-600 cursor-not-allowed text-slate-400' : 'from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:shadow-[0_0_20px_rgba(16,185,129,0.5)] text-white'} rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2`}>
-            <span className="text-lg leading-none">+</span> {lang === 'TR' ? 'YENİ İLAN AÇ' : 'CREATE AD'}
+            <span className="text-lg leading-none">+</span> {lang === 'TR' ? 'YENİ ORDER AÇ' : 'CREATE ORDER'}
           </button>
         </div>
       </div>
@@ -601,7 +601,7 @@ if (activeTrade?._pendingBackendSync && !activeTrade?.id) {
                 </div>
                 {isTaker ? (
                   <div className="w-full max-w-md flex flex-col items-center">
-                    <p className="text-slate-400 text-sm mb-4">{lang === 'TR' ? 'Satıcının onayı bekleniyor.' : 'Waiting for seller release.'}</p>
+                    <p className="text-slate-400 text-sm mb-4">{lang === 'TR' ? 'Maker onayı bekleniyor.' : 'Waiting for maker release.'}</p>
                     {(() => {
                       if (!activeTrade?.paidAt) return null;
                       if (activeTrade.pingedAt) {
@@ -611,7 +611,7 @@ if (activeTrade?._pendingBackendSync && !activeTrade?.id) {
                           return (
                             <div className="w-full mt-2 flex flex-col items-center">
                               <p className="text-[11px] text-red-400 font-bold mb-1 text-center leading-tight">
-                                {lang === 'TR' ? 'Dikkat: Satıcı pasif kaldığı için her iki tarafın teminatından %2 ihmal cezası kesilecektir (Maker: %2, Taker: %2).' : 'Warning: Due to maker inaction, a 2% negligence penalty will be deducted from both parties\' bonds (Maker: 2%, Taker: 2%).'}
+                                {lang === 'TR' ? 'Dikkat: Maker pasif kaldığı için her iki tarafın teminatından %2 ihmal cezası kesilecektir (Maker: %2, Taker: %2).' : 'Warning: Due to maker inaction, a 2% negligence penalty will be deducted from both parties\' bonds (Maker: 2%, Taker: 2%).'}
                               </p>
                               <button onClick={() => handleAutoRelease(activeTrade.onchainId)} disabled={isContractLoading} className="w-full text-sm font-bold py-3 rounded-xl transition bg-emerald-600/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500 hover:text-white shadow-lg">
                                 {isContractLoading ? '...' : (lang === 'TR' ? '✅ Fonları Otomatik Serbest Bırak' : '✅ Auto-Release Funds')}
@@ -619,7 +619,7 @@ if (activeTrade?._pendingBackendSync && !activeTrade?.id) {
                             </div>
                           );
                         }
-                        return <div className="mt-2 text-center text-xs text-emerald-400 bg-emerald-900/20 p-3 rounded-lg border border-emerald-900/50 w-full"><p className="font-bold">✓ {lang === 'TR' ? 'Satıcı Uyarıldı' : 'Maker Pinged'}</p></div>;
+                        return <div className="mt-2 text-center text-xs text-emerald-400 bg-emerald-900/20 p-3 rounded-lg border border-emerald-900/50 w-full"><p className="font-bold">✓ {lang === 'TR' ? 'Maker Uyarıldı' : 'Maker Pinged'}</p></div>;
                       }
                       const gracePeriodEnds = new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000);
                       const canPing = new Date() > gracePeriodEnds;
@@ -627,15 +627,15 @@ if (activeTrade?._pendingBackendSync && !activeTrade?.id) {
                         return (
                           <div className="w-full mt-2 flex flex-col items-center">
                             <button disabled className="w-full text-sm font-bold py-3 rounded-xl transition bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed">
-                              {lang === 'TR' ? '🔔 Satıcıyı Uyar' : '🔔 Ping Maker'}
+                              {lang === 'TR' ? '🔔 Maker’ı Uyar' : '🔔 Ping Maker'}
                             </button>
                             <p className="text-[11px] text-red-400 mt-2 text-center leading-tight">
-                              ⚠️ {lang === 'TR' ? 'Satıcı itiraz uyarı sürecini başlattı. Artık otomatik serbest bırakma (Auto-Release) yolunu kullanamazsınız.' : 'Maker has initiated the challenge warning process. You can no longer use Auto-Release.'}
+                              ⚠️ {lang === 'TR' ? 'Maker itiraz uyarı sürecini başlattı. Artık otomatik serbest bırakma (Auto-Release) yolunu kullanamazsınız.' : 'Maker has initiated the challenge warning process. You can no longer use Auto-Release.'}
                             </p>
                           </div>
                         );
                       }
-                      return <button onClick={() => handlePingMaker(activeTrade.onchainId)} disabled={!canPing || isContractLoading} className={`w-full mt-2 text-sm font-bold py-3 rounded-xl transition ${!canPing || isContractLoading ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-orange-600/20 text-orange-400 border border-orange-500/40 hover:bg-orange-500 hover:text-white'}`}>{isContractLoading ? '...' : canPing ? (lang === 'TR' ? '🔔 Satıcıyı Uyar' : '🔔 Ping Maker') : (lang === 'TR' ? '⏱️ Onay Bekleniyor' : '⏱️ Awaiting Confirmation')}</button>;
+                      return <button onClick={() => handlePingMaker(activeTrade.onchainId)} disabled={!canPing || isContractLoading} className={`w-full mt-2 text-sm font-bold py-3 rounded-xl transition ${!canPing || isContractLoading ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-orange-600/20 text-orange-400 border border-orange-500/40 hover:bg-orange-500 hover:text-white'}`}>{isContractLoading ? '...' : canPing ? (lang === 'TR' ? '🔔 Maker’ı Uyar' : '🔔 Ping Maker') : (lang === 'TR' ? '⏱️ Onay Bekleniyor' : '⏱️ Awaiting Confirmation')}</button>;
                     })()}
                   </div>
                 ) : (

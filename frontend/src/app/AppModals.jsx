@@ -389,7 +389,7 @@ export const buildAppModals = (ctx) => {
                     <span className="text-2xl">🚫</span>
                     <div>
                       <p className="font-bold text-red-400">{lang === 'TR' ? 'Taker Kısıtlaması Aktif' : 'Taker Restriction Active'}</p>
-                      <p className="text-red-300/80 text-xs mt-1">{lang === 'TR' ? 'Sadece maker olarak order açabilirsiniz.' : 'You can only open sell orders as Maker.'}</p>
+                      <p className="text-red-300/80 text-xs mt-1">{lang === 'TR' ? 'Sadece maker olarak order açabilirsiniz.' : 'You can only open orders as Maker.'}</p>
                     </div>
                   </div>
                 )}
@@ -689,7 +689,7 @@ export const buildAppModals = (ctx) => {
           <div className="space-y-4 text-sm text-slate-400 mb-6 bg-[#0a0a0c] p-4 rounded-xl border border-[#222] overflow-y-auto max-h-64">
             <p>{lang === 'TR' ? 'Araf Protokolü merkeziyetsiz bir akıllı kontrattır. Hiçbir aracı kurum veya hakem bulunmamaktadır.' : 'Araf Protocol is a decentralized smart contract. There are no intermediaries or arbitrators.'}</p>
             <p>{lang === 'TR' ? 'Tüm işlemleriniz kendi sorumluluğunuzdadır. "Bleeding Escrow" (Eriyen Kasa) oyun teorisine dayalı çalışır ve itiraz durumlarında fonlarınız zamanla eriyebilir.' : 'All transactions are at your own risk. The system operates on the "Bleeding Escrow" game theory, and in case of disputes, your funds may decay over time.'}</p>
-            <p className="text-red-400 font-bold">{lang === 'TR' ? 'Chargeback (Ters İbraz) riski tamamen Maker (Satıcı) tarafına aittir. Gelen fonların kaynağını doğrulamak sizin sorumluluğunuzdadır.' : 'The risk of Chargeback belongs entirely to the Maker (Seller). It is your responsibility to verify the source of incoming funds.'}</p>
+            <p className="text-red-400 font-bold">{lang === 'TR' ? 'Chargeback (Ters İbraz) riski tamamen Maker tarafına aittir. Gelen fonların kaynağını doğrulamak sizin sorumluluğunuzdadır.' : 'The risk of Chargeback belongs entirely to the Maker side. It is your responsibility to verify the source of incoming funds.'}</p>
           </div>
           <button
             onClick={() => { localStorage.setItem('araf_terms_accepted', 'true'); setTermsAccepted(true); }}
