@@ -379,6 +379,12 @@ export function useAppSessionData({
       return;
     }
 
+    // [TR] Her yeni /api/auth/me doğrulama döngüsünün başında pending moda dön.
+    //      Böylece stale authChecked=true ile guard bypass edilmez.
+    // [EN] Reset to pending at the start of every /api/auth/me validation cycle
+    //      to prevent stale authChecked=true guard bypass.
+    setAuthChecked(false);
+
     fetch(`${API_URL}/api/auth/me`, {
       credentials: 'include',
       headers: { 'x-wallet-address': connectedWallet },
