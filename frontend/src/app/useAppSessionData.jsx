@@ -110,6 +110,17 @@ export function useAppSessionData({
   const authenticatedWalletRef = React.useRef(null);
   const pendingTxCheckedRef = React.useRef(false);
   const autoTradeResumeRef = React.useRef(false);
+  const authValidationKeyRef = React.useRef(null);
+  const showToastRef = React.useRef(showToast);
+  const langRef = React.useRef(lang);
+
+  useEffect(() => {
+    showToastRef.current = showToast;
+  }, [showToast]);
+
+  useEffect(() => {
+    langRef.current = lang;
+  }, [lang]);
 
   const clearLocalSessionState = React.useCallback((options = {}) => {
     const { navigateHome = false, closeModals = true } = options;
@@ -374,27 +385,30 @@ export function useAppSessionData({
 
   useEffect(() => {
     if (!isConnected || !connectedWallet) {
+      authValidationKeyRef.current = null;
       clearLocalSessionState({ navigateHome: false, closeModals: true });
       setAuthChecked(true);
       return;
     }
 
-    // [TR] Her yeni /api/auth/me doğrulama döngüsünün başında pending moda dön.
-    //      Böylece stale authChecked=true ile guard bypass edilmez.
-    // [EN] Reset to pending at the start of every /api/auth/me validation cycle
-    //      to prevent stale authChecked=true guard bypass.
-    setAuthChecked(false);
+    const validationKey = `wallet:${connectedWallet}`;
+    if (authValidationKeyRef.current !== validationKey) {
+      authValidationKeyRef.current = validationKey;
+      setAuthChecked(false);
+    }
 
+    let cancelled = false;
     fetch(`${API_URL}/api/auth/me`, {
       credentials: 'include',
       headers: { 'x-wallet-address': connectedWallet },
     })
       .then(async (res) => {
+        if (cancelled) return;
         if (res.status === 409) {
           clearLocalSessionState({ navigateHome: false, closeModals: true });
           setAuthChecked(true);
-          showToast(
-            lang === 'TR'
+          showToastRef.current(
+            langRef.current === 'TR'
               ? 'Oturum cüzdanınızla eşleşmiyor. Lütfen yeniden giriş yapın.'
               : 'Session does not match your wallet. Please sign in again.',
             'info'
@@ -413,6 +427,7 @@ export function useAppSessionData({
 
         if (!sessionWallet) {
           await bestEffortBackendLogout();
+          if (cancelled) return;
           clearLocalSessionState({ navigateHome: false, closeModals: true });
           setAuthChecked(true);
           return;
@@ -420,9 +435,10 @@ export function useAppSessionData({
 
         if (sessionWallet !== connectedWallet) {
           await bestEffortBackendLogout();
+          if (cancelled) return;
           clearLocalSessionState({ navigateHome: false, closeModals: true });
-          showToast(
-            lang === 'TR'
+          showToastRef.current(
+            langRef.current === 'TR'
               ? 'Bağlı cüzdan oturumla eşleşmiyor. Lütfen yeniden imzalayın.'
               : 'Connected wallet does not match session. Please sign in again.',
             'info'
@@ -437,10 +453,14 @@ export function useAppSessionData({
         setAuthChecked(true);
       })
       .catch(() => {
+        if (cancelled) return;
         clearLocalSessionState({ navigateHome: false, closeModals: true });
         setAuthChecked(true);
       });
-  }, [isConnected, connectedWallet, clearLocalSessionState, bestEffortBackendLogout, lang, showToast]);
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, connectedWallet, clearLocalSessionState, bestEffortBackendLogout]);
 
   useEffect(() => {
     const mapOrders = (apiOrders = []) => apiOrders.map((o) => mapApiOrderToUi({

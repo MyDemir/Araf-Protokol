@@ -115,6 +115,13 @@ function App() {
   const [feedbackError, setFeedbackError] = useState('');
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
 
+  // [TR] Toast bildirimi gösterir — 4 sn sonra otomatik kapanır
+  // [EN] Shows toast notification — auto-closes after 4s
+  const showToast = React.useCallback((message, type = 'success') => {
+    setToast({ id: Date.now(), message, type });
+    setTimeout(() => setToast(null), 4000);
+  }, []);
+
   // ═══════════════════════════════════════════
   // 2. WEB3 BAĞLANTI VE KONTRAT HOOK'LARI
   //    Wallet connection + all contract methods
@@ -283,13 +290,6 @@ function App() {
   // 7. YARDIMCI FONKSİYONLAR
   //    Utility helpers
   // ═══════════════════════════════════════════
-
-  // [TR] Toast bildirimi gösterir — 4 sn sonra otomatik kapanır
-  // [EN] Shows toast notification — auto-closes after 4s
-  function showToast(message, type = 'success') {
-    setToast({ id: Date.now(), message, type });
-    setTimeout(() => setToast(null), 4000);
-  }
 
   // [TR] Sidebar'ı açar ve 5 sn sonra otomatik kapatır; hover timer'ı sıfırlar
   // [EN] Opens sidebar, auto-closes after 5s; hover resets the timer
