@@ -1,5 +1,6 @@
 import React from 'react';
 import { buildMakerPreview, getMakerModalCopy } from './orderUiModel';
+import { TERMS_ACCEPTED_STORAGE_KEY } from './bootstrapState';
 
 // [TR] Eksik env değişkenleri için kapatılabilir uyarı şeridi.
 // [EN] Dismissible warning strip for missing env variables.
@@ -695,7 +696,14 @@ export const buildAppModals = (ctx) => {
             <p className="text-red-400 font-bold">{lang === 'TR' ? 'Chargeback (Ters İbraz) riski tamamen Maker tarafına aittir. Gelen fonların kaynağını doğrulamak sizin sorumluluğunuzdadır.' : 'The risk of Chargeback belongs entirely to the Maker side. It is your responsibility to verify the source of incoming funds.'}</p>
           </div>
           <button
-            onClick={() => { localStorage.setItem('araf_terms_accepted', 'true'); setTermsAccepted(true); }}
+            onClick={() => {
+              // [TR] Kullanım koşulları kabulü kalıcı tutulur; modal refresh sonrası tekrar açılmaz.
+              // [EN] Persist terms acceptance so modal does not re-open after refresh.
+              if (typeof window !== 'undefined') {
+                window.localStorage.setItem(TERMS_ACCEPTED_STORAGE_KEY, 'true');
+              }
+              setTermsAccepted(true);
+            }}
             className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition shadow-[0_0_15px_rgba(16,185,129,0.3)]"
           >
             {lang === 'TR' ? 'Okudum, Kabul Ediyorum' : 'I Read and Accept'}

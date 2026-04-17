@@ -7,6 +7,7 @@ import PIIDisplay from './components/PIIDisplay';
 import { buildAppViews } from './app/AppViews';
 import { EnvWarningBanner, buildAppModals } from './app/AppModals';
 import { useAppSessionData } from './app/useAppSessionData';
+import { getInitialLang, getInitialTermsAccepted, APP_LANG_STORAGE_KEY } from './app/bootstrapState';
 import { resolveOrderActionFns, normalizeOrderSide, removeOrderByOnchainId } from './app/orderUiModel';
 
 // ─────────────────────────────────────────────
@@ -97,7 +98,7 @@ function App() {
   const [makerToken, setMakerToken] = useState('USDT');
   const [makerSide, setMakerSide] = useState('SELL_CRYPTO');
   const [profileTab, setProfileTab] = useState('hesabim');
-  const [lang, setLang] = useState('TR');
+  const [lang, setLang] = useState(getInitialLang);
   const [loadingText, setLoadingText] = useState('');
   const [isContractLoading, setIsContractLoading] = useState(false);
   const [connectedWallet, setConnectedWallet] = useState(null);
@@ -105,7 +106,7 @@ function App() {
   const [filterToken, setFilterToken] = useState('ALL');
   const [searchAmount, setSearchAmount] = useState('');
   const [toast, setToast] = useState(null);
-  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(getInitialTermsAccepted);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [activeTradesFilter, setActiveTradesFilter] = useState('ALL');
   const [feedbackRating, setFeedbackRating] = useState(0);
@@ -128,6 +129,13 @@ function App() {
   React.useEffect(() => {
     setConnectedWallet(address?.toLowerCase?.() || null);
   }, [address]);
+
+  // [TR] Dil değişimlerini kalıcılaştır; refresh sonrası aynı dil açılsın.
+  // [EN] Persist language changes so refresh keeps the same locale.
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(APP_LANG_STORAGE_KEY, lang);
+  }, [lang]);
 
   // [TR] Tüm kontrat metodları tek bir hook instance'ından alınır
   // [EN] All contract methods come from a single hook instance
@@ -296,15 +304,28 @@ function App() {
   // [EN] Close profile modal from effect when auth disconnects to avoid
   //      setState during render.
   React.useEffect(() => {
+    if (!authChecked) return;
     if (showProfileModal && (!isConnected || !isAuthenticated)) {
       setShowProfileModal(false);
     }
-  }, [showProfileModal, isConnected, isAuthenticated]);
+    if (showMakerModal && (!isConnected || !isAuthenticated)) {
+      setShowMakerModal(false);
+    }
+  }, [authChecked, showProfileModal, showMakerModal, isConnected, isAuthenticated]);
 
   const hasSignedSessionForActiveWallet =
     Boolean(isConnected && connectedWallet && isAuthenticated && authenticatedWallet === connectedWallet);
 
   const requireSignedSessionForActiveWallet = React.useCallback(() => {
+    if (!authChecked) {
+      showToast(
+        lang === 'TR'
+          ? 'Oturum doğrulanıyor. Lütfen 1-2 saniye sonra tekrar deneyin.'
+          : 'Session check in progress. Please try again in a moment.',
+        'info'
+      );
+      return false;
+    }
     if (hasSignedSessionForActiveWallet) return true;
     showToast(
       lang === 'TR'
@@ -312,14 +333,12 @@ function App() {
         : 'No signed session for the active wallet. Please sign in again.',
       'error'
     );
-    setShowMakerModal(false);
-    setShowProfileModal(false);
     return false;
-  }, [hasSignedSessionForActiveWallet, lang]);
+  }, [authChecked, hasSignedSessionForActiveWallet, lang]);
 
   const handleLogoutAndDisconnect = async () => {
     await bestEffortBackendLogout();
-    clearLocalSessionState();
+    clearLocalSessionState({ navigateHome: true, closeModals: true });
     disconnect();
   };
 
@@ -1235,6 +1254,15 @@ const handleCreateOrder = async () => {
   // [TR] Navbar auth butonu: bağlı değilse wallet modal, imzasızsa SIWE, imzalıysa profil açar
   // [EN] Navbar auth button: opens wallet modal if not connected, SIWE if unsigned, profile if signed
   const handleAuthAction = () => {
+    if (isConnected && !authChecked) {
+      showToast(
+        lang === 'TR'
+          ? 'Cüzdan oturumu doğrulanıyor. Lütfen bekleyin.'
+          : 'Validating wallet session. Please wait.',
+        'info'
+      );
+      return;
+    }
     if (!isConnected) setShowWalletModal(true);
     else if (!isAuthenticated) loginWithSIWE();
     else { setProfileTab('ayarlar'); setShowProfileModal(true); }

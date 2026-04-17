@@ -111,13 +111,18 @@ export function useAppSessionData({
   const pendingTxCheckedRef = React.useRef(false);
   const autoTradeResumeRef = React.useRef(false);
 
-  const clearLocalSessionState = React.useCallback(() => {
+  const clearLocalSessionState = React.useCallback((options = {}) => {
+    const { navigateHome = false, closeModals = true } = options;
     setIsAuthenticated(false);
     setAuthenticatedWallet(null);
     authenticatedWalletRef.current = null;
-    setShowMakerModal(false);
-    setShowProfileModal(false);
-    setCurrentView('home');
+    if (closeModals) {
+      setShowMakerModal(false);
+      setShowProfileModal(false);
+    }
+    if (navigateHome) {
+      setCurrentView('home');
+    }
     setActiveTrade(null);
     setActiveEscrows([]);
     setCancelStatus(null);
@@ -160,7 +165,7 @@ export function useAppSessionData({
         });
       } catch (_) {}
 
-      clearLocalSessionState();
+      clearLocalSessionState({ navigateHome: false, closeModals: true });
       showToast(
         lang === 'TR'
           ? 'Oturum cüzdan uyuşmazlığı nedeniyle sonlandırıldı. Lütfen yeniden giriş yapın.'
@@ -181,7 +186,7 @@ export function useAppSessionData({
       });
 
       if (!refreshRes.ok) {
-        clearLocalSessionState();
+        clearLocalSessionState({ navigateHome: false, closeModals: true });
         showToast(
           lang === 'TR'
             ? 'Oturumunuz sona erdi. Lütfen tekrar imzalayın.'
@@ -369,7 +374,7 @@ export function useAppSessionData({
 
   useEffect(() => {
     if (!isConnected || !connectedWallet) {
-      clearLocalSessionState();
+      clearLocalSessionState({ navigateHome: false, closeModals: true });
       setAuthChecked(true);
       return;
     }
@@ -380,7 +385,7 @@ export function useAppSessionData({
     })
       .then(async (res) => {
         if (res.status === 409) {
-          clearLocalSessionState();
+          clearLocalSessionState({ navigateHome: false, closeModals: true });
           setAuthChecked(true);
           showToast(
             lang === 'TR'
@@ -392,7 +397,7 @@ export function useAppSessionData({
         }
 
         if (!res.ok) {
-          clearLocalSessionState();
+          clearLocalSessionState({ navigateHome: false, closeModals: true });
           setAuthChecked(true);
           return;
         }
@@ -402,14 +407,14 @@ export function useAppSessionData({
 
         if (!sessionWallet) {
           await bestEffortBackendLogout();
-          clearLocalSessionState();
+          clearLocalSessionState({ navigateHome: false, closeModals: true });
           setAuthChecked(true);
           return;
         }
 
         if (sessionWallet !== connectedWallet) {
           await bestEffortBackendLogout();
-          clearLocalSessionState();
+          clearLocalSessionState({ navigateHome: false, closeModals: true });
           showToast(
             lang === 'TR'
               ? 'Bağlı cüzdan oturumla eşleşmiyor. Lütfen yeniden imzalayın.'
@@ -426,7 +431,7 @@ export function useAppSessionData({
         setAuthChecked(true);
       })
       .catch(() => {
-        clearLocalSessionState();
+        clearLocalSessionState({ navigateHome: false, closeModals: true });
         setAuthChecked(true);
       });
   }, [isConnected, connectedWallet, clearLocalSessionState, bestEffortBackendLogout, lang, showToast]);
@@ -665,7 +670,7 @@ export function useAppSessionData({
   }, [showProfileModal, profileTab, isAuthenticated, tradeHistoryPage, authenticatedFetch]);
 
   useEffect(() => {
-    if (!isConnected) clearLocalSessionState();
+    if (!isConnected) clearLocalSessionState({ navigateHome: true, closeModals: true });
   }, [isConnected, clearLocalSessionState]);
 
   useEffect(() => {
@@ -736,7 +741,7 @@ export function useAppSessionData({
     if (!isConnected || !connectedWallet || !isAuthenticated || !authenticatedWallet) return;
     if (authenticatedWallet !== connectedWallet) {
       bestEffortBackendLogout();
-      clearLocalSessionState();
+      clearLocalSessionState({ navigateHome: false, closeModals: true });
       showToast(
         lang === 'TR'
           ? 'Cüzdan değişikliği algılandı. Güvenlik için yeniden giriş yapmanız gerekiyor.'
@@ -754,7 +759,7 @@ export function useAppSessionData({
       const runtimeWallet = provider?.selectedAddress?.toLowerCase?.() || connectedWallet;
       if (runtimeWallet && runtimeWallet !== authenticatedWallet) {
         bestEffortBackendLogout();
-        clearLocalSessionState();
+        clearLocalSessionState({ navigateHome: false, closeModals: true });
         showToast(
           lang === 'TR'
             ? 'Wallet oturumu değişti. Güvenlik için tekrar imza gerekli.'
