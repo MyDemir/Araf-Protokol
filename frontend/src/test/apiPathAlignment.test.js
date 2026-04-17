@@ -37,7 +37,11 @@ describe('frontend ↔ backend API path alignment', () => {
     expect(pii).toContain('/api/pii/${tradeId}');
 
     const contract = readFront('src/hooks/useArafContract.js');
-    expect(contract).toContain('resolveApiBaseForLogs');
-    expect(contract).toContain('fetch(`${apiUrl}/logs/client-error`');
+    expect(contract).toContain('resolveClientErrorLogUrl');
+    expect(contract).toContain('fetch(logUrl, {');
+
+    const boundary = readFront('src/components/ErrorBoundary.jsx');
+    expect(boundary).toContain('resolveClientErrorLogUrl');
+    expect(boundary).toContain('fetch(logUrl, {');
   });
 });

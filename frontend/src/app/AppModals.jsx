@@ -1,5 +1,5 @@
 import React from 'react';
-import { buildMakerPreview, getMakerModalCopy } from './orderModel';
+import { buildMakerPreview, getMakerModalCopy } from './orderUiModel';
 
 // [TR] Eksik env değişkenleri için kapatılabilir uyarı şeridi.
 // [EN] Dismissible warning strip for missing env variables.

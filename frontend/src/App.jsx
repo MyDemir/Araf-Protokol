@@ -7,7 +7,7 @@ import PIIDisplay from './components/PIIDisplay';
 import { buildAppViews } from './app/AppViews';
 import { EnvWarningBanner, buildAppModals } from './app/AppModals';
 import { useAppSessionData } from './app/useAppSessionData';
-import { resolveOrderActionFns, normalizeOrderSide, removeOrderByOnchainId } from './app/orderModel';
+import { resolveOrderActionFns, normalizeOrderSide, removeOrderByOnchainId } from './app/orderUiModel';
 
 // ─────────────────────────────────────────────
 // [TR] API URL: DEV modunda localhost, prod'da VITE_API_URL zorunlu

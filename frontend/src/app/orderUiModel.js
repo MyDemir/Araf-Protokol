@@ -1,3 +1,8 @@
+/**
+ * Frontend UI model/adapter helpers for order rendering & view actions.
+ * NOTE: This is NOT the backend DB model (see backend/scripts/models/Order.js).
+ */
+
 import { formatUnits } from 'viem';
 
 const DEFAULT_TOKEN_DECIMALS = 6;

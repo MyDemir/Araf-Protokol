@@ -25,7 +25,7 @@ frontend/src/App.jsx
 frontend/src/app/useAppSessionData.jsx
 frontend/src/app/AppModals.jsx
 frontend/src/app/AppViews.jsx
-frontend/src/app/orderModel.js
+frontend/src/app/orderUiModel.js
 frontend/src/hooks/useArafContract.js
 frontend/src/hooks/usePII.js
 frontend/src/components/PIIDisplay.jsx
@@ -41,7 +41,7 @@ docs/EN/ux.md
 - Backend (`orders/trades/auth/pii/...`) is mirror/read + session/PII security layer only.
 - Frontend only handles:
   - contract ABI + event decode (`useArafContract.js`)
-  - backend response mapping (`useAppSessionData.jsx`, `orderModel.js`)
+  - backend response mapping (`useAppSessionData.jsx`, `orderUiModel.js`)
   - UI state.
 
 ## 3) Network/Deploy prerequisites
