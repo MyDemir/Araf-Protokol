@@ -250,7 +250,6 @@ function App() {
     showProfileModal,
     profileTab,
     lang,
-    userRole,
     isContractLoading,
     connectedWallet,
     setShowMakerModal,
@@ -291,6 +290,16 @@ function App() {
     if (sidebarTimerRef.current) clearTimeout(sidebarTimerRef.current);
     sidebarTimerRef.current = setTimeout(() => setSidebarOpen(false), 5000);
   };
+
+  // [TR] Profil modalı açıkken cüzdan/auth düşerse modalı effect katmanında kapat.
+  //      Böylece render sırasında setter çağrısı yapılmaz (regression crash fix).
+  // [EN] Close profile modal from effect when auth disconnects to avoid
+  //      setState during render.
+  React.useEffect(() => {
+    if (showProfileModal && (!isConnected || !isAuthenticated)) {
+      setShowProfileModal(false);
+    }
+  }, [showProfileModal, isConnected, isAuthenticated]);
 
   const hasSignedSessionForActiveWallet =
     Boolean(isConnected && connectedWallet && isAuthenticated && authenticatedWallet === connectedWallet);

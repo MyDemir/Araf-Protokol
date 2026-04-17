@@ -360,10 +360,12 @@ export const buildAppModals = (ctx) => {
   // [EN] Profile center modal — settings, reputation, my orders, active and history tabs
   const renderProfileModal = () => {
     if (!showProfileModal) return null;
-    if (!isConnected || !isAuthenticated) {
-      setShowProfileModal(false);
-      return null;
-    }
+    // [TR] Profil modalı görünürken auth kopmuş olabilir.
+    //      Burada setter çağırmak render sırasında state update üretip
+    //      React boundary'e düşebilen "illegal render side-effect" oluşturur.
+    //      Kapatma işlemi App.jsx içindeki useEffect ile yönetilir.
+    // [EN] If auth drops while modal is open, closing is handled in App.jsx effect.
+    if (!isConnected || !isAuthenticated) return null;
     const resolvedMyOrders = myOrders || (address ? orders.filter(o => o.ownerAddress?.toLowerCase() === address.toLowerCase()) : []);
 
     return (
