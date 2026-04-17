@@ -446,28 +446,65 @@ export const buildAppViews = (ctx) => {
   // [EN] Trade room — shows taker/maker actions based on LOCKED/PAID/CHALLENGED state.
   //      Contains Bleeding Escrow visual bar, timers, cancel/release and PII section.
   const renderTradeRoom = () => {
-    // renderTradeRoom fonksiyonunun başına ekle
-if (activeTrade?._pendingBackendSync && !activeTrade?.id) {
-  return (
-    <div className="p-8 text-center">
-      <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-      <p className="text-white font-bold text-lg mb-2">
-        {lang === 'TR' ? 'İşlem Zincire Yazıldı' : 'Trade Written On-Chain'}
-      </p>
-      <p className="text-slate-400 text-sm">
-        {lang === 'TR'
-          ? 'Backend kaydı senkronize ediliyor... Bu birkaç saniye sürebilir.'
-          : 'Syncing backend record... This may take a few seconds.'}
-      </p>
-      <button
-        onClick={fetchMyTrades}
-        className="mt-4 px-6 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold"
-      >
-        {lang === 'TR' ? 'Yenile' : 'Refresh'}
-      </button>
-    </div>
-  );
-}
+    // [TR] Session invalidation sonrası activeTrade temizlenmiş olabilir.
+    //      Bu durumda fallback "0.00/undefined" ile kırık oda render etmek yerine
+    //      kullanıcıya deterministik empty-state gösterip güvenli aksiyon sunuyoruz.
+    // [EN] activeTrade can be cleared after session invalidation.
+    //      Instead of rendering a broken room with fallback values, show a
+    //      deterministic empty-state with safe navigation actions.
+    if (!activeTrade) {
+      return (
+        <div className="p-4 md:p-8 max-w-[900px] w-full mx-auto mt-6 md:mt-0">
+          <div className="bg-[#111113] border border-[#222] rounded-2xl p-6 md:p-8 text-center">
+            <div className="w-14 h-14 bg-[#1a1a1f] border border-[#2a2a2e] rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">⚠️</div>
+            <h2 className="text-xl font-bold text-white mb-2">
+              {lang === 'TR' ? 'Aktif işlem bulunamadı' : 'No active trade found'}
+            </h2>
+            <p className="text-sm text-slate-400 mb-5">
+              {lang === 'TR'
+                ? 'Oturumunuz sona ermiş veya işlem durumu güncellenmiş olabilir. Güvenli şekilde pazar yerine dönebilirsiniz.'
+                : 'Your session may have expired or trade state was refreshed. You can safely return to the marketplace.'}
+            </p>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <button
+                onClick={() => { fetchMyTrades(); }}
+                className="w-full sm:w-auto px-5 py-2.5 bg-[#1a1a1f] border border-[#2a2a2e] hover:bg-[#222] text-white rounded-xl text-sm font-bold transition"
+              >
+                {lang === 'TR' ? 'İşlemleri Yenile' : 'Refresh Trades'}
+              </button>
+              <button
+                onClick={() => setCurrentView('market')}
+                className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-bold transition"
+              >
+                {lang === 'TR' ? 'Pazar Yerine Dön' : 'Go to Marketplace'}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (activeTrade?._pendingBackendSync && !activeTrade?.id) {
+      return (
+        <div className="p-8 text-center">
+          <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-white font-bold text-lg mb-2">
+            {lang === 'TR' ? 'İşlem Zincire Yazıldı' : 'Trade Written On-Chain'}
+          </p>
+          <p className="text-slate-400 text-sm">
+            {lang === 'TR'
+              ? 'Backend kaydı senkronize ediliyor... Bu birkaç saniye sürebilir.'
+              : 'Syncing backend record... This may take a few seconds.'}
+          </p>
+          <button
+            onClick={fetchMyTrades}
+            className="mt-4 px-6 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold"
+          >
+            {lang === 'TR' ? 'Yenile' : 'Refresh'}
+          </button>
+        </div>
+      );
+    }
     const roomState = resolvedTradeState;
     const isChallenged = roomState === 'CHALLENGED';
     const isTaker = userRole === 'taker';

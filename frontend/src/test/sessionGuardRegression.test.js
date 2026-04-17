@@ -14,4 +14,10 @@ describe('session guard regression checks', () => {
     expect(source).toContain('const { navigateHome = false, closeModals = true } = options;');
     expect(source).toContain('if (navigateHome) {');
   });
+
+  it('guards tradeRoom rendering when activeTrade is missing', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/app/AppViews.jsx'), 'utf8');
+    expect(source).toContain('if (!activeTrade) {');
+    expect(source).toContain('No active trade found');
+  });
 });
