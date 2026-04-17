@@ -4,9 +4,9 @@ import {
   buildMakerPreview,
   mapApiOrderToUi,
   resolveOrderActionFns,
-} from '../app/orderModel';
+} from '../app/orderUiModel';
 
-describe('orderModel mapping', () => {
+describe('orderUiModel mapping', () => {
   const bondMap = {
     1: { maker: 8, taker: 10 },
   };
