@@ -15,6 +15,7 @@ const { buildBankProfileRisk } = require("./tradeRisk");
 
 const CANCEL_VERIFY_ABI = [
   "function sigNonces(address) view returns (uint256)",
+  "function domainSeparator() view returns (bytes32)",
 ];
 const CANCEL_TYPES = {
   CancelProposal: [
@@ -73,6 +74,14 @@ async function _verifyCancelSignatureOrThrow({
     chainId: Number(network.chainId),
     verifyingContract: process.env.ARAF_ESCROW_ADDRESS,
   };
+
+  const onchainDomainSeparator = await contract.domainSeparator();
+  const computedDomainSeparator = ethers.TypedDataEncoder.hashDomain(domain);
+  if (onchainDomainSeparator !== computedDomainSeparator) {
+    const err = new Error("EIP-712 domain uyuşmazlığı. Cancel signature doğrulaması güvenli değil.");
+    err.statusCode = 503;
+    throw err;
+  }
 
   const value = {
     tradeId: BigInt(tradeOnchainId),

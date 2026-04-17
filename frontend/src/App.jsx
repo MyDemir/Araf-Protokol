@@ -7,14 +7,15 @@ import PIIDisplay from './components/PIIDisplay';
 import { buildAppViews } from './app/AppViews';
 import { EnvWarningBanner, buildAppModals } from './app/AppModals';
 import { useAppSessionData } from './app/useAppSessionData';
-import { resolveApiBaseUrl } from './app/apiConfig';
 import { resolveOrderActionFns, normalizeOrderSide, removeOrderByOnchainId } from './app/orderModel';
 
 // ─────────────────────────────────────────────
 // [TR] API URL: DEV modunda localhost, prod'da VITE_API_URL zorunlu
 // [EN] API URL: localhost in DEV, VITE_API_URL required in prod
 // ─────────────────────────────────────────────
-const API_URL = resolveApiBaseUrl();
+const API_URL = import.meta.env.VITE_API_URL || (
+  import.meta.env.DEV ? 'http://localhost:4000' : ''
+);
 
 // [TR] Uygulama başlangıcında kritik env değişkenlerini doğrula
 // [EN] Validate critical env variables on app start
@@ -106,7 +107,7 @@ function App() {
   const [toast, setToast] = useState(null);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
-  const [activeTradesFilter, setActiveTradesFilter] = useState('ALL');
+  const [activeTradesFilter, setActiveTradesFilter] = useState('all');
   const [feedbackRating, setFeedbackRating] = useState(0);
   const [feedbackCategory, setFeedbackCategory] = useState('');
   const [feedbackText, setFeedbackText] = useState('');
@@ -1383,7 +1384,6 @@ const handleCreateOrder = async () => {
     getSafeTelegramUrl,
     authenticatedFetch,
     showToast,
-    decayReputation,
   });
 
   const {

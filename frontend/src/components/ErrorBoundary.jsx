@@ -20,7 +20,6 @@
  */
 
 import React from 'react';
-import { buildApiUrl, resolveApiBaseUrl } from '../app/apiConfig';
 
 // [TR] Hassas veri pattern'ları — log göndermeden önce temizlenir
 // [EN] Sensitive data patterns — scrubbed before sending logs
@@ -79,12 +78,14 @@ export default class ErrorBoundary extends React.Component {
     console.error('[ErrorBoundary] Kritik Render Hatası:', error, errorInfo);
 
     // FRONT-04 Fix: Üretim ortamında VITE_API_URL tanımsızsa log atma
-    const apiUrl = resolveApiBaseUrl();
+    const apiUrl = import.meta.env.VITE_API_URL;
     if (!apiUrl && import.meta.env.PROD) {
       console.warn('[ErrorBoundary] VITE_API_URL tanımsız — log backend\'e gönderilmedi.');
       return;
     }
-    const logUrl = buildApiUrl('/api/logs/client-error');
+
+    const logBase = apiUrl || (import.meta.env.DEV ? 'http://localhost:4000/api' : null);
+    if (!logBase) return;
 
     // YÜKS-10 Fix: PII içerebilecek alanlar gönderilmeden önce scrub ediliyor
     const scrubbedMessage    = scrubPII(error.message || 'Bilinmeyen Render Hatası');
@@ -96,7 +97,7 @@ export default class ErrorBoundary extends React.Component {
       .map(line => line.trim())
       .slice(0, 20); // stack'in tamamını değil sadece üst 20 satırı gönder
 
-    fetch(logUrl, {
+    fetch(`${logBase}/logs/client-error`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

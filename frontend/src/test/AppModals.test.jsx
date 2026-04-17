@@ -99,7 +99,6 @@ const makeCtx = (overrides = {}) => ({
   DEFAULT_TOKEN_DECIMALS: 6,
   formatTokenAmountFromRaw: () => '0',
   showToast: vi.fn(),
-  decayReputation: vi.fn(),
   ...overrides,
 });
 
@@ -141,31 +140,5 @@ describe('AppModals side-aware behaviors', () => {
     expect(screen.getByText(/BUY_CRYPTO · OPEN/)).toBeInTheDocument();
     expect(screen.getByText(/Remaining: 50 USDT/)).toBeInTheDocument();
     expect(screen.getByText(/Min Fill: 10 USDT/)).toBeInTheDocument();
-  });
-
-  it('uses 90-day clean-slate messaging and calls decayReputation from context', async () => {
-    const user = userEvent.setup();
-    const decayReputation = vi.fn().mockResolvedValue({});
-    const bannedUntil = Math.floor(Date.now() / 1000) - (100 * 24 * 60 * 60);
-    const modals = buildAppModals(makeCtx({
-      lang: 'EN',
-      showMakerModal: false,
-      profileTab: 'itibar',
-      userReputation: {
-        successful: 1,
-        failed: 1,
-        effectiveTier: 0,
-        bannedUntil,
-        consecutiveBans: 1,
-        firstSuccessfulTradeAt: 0,
-      },
-      decayReputation,
-    }));
-
-    render(<div>{modals.renderProfileModal()}</div>);
-
-    expect(screen.getByText(/90 days have passed/i)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /Clear My Record/i }));
-    expect(decayReputation).toHaveBeenCalled();
   });
 });

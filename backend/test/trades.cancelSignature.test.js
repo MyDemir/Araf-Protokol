@@ -38,6 +38,7 @@ jest.mock('../scripts/routes/tradeRisk', () => ({
 
 const mockSigNonces = jest.fn().mockResolvedValue(0n);
 const mockVerifyTypedData = jest.fn().mockReturnValue('0x1111111111111111111111111111111111111111');
+const mockHashDomain = jest.fn().mockReturnValue('0x' + 'aa'.repeat(32));
 
 jest.mock('ethers', () => ({
   ethers: {
@@ -46,8 +47,10 @@ jest.mock('ethers', () => ({
     })),
     Contract: jest.fn(() => ({
       sigNonces: mockSigNonces,
+      domainSeparator: jest.fn().mockResolvedValue('0x' + 'aa'.repeat(32)),
     })),
     verifyTypedData: (...args) => mockVerifyTypedData(...args),
+    TypedDataEncoder: { hashDomain: (...args) => mockHashDomain(...args) },
   },
 }));
 
@@ -69,6 +72,7 @@ describe('POST /api/trades/propose-cancel signature verification', () => {
 
     expect(res.status).toBe(200);
     expect(mockSigNonces).toHaveBeenCalled();
+    expect(mockHashDomain).toHaveBeenCalled();
     expect(mockVerifyTypedData).toHaveBeenCalled();
   });
 });

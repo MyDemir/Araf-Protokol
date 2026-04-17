@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { formatUnits } from 'viem';
 import { useCountdown } from '../hooks/useCountdown';
 import { mapApiOrderToUi } from './orderModel';
-import { resolveApiBaseUrl } from './apiConfig';
 
-const API_URL = resolveApiBaseUrl();
+const API_URL = import.meta.env.VITE_API_URL || (
+  import.meta.env.DEV ? 'http://localhost:4000' : ''
+);
 
 const DEFAULT_TOKEN_DECIMALS = 6;
 
