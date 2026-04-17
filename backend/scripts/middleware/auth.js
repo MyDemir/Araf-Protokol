@@ -58,7 +58,7 @@ sağlar.
 Parent order / child trade authority kontratta kalır; middleware bunları yeniden yorumlamaz.
 */
 
-const { verifyJWT, isJWTBlacklisted, revokeRefreshToken } = require("../services/siwe");
+const { verifyJWT, isJWTBlacklisted, revokeRefreshToken, blacklistJWT } = require("../services/siwe");
 const logger = require("../utils/logger");
 
 const COOKIE_OPTIONS_BASE = {
@@ -167,6 +167,10 @@ async function requireSessionWalletMatch(req, res, next) {
 
     try {
       if (req.wallet) {
+        const currentJWT = req.cookies?.araf_jwt;
+        if (currentJWT) {
+          await blacklistJWT(currentJWT);
+        }
         await revokeRefreshToken(req.wallet);
       }
     } catch (revokeErr) {

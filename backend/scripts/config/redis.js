@@ -6,6 +6,45 @@ const logger = require("../utils/logger");
 
 let redisClient = null;
 let listenersAttached = false;
+let connectPromise = null;
+const REDIS_READY_WAIT_MS = Number(process.env.REDIS_READY_WAIT_MS || 5000);
+
+function waitForReady(client, timeoutMs = REDIS_READY_WAIT_MS) {
+  if (!client || client.isReady) return Promise.resolve(client);
+
+  return new Promise((resolve, reject) => {
+    const onReady = () => {
+      cleanup();
+      resolve(client);
+    };
+    const onError = (err) => {
+      cleanup();
+      reject(err);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`[Redis] Hazır sinyali ${timeoutMs}ms içinde gelmedi.`));
+    }, timeoutMs);
+
+    if (typeof timer.unref === "function") timer.unref();
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (client.off) {
+        client.off("ready", onReady);
+        client.off("error", onError);
+      }
+    };
+
+    if (client.on) {
+      client.on("ready", onReady);
+      client.on("error", onError);
+    } else {
+      cleanup();
+      reject(new Error("[Redis] Client event API mevcut değil."));
+    }
+  });
+}
 
 /**
  * Redis bağlantısını kurar.
@@ -34,9 +73,16 @@ async function connectRedis() {
     return redisClient;
   }
 
+  if (connectPromise) {
+    return connectPromise;
+  }
+
   if (redisClient?.isOpen && !redisClient.isReady) {
     logger.warn("[Redis] Mevcut client açık ama hazır değil — hazır hale gelmesi bekleniyor.");
-    return redisClient;
+    connectPromise = waitForReady(redisClient).finally(() => {
+      connectPromise = null;
+    });
+    return connectPromise;
   }
 
   const url = process.env.REDIS_URL || "redis://127.0.0.1:6379";
@@ -66,7 +112,13 @@ async function connectRedis() {
     listenersAttached = true;
   }
 
-  await redisClient.connect();
+  connectPromise = redisClient.connect()
+    .then(() => redisClient)
+    .finally(() => {
+      connectPromise = null;
+    });
+
+  await connectPromise;
   return redisClient;
 }
 
@@ -112,6 +164,7 @@ async function closeRedis() {
   } finally {
     redisClient = null;
     listenersAttached = false;
+    connectPromise = null;
   }
 }
 

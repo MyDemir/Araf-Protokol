@@ -10,7 +10,7 @@ const cookieParser = require("cookie-parser");
 
 // [TR] Yapılandırma ve yardımcı araçlar
 // [EN] Configuration and utility helpers
-const { connectDB } = require("./config/db");
+const { connectDB, setAllowProcessExitOnDisconnect } = require("./config/db");
 const { connectRedis, closeRedis } = require("./config/redis");
 const logger = require("./utils/logger");
 
@@ -233,6 +233,7 @@ async function bootstrap() {
       logger.info("[ORCHESTRATOR] Worker stop tamamlandı.");
 
       if (mongoose.connection.readyState !== 0) {
+        setAllowProcessExitOnDisconnect(false);
         await mongoose.connection.close();
         logger.info("[ORCHESTRATOR] MongoDB bağlantısı kapatıldı.");
       }

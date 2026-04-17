@@ -45,6 +45,16 @@ const CONFIG_ABI = [
 
 let protocolConfig = null;
 
+function _isConfigLoaded(cfg) {
+  return Boolean(
+    cfg &&
+    cfg.bondMap &&
+    cfg.feeConfig &&
+    cfg.cooldownConfig &&
+    cfg.tokenMap
+  );
+}
+
 function _getTrackedTokens() {
   const raw = process.env.ARAF_TRACKED_TOKENS || "";
   return raw
@@ -183,7 +193,11 @@ async function refreshProtocolConfig() {
 
 async function _patchAndPersist(mutator) {
   const redis = getRedisClient();
-  if (!protocolConfig) protocolConfig = {};
+  if (!_isConfigLoaded(protocolConfig)) {
+    const err = new Error("Protocol config not loaded; refusing partial cache mutation.");
+    err.code = "CONFIG_UNAVAILABLE";
+    throw err;
+  }
   mutator(protocolConfig);
   protocolConfig.loaded_at = new Date().toISOString();
   await _writeCache(redis, protocolConfig);
@@ -220,7 +234,7 @@ async function updateCachedTokenConfig(tokenAddress, tokenConfig) {
 }
 
 function getConfig() {
-  if (!protocolConfig) {
+  if (!_isConfigLoaded(protocolConfig)) {
     const err = new Error(
       "Protocol config not loaded. Ensure ARAF_ESCROW_ADDRESS and BASE_RPC_URL are set, then restart the server."
     );

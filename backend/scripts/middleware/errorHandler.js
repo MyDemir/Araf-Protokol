@@ -16,6 +16,26 @@ const PII_FIELD_NAMES = new Set([
   "accountNumber", "bic", "swiftCode", "sortCode",
 ]);
 
+const SENSITIVE_VALUE_PATTERNS = [
+  /TR\d{24}/gi, // TR IBAN
+  /\b[A-Z]{2}[A-Z0-9]{13,32}\b/g, // generic IBAN
+  /\b\d{9}\b/g, // routing
+  /\b\d{4,17}\b/g, // account-like
+  /0x[a-fA-F0-9]{40}/g, // wallet
+  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, // email
+  /(bearer\s+)[a-zA-Z0-9\-\._~\+\/]+=*/gi, // bearer
+  /\b(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+)\b/g, // jwt
+];
+
+function scrubSensitiveText(value) {
+  if (typeof value !== "string") return value;
+  let clean = value;
+  for (const pattern of SENSITIVE_VALUE_PATTERNS) {
+    clean = clean.replace(pattern, "[REDACTED]");
+  }
+  return clean;
+}
+
 /**
  * req.body'den PII alanlarını temizler.
  * Log dosyasına IBAN ve isim bilgisi yazılmasını önler.
@@ -30,7 +50,10 @@ const PII_FIELD_NAMES = new Set([
  * Buradaki amaç yalnız hata ayıklama sağlamak ve hassas veriyi log yüzeyinden uzak tutmaktır.
  */
 function scrubBody(body) {
-  if (!body || typeof body !== "object") return {};
+  if (typeof body === "string") {
+    return scrubSensitiveText(body);
+  }
+  if (!body || typeof body !== "object") return body;
   const clean = Array.isArray(body) ? [] : {};
 
   for (const [key, value] of Object.entries(body)) {
@@ -38,6 +61,8 @@ function scrubBody(body) {
       clean[key] = "[REDACTED]";
     } else if (typeof value === "object" && value !== null) {
       clean[key] = scrubBody(value); // nested obje
+    } else if (typeof value === "string") {
+      clean[key] = scrubSensitiveText(value);
     } else {
       clean[key] = value;
     }
@@ -116,4 +141,4 @@ function globalErrorHandler(err, req, res, next) {
   });
 }
 
-module.exports = { globalErrorHandler };
+module.exports = { globalErrorHandler, scrubBody, scrubSensitiveText };

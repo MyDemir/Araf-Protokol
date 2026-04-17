@@ -119,14 +119,20 @@ function makeInMemoryLimiter({
     interval.unref();
   }
 
+  let fallbackModeLogged = false;
+
   return function inMemoryLimiter(req, res, next) {
     const now = Date.now();
     const key = keyGenerator(req);
     const current = bucket.get(key);
 
+    if (!fallbackModeLogged) {
+      logger.warn(`[RateLimit:${label}] Redis down — process-local fallback enabled.`);
+      fallbackModeLogged = true;
+    }
+
     if (!current || now > current.resetAt) {
       bucket.set(key, { count: 1, resetAt: now + windowMs });
-      logger.warn(`[RateLimit:${label}] Redis erişilemez — in-memory fallback aktif.`);
       return next();
     }
 
@@ -137,7 +143,6 @@ function makeInMemoryLimiter({
       return res.status(429).json(errorMessage(req));
     }
 
-    logger.warn(`[RateLimit:${label}] Redis erişilemez — in-memory fallback aktif.`);
     return next();
   };
 }
@@ -257,6 +262,22 @@ const ordersWriteLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const ordersWriteInMemoryLimiter = makeInMemoryLimiter({
+  label: "ORDERS-WRITE",
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => req.wallet || req.ip,
+  errorMessage: () => ({
+    error: "Order oluşturma limiti: Saatte 5 istek.",
+  }),
+});
+
+const ordersWriteLimiterWithFallback = makeSensitiveLimiter({
+  label: "ORDERS-WRITE",
+  redisLimiter: ordersWriteLimiter,
+  inMemoryLimiter: ordersWriteInMemoryLimiter,
+});
+
 // ─── Trades / Child Trade Room Surface ──────────────────────────────────────
 // 1 dakikada 30 istek — wallet bazlı
 const tradesLimiter = rateLimit({
@@ -271,6 +292,22 @@ const tradesLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+});
+
+const tradesInMemoryLimiter = makeInMemoryLimiter({
+  label: "TRADES",
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => req.wallet || req.ip,
+  errorMessage: () => ({
+    error: "Çok fazla trade isteği. Dakikada maksimum 30 istek.",
+  }),
+});
+
+const tradesLimiterWithFallback = makeSensitiveLimiter({
+  label: "TRADES",
+  redisLimiter: tradesLimiter,
+  inMemoryLimiter: tradesInMemoryLimiter,
 });
 
 // ─── Feedback — Spam Engeli ───────────────────────────────────────────────────
@@ -289,19 +326,35 @@ const feedbackLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const feedbackInMemoryLimiter = makeInMemoryLimiter({
+  label: "FEEDBACK",
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  keyGenerator: (req) => req.wallet || req.ip,
+  errorMessage: () => ({
+    error: "Geri bildirim limiti: Saatte 3 istek.",
+  }),
+});
+
+const feedbackLimiterWithFallback = makeSensitiveLimiter({
+  label: "FEEDBACK",
+  redisLimiter: feedbackLimiter,
+  inMemoryLimiter: feedbackInMemoryLimiter,
+});
+
 // ── Backward-compatible aliases ──────────────────────────────────────────────
 // [TR] Route katmanını bir turda tamamen taşımak zorunda kalmamak için alias veriyoruz.
 // [EN] Aliases keep existing imports working while routes migrate toward V3 naming.
 const listingsReadLimiter = marketReadLimiter;
-const listingsWriteLimiter = ordersWriteLimiter;
+const listingsWriteLimiter = ordersWriteLimiterWithFallback;
 
 module.exports = {
   piiLimiter,
   authLimiter,
   marketReadLimiter,
-  ordersWriteLimiter,
+  ordersWriteLimiter: ordersWriteLimiterWithFallback,
   listingsReadLimiter,
   listingsWriteLimiter,
-  tradesLimiter,
-  feedbackLimiter,
+  tradesLimiter: tradesLimiterWithFallback,
+  feedbackLimiter: feedbackLimiterWithFallback,
 };

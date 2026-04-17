@@ -76,13 +76,11 @@ async function runReputationDecay() {
   //      Nihai eligibility kararı kontratın getReputation() çağrısından gelir.
   // [EN] Mirror fields may be stale. This query only builds a candidate pool.
   const candidates = await User.find({
-    $or: [
-      { consecutive_bans: { $gt: 0 } },
-      { banned_until: { $ne: null } },
-    ],
+    consecutive_bans: { $gt: 0 },
+    banned_until: { $ne: null, $lte: new Date(cutoffMs) },
   })
     .select("wallet_address consecutive_bans banned_until")
-    .sort({ updated_at: -1, wallet_address: 1 })
+    .sort({ banned_until: 1, wallet_address: 1 })
     .limit(DEFAULT_CANDIDATE_LIMIT)
     .lean();
 
@@ -119,7 +117,10 @@ async function runReputationDecay() {
   for (const wallet of usersToClean) {
     try {
       const tx = await contract.decayReputation(wallet);
-      logger.info(`[DecayJob] decayReputation gönderildi: wallet=${wallet} tx=${tx.hash}`);
+      const receipt = await tx.wait();
+      logger.info(
+        `[DecayJob] decayReputation onaylandı: wallet=${wallet} tx=${tx.hash} block=${receipt?.blockNumber || "n/a"}`
+      );
     } catch (err) {
       logger.error(`[DecayJob] ${wallet} için itibar temizleme başarısız: ${err.reason || err.message}`);
     }
