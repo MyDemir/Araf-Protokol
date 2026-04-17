@@ -145,6 +145,20 @@ describe('AppModals side-aware behaviors', () => {
     expect(screen.getByText(/Min Fill: 10 USDT/)).toBeInTheDocument();
   });
 
+  it('does not trigger profile modal setter during render when auth is missing', () => {
+    const setShowProfileModal = vi.fn();
+    const modals = buildAppModals(makeCtx({
+      showMakerModal: false,
+      showProfileModal: true,
+      isConnected: false,
+      isAuthenticated: false,
+      setShowProfileModal,
+    }));
+
+    render(<div>{modals.renderProfileModal()}</div>);
+    expect(setShowProfileModal).not.toHaveBeenCalled();
+  });
+
   it('uses 90-day clean-slate copy and wires decayReputation handler from context', async () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), 'src/app/AppModals.jsx'), 'utf8');
     expect(source).toContain('const cleanSlateTime = bannedUntil + (90 * 24 * 60 * 60);');
