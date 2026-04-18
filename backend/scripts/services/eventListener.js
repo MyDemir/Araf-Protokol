@@ -108,6 +108,17 @@ const EVENT_ARG_KEYS = {
 };
 
 function _toNum(v) {
+  return Number(v ?? 0);
+}
+function _toStr(v) { return v?.toString?.() ?? String(v); }
+
+/**
+ * [TR] Yalnızca *_num cache alanları için güvenli Number dönüşümü.
+ *      Kimlik alanları (orderId/tradeId) bu helper'ı kullanmaz; null kimlik drift'i önlenir.
+ * [EN] Safe Number conversion only for *_num cache fields.
+ *      Identity fields (orderId/tradeId) must not use this helper to avoid null-id drift.
+ */
+function _toSafeNum(v) {
   const normalized = v ?? 0;
   const asBigInt = typeof normalized === "bigint"
     ? normalized
@@ -119,7 +130,6 @@ function _toNum(v) {
 
   return Number(asBigInt);
 }
-function _toStr(v) { return v?.toString?.() ?? String(v); }
 
 function _normalizeSide(sideValue) {
   const sideNum = Number(sideValue);
@@ -701,17 +711,17 @@ class EventWorker {
       },
       amounts: {
         total_amount: _toStr(orderData.totalAmount),
-        total_amount_num: _toNum(orderData.totalAmount),
+        total_amount_num: _toSafeNum(orderData.totalAmount),
         remaining_amount: _toStr(orderData.remainingAmount),
-        remaining_amount_num: _toNum(orderData.remainingAmount),
+        remaining_amount_num: _toSafeNum(orderData.remainingAmount),
         min_fill_amount: _toStr(orderData.minFillAmount),
-        min_fill_amount_num: _toNum(orderData.minFillAmount),
+        min_fill_amount_num: _toSafeNum(orderData.minFillAmount),
       },
       reserves: {
         remaining_maker_bond_reserve: _toStr(orderData.remainingMakerBondReserve),
-        remaining_maker_bond_reserve_num: _toNum(orderData.remainingMakerBondReserve),
+        remaining_maker_bond_reserve_num: _toSafeNum(orderData.remainingMakerBondReserve),
         remaining_taker_bond_reserve: _toStr(orderData.remainingTakerBondReserve),
-        remaining_taker_bond_reserve_num: _toNum(orderData.remainingTakerBondReserve),
+        remaining_taker_bond_reserve_num: _toSafeNum(orderData.remainingTakerBondReserve),
       },
       fee_snapshot: {
         taker_fee_bps: _toNum(orderData.takerFeeBpsSnapshot),
@@ -782,11 +792,11 @@ class EventWorker {
       },
       financials: {
         crypto_amount: _toStr(tradeData.cryptoAmount),
-        crypto_amount_num: _toNum(tradeData.cryptoAmount),
+        crypto_amount_num: _toSafeNum(tradeData.cryptoAmount),
         maker_bond: _toStr(tradeData.makerBond),
-        maker_bond_num: _toNum(tradeData.makerBond),
+        maker_bond_num: _toSafeNum(tradeData.makerBond),
         taker_bond: _toStr(tradeData.takerBond),
-        taker_bond_num: _toNum(tradeData.takerBond),
+        taker_bond_num: _toSafeNum(tradeData.takerBond),
         crypto_asset: _inferCryptoAssetFromToken(tradeData.tokenAddress),
       },
       tier: _toNum(tradeData.tier),
@@ -816,10 +826,10 @@ class EventWorker {
     if (opts.fillAmount !== undefined) {
       setPayload.fill_metadata = {
         fill_amount: _toStr(opts.fillAmount),
-        fill_amount_num: _toNum(opts.fillAmount),
+        fill_amount_num: _toSafeNum(opts.fillAmount),
         filler_address: opts.filler?.toLowerCase() || null,
         remaining_amount_after_fill: _toStr(opts.remainingAmountAfterFill ?? 0),
-        remaining_amount_after_fill_num: _toNum(opts.remainingAmountAfterFill ?? 0),
+        remaining_amount_after_fill_num: _toSafeNum(opts.remainingAmountAfterFill ?? 0),
       };
     }
 
@@ -849,7 +859,7 @@ class EventWorker {
     if (!orderId) return;
 
     const fillAmountStr = _toStr(fillAmount);
-    const fillAmountNum = _toNum(fillAmount);
+    const fillAmountNum = _toSafeNum(fillAmount);
 
     await Order.updateOne(
       { onchain_order_id: orderId },
@@ -879,9 +889,9 @@ class EventWorker {
                 ],
               },
             },
-            "stats.total_filled_amount_num": {
-              $add: [{ $ifNull: ["$stats.total_filled_amount_num", 0] }, fillAmountNum],
-            },
+            "stats.total_filled_amount_num": fillAmountNum === null
+              ? { $ifNull: ["$stats.total_filled_amount_num", null] }
+              : { $add: [{ $ifNull: ["$stats.total_filled_amount_num", 0] }, fillAmountNum] },
           },
         },
       ],
@@ -1344,7 +1354,7 @@ class EventWorker {
     const tradeIdNum = _toNum(tradeId);
     const eventId = this._getEventId(event);
     const decayedAmountStr = _toStr(decayedAmount);
-    const decayedAmountNum = _toNum(decayedAmount);
+    const decayedAmountNum = _toSafeNum(decayedAmount);
 
     await Trade.updateOne(
       { onchain_escrow_id: tradeIdNum, "financials.decay_tx_hashes": { $ne: eventId } },
@@ -1360,9 +1370,9 @@ class EventWorker {
                 ],
               },
             },
-            "financials.total_decayed_num": {
-              $add: [{ $ifNull: ["$financials.total_decayed_num", 0] }, decayedAmountNum],
-            },
+            "financials.total_decayed_num": decayedAmountNum === null
+              ? { $ifNull: ["$financials.total_decayed_num", null] }
+              : { $add: [{ $ifNull: ["$financials.total_decayed_num", 0] }, decayedAmountNum] },
             "financials.decay_tx_hashes": {
               $concatArrays: [{ $ifNull: ["$financials.decay_tx_hashes", []] }, [eventId]],
             },

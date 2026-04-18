@@ -128,8 +128,9 @@ describe("eventListener OrderFilled mirror hardening", () => {
   });
 
   it("does not write unsafe precision number cache for uint256 > MAX_SAFE_INTEGER", async () => {
+    const hugeId = 9007199254740993n;
     await worker._upsertOrderMirror({
-      id: 1n,
+      id: hugeId,
       owner: "0x1111111111111111111111111111111111111111",
       side: 0,
       tokenAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -145,7 +146,10 @@ describe("eventListener OrderFilled mirror hardening", () => {
       orderRef: "0x" + "12".repeat(32),
     });
 
-    const orderPayload = mockFindOneAndUpdateOrder.mock.calls[0][1].$set;
+    const [orderFilter, orderUpdate] = mockFindOneAndUpdateOrder.mock.calls[0];
+    const orderPayload = orderUpdate.$set;
+    expect(orderFilter.onchain_order_id).toBe(Number(hugeId));
+    expect(orderPayload.onchain_order_id).toBe(Number(hugeId));
     expect(orderPayload.amounts.total_amount_num).toBeNull();
     expect(orderPayload.amounts.remaining_amount_num).toBeNull();
     expect(orderPayload.reserves.remaining_maker_bond_reserve_num).toBeNull();
