@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { buildAppViews } from '../app/AppViews';
 
 const baseCtx = {
@@ -150,5 +151,27 @@ describe('AppViews market side-aware rendering', () => {
     expect(screen.queryByText('SELLER PROFILE')).not.toBeInTheDocument();
     expect(screen.getAllByText('Open').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Bond/i).length).toBeGreaterThan(0);
+  });
+
+  it('shows explicit empty-state instead of broken trade room when activeTrade is missing', async () => {
+    const user = userEvent.setup();
+    const setCurrentView = vi.fn();
+    const fetchMyTrades = vi.fn();
+    const views = buildAppViews({
+      ...baseCtx,
+      currentView: 'tradeRoom',
+      activeTrade: null,
+      setCurrentView,
+      fetchMyTrades,
+    });
+
+    render(<div>{views.renderTradeRoom()}</div>);
+
+    expect(screen.getByText(/No active trade found/i)).toBeInTheDocument();
+    expect(screen.queryByText(/0.00/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/COUNTERPARTY/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Go to Marketplace/i }));
+    expect(setCurrentView).toHaveBeenCalledWith('market');
   });
 });

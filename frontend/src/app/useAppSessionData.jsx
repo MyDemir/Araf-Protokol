@@ -110,14 +110,30 @@ export function useAppSessionData({
   const authenticatedWalletRef = React.useRef(null);
   const pendingTxCheckedRef = React.useRef(false);
   const autoTradeResumeRef = React.useRef(false);
+  const authValidationKeyRef = React.useRef(null);
+  const showToastRef = React.useRef(showToast);
+  const langRef = React.useRef(lang);
 
-  const clearLocalSessionState = React.useCallback(() => {
+  useEffect(() => {
+    showToastRef.current = showToast;
+  }, [showToast]);
+
+  useEffect(() => {
+    langRef.current = lang;
+  }, [lang]);
+
+  const clearLocalSessionState = React.useCallback((options = {}) => {
+    const { navigateHome = false, closeModals = true } = options;
     setIsAuthenticated(false);
     setAuthenticatedWallet(null);
     authenticatedWalletRef.current = null;
-    setShowMakerModal(false);
-    setShowProfileModal(false);
-    setCurrentView('home');
+    if (closeModals) {
+      setShowMakerModal(false);
+      setShowProfileModal(false);
+    }
+    if (navigateHome) {
+      setCurrentView('home');
+    }
     setActiveTrade(null);
     setActiveEscrows([]);
     setCancelStatus(null);
@@ -160,7 +176,7 @@ export function useAppSessionData({
         });
       } catch (_) {}
 
-      clearLocalSessionState();
+      clearLocalSessionState({ navigateHome: false, closeModals: true });
       showToast(
         lang === 'TR'
           ? 'Oturum cüzdan uyuşmazlığı nedeniyle sonlandırıldı. Lütfen yeniden giriş yapın.'
@@ -181,7 +197,7 @@ export function useAppSessionData({
       });
 
       if (!refreshRes.ok) {
-        clearLocalSessionState();
+        clearLocalSessionState({ navigateHome: false, closeModals: true });
         showToast(
           lang === 'TR'
             ? 'Oturumunuz sona erdi. Lütfen tekrar imzalayın.'
@@ -369,21 +385,30 @@ export function useAppSessionData({
 
   useEffect(() => {
     if (!isConnected || !connectedWallet) {
-      clearLocalSessionState();
+      authValidationKeyRef.current = null;
+      clearLocalSessionState({ navigateHome: false, closeModals: true });
       setAuthChecked(true);
       return;
     }
 
+    const validationKey = `wallet:${connectedWallet}`;
+    if (authValidationKeyRef.current !== validationKey) {
+      authValidationKeyRef.current = validationKey;
+      setAuthChecked(false);
+    }
+
+    let cancelled = false;
     fetch(`${API_URL}/api/auth/me`, {
       credentials: 'include',
       headers: { 'x-wallet-address': connectedWallet },
     })
       .then(async (res) => {
+        if (cancelled) return;
         if (res.status === 409) {
-          clearLocalSessionState();
+          clearLocalSessionState({ navigateHome: false, closeModals: true });
           setAuthChecked(true);
-          showToast(
-            lang === 'TR'
+          showToastRef.current(
+            langRef.current === 'TR'
               ? 'Oturum cüzdanınızla eşleşmiyor. Lütfen yeniden giriş yapın.'
               : 'Session does not match your wallet. Please sign in again.',
             'info'
@@ -392,7 +417,7 @@ export function useAppSessionData({
         }
 
         if (!res.ok) {
-          clearLocalSessionState();
+          clearLocalSessionState({ navigateHome: false, closeModals: true });
           setAuthChecked(true);
           return;
         }
@@ -402,16 +427,18 @@ export function useAppSessionData({
 
         if (!sessionWallet) {
           await bestEffortBackendLogout();
-          clearLocalSessionState();
+          if (cancelled) return;
+          clearLocalSessionState({ navigateHome: false, closeModals: true });
           setAuthChecked(true);
           return;
         }
 
         if (sessionWallet !== connectedWallet) {
           await bestEffortBackendLogout();
-          clearLocalSessionState();
-          showToast(
-            lang === 'TR'
+          if (cancelled) return;
+          clearLocalSessionState({ navigateHome: false, closeModals: true });
+          showToastRef.current(
+            langRef.current === 'TR'
               ? 'Bağlı cüzdan oturumla eşleşmiyor. Lütfen yeniden imzalayın.'
               : 'Connected wallet does not match session. Please sign in again.',
             'info'
@@ -426,10 +453,14 @@ export function useAppSessionData({
         setAuthChecked(true);
       })
       .catch(() => {
-        clearLocalSessionState();
+        if (cancelled) return;
+        clearLocalSessionState({ navigateHome: false, closeModals: true });
         setAuthChecked(true);
       });
-  }, [isConnected, connectedWallet, clearLocalSessionState, bestEffortBackendLogout, lang, showToast]);
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, connectedWallet, clearLocalSessionState, bestEffortBackendLogout]);
 
   useEffect(() => {
     const mapOrders = (apiOrders = []) => apiOrders.map((o) => mapApiOrderToUi({
@@ -665,7 +696,7 @@ export function useAppSessionData({
   }, [showProfileModal, profileTab, isAuthenticated, tradeHistoryPage, authenticatedFetch]);
 
   useEffect(() => {
-    if (!isConnected) clearLocalSessionState();
+    if (!isConnected) clearLocalSessionState({ navigateHome: true, closeModals: true });
   }, [isConnected, clearLocalSessionState]);
 
   useEffect(() => {
@@ -736,7 +767,7 @@ export function useAppSessionData({
     if (!isConnected || !connectedWallet || !isAuthenticated || !authenticatedWallet) return;
     if (authenticatedWallet !== connectedWallet) {
       bestEffortBackendLogout();
-      clearLocalSessionState();
+      clearLocalSessionState({ navigateHome: false, closeModals: true });
       showToast(
         lang === 'TR'
           ? 'Cüzdan değişikliği algılandı. Güvenlik için yeniden giriş yapmanız gerekiyor.'
@@ -754,7 +785,7 @@ export function useAppSessionData({
       const runtimeWallet = provider?.selectedAddress?.toLowerCase?.() || connectedWallet;
       if (runtimeWallet && runtimeWallet !== authenticatedWallet) {
         bestEffortBackendLogout();
-        clearLocalSessionState();
+        clearLocalSessionState({ navigateHome: false, closeModals: true });
         showToast(
           lang === 'TR'
             ? 'Wallet oturumu değişti. Güvenlik için tekrar imza gerekli.'
