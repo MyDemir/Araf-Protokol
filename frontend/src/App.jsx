@@ -9,14 +9,7 @@ import { EnvWarningBanner, buildAppModals } from './app/AppModals';
 import { useAppSessionData } from './app/useAppSessionData';
 import { getInitialLang, getInitialTermsAccepted, APP_LANG_STORAGE_KEY } from './app/bootstrapState';
 import { resolveOrderActionFns, normalizeOrderSide, removeOrderByOnchainId } from './app/orderUiModel';
-
-// ─────────────────────────────────────────────
-// [TR] API URL: DEV modunda localhost, prod'da VITE_API_URL zorunlu
-// [EN] API URL: localhost in DEV, VITE_API_URL required in prod
-// ─────────────────────────────────────────────
-const API_URL = import.meta.env.VITE_API_URL || (
-  import.meta.env.DEV ? 'http://localhost:4000' : ''
-);
+import { buildApiUrl } from './app/apiConfig';
 
 // [TR] Uygulama başlangıcında kritik env değişkenlerini doğrula
 // [EN] Validate critical env variables on app start
@@ -365,7 +358,7 @@ function App() {
       setIsLoggingIn(true);
       showToast(lang === 'TR' ? 'Lütfen cüzdanınızdan imza isteğini onaylayın 🦊' : 'Please approve the signature request in your wallet 🦊', 'info');
 
-      const nonceRes = await fetch(`${API_URL}/api/auth/nonce?wallet=${address}`, { credentials: 'include' });
+      const nonceRes = await fetch(buildApiUrl(`auth/nonce?wallet=${address}`), { credentials: 'include' });
       if (!nonceRes.ok) {
         throw new Error('Nonce alınamadı');
       }
@@ -389,7 +382,7 @@ function App() {
       const message = siweMessage.prepareMessage();
       const signature = await signMessageAsync({ message });
 
-      const verifyRes = await fetch(`${API_URL}/api/auth/verify`, {
+      const verifyRes = await fetch(buildApiUrl('auth/verify'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -585,7 +578,7 @@ function App() {
     let realTradeId = null;
     for (let attempt = 0; attempt < 6; attempt++) {
       try {
-        const res = await authenticatedFetch(`${API_URL}/api/trades/by-escrow/${onchainTradeId}`);
+        const res = await authenticatedFetch(buildApiUrl(`trades/by-escrow/${onchainTradeId}`));
         if (res.ok) {
           const data = await res.json();
           realTradeId = data.trade?._id;
@@ -661,7 +654,7 @@ function App() {
       // [TR] Backend'in doğru trade'i bulması için on-chain ID'yi gönder
       // [EN] Send on-chain ID so backend can identify the correct trade
       formData.append('onchainEscrowId', String(activeTrade.onchainId));
-      const res = await fetch(`${API_URL}/api/receipts/upload`, {
+      const res = await fetch(buildApiUrl('receipts/upload'), {
         method: 'POST',
         body: formData,
         credentials: 'include'
@@ -742,7 +735,7 @@ function App() {
       const { signature, deadline } = await signCancelProposal(activeTrade.onchainId, nonce);
 
       try {
-        const relayRes = await authenticatedFetch(`${API_URL}/api/trades/propose-cancel`, {
+        const relayRes = await authenticatedFetch(buildApiUrl('trades/propose-cancel'), {
           method: 'POST',
           body: JSON.stringify({ tradeId: activeTrade.id, signature, deadline }),
         });
@@ -803,7 +796,7 @@ function App() {
     try {
       setIsSubmittingFeedback(true);
       setFeedbackError('');
-      await authenticatedFetch(`${API_URL}/api/feedback`, {
+      await authenticatedFetch(buildApiUrl('feedback'), {
         method: 'POST',
         body: JSON.stringify({ rating: feedbackRating, comment: trimmedFeedback, category: feedbackCategory }),
       });
@@ -851,7 +844,7 @@ function App() {
     try {
       setIsContractLoading(true);
       try {
-        await authenticatedFetch(`${API_URL}/api/trades/${activeTrade.id}/chargeback-ack`, { method: 'POST' });
+        await authenticatedFetch(buildApiUrl(`trades/${activeTrade.id}/chargeback-ack`), { method: 'POST' });
       } catch (err) {
         console.error('Backend chargeback-ack log hatası:', err);
       }
@@ -1011,7 +1004,7 @@ function App() {
     if (!requireSignedSessionForActiveWallet()) return;
     try {
       setIsContractLoading(true);
-      const res = await authenticatedFetch(`${API_URL}/api/auth/profile`, {
+      const res = await authenticatedFetch(buildApiUrl('auth/profile'), {
         method: 'PUT',
         body: JSON.stringify({
           rail: 'TR_IBAN',

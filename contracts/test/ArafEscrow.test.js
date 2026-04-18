@@ -1533,6 +1533,12 @@ describe("ArafEscrow V3", function () {
       ).to.be.revertedWithCustomError(escrow, "InvalidOrderRef");
     });
 
+    it("createBuyOrder enforces taker eligibility at create stage", async () => {
+      await expect(
+        escrow.connect(stranger).createBuyOrder(await mockUSDT.getAddress(), TRADE_AMOUNT, 1, 2, makeRef("buy-create-gate"))
+      ).to.be.revertedWithCustomError(escrow, "WalletTooYoung");
+    });
+
     it("fillBuyOrder creates LOCKED child trade with filler as maker and order owner as taker", async () => {
       const fillAmount = ethers.parseUnits("400", USDT_DECIMALS);
       const { orderId } = await setupBuyOrder({ label: "buy-fill-direct" });
@@ -1751,6 +1757,7 @@ describe("ArafEscrow V3", function () {
       expect(orderFilled.orderId).to.equal(orderId);
       expect(orderFilled.filler).to.equal(maker.address);
       expect(orderFilled.fillAmount).to.equal(fillAmount);
+      expect(orderFilled.childListingRef).to.equal(childListingRef);
 
       expect(escrowCreated.tradeId).to.equal(orderFilled.tradeId);
       expect(escrowCreated.maker).to.equal(maker.address);

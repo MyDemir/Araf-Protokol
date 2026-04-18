@@ -2,10 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { formatUnits } from 'viem';
 import { useCountdown } from '../hooks/useCountdown';
 import { mapApiOrderToUi } from './orderUiModel';
-
-const API_URL = import.meta.env.VITE_API_URL || (
-  import.meta.env.DEV ? 'http://localhost:4000' : ''
-);
+import { buildApiUrl } from './apiConfig';
 
 const DEFAULT_TOKEN_DECIMALS = 6;
 
@@ -149,7 +146,7 @@ export function useAppSessionData({
 
   const bestEffortBackendLogout = React.useCallback(async () => {
     try {
-      await fetch(`${API_URL}/api/auth/logout`, {
+      await fetch(buildApiUrl('auth/logout'), {
         method: 'POST',
         credentials: 'include',
       });
@@ -170,7 +167,7 @@ export function useAppSessionData({
 
     if (res.status === 409) {
       try {
-        await fetch(`${API_URL}/api/auth/logout`, {
+        await fetch(buildApiUrl('auth/logout'), {
           method: 'POST',
           credentials: 'include',
         });
@@ -189,7 +186,7 @@ export function useAppSessionData({
     if (res.status !== 401) return res;
 
     try {
-      const refreshRes = await fetch(`${API_URL}/api/auth/refresh`, {
+      const refreshRes = await fetch(buildApiUrl('auth/refresh'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -227,7 +224,7 @@ export function useAppSessionData({
     try {
       setStatsError(false);
       setStatsLoading(true);
-      const res = await fetch(`${API_URL}/api/stats`, { credentials: 'include' });
+      const res = await fetch(buildApiUrl('stats'), { credentials: 'include' });
       const data = await res.json();
       if (data.stats) setProtocolStats(data.stats);
       else setStatsError(true);
@@ -245,7 +242,7 @@ export function useAppSessionData({
     }
 
     try {
-      const res = await authenticatedFetch(`${API_URL}/api/trades/my`);
+      const res = await authenticatedFetch(buildApiUrl('trades/my'));
       const data = await res.json();
 
       if (data.trades) {
@@ -331,7 +328,7 @@ export function useAppSessionData({
 
   // Protocol configuration and read models
   useEffect(() => {
-    fetch(`${API_URL}/api/orders/config`, { credentials: 'include' })
+    fetch(buildApiUrl('orders/config'), { credentials: 'include' })
       .then((r) => r.json())
       .then((data) => {
         if (data.bondMap) setOnchainBondMap(data.bondMap);
@@ -398,7 +395,7 @@ export function useAppSessionData({
     }
 
     let cancelled = false;
-    fetch(`${API_URL}/api/auth/me`, {
+    fetch(buildApiUrl('auth/me'), {
       credentials: 'include',
       headers: { 'x-wallet-address': connectedWallet },
     })
@@ -474,7 +471,7 @@ export function useAppSessionData({
     const fetchOrders = async () => {
       try {
         setLoading(true);
-        const res = await fetch(`${API_URL}/api/orders`, { credentials: 'include' });
+        const res = await fetch(buildApiUrl('orders'), { credentials: 'include' });
         const data = await res.json();
         if (data.orders) {
           setOrders(mapOrders(data.orders));
@@ -496,7 +493,7 @@ export function useAppSessionData({
 
     const fetchMyOrders = async () => {
       try {
-        const res = await authenticatedFetch(`${API_URL}/api/orders/my`);
+        const res = await authenticatedFetch(buildApiUrl('orders/my'));
         const data = await res.json();
         if (data.orders) {
           setMyOrders(data.orders.map((o) => mapApiOrderToUi({
@@ -610,7 +607,7 @@ export function useAppSessionData({
 
   useEffect(() => {
     if (currentView === 'tradeRoom' && ['LOCKED', 'PAID', 'CHALLENGED'].includes(resolvedTradeState) && userRole === 'maker' && activeTrade?.id && isAuthenticated) {
-      authenticatedFetch(`${API_URL}/api/pii/taker-name/${activeTrade.onchainId}`)
+      authenticatedFetch(buildApiUrl(`pii/taker-name/${activeTrade.onchainId}`))
         .then((res) => res.json())
         .then((data) => { if (data.bankOwner) setTakerName(data.bankOwner); })
         .catch((err) => console.error('Taker name fetch error', err));
@@ -655,7 +652,7 @@ export function useAppSessionData({
     if (!showProfileModal || !isAuthenticated) return;
     const fetchMyPII = async () => {
       try {
-        const res = await authenticatedFetch(`${API_URL}/api/pii/my`);
+        const res = await authenticatedFetch(buildApiUrl('pii/my'));
         if (!res.ok) return;
         const data = await res.json();
         if (data.pii?.fields) {
@@ -675,7 +672,7 @@ export function useAppSessionData({
     const fetchHistory = async (page) => {
       try {
         setHistoryLoading(true);
-        const res = await authenticatedFetch(`${API_URL}/api/trades/history?page=${page}&limit=5`);
+        const res = await authenticatedFetch(buildApiUrl(`trades/history?page=${page}&limit=5`));
         if (!res.ok) throw new Error('History fetch failed');
         const data = await res.json();
         if (data.trades) {

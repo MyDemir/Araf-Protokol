@@ -14,6 +14,7 @@ jest.mock("../scripts/services/protocolConfig", () => ({
 
 jest.mock("../scripts/middleware/auth", () => ({
   requireAuth: (_req, _res, next) => next(),
+  requireSessionWalletMatch: (_req, _res, next) => next(),
 }));
 
 jest.mock("../scripts/middleware/rateLimiter", () => ({

@@ -38,7 +38,18 @@ export const resolveApiBaseUrl = (env = import.meta.env) => {
 };
 
 /**
+ * [TR] API path'ini canonical base URL üstünden birleştirir.
+ *      Path başında / olsa da olmasa da tek slash üretir.
+ * [EN] Builds full API URL from canonical base URL with normalized slashes.
+ */
+export const buildApiUrl = (path = '', env = import.meta.env) => {
+  const base = resolveApiBaseUrl(env).replace(/\/+$/, '');
+  const normalizedPath = String(path || '').replace(/^\/+/, '');
+  return normalizedPath ? `${base}/${normalizedPath}` : base;
+};
+
+/**
  * [TR] Client error log endpoint'ini tek bir canonical noktadan üretir.
  * [EN] Builds client error log endpoint from a single canonical resolver.
  */
-export const resolveClientErrorLogUrl = (env = import.meta.env) => `${resolveApiBaseUrl(env)}/logs/client-error`;
+export const resolveClientErrorLogUrl = (env = import.meta.env) => buildApiUrl('logs/client-error', env);
