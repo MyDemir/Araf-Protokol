@@ -84,7 +84,8 @@ app.use(helmet({
     : false,
 }));
 
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
+const rawAllowedOrigins = process.env.ALLOWED_ORIGINS;
+const allowedOrigins = (rawAllowedOrigins || "http://localhost:5173")
   .split(",")
   .map((o) => o.trim())
   .filter((o) => o.length > 0);
@@ -92,12 +93,23 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
 // [TR] Production'da CORS wildcard ve boş origin engellenir
 // [EN] CORS wildcard and empty origins blocked in production
 if (process.env.NODE_ENV === "production") {
+  // [TR] Production fail-closed:
+  //      ALLOWED_ORIGINS explicit tanımlı değilse localhost fallback'e güvenmeyiz.
+  // [EN] Do not allow implicit localhost fallback in production.
+  if (!rawAllowedOrigins || rawAllowedOrigins.trim().length === 0) {
+    logger.error("[GÜVENLİK] ALLOWED_ORIGINS production'da zorunludur (fail-closed).");
+    process.exit(1);
+  }
   if (allowedOrigins.includes("*")) {
     logger.error("[GÜVENLİK] CORS wildcard (*) production'da kullanılamaz! Sunucu durduruluyor.");
     process.exit(1);
   }
   if (allowedOrigins.length === 0) {
     logger.error("[GÜVENLİK] ALLOWED_ORIGINS boş! En az bir origin tanımlayın.");
+    process.exit(1);
+  }
+  if (allowedOrigins.length === 1 && allowedOrigins[0] === "http://localhost:5173") {
+    logger.error("[GÜVENLİK] Production'da localhost fallback origin kullanılamaz.");
     process.exit(1);
   }
   for (const origin of allowedOrigins) {

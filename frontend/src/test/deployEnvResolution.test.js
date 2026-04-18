@@ -10,6 +10,7 @@ describe('frontend production env/api resolution guards', () => {
     expect(appSrc).toContain("import { buildApiUrl } from './app/apiConfig';");
     expect(appSrc).toContain("fetch(buildApiUrl(`auth/nonce?wallet=${address}`)");
     expect(appSrc).toContain('VITE_API_URL tanımlı değil');
+    expect(appSrc).toContain('external VITE_API_URL kapalı');
     expect(appSrc).toContain('/api proxy (frontend/vercel.json)');
   });
 

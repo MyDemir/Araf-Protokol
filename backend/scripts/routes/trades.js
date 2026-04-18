@@ -25,6 +25,7 @@ const CANCEL_TYPES = {
     { name: "deadline", type: "uint256" },
   ],
 };
+const CONTRACT_CANCEL_ALLOWED_STATUSES = new Set(["LOCKED", "PAID", "CHALLENGED"]);
 
 let cancelVerifyProvider = null;
 let cancelVerifyContract = null;
@@ -339,6 +340,16 @@ router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, tradesLim
 
     const trade = await Trade.findById(value.tradeId);
     if (!trade) return res.status(404).json({ error: "İşlem bulunamadı." });
+    // [TR] Kontrat authority'si ile birebir hizalama:
+    //      proposeOrApproveCancel() yalnız LOCKED/PAID/CHALLENGED kabul eder.
+    //      Backend'in bu kapıyı genişletmesi false-success üretir.
+    // [EN] Keep backend precheck aligned with on-chain authority.
+    if (!CONTRACT_CANCEL_ALLOWED_STATUSES.has(trade.status)) {
+      return res.status(409).json({
+        error: `İptal imzası bu trade durumunda kabul edilmez (mevcut: ${trade.status}).`,
+        code: "CANCEL_STATE_NOT_ALLOWED",
+      });
+    }
     if (!Number.isInteger(trade.onchain_escrow_id) || trade.onchain_escrow_id <= 0) {
       return res.status(409).json({ error: "Trade on-chain kimliği bulunamadı. İptal imzası doğrulanamaz." });
     }
@@ -394,7 +405,7 @@ router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, tradesLim
       success: true,
       bothSigned,
       message: bothSigned
-        ? "Her iki taraf imzaladı. Kontrata gönderilebilir."
+        ? "Her iki taraf imzaladı. Kontrat precheck koşulları sağlandı."
         : "Teklifin kaydedildi. Karşı tarafın imzası bekleniyor.",
     });
   } catch (err) {

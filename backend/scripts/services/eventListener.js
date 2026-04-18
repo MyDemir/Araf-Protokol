@@ -183,6 +183,7 @@ const TRADE_STATE_ORDER = {
 };
 
 const TERMINAL_TRADE_STATES = new Set(["RESOLVED", "CANCELED", "BURNED"]);
+const LOCKABLE_TRADE_STATES = new Set(["OPEN", "LOCKED"]);
 
 function _getTradeStateOrder(state) {
   return TRADE_STATE_ORDER[state] ?? -1;
@@ -1047,9 +1048,9 @@ class EventWorker {
       throw new Error("EscrowLocked geldi ama trade mirror bulunamadı.");
     }
 
-    if (TERMINAL_TRADE_STATES.has(trade.status)) {
+    if (!LOCKABLE_TRADE_STATES.has(trade.status)) {
       logger.warn(
-        `[Worker] EscrowLocked replay/regression engellendi: trade=${tradeIdNum} current_status=${trade.status}`
+        `[Worker] EscrowLocked monotonic-skip: trade=${tradeIdNum} current_status=${trade.status}`
       );
       return;
     }
@@ -1134,7 +1135,11 @@ class EventWorker {
     await Trade.findOneAndUpdate(
       {
         onchain_escrow_id: tradeIdNum,
-        status: { $nin: ["RESOLVED", "CANCELED", "BURNED"] },
+        // [TR] Monotonic state kuralı:
+        //      EscrowLocked yalnız OPEN/LOCKED trade'i etkileyebilir.
+        //      PAID/CHALLENGED vb. ileri state'leri geriye sarmayız.
+        // [EN] Enforce monotonicity for delayed/replayed EscrowLocked events.
+        status: { $in: ["OPEN", "LOCKED"] },
       },
       { $set: updateSet },
       { session }

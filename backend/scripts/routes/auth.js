@@ -44,6 +44,9 @@ const logger = require("../utils/logger");
 
 const COOKIE_OPTIONS_BASE = {
   httpOnly: true,
+  // [TR] Repo deploy modeli same-origin /api üzerine kurulu.
+  //      Cross-origin cookie modu bilinçli olarak açılmadıkça SameSite=Lax kalır.
+  // [EN] Same-origin /api is the default deployment model; keep SameSite=Lax.
   sameSite: "lax",
   path: "/",
 };
@@ -529,3 +532,7 @@ router.put("/profile", requireAuth, requireSessionWalletMatch, authLimiter, asyn
 });
 
 module.exports = router;
+// [TR] Test yüzeyi: deploy/cookie policy regression doğrulaması.
+// [EN] Expose cookie helpers for deploy-policy regression tests.
+module.exports._getJwtCookieOptions = _getJwtCookieOptions;
+module.exports._getRefreshCookieOptions = _getRefreshCookieOptions;
