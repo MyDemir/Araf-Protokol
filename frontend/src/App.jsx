@@ -17,6 +17,9 @@ const ENV_ERRORS = [];
 if (!import.meta.env.VITE_API_URL && import.meta.env.PROD) {
   ENV_ERRORS.push('VITE_API_URL tanımlı değil — yalnızca aynı origin /api proxy (frontend/vercel.json) varsa çağrılar çalışır');
 }
+if (import.meta.env.PROD && /^https?:\/\//i.test((import.meta.env.VITE_API_URL || '').trim())) {
+  ENV_ERRORS.push('Production policy: external VITE_API_URL kapalı. Aynı origin /api proxy kullanın.');
+}
 if (!import.meta.env.VITE_ESCROW_ADDRESS ||
     import.meta.env.VITE_ESCROW_ADDRESS === '0x0000000000000000000000000000000000000000') {
   ENV_ERRORS.push('VITE_ESCROW_ADDRESS tanımlı değil veya sıfır adres — kontrat işlemleri çalışmayacak');

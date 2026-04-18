@@ -5,9 +5,9 @@
  *   /api/logs/client-error
  *
  * Supported VITE_API_URL inputs:
- * 1) https://api.example.com      -> https://api.example.com/api
- * 2) https://api.example.com/api  -> https://api.example.com/api
- * 3) (prod, empty)                -> /api (same-origin rewrite/proxy)
+ * 1) (prod, empty)                -> /api (same-origin rewrite/proxy)
+ * 2) (dev, empty)                 -> http://localhost:4000/api
+ * 3) (dev, explicit absolute)     -> https://api.example.com/api
  *
  * Dev fallback (empty VITE_API_URL):
  *   http://localhost:4000/api
@@ -21,6 +21,16 @@ const trimTrailingSlashes = (value = '') => value.replace(/\/+$/, '');
  */
 export const resolveApiBaseUrl = (env = import.meta.env) => {
   const raw = trimTrailingSlashes((env.VITE_API_URL || '').trim());
+  const isAbsoluteUrl = /^https?:\/\//i.test(raw);
+
+  if (env.PROD && isAbsoluteUrl) {
+    // [TR] Fail-closed: production'da cross-origin API kullanımını bilinçli olarak reddediyoruz.
+    //      Auth cookie modeli same-origin /api rewrite ile uyumludur.
+    // [EN] Fail-closed: reject cross-origin API base in production.
+    throw new Error(
+      'Production API policy violation: external VITE_API_URL is disabled. Use same-origin /api rewrite.'
+    );
+  }
 
   if (raw) {
     return raw.endsWith('/api') ? raw : `${raw}/api`;
