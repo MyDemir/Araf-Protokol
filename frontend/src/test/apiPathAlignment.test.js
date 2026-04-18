@@ -22,16 +22,15 @@ describe('frontend ↔ backend API path alignment', () => {
   it('frontend fetches canonical endpoints used by UX flow', () => {
     const session = readFront('src/app/useAppSessionData.jsx');
     [
-      '/api/orders/config',
-      '/api/orders',
-      '/api/orders/my',
-      '/api/trades/my',
-      '/api/trades/history',
-      '/api/pii/taker-name/',
-      '/api/auth/me',
-      '/api/auth/refresh',
+      "buildApiUrl('orders/config')",
+      "buildApiUrl('orders')",
+      "buildApiUrl('orders/my')",
+      "buildApiUrl('trades/my')",
+      'buildApiUrl(`trades/history?page=${page}&limit=5`)',
+      'buildApiUrl(`pii/taker-name/${activeTrade.onchainId}`)',
+      "buildApiUrl('auth/me')",
+      "buildApiUrl('auth/refresh')",
     ].forEach((pathPart) => expect(session).toContain(pathPart));
-
     const pii = readFront('src/hooks/usePII.js');
     expect(pii).toContain('/api/pii/request-token/');
     expect(pii).toContain('/api/pii/${tradeId}');

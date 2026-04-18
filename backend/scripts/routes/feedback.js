@@ -5,11 +5,11 @@
 const express = require("express");
 const Joi = require("joi");
 const router = express.Router();
-const { requireAuth } = require("../middleware/auth");
+const { requireAuth, requireSessionWalletMatch } = require("../middleware/auth");
 const { feedbackLimiter } = require("../middleware/rateLimiter");
 const Feedback = require("../models/Feedback");
 const logger = require("../utils/logger");
-router.post("/", requireAuth, feedbackLimiter, async (req, res, next) => {
+router.post("/", requireAuth, requireSessionWalletMatch, feedbackLimiter, async (req, res, next) => {
   try {
     const schema = Joi.object({ rating: Joi.number().integer().min(1).max(5).required(), comment: Joi.string().max(1000).allow("").optional(), category: Joi.string().valid("bug", "suggestion", "ui/ux", "other").required() });
     const { error, value } = schema.validate(req.body);

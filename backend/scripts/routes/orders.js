@@ -13,7 +13,7 @@ const express = require("express");
 const Joi = require("joi");
 const router = express.Router();
 
-const { requireAuth } = require("../middleware/auth");
+const { requireAuth, requireSessionWalletMatch } = require("../middleware/auth");
 const { marketReadLimiter, ordersWriteLimiter } = require("../middleware/rateLimiter");
 const Order = require("../models/Order");
 const Trade = require("../models/Trade");
@@ -116,7 +116,7 @@ router.get("/", marketReadLimiter, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get("/my", requireAuth, ordersWriteLimiter, async (req, res, next) => {
+router.get("/my", requireAuth, requireSessionWalletMatch, ordersWriteLimiter, async (req, res, next) => {
   try {
     const orders = await Order.find({ owner_address: req.wallet })
       .select(SAFE_ORDER_PROJECTION)
@@ -126,7 +126,7 @@ router.get("/my", requireAuth, ordersWriteLimiter, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get("/:id/trades", requireAuth, ordersWriteLimiter, async (req, res, next) => {
+router.get("/:id/trades", requireAuth, requireSessionWalletMatch, ordersWriteLimiter, async (req, res, next) => {
   try {
     const onchainOrderId = Number(req.params.id);
     if (!Number.isInteger(onchainOrderId) || onchainOrderId <= 0) {

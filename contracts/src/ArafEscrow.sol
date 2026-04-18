@@ -300,7 +300,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint256 indexed tradeId,
         address indexed filler,
         uint256 fillAmount,
-        uint256 remainingAmount
+        uint256 remainingAmount,
+        bytes32 childListingRef
     );
 
     event OrderCanceled(
@@ -501,7 +502,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         lastTradeAt[msg.sender] = block.timestamp;
 
-        emit OrderFilled(_orderId, tradeId, msg.sender, _fillAmount, o.remainingAmount);
+        emit OrderFilled(_orderId, tradeId, msg.sender, _fillAmount, o.remainingAmount, _childListingRef);
 
         // [TR] V3 saf modelde child trade otoritesi OrderFilled + getTrade() kombinasyonudur.
         //      Legacy create/lock mirror event zinciri artık üretilmez.
@@ -559,6 +560,12 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         uint8 effectiveTier = _getEffectiveTier(msg.sender);
         if (_tier > effectiveTier) revert TierNotAllowed();
+
+        // [TR] Buy order sahibi child trade'de taker rolünü üstleneceği için
+        //      create aşamasında da taker giriş kapısı zorlanır.
+        // [EN] Since buy order owner becomes taker in child trades,
+        //      enforce taker entry gate at create time as well.
+        _enforceTakerEntry(msg.sender, _tier);
 
         uint256 tierMax = _getTierMaxAmount(_tier);
         if (tierMax > 0 && _totalAmount > tierMax) revert AmountExceedsTierLimit();
@@ -676,7 +683,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         lastTradeAt[o.owner] = block.timestamp;
 
-        emit OrderFilled(_orderId, tradeId, msg.sender, _fillAmount, o.remainingAmount);
+        emit OrderFilled(_orderId, tradeId, msg.sender, _fillAmount, o.remainingAmount, _childListingRef);
 
         // [TR] V3 saf modelde child trade otoritesi OrderFilled + getTrade() kombinasyonudur.
         //      Legacy create/lock mirror event zinciri artık üretilmez.

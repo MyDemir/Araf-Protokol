@@ -5,18 +5,18 @@ import path from 'node:path';
 const read = (p) => fs.readFileSync(path.resolve(process.cwd(), p), 'utf8');
 
 describe('frontend production env/api resolution guards', () => {
-  it('App.jsx uses dev localhost fallback and explicit prod warning gate', () => {
+  it('App.jsx uses canonical API resolver + explicit prod warning gate', () => {
     const appSrc = read('src/App.jsx');
-    expect(appSrc).toContain("const API_URL = import.meta.env.VITE_API_URL || (");
-    expect(appSrc).toContain("import.meta.env.DEV ? 'http://localhost:4000' : ''");
+    expect(appSrc).toContain("import { buildApiUrl } from './app/apiConfig';");
+    expect(appSrc).toContain("fetch(buildApiUrl(`auth/nonce?wallet=${address}`)");
     expect(appSrc).toContain('VITE_API_URL tanımlı değil');
     expect(appSrc).toContain('/api proxy (frontend/vercel.json)');
   });
 
-  it('useAppSessionData keeps same API base policy as App', () => {
+  it('useAppSessionData uses canonical buildApiUrl instead of raw API_URL', () => {
     const sessionSrc = read('src/app/useAppSessionData.jsx');
-    expect(sessionSrc).toContain("const API_URL = import.meta.env.VITE_API_URL || (");
-    expect(sessionSrc).toContain("import.meta.env.DEV ? 'http://localhost:4000' : ''");
-    expect(sessionSrc).toContain('`${API_URL}/api/orders/config`');
+    expect(sessionSrc).toContain("import { buildApiUrl } from './apiConfig';");
+    expect(sessionSrc).toContain("fetch(buildApiUrl('orders/config')");
+    expect(sessionSrc).not.toContain('const API_URL');
   });
 });

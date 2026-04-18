@@ -60,7 +60,7 @@ const ArafEscrowABI = parseAbi([
   //      decodeEventLog() bu event ABI'si olmadan tradeId üretemez ve null döner.
   // [EN] Post fillSellOrder/fillBuyOrder, tradeId authority is only in OrderFilled.
   //      Without this event ABI decodeEventLog() cannot extract tradeId and returns null.
-  'event OrderFilled(uint256 indexed orderId, uint256 indexed tradeId, address indexed filler, uint256 fillAmount, uint256 remainingAmount)',
+  'event OrderFilled(uint256 indexed orderId, uint256 indexed tradeId, address indexed filler, uint256 fillAmount, uint256 remainingAmount, bytes32 childListingRef)',
 ]);
 
 // ERC-20 approve ABI — create/fill order akışlarında safeTransferFrom için zorunlu.
