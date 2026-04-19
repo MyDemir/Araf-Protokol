@@ -11,7 +11,6 @@ Bu rapor yalnız şu kaynaklara dayanır:
    - “Proof of Peace” ödül sistemi
 4. Sohbette ayrıca verdiğin ürün istekleri:
    - admin panel
-   - max fee = %1 tavanı
    - itibar temizleme süresinin 3 aya çekilmesi
    - trade ekranında referans kur akışı
    - rate limit politikasının Tier 4 market maker kullanımına göre yeniden düşünülmesi
@@ -91,25 +90,6 @@ Aşağıdaki kurallar sabit tutulmalıdır:
 **Uygulama katmanı:**
 - `ArafEscrow.sol` içinde `decayReputation` temiz dönem eşiği 180 günden 90 güne çekilir.
 - Mimari etkisi sınırlıdır.
-
-**Öncelik:** P0
-
----
-
-### B. Max fee tavanı toplam %1 olmalı
-**Karar:** Kabul.
-
-**Neden:**
-- Governance safety için net upper bound gerekir.
-- Fee surface owner yönetimli olduğu için bound’suz bırakmak ekonomi ve güven problemi yaratır.
-
-**Önerilen kural:**
-- `takerFeeBps <= 100`
-- `makerFeeBps <= 100`
-- `takerFeeBps + makerFeeBps <= 100`
-
-**Not:**
-Taraf başına %1 değil, toplam fee %1 tavanı daha güvenlidir. Böylece ürün söylemi de temiz kalır.
 
 **Öncelik:** P0
 
