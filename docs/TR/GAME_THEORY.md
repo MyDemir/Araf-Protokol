@@ -50,7 +50,7 @@ flowchart TD
         direction TB
         GRACE["🛡️ 48s Mühlet Süresi<br>(Fon Kaybı Yok)"]
         CANCELED(("🔄 İPTAL EDİLDİ (CANCELED)<br>(İadeler Yapıldı)"))
-        BLEEDING["🩸 10 Günlük Kanamalı Aşama<br>(Saatlik Kayıp Başlar)"]
+        BLEEDING["🩸 10 Günlük Kanamalı Aşama<br>(Bond decay hemen, principal decay geç başlar)"]
         ActionBurn["Herhangi Biri: Süresi Dolanları Yak (burnExpired)"]
         BURNED(("💀 YAKILDI (BURNED)<br>(Fonlar Hazineye)"))
 
@@ -70,4 +70,38 @@ flowchart TD
     class ActionRelease,ActionPingMaker,ActionAuto,ActionPingTaker,ActionChallenge,ActionBurn action;
     class GRACE phase;
     class BLEEDING,BURNED danger;
+```
+
+---
+
+## Mekanizmanın Yorumu
+
+Bleeding Escrow, **haklı tarafı bulmaya çalışan bir arbitraj akışı değil; aşamalı ekonomik zorlama motorudur.** Sistem tarafların niyetini yorumlamaz. Bunun yerine tarafları şu sırayla uzlaşmaya iter:
+
+1. **`PAID` aşaması — liveness baskısı:** Önce iki ayrı ping hattı açılır. Taker, `pingMaker → autoRelease`; maker ise `pingTakerForChallenge → challengeTrade` hattını izler.
+2. **`CHALLENGED` iç grace:** Challenge açıldıktan sonraki ilk 48 saatte fon kaybı yoktur. Bu pencere, dispute'u anında para yakma oyununa çevirmeden son bir çözüm alanı bırakır.
+3. **Bond-first bleeding:** Grace sonrası ilk ekonomik baskı principal'e değil, maker ve taker bond'larına uygulanır.
+4. **Gecikmeli principal bleed:** Escrowed crypto decay, bleeding'in 96. saatinde devreye girer. Yani principal decay challenge anında değil, yaklaşık 144 saat sonra başlar.
+5. **Terminal acceleration:** Principal geç başlatıldığı için son pencerenin gerçekten uzlaşma üretmesi gerekir. Bu nedenle kontrat formülünde `CRYPTO_DECAY_BPS_H * 2` uygulanır; taban katsayı 34 BPS/saat olsa da etkin principal decay oranı 68 BPS/saat'tir.
+6. **Permissionless burn:** Süre dolduğunda `burnExpired()` ile kalan her şey hazineye gider. Deadlock'un kazananı taraflar değil, protokol olur.
+
+### Neden `* 2` Kullanılır?
+
+Principal decay bu sistemde erken baskı aracı değildir. Erken fazda sistem önce:
+- cevap verme yükümlülüğünü,
+- ardından bond kaybını,
+- en son da principal kaybını
+
+devreye sokar.
+
+Bu yüzden principal decay **geç** başlatılır. Geç başlatılan decay'in yine de burn öncesi anlamlı bir uzlaşma baskısı üretebilmesi için terminal fazda hızlandırılması gerekir. `CRYPTO_DECAY_BPS_H = 34` taban katsayısı korunur; hesapta kullanılan `* 2` çarpanı ise principal'i son fazda **etkin 68 BPS/saat** hızında eriten acceleration katmanıdır.
+
+### Kısa Özet
+
+```text
+PAID        = önce liveness zorlaması
+CHALLENGED  = 48 saat kayıpsız iç grace
+BLEEDING    = önce bond'lar erir
+LATE BLEED  = principal de hızlandırılmış biçimde erir
+DEADLOCK    = burnExpired() ile permissionless kapanır
 ```
