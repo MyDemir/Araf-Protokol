@@ -107,8 +107,8 @@ describe("orders/trades pagination + big on-chain id", () => {
     expect(res.status).toBe(200);
 
     const filter = Trade.findOne.mock.calls[0][0];
-    expect(filter.onchain_escrow_id.$in).toContain(huge);
-    expect(filter.onchain_escrow_id.$in).toHaveLength(1);
+    expect(filter.$expr.$eq[0].$toString).toBe("$onchain_escrow_id");
+    expect(filter.$expr.$eq[1]).toBe(huge);
   });
 
   it("paginates /api/trades/my with defaults, custom values and cap validation", async () => {
@@ -208,7 +208,8 @@ describe("orders/trades pagination + big on-chain id", () => {
     const huge = "900719925474099312345";
     const okRes = await request(app).post("/api/receipts/upload").send({ onchainEscrowId: huge });
     expect(okRes.status).toBe(201);
-    expect(Trade.findOneAndUpdate.mock.calls[0][0].onchain_escrow_id.$in).toEqual([huge]);
+    expect(Trade.findOneAndUpdate.mock.calls[0][0].$expr.$eq[0].$toString).toBe("$onchain_escrow_id");
+    expect(Trade.findOneAndUpdate.mock.calls[0][0].$expr.$eq[1]).toBe(huge);
 
     if (fs.existsSync(tempPdfPath)) fs.unlinkSync(tempPdfPath);
   });

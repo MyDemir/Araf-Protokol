@@ -39,8 +39,24 @@ const LAST_SAFE_BLOCK_KEY = "worker:last_safe_block";
 const DLQ_KEY = "worker:dlq";
 const RETRY_DELAY_MS = 2_000;
 const MAX_RETRIES = 5;
-const BLOCK_BATCH_SIZE = Number(process.env.WORKER_BLOCK_BATCH_SIZE || 1_000);
-const CHECKPOINT_INTERVAL_BLOCKS = Number(process.env.WORKER_CHECKPOINT_INTERVAL_BLOCKS || 50);
+/**
+ * [TR] Worker env integer parser:
+ *      - yalnız pozitif tamsayı kabul eder
+ *      - invalid değerlerde sessiz/fail-safe fallback döner
+ * [EN] Strict positive-integer env parser with silent fail-safe fallback.
+ */
+function _getPositiveIntEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (!Number.isInteger(parsed)) return fallback;
+  if (parsed <= 0) return fallback;
+  return parsed;
+}
+
+const BLOCK_BATCH_SIZE = _getPositiveIntEnv("WORKER_BLOCK_BATCH_SIZE", 1_000);
+const CHECKPOINT_INTERVAL_BLOCKS = _getPositiveIntEnv("WORKER_CHECKPOINT_INTERVAL_BLOCKS", 50);
 const MAX_REPUTATION_HISTORY = 100;
 const BLOCK_TIMESTAMP_CACHE_LIMIT = 2_048;
 
@@ -123,10 +139,14 @@ function _toIdentityString(v, { allowZero = false } = {}) {
 
 function _buildIdentityLookup(field, rawId) {
   const idString = _toIdentityString(rawId);
-  const candidates = [idString];
-  const maybeSafe = Number(idString);
-  if (Number.isSafeInteger(maybeSafe)) candidates.push(maybeSafe);
-  return { [field]: { $in: candidates } };
+  // [TR] Mongoose cast etkisini bypass etmek için type-agnostic $expr + $toString kullanılır.
+  //      Böylece legacy numeric ve yeni string identity dokümanları aynı filtreden yakalanır.
+  // [EN] Use uncast, type-agnostic $expr + $toString matching for legacy numeric + new string IDs.
+  return {
+    $expr: {
+      $eq: [{ $toString: `$${field}` }, idString],
+    },
+  };
 }
 
 /**
@@ -1518,6 +1538,11 @@ class EventWorker {
 }
 
 const worker = new EventWorker();
+worker._runtimeConfig = {
+  BLOCK_BATCH_SIZE,
+  CHECKPOINT_INTERVAL_BLOCKS,
+};
+worker._getPositiveIntEnv = _getPositiveIntEnv;
 
 worker.buildSyntheticEventFromDLQEntry = function buildSyntheticEventFromDLQEntry(entry) {
   const mappedArgs = { ...(entry.namedArgs || {}) };

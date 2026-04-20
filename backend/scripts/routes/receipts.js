@@ -57,10 +57,13 @@ function _parsePositiveOnchainId(rawId) {
 }
 
 function _buildIdentityLookup(idString) {
-  const candidates = [idString];
-  const asNum = Number(idString);
-  if (Number.isSafeInteger(asNum)) candidates.push(asNum);
-  return { onchain_escrow_id: { $in: candidates } };
+  // [TR] Legacy numeric kayıtlar ve yeni string kayıtlar için cast-bağımsız eşleşme.
+  // [EN] Cast-independent identity match for both legacy numeric and new string docs.
+  return {
+    $expr: {
+      $eq: [{ $toString: "$onchain_escrow_id" }, idString],
+    },
+  };
 }
 
 async function validateFileMagicBytes(filePath, mimeType) {

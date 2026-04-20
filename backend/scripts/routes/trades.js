@@ -165,10 +165,14 @@ function _parsePositiveOnchainId(rawId) {
 }
 
 function _buildIdentityLookup(field, idString) {
-  const candidates = [idString];
-  const asNum = Number(idString);
-  if (Number.isSafeInteger(asNum)) candidates.push(asNum);
-  return { [field]: { $in: candidates } };
+  // [TR] Legacy numeric + yeni string kimlikleri tek filtreden güvenilir eşlemek için
+  //      cast-bağımsız $expr + $toString kullanıyoruz.
+  // [EN] Cast-independent matcher for both legacy numeric and new string identities.
+  return {
+    $expr: {
+      $eq: [{ $toString: `$${field}` }, idString],
+    },
+  };
 }
 
 /**
