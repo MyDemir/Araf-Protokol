@@ -119,7 +119,10 @@ router.get("/", marketReadLimiter, async (req, res, next) => {
     const [orders, total] = await Promise.all([
       Order.find(filter)
         .select(SAFE_ORDER_PROJECTION)
-        .sort({ status: 1, "amounts.remaining_amount_num": -1, onchain_order_id: -1 })
+        // [TR] onchain_order_id string olduğu için lexicographic drift'i önlemek adına
+        //      tie-break'i deterministic _id ile yapıyoruz.
+        // [EN] Use deterministic _id tie-break to avoid lexicographic drift on string IDs.
+        .sort({ status: 1, "amounts.remaining_amount_num": -1, _id: -1 })
         .skip(skip)
         .limit(value.limit)
         .lean(),

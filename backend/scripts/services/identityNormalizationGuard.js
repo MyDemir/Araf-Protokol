@@ -7,7 +7,8 @@ const logger = require("../utils/logger");
 const NUMERIC_BSON_TYPES = ["int", "long", "double", "decimal"];
 
 async function verifyIdentityNormalization({ mode = "off" } = {}) {
-  const normalizedMode = String(mode || "off").toLowerCase();
+  const requestedMode = String(mode || "off").toLowerCase();
+  const normalizedMode = ["off", "warn", "enforce"].includes(requestedMode) ? requestedMode : "warn";
   if (normalizedMode === "off") return { mode: normalizedMode, checked: false };
 
   const [ordersNumeric, tradesEscrowNumeric, tradesParentNumeric] = await Promise.all([

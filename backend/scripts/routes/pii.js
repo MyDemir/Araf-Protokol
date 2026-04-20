@@ -23,6 +23,7 @@ const Trade = require("../models/Trade");
 const User = require("../models/User");
 const { decryptField, decryptPayoutProfile } = require("../services/encryption");
 const { issuePIIToken } = require("../services/siwe");
+const { verifyIdentityNormalization } = require("../services/identityNormalizationGuard");
 const logger = require("../utils/logger");
 
 // [TR] PII erişimine yalnız aktif child trade durumlarında izin verilir.
@@ -55,6 +56,33 @@ function hasTakerNameSnapshot(trade) {
 
 function hasCompletePayoutSnapshot(trade) {
   return trade?.payout_snapshot?.is_complete === true;
+}
+
+let identityGuardChecked = false;
+let identityGuardError = null;
+let identityGuardInFlight = null;
+
+async function ensureIdentityNormalizedForPIIRoutes() {
+  if (identityGuardChecked) return;
+  if (identityGuardError) throw identityGuardError;
+  if (identityGuardInFlight) return identityGuardInFlight;
+
+  const mode = (process.env.PII_IDENTITY_NORMALIZATION_GUARD || process.env.IDENTITY_NORMALIZATION_GUARD || "enforce")
+    .toLowerCase();
+
+  identityGuardInFlight = verifyIdentityNormalization({ mode })
+    .then(() => {
+      identityGuardChecked = true;
+    })
+    .catch((err) => {
+      identityGuardError = err;
+      throw err;
+    })
+    .finally(() => {
+      identityGuardInFlight = null;
+    });
+
+  return identityGuardInFlight;
 }
 
 // ─── GET /api/pii/my ─────────────────────────────────────────────────────────
@@ -90,6 +118,16 @@ router.get("/my", requireAuth, requireSessionWalletMatch, piiLimiter, async (req
 //      Parent order değil, gerçek escrow/trade kimliği kullanılır.
 router.get("/taker-name/:onchainId", requireAuth, requireSessionWalletMatch, piiLimiter, async (req, res, next) => {
   try {
+    try {
+      await ensureIdentityNormalizedForPIIRoutes();
+    } catch (guardErr) {
+      logger.error(`[PII] identity normalization guard failed: ${guardErr.message}`);
+      return res.status(503).json({
+        error: "Identity normalization gerekli. Migration tamamlanmadan bu endpoint kullanılamaz.",
+        code: "IDENTITY_NORMALIZATION_REQUIRED",
+      });
+    }
+
     const onchainId = String(req.params.onchainId || "").trim();
     if (!/^[1-9]\d*$/.test(onchainId)) {
       return res.status(400).json({ error: "Geçersiz on-chain ID formatı." });
@@ -291,3 +329,4 @@ router.get(
 );
 
 module.exports = router;
+module.exports._ensureIdentityNormalizedForPIIRoutes = ensureIdentityNormalizedForPIIRoutes;
