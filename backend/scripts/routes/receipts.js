@@ -57,13 +57,7 @@ function _parsePositiveOnchainId(rawId) {
 }
 
 function _buildIdentityLookup(idString) {
-  // [TR] Legacy numeric kayıtlar ve yeni string kayıtlar için cast-bağımsız eşleşme.
-  // [EN] Cast-independent identity match for both legacy numeric and new string docs.
-  return {
-    $expr: {
-      $eq: [{ $toString: "$onchain_escrow_id" }, idString],
-    },
-  };
+  return { onchain_escrow_id: idString };
 }
 
 async function validateFileMagicBytes(filePath, mimeType) {

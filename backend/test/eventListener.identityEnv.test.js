@@ -84,8 +84,7 @@ describe("eventListener identity + env wiring", () => {
     });
 
     const [filter, updateObj] = mockTradeFindOneAndUpdate.mock.calls[0];
-    expect(filter.$expr.$eq[0].$toString).toBe("$onchain_escrow_id");
-    expect(filter.$expr.$eq[1]).toBe("900719925474099312345");
+    expect(filter.onchain_escrow_id).toBe("900719925474099312345");
 
     const update = updateObj.$set;
     expect(update.onchain_escrow_id).toBe("900719925474099312345");
@@ -113,7 +112,6 @@ describe("eventListener identity + env wiring", () => {
     });
 
     const [filter] = mockOrderFindOneAndUpdate.mock.calls[0];
-    expect(filter.$expr.$eq[0].$toString).toBe("$onchain_order_id");
-    expect(filter.$expr.$eq[1]).toBe("42");
+    expect(filter.onchain_order_id).toBe("42");
   });
 });
