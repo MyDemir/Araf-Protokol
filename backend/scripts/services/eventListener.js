@@ -39,8 +39,8 @@ const LAST_SAFE_BLOCK_KEY = "worker:last_safe_block";
 const DLQ_KEY = "worker:dlq";
 const RETRY_DELAY_MS = 2_000;
 const MAX_RETRIES = 5;
-const BLOCK_BATCH_SIZE = 1_000;
-const CHECKPOINT_INTERVAL_BLOCKS = 50;
+const BLOCK_BATCH_SIZE = Number(process.env.WORKER_BLOCK_BATCH_SIZE || 1_000);
+const CHECKPOINT_INTERVAL_BLOCKS = Number(process.env.WORKER_CHECKPOINT_INTERVAL_BLOCKS || 50);
 const MAX_REPUTATION_HISTORY = 100;
 const BLOCK_TIMESTAMP_CACHE_LIMIT = 2_048;
 
@@ -111,6 +111,23 @@ function _toNum(v) {
   return Number(v ?? 0);
 }
 function _toStr(v) { return v?.toString?.() ?? String(v); }
+
+function _toIdentityString(v, { allowZero = false } = {}) {
+  const normalized = _toStr(v).trim();
+  const pattern = allowZero ? /^(0|[1-9]\d*)$/ : /^[1-9]\d*$/;
+  if (!pattern.test(normalized)) {
+    throw new Error(`[Worker] Geçersiz zincir kimliği: ${normalized || "empty"}`);
+  }
+  return normalized;
+}
+
+function _buildIdentityLookup(field, rawId) {
+  const idString = _toIdentityString(rawId);
+  const candidates = [idString];
+  const maybeSafe = Number(idString);
+  if (Number.isSafeInteger(maybeSafe)) candidates.push(maybeSafe);
+  return { [field]: { $in: candidates } };
+}
 
 /**
  * [TR] Yalnızca *_num cache alanları için güvenli Number dönüşümü.
@@ -699,7 +716,7 @@ class EventWorker {
   }
 
   async _upsertOrderMirror(orderData, opts = {}) {
-    const orderId = _toNum(orderData.id);
+    const orderId = _toIdentityString(orderData.id);
     const payload = {
       onchain_order_id: orderId,
       owner_address: orderData.owner.toLowerCase(),
@@ -739,7 +756,7 @@ class EventWorker {
     Object.keys(payload).forEach((key) => payload[key] === undefined && delete payload[key]);
 
     await Order.findOneAndUpdate(
-      { onchain_order_id: orderId },
+      _buildIdentityLookup("onchain_order_id", orderId),
       {
         $set: payload,
         $setOnInsert: {
@@ -763,18 +780,18 @@ class EventWorker {
   }
 
   async _upsertTradeMirror(tradeData, opts = {}) {
-    const tradeId = _toNum(tradeData.id);
-    const parentOrderId = _toNum(tradeData.parentOrderId);
+    const tradeId = _toIdentityString(tradeData.id);
+    const parentOrderId = _toIdentityString(tradeData.parentOrderId, { allowZero: true });
     const parentOrder =
-      opts.parentOrder || (parentOrderId > 0 ? await this._fetchOrderFromChain(parentOrderId) : null);
+      opts.parentOrder || (parentOrderId !== "0" ? await this._fetchOrderFromChain(parentOrderId) : null);
 
-    const tradeOrigin = parentOrderId > 0 ? "ORDER_CHILD" : "DIRECT_ESCROW";
+    const tradeOrigin = parentOrderId !== "0" ? "ORDER_CHILD" : "DIRECT_ESCROW";
     const parentOrderSide = parentOrder ? _normalizeSide(parentOrder.side) : null;
     const orderRef = parentOrder ? _toStr(parentOrder.orderRef).toLowerCase() : null;
 
     const setPayload = {
       onchain_escrow_id: tradeId,
-      parent_order_id: parentOrderId || null,
+      parent_order_id: parentOrderId === "0" ? null : parentOrderId,
       trade_origin: tradeOrigin,
       parent_order_side: parentOrderSide,
       maker_address: tradeData.maker.toLowerCase(),
@@ -835,7 +852,7 @@ class EventWorker {
     }
 
     const result = await Trade.findOneAndUpdate(
-      { onchain_escrow_id: tradeId },
+      _buildIdentityLookup("onchain_escrow_id", tradeId),
       { $set: setPayload },
       {
         upsert: true,
@@ -863,7 +880,7 @@ class EventWorker {
     const fillAmountNum = _toSafeNum(fillAmount);
 
     await Order.updateOne(
-      { onchain_order_id: orderId },
+      _buildIdentityLookup("onchain_order_id", orderId),
       [
         {
           $set: {
@@ -980,7 +997,7 @@ class EventWorker {
       //      alanları eksiksiz oluşur.
       // [EN] Capture LOCKED snapshot directly in OrderFilled flow for V3-native child trades.
       await this._captureLockedTradeSnapshot({
-        tradeId: _toNum(tradeId),
+        tradeId: _toIdentityString(tradeId),
         lockedAt: _toDateOrNull(tradeData.lockedAt) || fillEventAt,
         makerAddress: tradeUpsert?.doc?.maker_address || tradeData.maker?.toLowerCase?.() || null,
         takerAddress:
@@ -993,7 +1010,7 @@ class EventWorker {
 
       if (tradeUpsert.inserted) {
         await this._incrementOrderFillStatsAtomically(
-          _toNum(orderId),
+          _toIdentityString(orderId),
           fillAmount,
           session
         );
@@ -1019,8 +1036,8 @@ class EventWorker {
     const { tradeId, listingRef } = event.args;
     const createdAt = await this._getEventDate(event);
     const tradeData = await this._fetchTradeFromChain(tradeId);
-    const parentOrderId = _toNum(tradeData.parentOrderId);
-    const parentOrder = parentOrderId > 0 ? await this._fetchOrderFromChain(parentOrderId) : null;
+    const parentOrderId = _toIdentityString(tradeData.parentOrderId, { allowZero: true });
+    const parentOrder = parentOrderId !== "0" ? await this._fetchOrderFromChain(parentOrderId) : null;
     const normalizedListingRef = listingRef ? _toStr(listingRef).toLowerCase() : null;
 
     await this._upsertTradeMirror(tradeData, {
@@ -1033,9 +1050,9 @@ class EventWorker {
   async _onEscrowLocked(event, attempt = 1) {
     const { tradeId, taker } = event.args;
     const lockedAt = await this._getEventDate(event);
-    const tradeIdNum = _toNum(tradeId);
+    const tradeIdNum = _toIdentityString(tradeId);
 
-    const trade = await Trade.findOne({ onchain_escrow_id: tradeIdNum })
+    const trade = await Trade.findOne(_buildIdentityLookup("onchain_escrow_id", tradeIdNum))
       .select("maker_address taker_address status")
       .lean();
 
@@ -1069,7 +1086,7 @@ class EventWorker {
     takerAddress,
     session,
   }) {
-    const tradeIdNum = _toNum(tradeId);
+    const tradeIdNum = _toIdentityString(tradeId);
     if (!tradeIdNum) return;
 
     const normalizedMaker = makerAddress?.toLowerCase?.() || null;
@@ -1134,7 +1151,7 @@ class EventWorker {
 
     await Trade.findOneAndUpdate(
       {
-        onchain_escrow_id: tradeIdNum,
+        ..._buildIdentityLookup("onchain_escrow_id", tradeIdNum),
         // [TR] Monotonic state kuralı:
         //      EscrowLocked yalnız OPEN/LOCKED trade'i etkileyebilir.
         //      PAID/CHALLENGED vb. ileri state'leri geriye sarmayız.
@@ -1157,7 +1174,7 @@ class EventWorker {
 
     await Trade.findOneAndUpdate(
       {
-        onchain_escrow_id: _toNum(tradeId),
+        ..._buildIdentityLookup("onchain_escrow_id", tradeId),
         status: { $in: ["LOCKED", "PAID"] },
       },
       {
@@ -1174,7 +1191,7 @@ class EventWorker {
   async _onEscrowReleased(event) {
     const { tradeId } = event.args;
     const resolvedAt = await this._getEventDate(event);
-    const tradeIdNum = _toNum(tradeId);
+    const tradeIdNum = _toIdentityString(tradeId);
     const tradeData = await this._fetchTradeFromChain(tradeId);
     const wasDisputed = _toNum(tradeData.challengedAt) > 0;
 
@@ -1184,7 +1201,7 @@ class EventWorker {
     try {
       const trade = await Trade.findOneAndUpdate(
         {
-          onchain_escrow_id: tradeIdNum,
+          ..._buildIdentityLookup("onchain_escrow_id", tradeIdNum),
           status: { $in: ["LOCKED", "PAID", "CHALLENGED"] },
         },
         {
@@ -1224,7 +1241,7 @@ class EventWorker {
 
       if (trade.parent_order_id) {
         await Order.findOneAndUpdate(
-          { onchain_order_id: trade.parent_order_id },
+          _buildIdentityLookup("onchain_order_id", trade.parent_order_id),
           {
             $inc: {
               "stats.active_child_trade_count": -1,
@@ -1250,7 +1267,7 @@ class EventWorker {
 
     await Trade.findOneAndUpdate(
       {
-        onchain_escrow_id: _toNum(tradeId),
+        ..._buildIdentityLookup("onchain_escrow_id", tradeId),
         status: { $in: ["LOCKED", "PAID", "CHALLENGED"] },
       },
       {
@@ -1268,7 +1285,7 @@ class EventWorker {
 
     const trade = await Trade.findOneAndUpdate(
       {
-        onchain_escrow_id: _toNum(tradeId),
+        ..._buildIdentityLookup("onchain_escrow_id", tradeId),
         status: { $in: ["OPEN", "LOCKED", "PAID", "CHALLENGED"] },
       },
       {
@@ -1283,7 +1300,7 @@ class EventWorker {
 
     if (trade?.parent_order_id) {
       await Order.findOneAndUpdate(
-        { onchain_order_id: trade.parent_order_id },
+        _buildIdentityLookup("onchain_order_id", trade.parent_order_id),
         { $inc: { "stats.active_child_trade_count": -1, "stats.canceled_child_trade_count": 1 } }
       );
     }
@@ -1292,7 +1309,7 @@ class EventWorker {
   async _onEscrowBurned(event) {
     const { tradeId } = event.args;
     const burnedAt = await this._getEventDate(event);
-    const tradeIdNum = _toNum(tradeId);
+    const tradeIdNum = _toIdentityString(tradeId);
 
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -1300,7 +1317,7 @@ class EventWorker {
     try {
       const trade = await Trade.findOneAndUpdate(
         {
-          onchain_escrow_id: tradeIdNum,
+          ..._buildIdentityLookup("onchain_escrow_id", tradeIdNum),
           status: { $in: ["LOCKED", "PAID", "CHALLENGED"] },
         },
         {
@@ -1338,7 +1355,7 @@ class EventWorker {
 
       if (trade?.parent_order_id) {
         await Order.findOneAndUpdate(
-          { onchain_order_id: trade.parent_order_id },
+          _buildIdentityLookup("onchain_order_id", trade.parent_order_id),
           { $inc: { "stats.active_child_trade_count": -1, "stats.burned_child_trade_count": 1 } },
           { session }
         );
@@ -1356,13 +1373,13 @@ class EventWorker {
   async _onBleedingDecayed(event) {
     const { tradeId, decayedAmount, timestamp } = event.args;
     const lastDecayAt = await this._getEventDate(event, timestamp);
-    const tradeIdNum = _toNum(tradeId);
+    const tradeIdNum = _toIdentityString(tradeId);
     const eventId = this._getEventId(event);
     const decayedAmountStr = _toStr(decayedAmount);
     const decayedAmountNum = _toSafeNum(decayedAmount);
 
     await Trade.updateOne(
-      { onchain_escrow_id: tradeIdNum, "financials.decay_tx_hashes": { $ne: eventId } },
+      { ..._buildIdentityLookup("onchain_escrow_id", tradeIdNum), "financials.decay_tx_hashes": { $ne: eventId } },
       [
         {
           $set: {
@@ -1416,7 +1433,7 @@ class EventWorker {
     }
 
     await Trade.findOneAndUpdate(
-      { onchain_escrow_id: _toNum(tradeId) },
+      { ..._buildIdentityLookup("onchain_escrow_id", tradeId) },
       { $set: update }
     );
   }
@@ -1425,7 +1442,7 @@ class EventWorker {
     const { tradeId, pinger, timestamp } = event.args;
     const pingAt = await this._getEventDate(event, timestamp);
 
-    const trade = await Trade.findOne({ onchain_escrow_id: _toNum(tradeId) }).lean();
+    const trade = await Trade.findOne({ ..._buildIdentityLookup("onchain_escrow_id", tradeId) }).lean();
     if (!trade) {
       throw new Error("MakerPinged geldi ama trade mirror bulunamadı.");
     }
@@ -1439,7 +1456,7 @@ class EventWorker {
       : { "timers.challenge_pinged_at": pingAt, "challenge_pinged_by_maker": true };
 
     await Trade.findOneAndUpdate(
-      { onchain_escrow_id: _toNum(tradeId) },
+      { ..._buildIdentityLookup("onchain_escrow_id", tradeId) },
       { $set: updateFields }
     );
   }

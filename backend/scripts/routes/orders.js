@@ -65,6 +65,23 @@ const SAFE_ORDER_TRADES_PROJECTION = [
   "chargeback_ack.acknowledged_at",
 ].join(" ");
 
+const POSITIVE_NUMERIC_ID_RE = /^[1-9]\d*$/;
+const DEFAULT_MY_ORDERS_LIMIT = 20;
+const MAX_MY_ORDERS_LIMIT = 50;
+
+function _parsePositiveOnchainId(rawId) {
+  const normalized = String(rawId ?? "").trim();
+  if (!POSITIVE_NUMERIC_ID_RE.test(normalized)) return null;
+  return normalized;
+}
+
+function _buildIdentityLookup(field, idString) {
+  const candidates = [idString];
+  const asNum = Number(idString);
+  if (Number.isSafeInteger(asNum)) candidates.push(asNum);
+  return { [field]: { $in: candidates } };
+}
+
 router.get("/config", async (_req, res, next) => {
   try {
     const config = getConfig();
@@ -118,30 +135,45 @@ router.get("/", marketReadLimiter, async (req, res, next) => {
 
 router.get("/my", requireAuth, requireSessionWalletMatch, ordersWriteLimiter, async (req, res, next) => {
   try {
-    const orders = await Order.find({ owner_address: req.wallet })
-      .select(SAFE_ORDER_PROJECTION)
-      .sort({ updated_at: -1, onchain_order_id: -1 })
-      .lean();
-    return res.json({ orders });
+    const schema = Joi.object({
+      page: Joi.number().integer().min(1).default(1),
+      limit: Joi.number().integer().min(1).max(MAX_MY_ORDERS_LIMIT).default(DEFAULT_MY_ORDERS_LIMIT),
+    });
+    const { error, value } = schema.validate(req.query);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const filter = { owner_address: req.wallet };
+    const skip = (value.page - 1) * value.limit;
+    const [orders, total] = await Promise.all([
+      Order.find(filter)
+        .select(SAFE_ORDER_PROJECTION)
+        .sort({ updated_at: -1, _id: -1 })
+        .skip(skip)
+        .limit(value.limit)
+        .lean(),
+      Order.countDocuments(filter),
+    ]);
+
+    return res.json({ orders, total, page: value.page, limit: value.limit });
   } catch (err) { next(err); }
 });
 
 router.get("/:id/trades", requireAuth, requireSessionWalletMatch, ordersWriteLimiter, async (req, res, next) => {
   try {
-    const onchainOrderId = Number(req.params.id);
-    if (!Number.isInteger(onchainOrderId) || onchainOrderId <= 0) {
+    const onchainOrderId = _parsePositiveOnchainId(req.params.id);
+    if (!onchainOrderId) {
       return res.status(400).json({ error: "Geçersiz on-chain order ID formatı." });
     }
 
-    const order = await Order.findOne({ onchain_order_id: onchainOrderId })
+    const order = await Order.findOne(_buildIdentityLookup("onchain_order_id", onchainOrderId))
       .select("owner_address")
       .lean();
     if (!order) return res.status(404).json({ error: "Order bulunamadı." });
     if (order.owner_address !== req.wallet) return res.status(403).json({ error: "Bu order sana ait değil." });
 
-    const trades = await Trade.find({ parent_order_id: onchainOrderId })
+    const trades = await Trade.find(_buildIdentityLookup("parent_order_id", onchainOrderId))
       .select(SAFE_ORDER_TRADES_PROJECTION)
-      .sort({ created_at: -1, onchain_escrow_id: -1 })
+      .sort({ created_at: -1, _id: -1 })
       .lean();
     return res.json({ trades });
   } catch (err) { next(err); }
@@ -149,11 +181,13 @@ router.get("/:id/trades", requireAuth, requireSessionWalletMatch, ordersWriteLim
 
 router.get("/:id", marketReadLimiter, async (req, res, next) => {
   try {
-    const onchainOrderId = Number(req.params.id);
-    if (!Number.isInteger(onchainOrderId) || onchainOrderId <= 0) {
+    const onchainOrderId = _parsePositiveOnchainId(req.params.id);
+    if (!onchainOrderId) {
       return res.status(400).json({ error: "Geçersiz on-chain order ID formatı." });
     }
-    const order = await Order.findOne({ onchain_order_id: onchainOrderId }).select(SAFE_ORDER_PROJECTION).lean();
+    const order = await Order.findOne(_buildIdentityLookup("onchain_order_id", onchainOrderId))
+      .select(SAFE_ORDER_PROJECTION)
+      .lean();
     if (!order) return res.status(404).json({ error: "Order bulunamadı." });
     return res.json({ order });
   } catch (err) { next(err); }

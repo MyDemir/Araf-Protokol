@@ -154,6 +154,23 @@ const SAFE_TRADE_PROJECTION = [
   "chargeback_ack.acknowledged_at",
 ].join(" ");
 
+const POSITIVE_NUMERIC_ID_RE = /^[1-9]\d*$/;
+const DEFAULT_MY_TRADES_LIMIT = 20;
+const MAX_MY_TRADES_LIMIT = 50;
+
+function _parsePositiveOnchainId(rawId) {
+  const normalized = String(rawId ?? "").trim();
+  if (!POSITIVE_NUMERIC_ID_RE.test(normalized)) return null;
+  return normalized;
+}
+
+function _buildIdentityLookup(field, idString) {
+  const candidates = [idString];
+  const asNum = Number(idString);
+  if (Number.isSafeInteger(asNum)) candidates.push(asNum);
+  return { [field]: { $in: candidates } };
+}
+
 /**
  * Trade listesine trade-scoped banka risk sinyalini ekler.
  *
@@ -203,16 +220,31 @@ async function _attachBankProfileRisk(trades) {
 // ─── GET /api/trades/my ───────────────────────────────────────────────────────
 router.get("/my", requireAuth, requireSessionWalletMatch, tradesLimiter, async (req, res, next) => {
   try {
-    const trades = await Trade.find({
+    const schema = Joi.object({
+      page: Joi.number().integer().min(1).default(1),
+      limit: Joi.number().integer().min(1).max(MAX_MY_TRADES_LIMIT).default(DEFAULT_MY_TRADES_LIMIT),
+    });
+    const { error, value } = schema.validate(req.query);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const filter = {
       $or: [{ maker_address: req.wallet }, { taker_address: req.wallet }],
       status: { $nin: ["RESOLVED", "CANCELED", "BURNED"] },
-    })
-      .select(SAFE_TRADE_PROJECTION)
-      .sort({ created_at: -1, onchain_escrow_id: -1 })
-      .lean();
+    };
+    const skip = (value.page - 1) * value.limit;
+
+    const [trades, total] = await Promise.all([
+      Trade.find(filter)
+        .select(SAFE_TRADE_PROJECTION)
+        .sort({ created_at: -1, _id: -1 })
+        .skip(skip)
+        .limit(value.limit)
+        .lean(),
+      Trade.countDocuments(filter),
+    ]);
 
     const enrichedTrades = await _attachBankProfileRisk(trades);
-    return res.json({ trades: enrichedTrades });
+    return res.json({ trades: enrichedTrades, total, page: value.page, limit: value.limit });
   } catch (err) {
     next(err);
   }
@@ -262,12 +294,12 @@ router.get("/history", requireAuth, requireSessionWalletMatch, tradesLimiter, as
 // [TR] Buradaki kimlik parent order id değil, child trade / escrow id'dir.
 router.get("/by-escrow/:onchainId", requireAuth, requireSessionWalletMatch, tradesLimiter, async (req, res, next) => {
   try {
-    const onchainId = Number(req.params.onchainId);
-    if (!Number.isInteger(onchainId) || onchainId <= 0) {
+    const onchainId = _parsePositiveOnchainId(req.params.onchainId);
+    if (!onchainId) {
       return res.status(400).json({ error: "Geçersiz on-chain ID formatı." });
     }
 
-    const trade = await Trade.findOne({ onchain_escrow_id: onchainId })
+    const trade = await Trade.findOne(_buildIdentityLookup("onchain_escrow_id", onchainId))
       .select(SAFE_TRADE_PROJECTION)
       .lean();
 
@@ -350,7 +382,8 @@ router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, tradesLim
         code: "CANCEL_STATE_NOT_ALLOWED",
       });
     }
-    if (!Number.isInteger(trade.onchain_escrow_id) || trade.onchain_escrow_id <= 0) {
+    const normalizedEscrowId = _parsePositiveOnchainId(trade.onchain_escrow_id);
+    if (!normalizedEscrowId) {
       return res.status(409).json({ error: "Trade on-chain kimliği bulunamadı. İptal imzası doğrulanamaz." });
     }
 
@@ -363,7 +396,7 @@ router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, tradesLim
     await _verifyCancelSignatureOrThrow({
       wallet: req.wallet,
       signature: value.signature,
-      tradeOnchainId: trade.onchain_escrow_id,
+      tradeOnchainId: normalizedEscrowId,
       deadline: value.deadline,
     });
 

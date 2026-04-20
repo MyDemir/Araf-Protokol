@@ -64,6 +64,13 @@ let server = null;
 let isShuttingDown = false;
 const FATAL_EXIT_TIMEOUT_MS = 8_000;
 
+function _envMs(name, fallbackMs) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw === "") return fallbackMs;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallbackMs;
+}
+
 // [TR] Proxy arkasında gerçek client IP'yi her ortamda doğru almak için trust proxy.
 // [EN] trust proxy so real client IP is preserved behind reverse proxies.
 app.set("trust proxy", 1);
@@ -306,29 +313,39 @@ async function bootstrap() {
 
     // [TR] DLQ monitörü — her 60 saniyede başarısız event'leri kontrol eder
     // [EN] DLQ monitor — checks failed events every 60 seconds
+    const DLQ_INTERVAL_MS = _envMs("JOB_DLQ_INTERVAL_MS", 60_000);
+    const REPUTATION_DECAY_DELAY_MS = _envMs("JOB_REPUTATION_DECAY_DELAY_MS", 30_000);
+    const REPUTATION_DECAY_INTERVAL_MS = _envMs("JOB_REPUTATION_DECAY_INTERVAL_MS", 24 * 60 * 60 * 1000);
+    const STATS_SNAPSHOT_DELAY_MS = _envMs("JOB_STATS_SNAPSHOT_DELAY_MS", 60_000);
+    const STATS_SNAPSHOT_INTERVAL_MS = _envMs("JOB_STATS_SNAPSHOT_INTERVAL_MS", 24 * 60 * 60 * 1000);
+    const SENSITIVE_CLEANUP_DELAY_MS = _envMs("JOB_SENSITIVE_CLEANUP_DELAY_MS", 120_000);
+    const SENSITIVE_CLEANUP_INTERVAL_MS = _envMs("JOB_SENSITIVE_CLEANUP_INTERVAL_MS", 30 * 60 * 1000);
+    const USER_BANK_RISK_CLEANUP_DELAY_MS = _envMs("JOB_USER_BANK_RISK_CLEANUP_DELAY_MS", 150_000);
+    const USER_BANK_RISK_CLEANUP_INTERVAL_MS = _envMs("JOB_USER_BANK_RISK_CLEANUP_INTERVAL_MS", 6 * 60 * 60 * 1000);
+
     dlqInterval = setInterval(() => {
       runScheduledJob("dlq", processDLQ);
-    }, 60_000);
+    }, DLQ_INTERVAL_MS);
 
     // [TR] İlk çalıştırma 30 sn geciktirilir — cold start'ta DB'ye eş zamanlı yük binmesini önler
     // [EN] First run delayed by 30s — prevents simultaneous DB load on cold start
     reputationDecayDelay = setTimeout(() => {
       runScheduledJob("reputationDecay", runReputationDecay);
       logger.info("Periyodik İtibar İyileştirme görevi zamanlandı (her 24 saatte bir).");
-    }, 30_000);
+    }, REPUTATION_DECAY_DELAY_MS);
 
     reputationDecayInterval = setInterval(() => {
       runScheduledJob("reputationDecay", runReputationDecay);
-    }, 24 * 60 * 60 * 1000);
+    }, REPUTATION_DECAY_INTERVAL_MS);
 
     statsSnapshotDelay = setTimeout(() => {
       runScheduledJob("statsSnapshot", runStatsSnapshot);
       logger.info("Periyodik V3 istatistik snapshot görevi zamanlandı (her 24 saatte bir).");
-    }, 60_000);
+    }, STATS_SNAPSHOT_DELAY_MS);
 
     statsSnapshotInterval = setInterval(() => {
       runScheduledJob("statsSnapshot", runStatsSnapshot);
-    }, 24 * 60 * 60 * 1000);
+    }, STATS_SNAPSHOT_INTERVAL_MS);
 
     // [TR] Hassas veri retention cleanup — her 30 dakikada bir
     //      Trade üzerindeki:
@@ -340,11 +357,11 @@ async function bootstrap() {
     sensitiveCleanupDelay = setTimeout(() => {
       runScheduledJob("sensitiveCleanup", runSensitiveCleanupBundle);
       logger.info("Receipt/PII snapshot retention cleanup görevi zamanlandı (her 30 dakikada bir).");
-    }, 120_000);
+    }, SENSITIVE_CLEANUP_DELAY_MS);
 
     sensitiveCleanupInterval = setInterval(() => {
       runScheduledJob("sensitiveCleanup", runSensitiveCleanupBundle);
-    }, 30 * 60 * 1000);
+    }, SENSITIVE_CLEANUP_INTERVAL_MS);
 
     // [TR] User bank risk metadata prune — her 6 saatte bir
     //      Amaç:
@@ -356,11 +373,11 @@ async function bootstrap() {
     userBankRiskCleanupDelay = setTimeout(() => {
       runScheduledJob("userBankRiskCleanup", runUserBankRiskMetadataCleanup);
       logger.info("User bank risk metadata cleanup görevi zamanlandı (her 6 saatte bir).");
-    }, 150_000);
+    }, USER_BANK_RISK_CLEANUP_DELAY_MS);
 
     userBankRiskCleanupInterval = setInterval(() => {
       runScheduledJob("userBankRiskCleanup", runUserBankRiskMetadataCleanup);
-    }, 6 * 60 * 60 * 1000);
+    }, USER_BANK_RISK_CLEANUP_INTERVAL_MS);
 
     // [TR] Rotalar DB ve Redis hazır olduktan sonra yüklenir
     // [EN] Routes loaded after DB and Redis are ready

@@ -21,10 +21,11 @@ const mongoose = require("mongoose");
 const orderSchema = new mongoose.Schema(
   {
     onchain_order_id: {
-      type: Number,
+      type: String,
       required: true,
       unique: true,
       index: true,
+      match: /^\d+$/,
     },
 
     owner_address: {

@@ -148,8 +148,8 @@ describe("eventListener OrderFilled mirror hardening", () => {
 
     const [orderFilter, orderUpdate] = mockFindOneAndUpdateOrder.mock.calls[0];
     const orderPayload = orderUpdate.$set;
-    expect(orderFilter.onchain_order_id).toBe(Number(hugeId));
-    expect(orderPayload.onchain_order_id).toBe(Number(hugeId));
+    expect(orderFilter.onchain_order_id.$in).toContain("9007199254740993");
+    expect(orderPayload.onchain_order_id).toBe("9007199254740993");
     expect(orderPayload.amounts.total_amount_num).toBeNull();
     expect(orderPayload.amounts.remaining_amount_num).toBeNull();
     expect(orderPayload.reserves.remaining_maker_bond_reserve_num).toBeNull();

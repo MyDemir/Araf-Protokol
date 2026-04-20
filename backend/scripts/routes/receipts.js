@@ -48,6 +48,21 @@ const MAGIC_BYTES_BY_MIME = {
   "application/pdf": [(buf) => buf.length >= 5 && buf.subarray(0, 5).toString("ascii") === "%PDF-"],
 };
 
+const POSITIVE_NUMERIC_ID_RE = /^[1-9]\d*$/;
+
+function _parsePositiveOnchainId(rawId) {
+  const normalized = String(rawId ?? "").trim();
+  if (!POSITIVE_NUMERIC_ID_RE.test(normalized)) return null;
+  return normalized;
+}
+
+function _buildIdentityLookup(idString) {
+  const candidates = [idString];
+  const asNum = Number(idString);
+  if (Number.isSafeInteger(asNum)) candidates.push(asNum);
+  return { onchain_escrow_id: { $in: candidates } };
+}
+
 async function validateFileMagicBytes(filePath, mimeType) {
   const validators = MAGIC_BYTES_BY_MIME[mimeType];
   if (!validators?.length) return false;
@@ -82,9 +97,8 @@ router.post("/upload", requireAuth, requireSessionWalletMatch, tradesLimiter, up
   try {
     if (!req.file) return res.status(400).json({ error: "Dekont dosyası eksik veya boş." });
 
-    const rawId = req.body?.onchainEscrowId;
-    const onchainId = Number(rawId);
-    if (!rawId || !Number.isInteger(onchainId) || onchainId <= 0) {
+    const onchainId = _parsePositiveOnchainId(req.body?.onchainEscrowId);
+    if (!onchainId) {
       return res.status(400).json({ error: "Geçersiz veya eksik onchainEscrowId." });
     }
 
@@ -95,7 +109,7 @@ router.post("/upload", requireAuth, requireSessionWalletMatch, tradesLimiter, up
 
     const updatedTrade = await Trade.findOneAndUpdate(
       {
-        onchain_escrow_id: onchainId,
+        ..._buildIdentityLookup(onchainId),
         taker_address: req.wallet,
         status: "LOCKED",
         "evidence.receipt_encrypted": null,
@@ -112,7 +126,9 @@ router.post("/upload", requireAuth, requireSessionWalletMatch, tradesLimiter, up
     );
 
     if (!updatedTrade) {
-      const existing = await Trade.findOne({ onchain_escrow_id: onchainId }).select("taker_address status evidence.receipt_encrypted").lean();
+      const existing = await Trade.findOne(_buildIdentityLookup(onchainId))
+        .select("taker_address status evidence.receipt_encrypted")
+        .lean();
       if (!existing) return res.status(404).json({ error: `#${onchainId} numaralı trade bulunamadı.` });
       if (existing.taker_address !== req.wallet) return res.status(403).json({ error: "Yalnızca taker dekont yükleyebilir." });
       if (existing.evidence?.receipt_encrypted) return res.status(409).json({ error: "Bu işlem için dekont zaten yüklendi. Üzerine yazılamaz." });
