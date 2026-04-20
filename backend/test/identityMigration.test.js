@@ -3,12 +3,15 @@
 const {
   normalizeIdentityValue,
   buildBulkOps,
+  detectLogicalCollisions,
 } = require("../scripts/migrations/normalizeIdentityFields");
 
 describe("identity normalization migration helpers", () => {
   it("normalizes numeric legacy IDs to canonical strings", () => {
     expect(normalizeIdentityValue(42)).toBe("42");
     expect(normalizeIdentityValue("900719925474099312345")).toBe("900719925474099312345");
+    expect(normalizeIdentityValue("42.0")).toBe("42");
+    expect(normalizeIdentityValue("42.000")).toBe("42");
   });
 
   it("keeps parent zero semantics as null when configured", () => {
@@ -37,5 +40,21 @@ describe("identity normalization migration helpers", () => {
     const plan = buildBulkOps(docs, "onchain_order_id");
     expect(plan.changed).toBe(1);
     expect(plan.ops[0].updateOne.update.$set.onchain_order_id).toBe("123");
+  });
+
+  it("detects collisions after decimal canonicalization in preflight", async () => {
+    const model = {
+      find: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            { _id: "a", onchain_order_id: "42" },
+            { _id: "b", onchain_order_id: "42.0" },
+          ]),
+        }),
+      }),
+    };
+
+    const collisions = await detectLogicalCollisions(model, "onchain_order_id");
+    expect(collisions).toEqual([{ _id: "42", count: 2 }]);
   });
 });

@@ -51,6 +51,7 @@ const {
 
 const { getReadiness, getLiveness } = require("./services/health");
 const { verifyIdentityNormalization } = require("./services/identityNormalizationGuard");
+const { parsePositiveTimerMs } = require("./utils/timeEnv");
 
 // [TR] Global Express hata yakalayıcı
 // [EN] Global Express error handler
@@ -66,10 +67,7 @@ let isShuttingDown = false;
 const FATAL_EXIT_TIMEOUT_MS = 8_000;
 
 function _envMs(name, fallbackMs) {
-  const raw = process.env[name];
-  if (raw === undefined || raw === null || raw === "") return fallbackMs;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallbackMs;
+  return parsePositiveTimerMs(process.env[name], fallbackMs);
 }
 
 function _resolveIdentityGuardMode() {
@@ -458,3 +456,4 @@ bootstrap();
 
 module.exports = app;
 module.exports._resolveIdentityGuardMode = _resolveIdentityGuardMode;
+module.exports._envMs = _envMs;

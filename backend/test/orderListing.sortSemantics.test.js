@@ -90,4 +90,49 @@ describe("orders/listings sort semantics on string onchain ids", () => {
     expect(sortArg._id).toBe(1);
     expect(sortArg.onchain_order_id).toBeUndefined();
   });
+
+  it("trades history route uses _id tie-break instead of onchain_escrow_id lexicographic sort", async () => {
+    const findChain = {
+      select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    };
+    const Trade = {
+      find: jest.fn(() => findChain),
+      countDocuments: jest.fn().mockResolvedValue(0),
+    };
+
+    let router;
+    jest.isolateModules(() => {
+      jest.doMock("../scripts/middleware/auth", () => ({
+        requireAuth: (req, _res, next) => { req.wallet = "0x1111111111111111111111111111111111111111"; next(); },
+        requireSessionWalletMatch: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../scripts/middleware/rateLimiter", () => ({
+        tradesLimiter: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../scripts/models/Trade", () => Trade);
+      jest.doMock("../scripts/models/User", () => ({
+        find: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+        }),
+      }));
+      jest.doMock("../scripts/utils/logger", () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }));
+      router = require("../scripts/routes/trades");
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/trades", router);
+
+    const res = await request(app).get("/api/trades/history");
+    expect(res.status).toBe(200);
+
+    const sortArg = findChain.sort.mock.calls[0][0];
+    expect(sortArg["timers.resolved_at"]).toBe(-1);
+    expect(sortArg._id).toBe(-1);
+    expect(sortArg.onchain_escrow_id).toBeUndefined();
+  });
 });

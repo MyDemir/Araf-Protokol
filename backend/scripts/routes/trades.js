@@ -266,7 +266,9 @@ router.get("/history", requireAuth, requireSessionWalletMatch, tradesLimiter, as
     const [trades, total] = await Promise.all([
       Trade.find(filter)
         .select(SAFE_TRADE_PROJECTION)
-        .sort({ "timers.resolved_at": -1, onchain_escrow_id: -1 })
+        // [TR] onchain_escrow_id string olduğu için lexicographic drift'i önlüyoruz.
+        // [EN] Use deterministic _id tie-break to avoid string-ID lexicographic drift.
+        .sort({ "timers.resolved_at": -1, _id: -1 })
         .skip(skip)
         .limit(value.limit)
         .lean(),
