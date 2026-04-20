@@ -36,12 +36,19 @@ function normalizeIdentityValue(raw, { allowZero = false, toNullOnZero = false }
     throw new Error(`IDENTITY_NOT_NUMERIC:${asString}`);
   }
 
-  const asNumber = Number(asString);
-  if (!Number.isFinite(asNumber) || !Number.isInteger(asNumber)) {
-    throw new Error(`IDENTITY_NOT_INTEGER:${asString}`);
+  let normalizedIntegerString = asString;
+  if (asString.includes(".")) {
+    const [integerPart, fractionalPart = ""] = asString.split(".");
+    if (!/^\d+$/.test(fractionalPart)) {
+      throw new Error(`IDENTITY_NOT_INTEGER:${asString}`);
+    }
+    if (!/^0+$/.test(fractionalPart)) {
+      throw new Error(`IDENTITY_NOT_INTEGER:${asString}`);
+    }
+    normalizedIntegerString = integerPart;
   }
 
-  const asBigInt = BigInt(asString);
+  const asBigInt = BigInt(normalizedIntegerString);
   if (asBigInt < 0n) throw new Error(`IDENTITY_NEGATIVE:${asString}`);
   if (!allowZero && asBigInt === 0n) throw new Error(`IDENTITY_ZERO_NOT_ALLOWED:${asString}`);
   if (toNullOnZero && asBigInt === 0n) return null;
@@ -70,23 +77,30 @@ function buildBulkOps(docs, field, opts = {}) {
 }
 
 async function detectLogicalCollisions(Model, field, { allowNull = false } = {}) {
-  const match = {
+  const docs = await Model.find({
     [field]: {
       $exists: true,
       ...(allowNull ? {} : { $ne: null }),
       $type: ["string", ...NUMERIC_BSON_TYPES],
     },
-  };
+  }).select(`_id ${field}`).lean();
 
-  const collisions = await Model.aggregate([
-    { $match: match },
-    { $project: { normalized: { $toString: `$${field}` } } },
-    { $group: { _id: "$normalized", count: { $sum: 1 } } },
-    { $match: { count: { $gt: 1 } } },
-    { $limit: 25 },
-  ]);
+  const counts = new Map();
+  for (const doc of docs) {
+    let normalized;
+    try {
+      normalized = normalizeIdentityValue(doc[field], { allowZero: true, toNullOnZero: false });
+    } catch (err) {
+      throw new Error(`IDENTITY_COLLISION_PREFLIGHT_INVALID:${field}:${doc._id}:${err.message}`);
+    }
+    if (normalized == null) continue;
+    counts.set(normalized, (counts.get(normalized) || 0) + 1);
+  }
 
-  return collisions;
+  return [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .slice(0, 25)
+    .map(([key, count]) => ({ _id: key, count }));
 }
 
 async function run({ dryRun = false } = {}) {
