@@ -22,6 +22,7 @@
 
 const User = require("../models/User");
 const logger = require("../utils/logger");
+const CLEANUP_CURSOR_BATCH_SIZE = Number(process.env.USER_BANK_RISK_CLEANUP_CURSOR_BATCH_SIZE || 200);
 
 /**
  * Hangi kullanıcıları tarıyoruz?
@@ -55,6 +56,7 @@ async function runUserBankRiskMetadataCleanup(now = new Date()) {
       .select(
         "profileVersion lastBankChangeAt bankChangeCount7d bankChangeCount30d bank_change_history"
       )
+      .batchSize(Number.isFinite(CLEANUP_CURSOR_BATCH_SIZE) && CLEANUP_CURSOR_BATCH_SIZE > 0 ? CLEANUP_CURSOR_BATCH_SIZE : 200)
       .cursor();
 
     for await (const user of cursor) {

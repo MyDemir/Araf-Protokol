@@ -29,19 +29,21 @@ const tradeSchema = new mongoose.Schema(
     // [TR] Kontrattaki tradeId aynası — child trade için birincil kimlik.
     // [EN] Mirror of on-chain tradeId — primary identity for child trade.
     onchain_escrow_id: {
-      type: Number,
+      type: String,
       unique: true,
       sparse: true,
       index: true,
+      match: /^\d+$/,
     },
 
     // [TR] Parent order bağı. Child trade order fill ile doğduysa set edilir.
     //      Direct escrow akışında null kalabilir.
     // [EN] Parent order linkage. Populated when the trade is spawned from an order fill.
     parent_order_id: {
-      type: Number,
+      type: String,
       default: null,
       index: true,
+      match: /^\d+$/,
     },
 
     // [TR] Trade kökeni. V3'te ana yol ORDER_CHILD'dır.

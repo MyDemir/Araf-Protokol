@@ -230,6 +230,40 @@ const authLimiter = makeSensitiveLimiter({
   inMemoryLimiter: authInMemoryLimiter,
 });
 
+// ─── SIWE Nonce Surface — Daha Dar Koruma ───────────────────────────────────
+// 1 dakikada 6 istek — IP + wallet(query) kombinasyonu
+// [TR] Nonce endpoint'i auth yüzeyinde en sık çağrılan noktalardan biri olduğu için
+//      authLimiter korunurken ek route-spesifik limiter uygulanır.
+// [EN] Keep authLimiter, add a route-specific limiter for nonce spray resistance.
+const nonceRedisLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 6,
+  keyGenerator: (req) => `${req.ip}:${String(req.query?.wallet || "anon").toLowerCase()}`,
+  store: makeStore("auth-nonce"),
+  handler: (req, res) => {
+    onLimitReached(req);
+    res.status(429).json({ error: "Çok fazla nonce isteği. Lütfen kısa bir süre sonra tekrar deneyin." });
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const nonceInMemoryLimiter = makeInMemoryLimiter({
+  label: "AUTH-NONCE",
+  windowMs: 60 * 1000,
+  max: 6,
+  keyGenerator: (req) => `${req.ip}:${String(req.query?.wallet || "anon").toLowerCase()}`,
+  errorMessage: () => ({
+    error: "Çok fazla nonce isteği. Lütfen kısa bir süre sonra tekrar deneyin.",
+  }),
+});
+
+const nonceLimiter = makeSensitiveLimiter({
+  label: "AUTH-NONCE",
+  redisLimiter: nonceRedisLimiter,
+  inMemoryLimiter: nonceInMemoryLimiter,
+});
+
 // ─── Market Read Surface — Public Okuma ─────────────────────────────────────
 // 1 dakikada 100 istek — IP bazlı
 const marketReadLimiter = rateLimit({
@@ -351,6 +385,7 @@ const listingsWriteLimiter = ordersWriteLimiterWithFallback;
 module.exports = {
   piiLimiter,
   authLimiter,
+  nonceLimiter,
   marketReadLimiter,
   ordersWriteLimiter: ordersWriteLimiterWithFallback,
   listingsReadLimiter,

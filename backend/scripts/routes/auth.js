@@ -21,7 +21,7 @@ const express = require("express");
 const Joi = require("joi");
 const router = express.Router();
 
-const { authLimiter } = require("../middleware/rateLimiter");
+const { authLimiter, nonceLimiter } = require("../middleware/rateLimiter");
 const { requireAuth, requireSessionWalletMatch } = require("../middleware/auth");
 const {
   generateNonce,
@@ -198,32 +198,10 @@ const PROFILE_SCHEMA = Joi.object({
 });
 
 /**
- * JWT cookie içinden wallet decode etmeye çalışır.
- * Refresh isteğinde body wallet yoksa fallback olarak kullanılır.
- *
- * Bu decode doğrulama yapmaz; yalnız UX kolaylığı için fallback üretir.
- */
-function _tryDecodeWalletFromJwtCookie(jwtCookie) {
-  if (!jwtCookie || typeof jwtCookie !== "string") return null;
-
-  try {
-    const parts = jwtCookie.split(".");
-    if (parts.length !== 3) return null;
-
-    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString());
-    if (typeof payload?.sub !== "string") return null;
-
-    return payload.sub.toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
-/**
  * GET /api/auth/nonce?wallet=0x...
  * Nonce üretir ve SIWE config bilgisini döndürür.
  */
-router.get("/nonce", authLimiter, async (req, res, next) => {
+router.get("/nonce", authLimiter, nonceLimiter, async (req, res, next) => {
   try {
     const { wallet } = req.query;
 
@@ -296,12 +274,10 @@ router.post("/refresh", authLimiter, async (req, res) => {
 
     let expectedWallet = req.body?.wallet;
 
-    // [TR] Body wallet opsiyoneldir.
-    //      Gönderilirse formatı doğrulanır ve token payload wallet ile eşleşmesi beklenir.
-    //      Gönderilmezse authority doğrudan refresh token payload'ından alınır.
-    if (expectedWallet == null || expectedWallet === "") {
-      expectedWallet = _tryDecodeWalletFromJwtCookie(req.cookies?.araf_jwt);
-    }
+    // [TR] Body wallet authority kaynağı değildir.
+    //      Sadece backward-compat amaçlı "expected wallet" olarak doğrulama girdiği olur.
+    // [EN] Body wallet is compatibility-only; authority comes from verified refresh token.
+    if (expectedWallet == null || expectedWallet === "") expectedWallet = null;
 
     if (expectedWallet && !/^0x[a-fA-F0-9]{40}$/.test(expectedWallet)) {
       return res.status(400).json({ error: "Wallet formatı geçersiz." });

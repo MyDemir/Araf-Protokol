@@ -16,6 +16,7 @@ describe("auth cookie policy deploy matrix", () => {
     jest.isolateModules(() => {
       jest.doMock("../scripts/middleware/rateLimiter", () => ({
         authLimiter: (_req, _res, next) => next(),
+        nonceLimiter: (_req, _res, next) => next(),
       }));
       jest.doMock("../scripts/middleware/auth", () => ({
         requireAuth: (_req, _res, next) => next(),
