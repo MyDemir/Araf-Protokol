@@ -72,6 +72,16 @@ function _envMs(name, fallbackMs) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallbackMs;
 }
 
+function _resolveIdentityGuardMode() {
+  const configured = (process.env.IDENTITY_NORMALIZATION_GUARD || "").trim().toLowerCase();
+  if (configured) return configured;
+
+  // [TR] Varsayılanı production'da enforce yapıyoruz ki migration unutulursa
+  //      sessiz false-negative drift oluşmasın.
+  // [EN] Default to enforce in production to avoid silent drift if migration is skipped.
+  return process.env.NODE_ENV === "production" ? "enforce" : "warn";
+}
+
 // [TR] Proxy arkasında gerçek client IP'yi her ortamda doğru almak için trust proxy.
 // [EN] trust proxy so real client IP is preserved behind reverse proxies.
 app.set("trust proxy", 1);
@@ -304,11 +314,11 @@ async function bootstrap() {
     await connectRedis();
     logger.info("MongoDB ve Redis bağlantıları başarıyla sağlandı.");
 
-    // [TR] Opsiyonel startup guard:
-    //      mixed numeric/string identity drift'i sessiz bırakmamak için kullanılabilir.
-    // [EN] Optional startup guard for legacy numeric identity drift.
+    // [TR] Startup guard default'u production'da enforce:
+    //      mixed identity ile sessiz bozuk runtime'a izin vermiyoruz.
+    // [EN] Startup guard defaults to enforce in production to prevent silent drift.
     await verifyIdentityNormalization({
-      mode: process.env.IDENTITY_NORMALIZATION_GUARD || "off",
+      mode: _resolveIdentityGuardMode(),
     });
 
     // [TR] V3 mutable protocol config mirror'ı yüklenir.
@@ -447,3 +457,4 @@ async function bootstrap() {
 bootstrap();
 
 module.exports = app;
+module.exports._resolveIdentityGuardMode = _resolveIdentityGuardMode;

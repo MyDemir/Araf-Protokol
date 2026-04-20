@@ -81,7 +81,9 @@ router.get("/", marketReadLimiter, async (req, res, next) => {
     const skip = (value.page - 1) * value.limit;
     const [orders, total] = await Promise.all([
       Order.find(filter)
-        .sort({ "market.exchange_rate": 1, onchain_order_id: 1 })
+        // [TR] onchain_order_id string olduğu için lexicographic sıra yanılmasını önlüyoruz.
+        // [EN] Avoid lexicographic drift from string onchain_order_id by using _id tie-break.
+        .sort({ "market.exchange_rate": 1, _id: 1 })
         .skip(skip)
         .limit(value.limit)
         .lean(),
