@@ -165,14 +165,7 @@ function _parsePositiveOnchainId(rawId) {
 }
 
 function _buildIdentityLookup(field, idString) {
-  // [TR] Legacy numeric + yeni string kimlikleri tek filtreden güvenilir eşlemek için
-  //      cast-bağımsız $expr + $toString kullanıyoruz.
-  // [EN] Cast-independent matcher for both legacy numeric and new string identities.
-  return {
-    $expr: {
-      $eq: [{ $toString: `$${field}` }, idString],
-    },
-  };
+  return { [field]: idString };
 }
 
 /**

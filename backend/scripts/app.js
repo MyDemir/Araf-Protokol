@@ -50,6 +50,7 @@ const {
 } = require("./jobs/cleanupUserBankRiskMetadata");
 
 const { getReadiness, getLiveness } = require("./services/health");
+const { verifyIdentityNormalization } = require("./services/identityNormalizationGuard");
 
 // [TR] Global Express hata yakalayıcı
 // [EN] Global Express error handler
@@ -302,6 +303,13 @@ async function bootstrap() {
     await connectDB();
     await connectRedis();
     logger.info("MongoDB ve Redis bağlantıları başarıyla sağlandı.");
+
+    // [TR] Opsiyonel startup guard:
+    //      mixed numeric/string identity drift'i sessiz bırakmamak için kullanılabilir.
+    // [EN] Optional startup guard for legacy numeric identity drift.
+    await verifyIdentityNormalization({
+      mode: process.env.IDENTITY_NORMALIZATION_GUARD || "off",
+    });
 
     // [TR] V3 mutable protocol config mirror'ı yüklenir.
     //      Config yüklenemiyorsa server tamamen çökmez; route'lar CONFIG_UNAVAILABLE dönebilir.

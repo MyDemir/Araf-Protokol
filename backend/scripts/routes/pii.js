@@ -90,8 +90,8 @@ router.get("/my", requireAuth, requireSessionWalletMatch, piiLimiter, async (req
 //      Parent order değil, gerçek escrow/trade kimliği kullanılır.
 router.get("/taker-name/:onchainId", requireAuth, requireSessionWalletMatch, piiLimiter, async (req, res, next) => {
   try {
-    const onchainId = Number(req.params.onchainId);
-    if (!Number.isInteger(onchainId) || onchainId <= 0) {
+    const onchainId = String(req.params.onchainId || "").trim();
+    if (!/^[1-9]\d*$/.test(onchainId)) {
       return res.status(400).json({ error: "Geçersiz on-chain ID formatı." });
     }
 

@@ -139,14 +139,7 @@ function _toIdentityString(v, { allowZero = false } = {}) {
 
 function _buildIdentityLookup(field, rawId) {
   const idString = _toIdentityString(rawId);
-  // [TR] Mongoose cast etkisini bypass etmek için type-agnostic $expr + $toString kullanılır.
-  //      Böylece legacy numeric ve yeni string identity dokümanları aynı filtreden yakalanır.
-  // [EN] Use uncast, type-agnostic $expr + $toString matching for legacy numeric + new string IDs.
-  return {
-    $expr: {
-      $eq: [{ $toString: `$${field}` }, idString],
-    },
-  };
+  return { [field]: idString };
 }
 
 /**

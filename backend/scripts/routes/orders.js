@@ -76,14 +76,7 @@ function _parsePositiveOnchainId(rawId) {
 }
 
 function _buildIdentityLookup(field, idString) {
-  // [TR] Mongoose cast'i nedeniyle numeric fallback'in string'e çevrilmesini önlemek için
-  //      type-agnostic $expr + $toString eşleşmesi kullanılır.
-  // [EN] Avoid cast drift by matching identity through $expr + $toString.
-  return {
-    $expr: {
-      $eq: [{ $toString: `$${field}` }, idString],
-    },
-  };
+  return { [field]: idString };
 }
 
 router.get("/config", async (_req, res, next) => {
