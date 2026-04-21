@@ -15,7 +15,7 @@
 - `RELAYER_PRIVATE_KEY` (sadece automation job açıksa)
 
 ## Deploy Sonrası Zorunlu Admin Adımları
-1. `supportedTokens(MAINNET_USDT_ADDRESS)` ve `supportedTokens(MAINNET_USDC_ADDRESS)` değerlerini `true` doğrula.
+1. `tokenConfigs(MAINNET_USDT_ADDRESS).supported` ve `tokenConfigs(MAINNET_USDC_ADDRESS).supported` değerlerini `true` doğrula.
 2. Ownership devrini doğrula (`owner()` kontrolü).
 3. Redis checkpoint anahtarını (`worker:last_block`) seed/doğrula.
 4. `/health` (liveness) ve `/ready` (readiness) endpoint'lerini doğrula.

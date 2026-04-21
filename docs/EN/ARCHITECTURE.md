@@ -1,971 +1,606 @@
-<div align="center">
+# Araf Protocol — Canonical Architecture & Technical Reference (V3 Order-First)
 
-# 🌀 Araf Protocol
-### Canonical Architecture & Technical Reference
-
-[![Version](https://img.shields.io/badge/version-2.1-00c9a7?style=flat-square)](.)
-[![Network](https://img.shields.io/badge/network-Base_L2_(8453)-0052FF?style=flat-square&logo=coinbase)](.)
-[![Status](https://img.shields.io/badge/status-Testnet_Ready-f5a623?style=flat-square)](.)
-[![Updated](https://img.shields.io/badge/updated-March_2026-purple?style=flat-square)](.)
-[![Solidity](https://img.shields.io/badge/Solidity-0.8.24-363636?style=flat-square&logo=solidity)](.)
-[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](.)
+> This document preserves the correct V3 core introduced in PR #52 and expands it back to detailed technical-reference depth.  
+> Source-of-truth order: `ArafEscrow.sol` → backend mirror/read layer → frontend guardrail layer → documentation.
 
 ---
 
-*A P2P escrow protocol that enables fiat ↔ crypto exchange in a trustless environment, **non-custodial, humanless, and oracle-independent**.*
+## 1) Executive canonical model
 
-> **"The system does not judge. It makes dishonesty expensive."**
+In Araf V3, the public market primitive is no longer listing-first; it is **parent-order first**.
 
-</div>
+- **Parent Order** = public market/order layer
+- **Child Trade** = actual escrow lifecycle (economic state machine)
+- **Contract** = single authoritative state machine
+- **Backend** = mirror + coordination + operational read layer
+- **Frontend** = UX guardrail + contract access layer
 
----
+### 1.1 Authority boundaries
+- Final state transitions and economic payouts are contract-enforced.
+- Backend is not an arbiter; it mirrors state and provides coordination surfaces.
+- Frontend is not enforcement; it is a guardrail/orchestration layer.
 
-## 📋 Table of Contents
-
-| # | Section |
-|---|---------|
-| 1 | [Vision and Core Philosophy](#1-vision-and-core-philosophy) |
-| 2 | [Hybrid Architecture: On-Chain and Off-Chain](#2-hybrid-architecture-on-chain-and-off-chain) |
-| 3 | [System Participants](#3-system-participants) |
-| 4 | [Tier and Bond System](#4-tier-and-bond-system) |
-| 5 | [Anti-Sybil Shield](#5-anti-sybil-shield) |
-| 6 | [Standard Transaction Flow (Happy Path)](#6-standard-transaction-flow-happy-path) |
-| 7 | [Dispute System — Bleeding Escrow](#7-dispute-system--bleeding-escrow) |
-| 8 | [Reputation and Penalty System](#8-reputation-and-penalty-system) |
-| 9 | [Security Architecture](#9-security-architecture) |
-| 10 | [Data Models (MongoDB)](#10-data-models-mongodb) |
-| 11 | [Treasury Model](#11-treasury-model) |
-| 12 | [Attack Vectors and Known Limitations](#12-attack-vectors-and-known-limitations) |
-| 13 | [Finalized Protocol Parameters](#13-finalized-protocol-parameters) |
-| 14 | [Future Evolution Path](#14-future-evolution-path) |
-| 15 | [Frontend UX Protection Layer](#15-frontend-ux-protection-layer-march-2026) |
+### 1.2 Practical V3 consequence
+- Market-facing primitive = parent order.
+- Escrow/dispute/release/cancel/burn semantics live at child-trade level.
+- Child-trade identity authority comes from `OrderFilled + getTrade(tradeId)`.
 
 ---
 
-## 1. Vision and Core Philosophy
+## 2) Hybrid architecture and technology stack
 
-Araf Protocol is a P2P escrow system that enables exchange between fiat currencies (TRY / USD / EUR) and crypto assets (USDT / USDC) in a trustless environment, **non-custodial, humanless, and oracle-independent**. There is no moderator, no appeal to an arbitrator, and no customer support. Disputes are resolved autonomously through on-chain timers and economic game theory.
+## 2.1 Why hybrid?
+Araf must satisfy both hard security and practical operations:
+- **On-chain:** custody, state transitions, economics, reputation enforcement
+- **Off-chain (Mongo):** read model, performance, PII and operational metadata
+- **Redis:** checkpoints, readiness, rate limiting, short-lived coordination
 
-> **"The system does not judge. It makes dishonesty expensive."**
+This yields a Web2.5 model: on-chain authority + off-chain operational acceleration.
 
-### Core Principles
+## 2.2 Layer matrix
 
-| Principle | Description |
-|-----------|-------------|
-| 🔒 **Non-Custodial** | The platform never touches user funds. All assets are locked in a transparent smart contract. |
-| 🔮 **Oracle-Independent Dispute Resolution** | No external data source determines the winning side in disputes. Resolution is entirely time-based (Bleeding Escrow). |
-| 🤖 **Humanless** | No moderators. No jury. Code and timers decide everything. |
-| ☢️ **MAD-Based Security** | Mutually Assured Destruction (MAD): dishonest behavior always becomes more expensive than honest behavior. |
-| 🔑 **Non-Custodial Backend Key Model** | The backend does not hold a custody key that controls user funds; it may have an operational automation/relayer signer, but it cannot directly move user funds. |
-
-### Boundary of Oracle Independence
-
-**Areas where oracles are NOT used:**
-- ❌ Verification of bank transfers
-- ❌ Determining the “rightful side” in disputes
-- ❌ Any external data flow that triggers escrow release
-
-**Data that lives off-chain (and why):**
-- ✅ PII data (IBAN, Telegram) — **GDPR / KVKK: Right to Be Forgotten**
-- ✅ Order book and listings — **Performance: sub-50ms queries**
-- ✅ Analytics — **User experience: real-time statistics**
-
-> **Critical distinction:** Oracles are used only for lawful data storage — **never for dispute outcomes.**
-
----
-
-## 2. Hybrid Architecture: On-Chain and Off-Chain
-
-Araf operates as a **Web2.5 Hybrid System**. Security-critical operations live on-chain; privacy- and performance-critical data lives off-chain.
-
-```mermaid
-graph TB
-    subgraph ONCHAIN ["⛓️ On-Chain — ArafEscrow.sol"]
-        A[USDT / USDC Escrow]
-        B[Trade State Machine]
-        C[Reputation Scores]
-        D[Bond Calculations]
-        E[Anti-Sybil Controls]
-    end
-
-    subgraph OFFCHAIN ["🗄️ Off-Chain — MongoDB"]
-        F[PII Data — IBAN / Name]
-        G[Order Book & Listings]
-        H[Event Cache]
-    end
-
-    subgraph MEMORY ["⚡ Memory — Redis"]
-        I[Nonce & Rate Limit]
-        J[Event Checkpoint]
-        K[DLQ & Coordination]
-    end
-
-    USER([👤 User]) -->|SIWE + JWT| BACKEND
-    BACKEND([🖥️ Backend / Relayer]) --> OFFCHAIN
-    BACKEND --> MEMORY
-    BACKEND -.->|Read-only / mirrors only| ONCHAIN
-    USER -->|signed tx| ONCHAIN
-```
-
-### Architectural Decision Matrix
-
-| Component | Storage | Technology | Rationale |
-|-----------|---------|------------|-----------|
-| USDT / USDC Escrow | 🔗 On-Chain | `ArafEscrow.sol` | Immutable, non-custodial |
-| Trade State Machine | 🔗 On-Chain | `ArafEscrow.sol` | Bleeding timer is fully autonomous |
-| Reputation Scores | 🔗 On-Chain | `ArafEscrow.sol` | Permanent, non-forgeable proof of history |
-| Bond Calculations | 🔗 On-Chain | `ArafEscrow.sol` | No backend can manipulate penalties |
-| Anti-Sybil Controls | 🔗 On-Chain | `ArafEscrow.sol` | Wallet age, dust, and cooldown rules are enforced on-chain |
-| PII Data (IBAN / Name) | 🗄️ Off-Chain | MongoDB + KMS | GDPR / KVKK: Right to Be Forgotten |
-| Order Book and Listings | 🗄️ Off-Chain | MongoDB | Sub-50ms queries |
-| Event Cache | 🗄️ Off-Chain | MongoDB | Trade state mirror for fast UI |
-| Operational Ephemeral State | ⚡ Memory | Redis | Nonce, rate limit, checkpoint, DLQ |
-
-### Technology Stack
-
-| Layer | Technology | Details |
-|-------|------------|---------|
-| Smart Contract | Solidity + Hardhat | `0.8.24`, `optimizer runs=200`, `viaIR`, `evmVersion=cancun` — Base L2 (`8453`) / Base Sepolia (`84532`) |
-| Backend | Node.js + Express | CommonJS, non-custodial relayer |
-| Database | MongoDB + Mongoose | v8.x — `maxPoolSize=100`, `socketTimeoutMS=20000`, `serverSelectionTimeoutMS=5000` |
-| Cache / Auth | Redis | v4.x — nonces, event checkpoint, DLQ, readiness gate, short-lived coordination |
-| Scheduled Jobs | Node.js jobs | Pending listing cleanup, PII/receipt retention cleanup, on-chain reputation decay, daily stats snapshot |
-| Encryption | AES-256-GCM + HKDF + KMS/Vault | Envelope encryption, deterministic per-wallet DEK, external key manager in production |
-| Authentication | SIWE + JWT (HS256) | EIP-4361, 15-minute validity |
-| Frontend | React 18 + Vite + Wagmi | Tailwind CSS, viem, EIP-712 |
-| Contract ABI | Auto-generated | `frontend/src/abi/ArafEscrow.json` |
-
-### Runtime Connectivity Policies
-
-Araf’s real runtime behavior is defined not only by technology selection but also by **connection and failure policies**.
-
-- **MongoDB pool policy:** Event replay/worker load and concurrent API traffic may hit Mongo at the same time. For this reason, the connection pool is not kept artificially low; this prevents user requests from failing due to pool saturation and `serverSelectionTimeoutMS`.
-- **Timeout alignment:** Mongo `socketTimeoutMS` is kept below the reverse proxy/CDN timeout. The goal is to avoid leaving long-lived “zombie” queries in the background after the client connection has already dropped.
-- **Fail-fast DB approach:** If the Mongo connection drops via the `disconnected` event, the process terminates itself. PM2 / Docker / the orchestrator restarts it with a clean process. A clean restart is preferred over partial reconnect.
-- **Redis readiness-first approach:** Redis being connected is not enough on its own; the application also checks `isReady`. This prevents Redis-dependent middleware from turning into a single point of failure.
-- **Managed Redis / TLS compatibility:** `rediss://` or TLS-mandatory services are supported by local configuration for secure connections. Self-signed certificate bypass exists only for development.
-
-### Zero-Trust Backend Model
-
-```text
-✅ The backend holds no custody key for user funds (it may have an operational signer)
-✅ The backend cannot release escrow (only users can sign)
-✅ The backend cannot bypass the Bleeding Escrow timer (on-chain enforced)
-✅ The backend cannot fake reputation scores (verified on-chain)
-⚠️ The backend can decrypt PII (mandatory for UX — mitigated with rate limiting + audit logs)
-```
-
-`ArafEscrow.sol` is the protocol’s **single authoritative state machine.** The backend, event listener, and Mongo mirror merely index that reality; they cannot change business rules on their own.
-
-What this means in practice:
-- `TradeState` transitions are enforced by the contract; the backend only mirrors them.
-- Tier limits, bond BPS values, maximum amounts, anti-sybil gates, and decay mathematics come from contract constants.
-- The backend provides a UX surface, but it cannot make a flow “valid” if the contract rejects it.
-- In architectural disagreements, **contract reality takes precedence**; backend mirror fields are at most cache / display convenience.
-- Event names, Mongo mirrors, route responses, and analytical summaries are **auxiliary interpretation layers**; if they conflict with contract storage or state-changing functions, they are not authoritative.
-
----
-
-## 3. System Participants
-
-| Role | Label | Capabilities | Limitations |
-|------|-------|--------------|-------------|
-| **Maker** | Seller | Opens listings. Locks USDT + bond. Can release, challenge, and propose cancellation. | Cannot be Taker on their own listing. Bond remains locked until the trade is resolved. |
-| **Taker** | Buyer | Sends fiat off-chain. Locks Taker Bond. Can report payment and approve cancellation. | Subject to anti-sybil filters. The ban gate is applied only on taker entry. |
-| **Treasury** | Protocol | Receives the 0.2% success fee + decayed/burned funds. | Initial address is set at deployment; owner can update it via `setTreasury()`. The backend cannot change it on its own. |
-| **Backend** | Relayer | Stores encrypted PII, indexes the order book, issues JWTs, serves the API. | Holds no custody key; may have an operational signer. Cannot move user funds. Cannot alter on-chain state. |
-
----
-
-## 4. Tier and Bond System
-
-The 5-level system solves the **“Cold Start” problem**: new wallets cannot access high-volume trades immediately. All bond constants are enforced on-chain and cannot be changed by the backend.
-
-> **Rule:** A user may only open listings at, or place buy orders into, tier levels equal to or lower than their current effective tier.
-
-| Tier | Crypto Limit | Maker Bond | Taker Bond | Cooldown | Access Condition |
-|------|--------------|------------|------------|----------|------------------|
-| **Tier 0** | Max. 150 USDT | 0% | 0% | 4 hours / trade | Default — all new users |
-| **Tier 1** | Max. 1,500 USDT | 8% | 10% | 4 hours / trade | ≥ 15 successful, 15 days active, ≤ 2 failed disputes |
-| **Tier 2** | Max. 7,500 USDT | 6% | 8% | Unlimited | ≥ 50 successful, ≤ 5 failed disputes |
-| **Tier 3** | Max. 30,000 USDT | 5% | 5% | Unlimited | ≥ 100 successful, ≤ 10 failed disputes |
-| **Tier 4** | Unlimited | 2% | 2% | Unlimited | ≥ 200 successful, ≤ 15 failed disputes |
-
-> Limits are calculated **entirely in crypto assets (USDT/USDC)** — fiat exchange rates are not considered when determining limits, in order to prevent rate manipulation.
-
-The contract does not trust frontend or backend assumptions; tier access and bond logic are enforced directly on-chain. In `createEscrow()`, the maker cannot exceed the requested tier; in `lockEscrow()`, the taker’s effective tier must satisfy the relevant trade tier. Maximum escrow amounts for Tiers 0–3 are fixed in the contract; Tier 4 is intentionally left unlimited. The clean reputation discount (`GOOD_REP_DISCOUNT_BPS`) and bad reputation penalty (`BAD_REP_PENALTY_BPS`) are also applied inside the contract to maker/taker bond calculations.
-
-### Effective Tier Calculation
-
-```mermaid
-flowchart LR
-    A["Reputation-Based Tier\n(successfulTrades + failedDisputes)"] --> C{"MIN(A, B)"}
-    B["Penalty-Based Tier Ceiling\n(maxAllowedTier)"] --> C
-    C --> D["Effective Tier"]
-
-    style C fill:#f5a623,color:#000
-    style D fill:#00c9a7,color:#000
-```
-
-A user’s maximum tradable tier is determined by taking the **lower** of two values:
-1. **Reputation-Based Tier:** the level reached according to `successfulTrades` and `failedDisputes`
-2. **Penalty-Based Tier Ceiling (`maxAllowedTier`):** the upper bound imposed due to ban/penalty history
-
-**Additional rule:** Even if a user reaches the Tier 1+ threshold through success count, their effective tier cannot rise above 0 until at least **15 days** (`MIN_ACTIVE_PERIOD`) have passed since their first successful trade. In other words, performance alone is not enough; the time component is also enforced by the contract. For example, even if a user appears to be Tier 3 by reputation, if a penalty results in `maxAllowedTier = 1`, they may only trade in Tier 0 and Tier 1.
-
-### Reputation-Based Bond Modifiers
-
-| Condition | Effect |
-|-----------|--------|
-| 0 failed disputes + at least 1 successful trade | **−1%** bond discount (clean history reward) |
-| 1 or more failed disputes | **+3%** bond penalty |
-
-These modifiers are applied on top of the base bond rates for Tiers 1–4; **they do not apply to Tier 0.** This rewards good history with lower friction, while wallets with a dispute history carry higher economic risk.
-
----
-
-## 5. Anti-Sybil Shield
-
-Four on-chain filters run before every `lockEscrow()` call. The backend **cannot bypass or invalidate** them.
-
-| Filter | Rule | Purpose |
-|--------|------|---------|
-| 🚫 **Self-Trade Block** | `msg.sender ≠ maker address` | Prevents fake trades on one’s own listings |
-| 🕐 **Wallet Age** | Registration ≥ 7 days before first trade | Blocks newly created Sybil wallets |
-| 💰 **Dust Limit** | Native balance ≥ `0.001 ether` | Blocks zero-balance disposable wallets |
-| ⏱️ **Tier 0 / 1 Cooldown** | Maximum 1 trade per 4 hours | Limits bot-scale spam attacks in low-bond tiers |
-| 🔔 **Challenge Ping Cooldown** | After `PAID`, `pingTakerForChallenge` requires a wait of ≥ 24 hours | Prevents erroneous challenges and instant harassment |
-| 🔒 **Ban Gate (taker role only)** | `notBanned` is enforced only at `lockEscrow()` entry | Prevents a banned wallet from entering a new trade as buyer; does not by itself freeze maker role or current trade closures |
-
-<details>
-<summary>📄 Related Contract Functions</summary>
-
-| Function | Description |
-|----------|-------------|
-| `registerWallet()` | Allows a wallet to begin the 7-day “wallet aging” process. It is a mandatory prerequisite for the Anti-Sybil check inside `lockEscrow()`. |
-| `antiSybilCheck(address)` | An informational `view` helper that returns `aged`, `funded`, and `cooldownOk` fields. It exists for UX and pre-notification; the binding decision is still made inside `lockEscrow()`. |
-| `getCooldownRemaining(address)` | Returns the remaining time in the cooldown window. Useful to tell the user “how long do I need to wait?”; it does not itself enforce the cooldown rule. |
-
-</details>
-
----
-
-## 6. Standard Transaction Flow (Happy Path)
-
-```mermaid
-sequenceDiagram
-    participant M as 👤 Maker
-    participant SC as ⛓️ ArafEscrow.sol
-    participant T as 👤 Taker
-    participant B as 🖥️ Backend
-
-    M->>B: POST /api/listings (generate listing_ref)
-    B-->>M: listing_ref ✓
-    M->>SC: createEscrow(token, amount, tier, listingRef)
-    SC-->>SC: USDT + Maker Bond locked → OPEN
-    SC-->>B: emit EscrowCreated
-    B-->>B: Listing → moves to OPEN state
-
-    T->>SC: lockEscrow(tradeId) [Anti-Sybil passes]
-    SC-->>SC: Taker Bond locked → LOCKED
-
-    T->>B: POST /api/receipts/upload (encrypted receipt)
-    B-->>T: SHA-256 hash
-    T->>SC: reportPayment(tradeId, ipfsHash)
-    SC-->>SC: 48-hour Grace Period starts → PAID
-
-    M->>SC: releaseFunds(tradeId)
-    SC-->>SC: 0.2% fee is deducted → RESOLVED ✅
-    SC-->>T: USDT is sent
-    SC-->>M: Maker bond is returned
-    SC-->>T: Taker bond is returned
-```
-
-### State Definitions
-
-| State | Trigger | Description |
-|-------|---------|-------------|
-| `OPEN` | Maker `createEscrow()` | Listing is live. USDT + Maker bond are locked on-chain. |
-| `LOCKED` | Taker `lockEscrow()` | Anti-Sybil passed. Taker bond is locked on-chain. |
-| `PAID` | Taker `reportPayment()` | IPFS receipt hash was recorded on-chain. The 48-hour timer has started. |
-| `RESOLVED` ✅ | Maker `releaseFunds()` | 0.2% fee taken. USDT → Taker. Bonds returned. |
-| `CANCELED` 🔄 | 2/2 EIP-712 signature | In `LOCKED`: full refund, no fee. In `PAID` or `CHALLENGED`: 0.2% protocol fee is deducted from remaining amounts, net amounts are refunded. In both cases, no reputation penalty is applied. |
-| `BURNED` 💀 | `burnExpired()` after 240 hours | All remaining funds → Treasury. |
-
-### Fee Model
-
-| Side | Deduction | Source |
-|------|-----------|--------|
-| Taker fee | 0.1% | From the USDT received by the Taker |
-| Maker fee | 0.1% | From the Maker’s bond refund |
-| **Total** | **0.2%** | On every successfully resolved trade |
-
-### Listing Lifecycle
-
-1. The Maker calls `POST /api/listings`.
-2. The backend verifies session wallet consistency and the on-chain `effectiveTier` value.
-3. The listing is first created in MongoDB as `PENDING`; `listing_ref` is derived deterministically.
-4. The frontend/contract flow emits the `EscrowCreated` event.
-5. The event listener moves the relevant record to `OPEN` and makes it visible in the marketplace.
-6. If the listing never lands on-chain, a cleanup job sweeps the record to `DELETED` after 12 hours.
-
-This flow keeps the marketplace display fast while leaving authority on-chain; the backend cannot fabricate a “real” open listing on its own.
-
-### Canonical Creation Path and Pause Semantics
-
-The only valid way to create an escrow in the contract is the call `createEscrow(token, amount, tier, listingRef)`. The legacy three-parameter overload now intentionally reverts with `InvalidListingRef()`. This prevents the creation of escrows that are anonymous or detached from the canonical linkage.
-
-Also, the `pause()` state does not freeze the entire system:
-- **New** `createEscrow()` and `lockEscrow()` calls stop.
-- Closure paths for existing trades such as `releaseFunds`, `autoRelease`, `proposeOrApproveCancel`, and `burnExpired` remain open.
-
-This choice prevents new risk from being taken in emergency mode while also preventing live trades from remaining locked forever and trapping users indefinitely.
-
----
-
-## 7. Dispute System — Bleeding Escrow
-
-There is no arbitrator in the Araf Protocol. Instead, an **asymmetric time-decay mechanism** is used. The longer one side refuses to cooperate, the more it loses.
-
-```mermaid
-stateDiagram-v2
-    [*] --> PAID
-
-    PAID --> RESOLVED_1 : Maker releaseFunds() ✅
-    PAID --> AUTO_RELEASE_PATH : 48h passed, Taker pingMaker()
-    PAID --> CHALLENGE_PATH : 24h passed, Maker pingTakerForChallenge()
-
-    AUTO_RELEASE_PATH --> RESOLVED_2 : +24h Taker autoRelease() ✅\n(Maker +1 Failure, 2% neglect penalty)
-
-    CHALLENGE_PATH --> CHALLENGED : +24h Maker challengeTrade()
-
-    state CHALLENGED {
-        [*] --> GRACE_PERIOD
-        GRACE_PERIOD --> BLEEDING : No agreement after 48 hours
-        GRACE_PERIOD --> CANCELED_GP : 2/2 EIP-712 Cancel 🔄
-        GRACE_PERIOD --> RESOLVED_GP : Mutual release ✅
-
-        state BLEEDING {
-            [*] --> DECAYING
-            DECAYING --> RESOLVED_B : releaseFunds() ✅
-            DECAYING --> CANCELED_B : 2/2 Cancel 🔄
-            DECAYING --> BURNED : 240 hours → burnExpired() 💀
-        }
-    }
-
-    RESOLVED_1 : RESOLVED ✅
-    RESOLVED_2 : RESOLVED ✅
-    RESOLVED_GP : RESOLVED ✅
-    RESOLVED_B : RESOLVED ✅
-    CANCELED_GP : CANCELED 🔄
-    CANCELED_B : CANCELED 🔄
-    BURNED : BURNED 💀\nAll funds → Treasury
-```
-
-### Bleeding Decay Rates
-
-| Asset | Rate | Start | Daily Effect |
-|-------|------|-------|--------------|
-| **Taker Bond** | 42 BPS / hour | Hour 0 of Bleeding | ~10.1% / day |
-| **Maker Bond** | 26 BPS / hour | Hour 0 of Bleeding | ~6.2% / day |
-| **Escrowed Crypto** | 34 BPS / hour | Hour **96** of Bleeding | ~8.2% / day |
-
-> **Why hour 96?** A 48-hour grace period + a 96-hour buffer against weekend banking delays. It protects honest parties from immediate loss while preserving urgency.
-
-Bleeding decay is not a single-line item. The contract applies 26 BPS/hour to the **maker bond**, 42 BPS/hour to the **taker bond**, and 34 BPS/hour to the **escrowed crypto**. `totalDecayed` is the sum of these three components.
-
-### Mutually Exclusive Ping Paths
-
-```mermaid
-flowchart TD
-    PAID([PAID]) --> MakerPing["Maker pingTakerForChallenge()"]
-    PAID --> TakerPing["Taker pingMaker()"]
-
-    MakerPing -->|24 hours later| Challenge["Maker challengeTrade()"]
-    TakerPing -->|24 hours later| AutoRelease["Taker autoRelease()"]
-
-    MakerPing -. "ConflictingPingPath\nError" .-> TakerPing
-
-    style MakerPing fill:#f5a623,color:#000
-    style TakerPing fill:#0090ff,color:#fff
-    style Challenge fill:#ff4d6a,color:#fff
-    style AutoRelease fill:#22c55e,color:#000
-```
-
-> These two paths exclude each other via the `ConflictingPingPath` error — preventing two contradictory forced-resolution lines from being opened in parallel for the same trade. If the maker has opened the challenge window, the taker cannot start the auto-release ping path for that same trade; if the taker has opened the auto-release path, the maker cannot later switch into the challenge ping path.
-
-### Mutual Cancel (EIP-712)
-
-Both parties may propose a mutual exit in `LOCKED`, `PAID`, or `CHALLENGED` state.
-
-**Important contract reality:** The current contract does not provide a batch path in which two signatures are collected off-chain by the backend and then submitted by a third-party relayer. Each side must separately confirm on-chain using its own account. The backend only serves as a coordination and UX facilitator.
-
-Signature type: `CancelProposal(uint256 tradeId, address proposer, uint256 nonce, uint256 deadline)`
-
-> `sigNonces` counters are **global per wallet** — a signature stored off-chain may become stale after another trade action.
-
-The economic outcome is determined inside the contract via `_executeCancel()`:
-- the decayed (`decayed`) portion goes to the Treasury first,
-- in `PAID` / `CHALLENGED` states, standard protocol fees are applied,
-- the remaining net amounts are refunded,
-- no additional reputation penalty is written.
-
-<details>
-<summary>📄 Related Contract Functions</summary>
-
-| Function | Description |
-|----------|-------------|
-| `pingTakerForChallenge(tradeId)` | Mandatory prerequisite for `challengeTrade()`. |
-| `challengeTrade(tradeId)` | Starts the Bleeding Escrow phase by challenging after 24 hours. |
-| `pingMaker(tradeId)` | Sends a signal to the Maker after the 48-hour grace period. Prerequisite for `autoRelease()`. |
-| `autoRelease(tradeId)` | Allows the Taker to release funds unilaterally after 24 hours. |
-| `proposeOrApproveCancel(...)` | Proposes or approves a mutual cancel using an EIP-712 signature. |
-| `burnExpired(tradeId)` | Transfers all funds to the Treasury after 10 days of bleeding. **Permissionless** — anyone may call it. |
-| `getCurrentAmounts(tradeId)` | Returns the current economic state directly from the contract after Bleeding. |
-
-</details>
-
----
-
-## 8. Reputation and Penalty System
-
-### Reputation Update Logic
-
-| Outcome | Maker | Taker |
-|---------|-------|-------|
-| Closed without dispute (RESOLVED) | +1 Successful | +1 Successful |
-| Maker challenged → then released | +1 Failed | +1 Successful |
-| `autoRelease` — Maker remained inactive for 48 hours | +1 Failed | +1 Successful |
-| BURNED (10-day timeout) | +1 Failed | +1 Failed |
-
-### Ban Escalation
-
-**Trigger:** The first ban starts at the threshold `failedDisputes >= 2`. Once the threshold is crossed, **every new failure** triggers punishment again; the model is not “once every two failures,” but rather follows a logic where the `consecutiveBans` counter increases again with each additional failure.
-
-> The ban is applied **only to the Taker** — the `notBanned` modifier exists only on `lockEscrow()`. That means a banned wallet cannot enter a new trade as a buyer, but opening listings as a maker or closing existing trades is not automatically blocked by this modifier.
-
-| Ban Count | Duration | Tier Effect |
-|-----------|----------|-------------|
-| 1st ban | 30 days | No tier change |
-| 2nd ban | 60 days | `maxAllowedTier −1` |
-| 3rd ban | 120 days | `maxAllowedTier −1` |
-| Nth ban | `30 × 2^(N−1)` days (max. 365) | `maxAllowedTier −1` on every ban (floor: Tier 0) |
-
-> **Tier Ceiling Enforcement:** If the requested tier in `createEscrow()` exceeds the user’s `maxAllowedTier`, the transaction reverts. For example, if a Tier 3 user receives their second ban, `maxAllowedTier` drops to 2, and they can no longer open Tier 3 or Tier 4 listings.
-
-### Clean Slate Rule (`decayReputation`)
-
-After 180 days:
-- `consecutiveBans` resets to zero
-- the `hasTierPenalty` flag is cleared
-- `maxAllowedTier` is restored to 4
-
-It is a **permissionless maintenance call** — the user, the backend relayer, or any third party may call it.
-
-> `decayReputation()` resets only `consecutiveBans` and the tier ceiling penalty; `failedDisputes` and the historical `bannedUntil` trace remain.
-
-### Authoritative Reputation Note
-
-The binding source of reputation is the contract’s `reputation` mapping. Backend fields such as `reputation_cache`, `reputation_history`, `banned_until`, and similar values exist only for mirroring / analytics / display purposes; by themselves they are not an enforcement source.
-
----
-
-## 9. Security Architecture
-
-### 9.1 Authentication Flow (SIWE + JWT)
-
-```mermaid
-sequenceDiagram
-    participant FE as 🌐 Frontend
-    participant BE as 🖥️ Backend
-    participant RD as ⚡ Redis
-
-    FE->>BE: GET /api/auth/nonce
-    BE->>RD: SET NX (nonce, 5 min TTL)
-    RD-->>BE: nonce
-    BE-->>FE: { nonce, siweDomain, siweUri }
-
-    FE->>FE: EIP-4361 SIWE message is signed
-    FE->>BE: POST /api/auth/verify { message, signature }
-    BE->>RD: getDel(nonce) — atomic consumption
-    BE->>BE: SiweMessage.verify() + domain check
-    BE-->>FE: JWT → httpOnly araf_jwt cookie
-
-    FE->>BE: GET /api/auth/me { x-wallet-address }
-    BE->>BE: cookie wallet === x-wallet-address?
-    alt No match
-        BE->>BE: Session invalidate
-        BE-->>FE: 409 SESSION_WALLET_MISMATCH
-    else Match
-        BE-->>FE: { wallet, ... } ✓
-    end
-```
-
-**Core security decisions:**
-
-| Decision | Description |
-|----------|-------------|
-| **Cookie-only auth** | The auth JWT is written only to the httpOnly `araf_jwt` cookie; Bearer fallback is disabled for normal auth. |
-| **Nonce atomicity** | After a `SET NX` race, the losing side re-reads the nonce that already exists in Redis — no drift occurs. |
-| **Route-level wallet authority** | `requireSessionWalletMatch` matches the `x-wallet-address` header against the session wallet inside the cookie; the header alone is not an auth source. |
-| **Session mismatch behavior** | On mismatch, the session is actively terminated; cookies are cleared, the refresh token family is invalidated, and `409 SESSION_WALLET_MISMATCH` is returned. |
-| **Refresh token family** | On a reuse attempt, **all families** belonging to that wallet are shut down. |
-| **JWT blacklist fail-mode** | Default is **fail-closed** in production, **fail-open** in development. |
-| **JWT secret requirement** | Minimum length, placeholder ban, and Shannon entropy check — if insufficient, the service does not start. |
-| **PII token separation** | PII access is separated from the normal auth cookie and handled with a short-lived, trade-scoped bearer token. |
-
-> The frontend does not assume a signed session is passively valid; it verifies `/api/auth/me` against the connected wallet context. If the connected wallet and the backend session wallet diverge, the local session is cleared and the user is forced to sign again.
-
-### 9.2 PII Encryption (Envelope Encryption)
-
-```mermaid
-flowchart LR
-    MK["🔑 Master Key\n(AWS KMS / Vault)"] --> HKDF
-    WALLET["👤 wallet address"] --> HKDF["HKDF SHA-256\nRFC 5869"]
-    HKDF --> DEK["🗝️ DEK\n(deterministic per wallet)"]
-    DEK --> AES["AES-256-GCM"]
-    PII["📋 Plaintext PII\n(IBAN, Name, Telegram)"] --> AES
-    AES --> CIPHER["🔒 iv(12B) + authTag(16B) + ciphertext\nhex-encoded → MongoDB"]
-```
-
-| Feature | Value |
-|---------|-------|
-| Algorithm | AES-256-GCM (authenticated encryption) |
-| Key Derivation | Node.js native `crypto.hkdf()` — HKDF (SHA-256, RFC 5869) |
-| Salt Policy | Wallet-dependent deterministic salt derivation — fixed for the same wallet, different across wallets |
-| DEK Scope | Deterministic per wallet — not stored, re-derived on demand |
-| Ciphertext Format | `iv(12B) + authTag(16B) + ciphertext` hex-encoded |
-| Master Key Source | Development: `.env` / Production: **AWS KMS** or **HashiCorp Vault** |
-| Production Protection | `KMS_PROVIDER=env` is intentionally blocked when `NODE_ENV=production` |
-| Master Key Cache | Short-lived in-memory cache to reduce KMS/Vault call cost; cleared on shutdown/rotation |
-| IBAN Access Flow | Auth JWT → PII token (15 min, trade-scoped) → live trade status check → decryption |
-
-> Plaintext PII is never written to persistent storage. The route layer acts only as a validation/normalization surface; persistent records contain only encrypted fields.
-
-### 9.3 Rate Limiting
-
-| Endpoint Group | Limit | Window | Key |
-|----------------|-------|--------|-----|
-| PII / IBAN | 3 requests | 10 minutes | IP + Wallet |
-| Auth (SIWE) | 10 requests | 1 minute | IP |
-| Listings (read) | 100 requests | 1 minute | IP |
-| Listings (write) | 5 requests | 1 hour | Wallet |
-| Trades | 30 requests | 1 minute | Wallet |
-| Feedback | 3 requests | 1 hour | Wallet |
-| Client error log | Limited / truncated payload | Short window | IP |
-
-> On the auth surface, an **in-memory fallback limiter** activates and returns `429` when Redis is unavailable. Other surfaces follow a general fail-open behavior; however, health, readiness, and bootstrap checks additionally protect service safety.
-
-<details>
-<summary>📄 Event Listener Reliability (9.4)</summary>
-
-- **State machine:** Worker `booting → connected → replaying → live → reconnecting → stopped`
-- **Safe Checkpoint:** Only blocks for which all events have been successfully acked are checkpointed
-- **DLQ:** Failed events are kept in the Redis list `worker:dlq`; exponential backoff (max. 30 min)
-- **Poison Event Policy:** Not auto-deleted — remains visible for manual inspection
-- **Authoritative Linkage:** `EscrowCreated` is matched only through canonical `listing_ref` — zero ref is a critical integrity violation, with no heuristic fallback
-- **Atomic Binding:** `Listing.onchain_escrow_id` is bound only via atomic update
-- **Atomic Finalization:** `EscrowReleased` and `EscrowBurned` flows run through a Mongo transaction
-- **Mirror warning:** `EscrowReleased` and `EscrowCanceled` event names do not by themselves carry full economic context; backend analytics must interpret state and call context together.
-
-</details>
-
-<details>
-<summary>📄 Bootstrap, Middleware, Health, and Shutdown Orchestration (9.5)</summary>
-
-**Bootstrap order:**
-```text
-load .env → connect MongoDB → connect Redis → load on-chain config
-→ start event worker → install schedulers → mount HTTP routes
-```
-
-**Core middleware chain:** `helmet` + `cors(credentials=true)` + `express.json(50kb)` + `cookieParser` + `express-mongo-sanitize`
-
-**Health / readiness principles:**
-- Redis is evaluated not only by connection status but also through `isReady`-like readiness logic.
-- If the Mongo connection falls into `disconnected`, the process shuts down under a fail-fast approach; a clean restart is preferred.
-- `SIWE_DOMAIN`, `SIWE_URI`, CORS, and core env security checks are applied fail-fast.
-
-**Safe crash logging principles:**
-- Client-side crash logs are sent best-effort to the backend after PII scrubbing.
-- If `VITE_API_URL` is undefined, the client in production does not leak logs to the wrong fallback target.
-- Log payload is truncated; `componentStack` and route context are diagnostic but bounded.
-
-**Shutdown order:**
-```text
-server.close() → stop worker → close Mongo → Redis quit()
-→ zero master key cache → clear timers → force-exit timeout
-```
-
-**Fail-fast startup rules:**
-- In production, `SIWE_DOMAIN=localhost` → does not start
-- Empty/`*` CORS origins → do not start
-- If `SIWE_URI` is not `https` → does not start
-- Insecure KMS/env combinations in production → do not start
-
-</details>
-
----
-
-## 10. Data Models (MongoDB)
-
-> **Critical principle:** On-chain fields represent authoritative reality. Fields such as `reputation_cache`, `banned_until`, and `crypto_amount_num` are **mirrors for speed and display only** — they are not used by themselves for authorization or economic enforcement.
-
-### 10.1 Users
-
-| Field | Type | Description |
-|------|------|-------------|
-| `wallet_address` | String (unique) | Lowercase Ethereum address — primary identity |
-| `pii_data.bankOwner_enc` | String | AES-256-GCM encrypted bank account owner name |
-| `pii_data.iban_enc` | String | AES-256-GCM encrypted IBAN |
-| `pii_data.telegram_enc` | String | AES-256-GCM encrypted Telegram username |
-| `reputation_cache.total_trades` | Number | Mirror of total successfully completed trade count |
-| `reputation_cache.failed_disputes` | Number | Mirror of failed dispute count |
-| `reputation_cache.success_rate` | Number | UI-calculated success rate |
-| `reputation_cache.failure_score` | Number | Weighted failure score |
-| `reputation_history` | Array | Failed dispute history with decreasing effect over time |
-| `is_banned` / `banned_until` | Boolean / Date | Mirror of on-chain ban state |
-| `consecutive_bans` | Number | Mirror of on-chain consecutive ban count |
-| `max_allowed_tier` | Number | Mirror of penalty-based tier ceiling |
-| `last_login` | Date | TTL: auto-delete after 2 years of inactivity (GDPR) |
-
-**Model notes**
-- `toPublicProfile()` returns only explicitly selected public fields via an allowlist/fail-safe approach.
-- `checkBanExpiry()` permanently corrects the mirror via `save()` if the ban duration has passed; it does not only flip an in-memory flag.
-- `reputation_cache` and ban fields exist for fast UI rendering; when final authority is needed, the source is on-chain data.
-
-### 10.2 Listings
-
-| Field | Type | Description |
-|------|------|-------------|
-| `maker_address` | String | Address of the listing creator |
-| `crypto_asset` | `USDT` \| `USDC` | Asset being sold |
-| `fiat_currency` | `TRY` \| `USD` \| `EUR` | Requested fiat currency |
-| `exchange_rate` | Number | Rate per 1 unit of crypto |
-| `limits.min` / `limits.max` | Number | Fiat amount range per trade |
-| `tier_rules.required_tier` | 0–4 | Minimum tier required to take this listing |
-| `tier_rules.maker_bond_pct` | Number | Maker bond percentage |
-| `tier_rules.taker_bond_pct` | Number | Taker bond percentage |
-| `status` | `PENDING\|OPEN\|PAUSED\|COMPLETED\|DELETED` | `PENDING` = not yet written on-chain |
-| `onchain_escrow_id` | Number \| null | On-chain `tradeId` once escrow is created |
-| `listing_ref` | String | 64-byte hex reference; sparse+unique |
-| `token_address` | String | ERC-20 contract address on Base |
-
-**Model notes**
-- The rule `limits.max > limits.min` is enforced at the model level.
-- `PENDING` is not a permanent business state; it is the synchronization window between frontend/backend and on-chain.
-- Records that remain `PENDING` for a long time with `onchain_escrow_id = null` may be swept to `DELETED` by a cleanup job.
-- `GET /api/listings` returns only `OPEN` records; pagination runs with deterministic ordering.
-- If the backend cannot validate the on-chain `effectiveTier` while creating a listing, it does not safely fall back to Tier 0; it rejects the request.
-
-### 10.3 Trades
-
-| Field Group | Core Fields | Notes |
-|------------|-------------|-------|
-| Identity | `onchain_escrow_id`, `listing_id`, `maker_address`, `taker_address` | `onchain_escrow_id` = source of truth |
-| Financial | `crypto_amount` **(String, authoritative)**, `crypto_amount_num` (Number, cache), `fiat_amount`, `exchange_rate`, `total_decayed` **(String)**, `total_decayed_num` (Number, cache) | `*_num` fields are for analytics/UI only |
-| Status | `status` | `OPEN\|LOCKED\|PAID\|CHALLENGED\|RESOLVED\|CANCELED\|BURNED` |
-| Timers | `locked_at`, `paid_at`, `challenged_at`, `resolved_at`, `last_decay_at`, `pinged_at`, `challenge_pinged_at` | Mirror the dispute and decay timeline |
-| Evidence | `evidence.ipfs_receipt_hash`, `evidence.receipt_encrypted`, `evidence.receipt_timestamp`, `evidence.receipt_delete_at` | Hash is the on-chain reference; payload is encrypted in the backend |
-| PII Snapshot | `pii_snapshot.*` | Frozen view of the counterparty’s data at LOCKED time — reduces bait-and-switch risk |
-| Cancel Proposal | `cancel_proposal.*` | Collected signatures and deadline for mutual cancellation |
-| Chargeback Acknowledgment | `chargeback_ack.*` | Maker’s legal acknowledgment record before `releaseFunds` |
-| Tier | `tier` (0–4) | Tier at the time the trade was opened |
-
-> For financial precision, `crypto_amount` and `total_decayed` are stored as **String** — BigInt-safe authoritative values.
-
-**Model notes**
-- Receipt data is not an actual public IPFS payload; even though the historical name is preserved, it is stored backend-side as AES-256-GCM encrypted data.
-- `pii_snapshot` freezes the counterparty information at LOCKED time.
-- Fields such as `isInGracePeriod` and `isInBleedingPhase` are runtime calculation conveniences, not query sources.
-- Trade read endpoints should return narrowed, safe projections instead of the full document.
-
-### 10.4 Feedback
-
-| Field | Type | Description |
-|------|------|-------------|
-| `wallet_address` | String | Wallet that submitted the feedback |
-| `rating` | 1–5 | Required star rating |
-| `comment` | String | Comment up to 1000 characters |
-| `category` | `bug` \| `suggestion` \| `ui/ux` \| `other` | Route-validation-synchronized category |
-| `created_at` | Date | Record date |
-
-**Model notes**
-- The feedback model is lightweight and operational; it does not create protocol authority.
-- `POST /api/feedback` is behind auth and rate limits; anonymous feedback is not accepted.
-- `created_at` has a 1-year TTL.
-
-### 10.5 Daily Statistics
-
-| Field | Type | Description |
-|------|------|-------------|
-| `date` | `YYYY-MM-DD` String | Unique daily key |
-| `total_volume_usdt` | Number | Total volume of resolved trades |
-| `completed_trades` | Number | Total completed trade count at daily snapshot time |
-| `active_listings` | Number | Number of open listings at snapshot time |
-| `burned_bonds_usdt` | Number | Total decayed/burned amount |
-| `avg_trade_hours` | Number \| null | Average resolution duration (hours) |
-| `created_at` | Date | Time the snapshot was created |
-
-**Model notes**
-- `date` is the unique key; a second snapshot on the same day does not create a new row.
-- `/api/stats` uses this collection to produce 30-day trend and comparison data without scanning the trades collection on every request.
-- This surface exists for fast display and analytics; it is not a one-to-one live mirror of contract storage.
-
----
-
-## 11. Treasury Model
-
-| Revenue Source | Rate | Condition |
-|----------------|------|-----------|
-| Success fee | 0.2% (0.1% from each side) | Every `RESOLVED` trade |
-| Taker bond decay | 42 BPS / hour | `CHALLENGED` + Bleeding phase |
-| Maker bond decay | 26 BPS / hour | `CHALLENGED` + Bleeding phase |
-| Escrowed crypto decay | 34 BPS / hour | After hour 96 of Bleeding |
-| BURNED result | 100% of remaining funds | No settlement within 240 hours |
-
-### Related Contract Functions
-
-| Function | Description |
-|----------|-------------|
-| `setTreasury(address)` | Callable only by owner; updates the treasury address where protocol fees and decay/burn revenue will flow. |
-| `setSupportedToken(address, bool)` | Manages the supported ERC-20 list; determines which tokens the create/lock surface is open for. |
-| `pause()` / `unpause()` | Stops or re-opens only new create/lock flows; does not lock the closure functions of existing trades. |
-
-> The treasury address is supplied at deployment, but it is not immutable; it can be updated by the owner. Therefore, the economic-flow trust model cannot rely only on an assumption of a fixed deploy-time address.
-
----
-
-## 12. Attack Vectors and Known Limitations
-
-<details>
-<summary>✅ Mitigated Vectors</summary>
-
-| Attack | Risk | Mitigation |
-|--------|------|------------|
-| Self-trading | High | On-chain `msg.sender ≠ maker` |
-| Backend key theft | Critical | Zero private-key architecture — relayer only |
-| JWT compromise | High | 15 min validity + cookie-only auth + strict wallet authority check |
-| PII data leak | Critical | AES-256-GCM + HKDF + rate limit (3 / 10 min) + retention cleanup |
-| `.env` master key in production | Critical | `KMS_PROVIDER=env` is blocked in production |
-| Receipt evidence overwrite | Critical | Atomic `findOneAndUpdate` + `evidence.receipt_encrypted: null` filter |
-| Rate manipulation | Critical | Tier limits are enforced on-chain via absolute crypto amount |
-| Redis single point of failure | High | Fail-open (general) + in-memory fallback limiter (auth) + readiness-first approach |
-| DLQ event loss | High | Re-drive worker + poison event metrics + archiving |
-| Zero `listingRef` | Critical | Zero ref = critical integrity violation; no heuristic fallback |
-| Silent live-checkpoint data loss | Critical | `seen/acked/unsafe` block tracking |
-| SIWE nonce race | High | `SET NX` + atomic re-read + `getDel` consumption |
-| Weak JWT secret | Critical | Min. length + placeholder ban + entropy check + startup fail-fast |
-| Challenge spam (Tier 0/1) | High | 4-hour cooldown + dust limit + wallet age |
-| Wrong network / missing contract address write | Medium/High | Frontend preflight guard + contract-side enforcement |
-
-</details>
-
-<details>
-<summary>⚠️ Open Notes (Unresolved / Requires Monitoring)</summary>
-
-| Attack / Risk | Risk | Note |
-|---------------|------|------|
-| Fake receipt upload | High | Bond penalty is deterrent but full mitigation is difficult |
-| Chargeback (TRY reversal) | Medium | IP hash + audit log exist, but cannot be fully prevented |
-| Backend interpretation layer overtaking contract authority | Critical | Regular contract-authoritative review is required |
-| Mutual cancel narrative being mistaken for a batch model | High | Each side must call `proposeOrApproveCancel()` from its own account; off-chain signature coordination is not authority |
-| `EscrowReleased` / `EscrowCanceled` event names being assumed singular | Medium | The same event name is used across different closure paths |
-| Underestimating the owner governance surface | High | `setTreasury`, `setSupportedToken`, and `pause` directly affect economic flow |
-| Assuming `getReputation()` output covers full state | Medium | Additional reads are required for `hasTierPenalty`, `maxAllowedTier`, `consecutiveBans` |
-| Frontend EIP-712 domain drift risk | High | The hook defines the domain statically; if the contract changes, signatures become invalid |
-| Assuming a banned wallet is fully excluded from the protocol | Medium | The ban gate is enforced only on taker-side `lockEscrow()` entry |
-| Assuming `decayReputation()` is full reputation amnesty | High | It resets only `consecutiveBans` and the tier ceiling penalty; the historical trace remains |
-| Assuming off-chain stored mutual-cancel signatures are always valid | Medium | `sigNonces` are global per wallet; another cancel flow may stale the signature |
-| Assuming `burnExpired()` can be called only by the parties | Medium | Once the timer expires, permissionless finalization is possible |
-| Assuming the treasury address is immutable | Medium | Owner can update it via `setTreasury()` |
-| Assuming the supported token set is static | Medium | `supportedTokens` can be changed by the owner at runtime |
-| Assuming terms modal / toast / banners are enforcement | Medium | These are UX guidance layers; the decision authority is the contract and backend guards |
-
-</details>
-
----
-
-## 13. Finalized Protocol Parameters
-
-> All values below are deployed as Solidity `public constant` values — **they cannot be changed by the backend.** If the contract address / RPC is missing, the system enters `CONFIG_UNAVAILABLE` state and relevant routes return `503`.
-
-| Parameter | Value | Contract Constant |
-|-----------|-------|-------------------|
-| Network | Base (Chain ID 8453) / Base Sepolia (84532) | — |
-| Protocol fee | 0.2% (0.1% from each side) | `TAKER_FEE_BPS = 10`, `MAKER_FEE_BPS = 10` |
-| Grace period | 48 hours | `GRACE_PERIOD` |
-| Escrowed crypto decay start | 96 hours after Bleeding starts | `USDT_DECAY_START` |
-| Maximum bleeding duration | 240 hours (10 days) | `MAX_BLEEDING` |
-| Taker bond decay rate | 42 BPS / hour | `TAKER_BOND_DECAY_BPS_H` |
-| Maker bond decay rate | 26 BPS / hour | `MAKER_BOND_DECAY_BPS_H` |
-| Escrowed crypto decay rate | 34 BPS / hour | `CRYPTO_DECAY_BPS_H` |
-| Minimum wallet age | 7 days | `WALLET_AGE_MIN` |
-| Dust limit | `0.001 ether` | `DUST_LIMIT` |
-| Minimum active period | 15 days | `MIN_ACTIVE_PERIOD` |
-| Tier 0 max amount | 150 USDT/USDC | `TIER_MAX_AMOUNT_TIER0` |
-| Tier 1 max amount | 1,500 USDT/USDC | `TIER_MAX_AMOUNT_TIER1` |
-| Tier 2 max amount | 7,500 USDT/USDC | `TIER_MAX_AMOUNT_TIER2` |
-| Tier 3 max amount | 30,000 USDT/USDC | `TIER_MAX_AMOUNT_TIER3` |
-| Tier 4 max amount | Unlimited | `_getTierMaxAmount(4) -> 0` |
-| Tier 0 / 1 cooldown | 4 hours / trade | `TIER0_TRADE_COOLDOWN`, `TIER1_TRADE_COOLDOWN` |
-| Auto-release neglect penalty | 2% from both bonds | `AUTO_RELEASE_PENALTY_BPS = 200` |
-| Mutual cancel deadline cap | 7 days | `MAX_CANCEL_DEADLINE` |
-| EIP-712 domain | ArafEscrow / version 1 | `EIP712("ArafEscrow", "1")` |
-| Clean reputation discount | −1% | `GOOD_REP_DISCOUNT_BPS = 100` |
-| Bad reputation penalty | +3% | `BAD_REP_PENALTY_BPS = 300` |
-| Ban trigger | 2+ failed disputes | `_updateReputation()` |
-| 1st ban duration | 30 days | Escalation: `30 × 2^(N−1)` days |
-| Maximum ban duration | 365 days | Upper bound in contract |
-| Initial treasury address | Supplied at deployment, owner-updatable | `treasury` + `setTreasury()` |
-| Supported token list | Not static, owner-managed | `supportedTokens` + `setSupportedToken()` |
-
-**Build profile:** `Solidity 0.8.24 + optimizer(runs=200) + viaIR + evmVersion=cancun`
-
-### Build and Network Toolchain Assumptions
-
-- The official build pipeline must remain faithful to the profile above; silent changes to `viaIR` or `evmVersion` settings may break verification and bytecode expectations.
-- Local development network uses `31337` for `hardhat` / `localhost`.
-- Basescan verification is part of the toolchain; it is not an independent security guarantee, but rather a way to make the bytecode reviewable.
-
-### Deployment and Setup Security
-
-- In production, real token addresses must be supplied through env; if missing or zero-address, deployment hard fails.
-- After `setSupportedToken(token, true)`, ownership transfer must not be completed before the value is re-read and verified on-chain.
-- ABI copying and frontend env auto-write are developer ergonomics; they are not the core of the trust model.
-- The order of token support verification and ownership transfer, however, is directly part of the trust model.
-
----
-
-## 14. Future Evolution Path
-
-The evolution of the Araf Protocol progresses in the following four major phases, in parallel with technical maturity and ecosystem growth:
-
-```mermaid
-timeline
-    title Araf Protocol Evolution Path
-    section Phase 1 — Security & Launch
-        Smart Contract Audit : Independent audit
-        Base Sepolia Public Beta : Public testnet
-        Gnosis Safe (3/5) : Treasury migration
-        AWS KMS / Vault : PII key management
-    section Phase 2 — Mainnet & UX
-        Base Mainnet Launch : Official go-live
-        Smart Wallet (Passkey) : Easier onboarding
-        Paymaster (Gasless) : Gas fee abstraction
-        PWA Mobile Interface : Mobile experience
-    section Phase 3 — Expansion & Liquidity
-        Subgraph Indexing : Advanced order book
-        Multi-Asset Swap : ETH, cbBTC, etc.
-        Retroactive Staking : Reward mechanism
-        Institutional Maker API : B2B integration
-    section Phase 4 — Privacy & Vision
-        ZK-Proof IBAN : Anonymous verification
-        OP Superchain : Cross-chain escrow
-        Global Liquidity : Fiat-crypto settlement layer
-```
-
----
-
-## 15. Frontend UX Protection Layer (March 2026)
-
-> **The critical principle remains preserved: the contract is always the decision authority; the frontend only guides.**
-
-This layer has been updated in a way that steers users away from high-cost error flows without introducing arbitration.
-
-### App.jsx Data Flow
-
-```mermaid
-flowchart TD
-    subgraph CONTRACT ["⛓️ Contract Read (Authoritative)"]
-        C1[fetchFeeBps]
-        C2[fetchAmounts — Bleeding]
-        C3[fetchUserReputation]
-        C4[fetchSybil / fetchPausedStatus]
-    end
-
-    subgraph BACKEND ["🖥️ Backend Read (Operational)"]
-        B1[fetchMyTrades — active room list]
-        B2[fetchStats — daily comparison]
-        B3[fetchListings — market cards]
-    end
-
-    subgraph APP ["🌐 App.jsx — Root Orchestrator"]
-        P[Polling — interval-based re-sync]
-        V[onVisibilityChange — tab refresh]
-        TX[araf_pending_tx — recovery]
-        AR[Auto-resume — single active trade]
-    end
-
-    CONTRACT --> APP
-    BACKEND --> APP
-    APP --> RENDER([🖥️ Render])
-```
-
-### Core Features
-
-| Feature | Description |
-|---------|-------------|
-| 🔒 **PIIDisplay** | IBAN is hidden by default. No fetch without user action. `AbortController` race-condition protection. Trade-scoped PII token flow is used; reveal state is not persisted in cache. |
-| 📡 **useArafContract** | 3 preflight guards before every write: `walletClient` + `VITE_ESCROW_ADDRESS` + network validation. Approval, receipt waiting, and `araf_pending_tx` recovery trace are orchestrated in this layer. |
-| ⏱️ **useCountdown** | Background drift protection via the Page Visibility API. Initial `isFinished` state is computed against the target time — no flicker. Countdown manages visibility only; it does not grant authority. |
-| 🔑 **Signed Session Guard** | `isConnected + authenticatedWallet === connectedWallet` — wallet connection alone does not grant authority. Session/wallet mismatch is treated as a security event. |
-| 💾 **Pending Tx Recovery** | `araf_pending_tx` is preserved in localStorage. On page refresh, receipt is checked and the trace is cleared; on-chain visibility is not lost completely. |
-| 🔄 **Auto-resume** | If there is a single active trade, the app returns to the trade room context — this does not guarantee finality, it is a UX convenience. |
-| 🛡️ **ErrorBoundary** | Render errors are sent to the backend after PII scrubbing (IBAN/card/phone pattern cleanup). Crash logging is best-effort; leakage to the wrong fallback target is prevented. |
-| 💬 **Feedback Modal** | Star + category are mandatory, minimum description length is enforced; a failed API call does not show a false success toast. |
-| 🧭 **Bootstrap / Provider Layer** | `WagmiProvider → QueryClientProvider → ErrorBoundary → App` chain defines the boundary of wallet access, cache, and render isolation. |
-| 🏪 **Market / Trade Room Guard Rails** | In listing create/start-trade/release/challenge/auto-release flows, signed session, wrong-network, pause, tier, allowance, and anti-sybil visibility operate together; these are guidance layers, not enforcement. |
-
-### Additional Application-Layer Notes
-
-- The home page is not only a landing screen; it is also an informational layer that establishes onboarding, FAQ, and the mental model of the arbitrator-free system.
-- The footer carries public protocol identity and env-based social link routing.
-- `main.jsx` installs the wallet/provider/query layer at the shared root; network priority and connector surface are defined there.
-- Some metrics on market cards may be placeholders; they do not replace contract authority.
-- Critical trade room actions are supported not only by local state, but also by fast re-sync (`fetchMyTrades`) and re-construction of the view.
-- The profile center may combine both off-chain PII management and the on-chain wallet registration action within the same user surface.
-- Banner, terms modal, and toast surfaces provide high-visibility guard rails; they do not replace contract enforcement.
-
-### Architectural Outcome
-
-```text
-✅ The on-chain state machine did not change
-✅ No arbitration or backend discretion was added
-✅ PII remains hidden by default — reveal/hide/clipboard flow is constrained with defensive UX
-✅ Frontend countdown logic synchronizes on-chain time windows — it does not grant authority
-✅ Frontend crashes are scrubbed and sent best-effort to a centralized log surface
-✅ Frontend contract access narrows wrong-network / missing contract address / missing allowance errors
-✅ Pending transaction trace is not lost on page refresh
-✅ The app root layer behaves like a live frontend runtime orchestrator
-✅ UX improvement = lower operational friction, lower support burden
-```
-
-### Why the Hybrid Model Is Honest
-
-**What we decentralized (critical parts):**
-- ✅ Fund custody — non-custodial smart contract
-- ✅ Dispute resolution — time-based, no human judgment
-- ✅ Reputation integrity — immutable on-chain records
-- ✅ Anti-Sybil enforcement — on-chain controls
-
-**What we centralized (privacy / performance):**
-- ⚠️ PII storage — requires GDPR-compliant deletion capability
-- ⚠️ Order book indexing — sub-second queries for UX
-- ⚠️ Rate limit / nonce / checkpoint coordination — short-lived operational state
-
-**What the backend never controls:**
-
-| ❌ Fund custody | ❌ Dispute outcomes | ❌ Reputation scores | ❌ Trade state transitions |
+| Layer | Primary responsibility | Authority level | Technology |
 |---|---|---|---|
+| Contract | Escrow state machine, payouts, dispute economics, governance controls | **Authoritative** | Solidity / Base |
+| Backend API | Session/security boundaries, projection, coordination | Non-authoritative | Node.js + Express |
+| Event Worker | Event mirror, replay, checkpoint/DLQ handling | Non-authoritative | ethers + Mongo + Redis |
+| Mongo | Read model / operational cache | Non-authoritative | MongoDB + Mongoose |
+| Redis | Ephemeral coordination / runtime safety signals | Non-authoritative | Redis |
+| Frontend | Contract write/read orchestration + UX guardrails | Non-authoritative | React + Wagmi + viem |
 
-<div align="center">
+## 2.3 Non-custodial backend model
+- Backend does not hold user-fund custody authority.
+- Backend cannot fabricate release/challenge/cancel outcomes against contract rules.
+- Backend strength lies in coordination, observability, and secure PII boundaries.
 
-*Araf Protocol — "The system does not judge. It makes dishonesty expensive."*
+---
 
-[![Base](https://img.shields.io/badge/Base_L2-0052FF?style=for-the-badge&logo=coinbase&logoColor=white)](https://base.org)
-[![Solidity](https://img.shields.io/badge/Solidity-363636?style=for-the-badge&logo=solidity&logoColor=white)](https://soliditylang.org)
-[![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](https://mongodb.com)
-[![Redis](https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io)
+## 3) On-chain public surface (ArafEscrow.sol)
 
-</div>
+## 3.1 Parent-order write surface
+- `createSellOrder`
+- `fillSellOrder`
+- `cancelSellOrder`
+- `createBuyOrder`
+- `fillBuyOrder`
+- `cancelBuyOrder`
+
+## 3.2 Child-trade lifecycle write surface
+- `reportPayment`
+- `releaseFunds`
+- `challengeTrade`
+- `autoRelease`
+- `burnExpired`
+- `proposeOrApproveCancel`
+
+## 3.3 Liveness / auxiliary write surface
+- `registerWallet`
+- `pingMaker`
+- `pingTakerForChallenge`
+- `decayReputation`
+
+## 3.4 Governance / mutable admin surface
+- `setTreasury`
+- `setFeeConfig`
+- `setCooldownConfig`
+- `setTokenConfig`
+- `pause` / `unpause`
+
+## 3.5 Read surface
+- `getOrder`, `getTrade`, `getReputation`
+- `getFeeConfig`, `getCooldownConfig`
+- `getCurrentAmounts`
+- `antiSybilCheck`, `getCooldownRemaining`, `getFirstSuccessfulTradeAt`
+
+---
+
+## 4) Parent order vs child trade state model
+
+## 4.1 Parent-order states
+- `OPEN`
+- `PARTIALLY_FILLED`
+- `FILLED`
+- `CANCELED`
+
+Parent orders carry market visibility and fillability, not escrow dispute semantics.
+
+## 4.2 Child-trade states
+- `OPEN` (not practically used in pure V3 fill path)
+- `LOCKED`
+- `PAID`
+- `CHALLENGED`
+- `RESOLVED`
+- `CANCELED`
+- `BURNED`
+
+## 4.3 Fill-time child-trade creation
+Both `fillSellOrder` and `fillBuyOrder` spawn child trades directly in `LOCKED` state in the same transaction.
+
+## 4.4 Identity relationship
+- Parent identity: `orderId`
+- Child identity: `tradeId` (`onchain_escrow_id` mirror)
+- Link authority: `OrderFilled(orderId, tradeId, ...)` + `getTrade(tradeId)`
+
+---
+
+## 5) Sell flow, buy flow, and role mapping
+
+## 5.1 Sell-order flow
+1. Owner calls `createSellOrder`
+2. Filler calls `fillSellOrder` (taker gate enforced)
+3. Child trade enters `LOCKED`
+4. Taker calls `reportPayment`
+5. Maker resolves with `releaseFunds` or dispute/cancel paths
+
+## 5.2 Buy-order flow
+1. Owner calls `createBuyOrder` (owner is eventual taker; gate enforced at create-time)
+2. Filler calls `fillBuyOrder`
+3. Owner (taker) is re-checked at fill-time
+4. Child trade enters `LOCKED`
+5. `reportPayment` then resolution/dispute/cancel paths
+
+## 5.3 Side-dependent role mapping
+No universal “maker=seller, taker=buyer” rule:
+- `SELL_CRYPTO`: owner→maker, filler→taker
+- `BUY_CRYPTO`: owner→taker, filler→maker
+
+---
+
+## 6) Anti-sybil enforcement semantics (V3)
+
+Canonical gate helper: `_enforceTakerEntry(wallet, tier)`
+
+Gate components:
+- active ban gate (`bannedUntil`)
+- wallet age (`WALLET_AGE_MIN`)
+- native dust threshold (`DUST_LIMIT`)
+- tier cooldown (`tier0TradeCooldown`, `tier1TradeCooldown`)
+
+V3 enforcement points:
+- `fillSellOrder` (filler/taker)
+- `createBuyOrder` (owner/eventual taker)
+- `fillBuyOrder` (owner/taker re-check)
+
+So anti-sybil is no longer lockEscrow-centered legacy; it is child-trade-entry centered in V3.
+
+---
+
+## 7) Dispute / Bleeding Escrow technical flow
+
+## 7.1 Resolution paths after `PAID`
+- **Normal close:** maker `releaseFunds`
+- **Dispute path:** maker `pingTakerForChallenge` → wait window → `challengeTrade`
+- **Liveness path:** taker `pingMaker` → wait window → `autoRelease`
+- **Mutual cancel:** dual-signature `proposeOrApproveCancel`
+- **Terminal burn:** `burnExpired` after challenge timeout
+
+## 7.2 Bleeding components
+- maker bond decay
+- taker bond decay
+- post-threshold crypto-side decay
+
+`getCurrentAmounts(tradeId)` exposes authoritative real-time economics.
+
+## 7.3 Challenge and liveness ping semantics
+- Ping paths are mutually exclusive (conflict guard).
+- Required wait windows are enforced by state guards.
+
+## 7.4 Burn semantics
+- `burnExpired` finalizes stale challenged trades once max window elapses.
+- Remaining value is routed to treasury according to contract rules.
+
+## 7.5 Cancel semantics
+- `proposeOrApproveCancel` validates EIP-712 signature + nonce + deadline on-chain.
+- Cancel finalization requires both party approvals.
+
+---
+
+## 8) Reputation / bans / clean-slate
+
+## 8.1 Reputation fields
+- `successfulTrades`
+- `failedDisputes`
+- `bannedUntil`
+- `consecutiveBans`
+
+## 8.2 Tier impact
+- Success/failure history affects effective tier.
+- Penalty ceilings (`maxAllowedTier`) may apply.
+- `MIN_ACTIVE_PERIOD` enforces time-based progression discipline.
+
+## 8.3 Clean-slate rule
+- `decayReputation` requires clean-period completion.
+- Current clean period: **90 days**.
+- Not full amnesty: `failedDisputes` history is not erased.
+
+---
+
+## 9) Finalized parameters vs mutable config
+
+## 9.0 Parameter-classification table
+
+| Class | Parameters | Notes |
+|---|---|---|
+| Immutable/public constants | `TIER_MAX_AMOUNT_*`, `*_DECAY_BPS_H`, `WALLET_AGE_MIN`, `DUST_LIMIT`, `MAX_BLEEDING`, `MIN_ACTIVE_PERIOD`, `AUTO_RELEASE_PENALTY_BPS`, `MAX_CANCEL_DEADLINE`, `GOOD_REP_DISCOUNT_BPS`, `BAD_REP_PENALTY_BPS` | Not mutable via owner runtime calls. |
+| Mutable runtime config | `takerFeeBps`, `makerFeeBps`, `tier0TradeCooldown`, `tier1TradeCooldown` | Adjustable through owner governance surface. |
+| Direction-aware token runtime policy | `tokenConfigs[token] => {supported, allowSellOrders, allowBuyOrders}` | Token support is managed per order direction. |
+
+## 9.1 Immutable/public-constant class
+- tier max amount constants (`TIER_MAX_AMOUNT_*`)
+- decay constants (`*_DECAY_BPS_H`)
+- wallet age / dust / bleeding / active period limits
+- auto-release penalty
+- max cancel deadline
+- reputation discount/penalty BPS
+
+## 9.2 Mutable runtime config class
+- `takerFeeBps`
+- `makerFeeBps`
+- `tier0TradeCooldown`
+- `tier1TradeCooldown`
+- direction-aware token config via `setTokenConfig`
+
+## 9.3 Fee snapshot semantics
+- Snapshot is captured at order creation.
+- Child trade inherits parent snapshots.
+- Later `setFeeConfig` changes do not retroactively rewrite active-trade economics.
+
+## 9.4 Toolchain / deployment assumptions
+- Deploy flow starts with `constructor(treasury)` and token direction config.
+- Post-deploy token-direction policy should be verified on-chain via `tokenConfigs(token)`.
+- Production guidance assumes owner governance key is managed by multisig to reduce key risk.
+
+---
+
+## 10) Runtime connectivity and operational policies
+
+## 10.1 Backend bootstrap ordering
+1. env/security prechecks
+2. Mongo connect
+3. Redis connect
+4. worker init + protocol config load
+5. route mount
+6. health/readiness activation
+
+## 10.2 Readiness-first operations
+- Liveness (`/health`) answers “is process alive?”.
+- Readiness (`/ready`) answers “are dependencies actually ready?”.
+- Traffic gating should follow readiness, not liveness alone.
+
+## 10.3 Fail-fast / fail-open choices
+- Critical dependency failures follow fail-fast patterns (DB/worker integrity).
+- Security boundaries prefer fail-closed semantics (auth/session/PII).
+
+## 10.4 Timeout/connectivity policy
+- Mongo uses tuned `maxPoolSize`, `socketTimeoutMS`, and `serverSelectionTimeoutMS` values for combined worker+API load.
+- Mongo disconnect path favors fail-fast restart to reduce stale/partial-connection drift.
+- Redis `isReady` is explicitly treated as distinct from mere connectivity.
+- Redis TLS (`rediss://`) and managed-service assumptions are part of runtime configuration behavior.
+
+## 10.5 Graceful shutdown ordering
+- stop new requests
+- stop worker
+- clear scheduler timers
+- close Mongo/Redis
+- controlled process exit
+
+## 10.6 Scheduler and cleanup jobs
+- reputation decay trigger job
+- stats snapshot job
+- receipt + PII retention cleanup
+- user bank-risk metadata cleanup
+- DLQ processing
+
+## 10.7 Operational meaning of health vs ready
+- `/health`: process liveness only.
+- `/ready`: dependency + config + worker lag/replay safety gate.
+- During replay/high lag, liveness may be true while readiness is intentionally false.
+
+---
+
+## 11) Event worker / replay / mirror reliability
+
+## 11.1 Worker state model
+Worker consumes contract events and updates Mongo without becoming authority.
+
+## 11.2 Checkpoint approach
+- last processed block
+- last safe checkpoint
+- replay-safe startup logic
+
+## 11.3 Replay and batch processing
+- block-batch processing
+- idempotent mirror intent
+- state-regression guards to prevent backward drift
+
+## 11.3.1 Last-safe-block semantics
+- Worker tracks not only last seen block, but also last safe checkpoint block.
+- Readiness includes lag between provider head and worker safe checkpoint.
+- This prevents “appears alive but silently behind” operational blind spots.
+
+## 11.4 DLQ and poison-event visibility
+- unprocessable events go to DLQ
+- retry/backoff applies
+- operational logs preserve observability of failure modes
+
+## 11.5 Identity normalization
+- on-chain IDs stored with numeric-string discipline
+- explicit lookup strategy prevents parent/child identity confusion
+
+## 11.6 OrderFilled + getTrade linkage
+Child-trade authority is mirrored through explicit event + getter linkage rather than heuristics.
+
+## 11.7 Mirror-authority warning
+- Event worker does not define protocol rules; it only projects authoritative chain state.
+- If Mongo mirror fields and contract storage diverge, contract state is authoritative.
+
+---
+
+## 12) Security architecture and trust boundaries
+
+## 12.1 Auth model (SIWE + JWT + cookie session)
+
+### 12.1.1 Nonce lifecycle (TTL + consume)
+- Nonce is stored in Redis per wallet (`nonce:<wallet>`), with default **5-minute** TTL.
+- Under race conditions, Redis is authoritative: if `SET NX` fails, local nonce is not returned; the live Redis nonce is re-read.
+- During SIWE verify, nonce is consumed via `getDel`, shrinking replay window.
+- SIWE domain/URI checks are enforced at request time (host/origin matching is strict in production).
+
+### 12.1.2 Session token lifecycle
+- Auth JWT cookie (`araf_jwt`) is short-lived by default (configurable; default 15m).
+- Refresh cookie (`araf_refresh`) is longer-lived (default 7 days) and path-scoped to `/api/auth`.
+- The model remains httpOnly + sameSite=lax + credentials:include; bearer header is not normal auth authority.
+
+## 12.2 Cookie-only boundary and session-wallet mismatch behavior
+
+| Control step | What is validated | Mismatch result |
+|---|---|---|
+| `requireAuth` | Cookie JWT validity + blacklist status | 401 / 403 |
+| `requireSessionWalletMatch` | `x-wallet-address` == cookie-auth wallet | 409 + session invalidation |
+| Session invalidation | JWT blacklist + refresh revoke + cookie clear | Session terminated safely |
+
+> Boundary note: `x-wallet-address` is never an auth source by itself; it is only a cookie-session consistency check.
+
+## 12.3 Refresh-token family invalidation
+- On logout and session-wallet mismatch events, refresh family revocation is applied.
+- Goal is to invalidate not only the current access context but also refresh-lineage reuse.
+- This is “session family termination”, not just “single request denial”.
+
+## 12.4 PII access boundary (trade-scoped token + live-state checks)
+- PII token is scoped to one `tradeId`, not parent order scope.
+- `requirePIIToken` enforces token type=`pii`, tradeId match, and token-wallet == cookie-session-wallet.
+- Token alone is insufficient; route handlers re-check live trade state (`LOCKED/PAID/CHALLENGED` window).
+- Snapshot-first policy: if payout snapshot is missing, endpoint returns controlled error; current-profile fallback is disabled.
+- Sensitive PII responses set `Cache-Control: no-store` / `Pragma: no-cache`.
+
+## 12.5 Encryption model
+- PII and receipt payload fields are persisted encrypted via AES-256-GCM.
+- Key derivation/governance follows HKDF + KMS/Vault-oriented design.
+- Plaintext is not persisted; contract receives only hash traces for receipt proof linking.
+
+## 12.6 Rate-limit classes and fallback behavior
+- Limiter classes are separated by surface: auth, nonce, market read, orders/trades read-write, PII, feedback, logs.
+- Sensitive surfaces (auth/PII) use in-memory fallback protection when Redis is unavailable (minimizing fail-open posture).
+- Public/read surfaces may allow controlled fail-open choices for availability, without relaxing auth/PII boundaries.
+
+## 12.7 Client-error logging boundary (scrub semantics)
+- Frontend telemetry is accepted only via `/api/logs/client-error`.
+- Message/stack text is scrubbed by regex redaction for IBAN-like values, wallet addresses, emails, bearer/JWT-like tokens.
+- Size limits + rate limits support both data minimization and abuse resistance.
+
+## 12.8 Trust-boundary summary
+- Contract = economic/state authority.
+- Backend = auth/session/PII coordination + read-model projection.
+- Frontend = runtime guardrail and user feedback layer.
+- Off-chain data = operational utility, not protocol authority.
+
+---
+
+## 13) Data models (Mongo read-model layer)
+
+> Mongo is not canonical protocol authority; it is still critical for read performance and operational observability.
+
+## 13.1 User model (field-aware)
+
+### Identity and payout-profile structure
+- `wallet_address` is the primary user identity (lowercase EVM address).
+- `payout_profile` is rail-aware:
+  - `rail`, `country`
+  - `contact.{channel, value_enc}`
+  - `payout_details_enc`
+  - `fingerprint.{hash, version, last_changed_at}`
+  - `updated_at`
+
+### Encryption and public-projection boundary
+- `contact.value_enc` and `payout_details_enc` are encrypted at rest; plaintext is not persisted.
+- `toPublicProfile()` uses an allowlist strategy to return only safe fields.
+- `bank_change_history` and payout details are excluded from public profile surface.
+
+### Bank-profile risk metadata (non-authoritative)
+- `profileVersion`
+- `lastBankChangeAt`
+- `bankChangeCount7d`
+- `bankChangeCount30d`
+- `bank_change_history` (internal rolling-window support)
+- These are anti-fraud/risk signals, not contract enforcement authority.
+
+### Reputation/ban mirror boundary
+- `reputation_cache` and ban mirrors (`is_banned`, `banned_until`, `consecutive_bans`, `max_allowed_tier`) support query/UI convenience.
+- If mirror state diverges from chain state, on-chain data remains authoritative.
+
+## 13.2 Order model (field-aware)
+
+### Identity + lifecycle fields
+- `onchain_order_id` (numeric-string identity)
+- `owner_address`, `side`, `status`, `tier`, `token_address`
+
+### Financial/snapshot fields
+- `amounts.{total_amount, remaining_amount, min_fill_amount}` + `*_num` caches
+- `reserves.{remaining_maker_bond_reserve, remaining_taker_bond_reserve}` + `*_num` caches
+- `fee_snapshot.{taker_fee_bps, maker_fee_bps}`
+
+### Reference/timer/helper stats fields
+- `refs.order_ref` (event-trace and idempotent linkage aid)
+- `timers.{created_at_onchain, last_filled_at, canceled_at}`
+- `stats.*` (`child_trade_count`, `active/resolved/canceled/burned` breakdown, `total_filled_amount`)
+
+### Mirror boundary
+- Remaining/reserve values are not backend-calculated authority; they are worker projections mirrored from contract truth.
+
+## 13.3 Trade model (field-aware)
+
+### Identity and canonical linkage
+- `onchain_escrow_id` (primary child-trade identity)
+- `parent_order_id`
+- `parent_order_side`
+- `trade_origin` (`ORDER_CHILD` / `DIRECT_ESCROW`)
+- `canonical_refs.{listing_ref, order_ref}`
+
+### Fill and fee linkage
+- `fill_metadata.{fill_amount, filler_address, remaining_amount_after_fill}` (+ numeric caches)
+- `fee_snapshot.{taker_fee_bps, maker_fee_bps}`
+
+### BigInt-safe financial strategy
+- Authoritative financial fields are string-based:
+  - `financials.crypto_amount`
+  - `financials.maker_bond`
+  - `financials.taker_bond`
+  - `financials.total_decayed`
+- `*_num` caches are for UI/aggregation convenience only; not enforcement inputs.
+
+### PII / receipt / payout snapshot fields
+- `evidence.ipfs_receipt_hash`
+- `evidence.receipt_encrypted`
+- `evidence.receipt_timestamp`
+- `evidence.receipt_delete_at`
+- `payout_snapshot.{maker,taker,...}` carries lock-time risk context like `profile_version_at_lock`, `bank_change_count_*_at_lock`, `fingerprint_hash_at_lock`.
+
+### Cancel / chargeback audit fields
+- `cancel_proposal.{proposed_by, proposed_at, approved_by, maker_signed, taker_signed, maker_signature, taker_signature, deadline}`
+- `chargeback_ack.{acknowledged, acknowledged_by, acknowledged_at, ip_hash}`
+
+### Retention and terminal-TTL separation
+- Trade document lifecycle uses terminal-state TTL policy.
+- Receipt/snapshot payload minimization uses separate cleanup fields (`receipt_delete_at`, `snapshot_delete_at`) and jobs.
+- This separation distinguishes “document lifecycle TTL” from “sensitive payload retention”.
+
+## 13.4 Feedback / stats snapshot layer
+- Feedback is a separate operational/user-signal surface.
+- Stats/snapshot layer (daily aggregates, dashboard counters) supports observability and decisions, not protocol authority.
+- Read-model snapshots do not replace contract state; they improve operator visibility.
+
+---
+
+## 14) Backend route surface and coordination semantics
+
+## 14.1 Orders routes
+- parent-order read/config surfaces
+- owner-scoped child-trade listing route
+
+## 14.2 Trades routes
+- active/history/by-escrow reads
+- cancel-signature coordination
+- chargeback-ack audit surface
+
+## 14.3 Auth routes
+- nonce/verify/refresh/logout/me/profile
+- session-wallet mismatch guard behavior
+
+## 14.4 PII routes
+- `/my`, `taker-name`, request-token, trade-scoped retrieval
+- snapshot-first and role-bound access
+
+## 14.5 Receipts routes
+- file validation + encryption + hash storage
+- restricted to taker while `LOCKED`
+
+## 14.6 Logs/stats/feedback
+- client error logs
+- protocol stats read surface
+- feedback intake endpoint
+
+---
+
+## 15) Frontend UX guardrail layer
+
+## 15.1 Runtime orchestration: `useArafContract`
+- Write preflight checks enforce:
+  - wallet client availability
+  - valid contract address (`VITE_ESCROW_ADDRESS`)
+  - supported chain
+- After tx send, receipt is awaited; pending tx hash is persisted in `localStorage(araf_pending_tx)`.
+- Fill paths decode `OrderFilled` to extract `tradeId`; frontend does not fabricate trade identity.
+
+## 15.2 Runtime orchestration: `usePII`
+- PII flow is two-step:
+  1) `pii/request-token/:tradeId`
+  2) `pii/:tradeId` (Bearer + cookie session together)
+- API path canonicalization is enforced via `buildApiUrl(...)`.
+- `authenticatedFetch` centralizes me/refresh-aware behavior.
+- Every new PII request aborts previous inflight request with `AbortController`; stale responses cannot overwrite state.
+- Sensitive PII state is cleared on unmount/trade switch.
+
+## 15.3 Session-mismatch and recovery UX
+- On 409 (`SESSION_WALLET_MISMATCH`), `authenticatedFetch` performs backend logout + local session cleanup.
+- On 401, refresh (`auth/refresh`) is attempted; if refresh fails, user is routed back to sign-in flow.
+- If connected wallet diverges from authenticated wallet, fail-fast logout/re-entry is applied.
+
+## 15.4 Wrong-network / wrong-address fail-fast
+- Unsupported chain blocks contract write calls before tx submission.
+- Invalid/zero contract address blocks execution early.
+- Goal is clear early failure instead of silent off-chain drift.
+
+## 15.5 Provider/bootstrap notes
+- App session layer checks pending tx recovery at startup; stale/invalid hashes are cleaned.
+- Same layer can auto-resume the single active trade and route user back to trade room.
+
+## 15.6 Enforcement boundary
+Frontend does not replace contract enforcement; it is a guardrail/orchestration layer.
+
+---
+
+## 16) Attack vectors and known limitations
+
+## 16.1 Mitigated / reduced risks
+- **Backend authority confusion (partially reduced):** documentation + route projection boundaries + worker mirror warnings narrow the chance that backend is treated as adjudicator.
+- **Session/account confusion:** cookie-wallet ↔ header-wallet mismatch now triggers request denial + refresh-family revoke + cookie clear chain.
+- **PII overexposure:** trade-scoped token + role/state/session triple checks + snapshot-first + no-store response semantics.
+- **API-path drift:** canonical path helper usage reduces silent endpoint mismatch risks.
+- **Wrong-network tx risk (UX layer):** chain/address preflight guards fail fast before write submission.
+
+## 16.2 Remaining / open risks
+- **Governance key risk:** mutable fee/cooldown/token-direction surfaces remain owner-controlled and require multisig/ops discipline.
+- **Fake receipt / off-chain payment ambiguity:** encrypted receipt + hash trace raises fraud cost but cannot cryptographically prove fiat transfer truth.
+- **Chargeback reality:** banking reversals/disputes can make off-chain finality differ from on-chain expectations.
+- **Off-chain signature staleness:** cancel-signature domain/nonce/deadline checks help, but user-side stale-sign UX risk remains.
+- **Backend mirror interpreted as authority:** operators/integrators may still mistake Mongo/cache as source of truth.
+- **Frontend wrong-network/wrong-address configuration risk:** guardrails do not fully eliminate deployment/env misconfiguration risk.
+- **Operator/documentation misunderstanding risk:** legacy mental models (“listing-first”, “backend is arbiter”) can still cause operational errors.
+
+## 16.3 Conscious limitations (oracle-free model)
+- Oracle-free design intentionally does not prove fiat transfer truth fully on-chain.
+- The system applies economic pressure + time-decay incentives, not absolute subjective arbitration.
+- This reduces centralized oracle dependence but does not eliminate social/operational dispute risk.
+
+---
+
+## 17) Legacy concepts (historical / deprecated / non-canonical)
+
+The following are not part of live V3 canonical behavior:
+- createEscrow/lockEscrow-centered flow
+- listing-first market primitive assumption
+- fixed-fee/fixed-cooldown assumptions
+- absolute maker=seller / taker=buyer mapping
+- old single-dimension token-support language
+
+Legacy references should be treated as historical context only; operational decisions must follow source-of-truth code and this V3 reference.
+
+---
+
+## 18) Final role of this document
+
+This architecture document deliberately serves both:
+1. an executive V3 canonical model
+2. a deep technical reference (security, data models, runtime reliability, guardrails, attack surface)
+
+So it is neither a shallow summary nor a stale legacy dump; it is a modern, operationally mature V3 architecture reference.

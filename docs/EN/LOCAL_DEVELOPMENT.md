@@ -95,7 +95,7 @@ KMS_PROVIDER=env
 # node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 MASTER_ENCRYPTION_KEY=generate_your_own_32_byte_string_here
 
-BASE_RPC_URL=[http://127.0.0.1:8545](http://127.0.0.1:8545)
+BASE_RPC_URL=http://127.0.0.1:8545
 ARAF_ESCROW_ADDRESS=<address_from_deploy_output>
 CHAIN_ID=31337
 
@@ -227,7 +227,7 @@ tail -f araf_full_stack.log.txt
 cat > contracts/.env << 'EOF'
 DEPLOYER_PRIVATE_KEY=0x<testnet_deployer_private_key>
 TREASURY_ADDRESS=0x<testnet_treasury_wallet>
-BASE_SEPOLIA_RPC_URL=[https://base-sepolia.g.alchemy.com/v2/](https://base-sepolia.g.alchemy.com/v2/)<API_KEY>
+BASE_SEPOLIA_RPC_URL=https://base-sepolia.g.alchemy.com/v2/<API_KEY>
 BASESCAN_API_KEY=<basescan_api_key>
 REPORT_GAS=true
 EOF
@@ -274,7 +274,7 @@ npx hardhat verify --network base-sepolia \
 
 ```bash
 # Install Fly.io CLI (macOS/Linux)
-curl -L [https://fly.io/install.sh](https://fly.io/install.sh) | sh
+curl -L https://fly.io/install.sh | sh
 
 # Login
 fly auth login
@@ -295,14 +295,14 @@ fly secrets set \
   PII_TOKEN_EXPIRES_IN="15m" \
   KMS_PROVIDER="env" \
   MASTER_ENCRYPTION_KEY="<32_byte_hex>" \
-  BASE_RPC_URL="[https://base-sepolia.g.alchemy.com/v2/](https://base-sepolia.g.alchemy.com/v2/)<API_KEY>" \
-  BASE_WS_RPC_URL="wss://[base-sepolia.g.alchemy.com/v2/](https://base-sepolia.g.alchemy.com/v2/)<API_KEY>" \
+  BASE_RPC_URL="https://base-sepolia.g.alchemy.com/v2/<API_KEY>" \
+  BASE_WS_RPC_URL="wss://base-sepolia.g.alchemy.com/v2/<API_KEY>" \
   ARAF_ESCROW_ADDRESS="<DEPLOY_ADDRESS>" \
   CHAIN_ID="84532" \
   TREASURY_ADDRESS="<TREASURY_WALLET>" \
   RELAYER_PRIVATE_KEY="0x<relayer_private_key>" \
   SIWE_DOMAIN="araf-protocol-backend.fly.dev" \
-  ALLOWED_ORIGINS="[https://araf-protocol.vercel.app](https://araf-protocol.vercel.app)" \
+  ALLOWED_ORIGINS="https://araf-protocol.vercel.app" \
   ARAF_DEPLOYMENT_BLOCK="<DEPLOY_BLOCK_NUMBER>"
 
 # First install: seed checkpoint (prevents genesis replay)
@@ -328,11 +328,11 @@ npm install -g vercel
 cd frontend
 
 # Update the proxy URL in vercel.json
-# "destination" → "[https://araf-protocol-backend.fly.dev/api/$1](https://araf-protocol-backend.fly.dev/api/$1)"
+# "destination" → "https://araf-protocol-backend.fly.dev/api/$1"
 
 # Create Production env file
 cat > .env.production << 'EOF'
-VITE_API_URL=[https://araf-protocol-backend.fly.dev](https://araf-protocol-backend.fly.dev)
+VITE_API_URL=https://araf-protocol-backend.fly.dev
 VITE_ESCROW_ADDRESS=<DEPLOY_ADDRESS>
 VITE_USDT_ADDRESS=<USDT_ADDRESS>
 VITE_USDC_ADDRESS=<USDC_ADDRESS>
@@ -434,7 +434,7 @@ aws kms generate-data-key \
 cat > contracts/.env << 'EOF'
 DEPLOYER_PRIVATE_KEY=0x<mainnet_deployer_private_key>
 TREASURY_ADDRESS=0x<gnosis_safe_address>
-BASE_RPC_URL=[https://base-mainnet.g.alchemy.com/v2/](https://base-mainnet.g.alchemy.com/v2/)<API_KEY>
+BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/<API_KEY>
 BASESCAN_API_KEY=<basescan_api_key>
 MAINNET_USDT_ADDRESS=0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2
 MAINNET_USDC_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
@@ -458,13 +458,13 @@ fly secrets set \
   AWS_KMS_KEY_ARN="arn:aws:kms:eu-west-1:...:key/..." \
   AWS_ENCRYPTED_DATA_KEY="<base64_CiphertextBlob>" \
   AWS_REGION="eu-west-1" \
-  BASE_RPC_URL="[https://base-mainnet.g.alchemy.com/v2/](https://base-mainnet.g.alchemy.com/v2/)<API_KEY>" \
-  BASE_WS_RPC_URL="wss://[base-mainnet.g.alchemy.com/v2/](https://base-mainnet.g.alchemy.com/v2/)<API_KEY>" \
+  BASE_RPC_URL="https://base-mainnet.g.alchemy.com/v2/<API_KEY>" \
+  BASE_WS_RPC_URL="wss://base-mainnet.g.alchemy.com/v2/<API_KEY>" \
   CHAIN_ID="8453" \
   ARAF_ESCROW_ADDRESS="<MAINNET_ESCROW>" \
   TREASURY_ADDRESS="<GNOSIS_SAFE>" \
   SIWE_DOMAIN="app.araf.xyz" \
-  ALLOWED_ORIGINS="[https://app.araf.xyz](https://app.araf.xyz)"
+  ALLOWED_ORIGINS="https://app.araf.xyz"
   # RELAYER_PRIVATE_KEY → Use Gelato Automation on Mainnet
 
 fly deploy
@@ -477,7 +477,7 @@ fly deploy
 import { base } from 'wagmi/chains'
 
 # .env.production
-VITE_API_URL=[https://api.araf.xyz](https://api.araf.xyz)
+VITE_API_URL=https://api.araf.xyz
 VITE_ESCROW_ADDRESS=<MAINNET_ESCROW>
 # VITE_USDT_ADDRESS and VITE_USDC_ADDRESS → real Base USDT/USDC addresses
 # Base USDT: 0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2
@@ -493,7 +493,7 @@ vercel --prod
 - [ ] AWS KMS is active and encrypted data key is tested
 - [ ] `NODE_ENV=production` — MockERC20 was not deployed ✅
 - [ ] `MAINNET_USDT_ADDRESS` and `MAINNET_USDC_ADDRESS` are set (mandatory)
-- [ ] You saw post-`setSupportedToken` on-chain checks in logs (`supportedTokens(token)==true`)
+- [ ] You saw post-`setTokenConfig` on-chain checks in logs (`tokenConfigs(token).supported == true`)
 - [ ] Contract verified on BaseScan
 - [ ] Ownership transferred to Gnosis Safe ✅
 - [ ] `pause()` / `unpause()` is operational from Gnosis Safe
