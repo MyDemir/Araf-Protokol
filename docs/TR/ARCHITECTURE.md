@@ -338,44 +338,61 @@ Child trade authority worker tarafında heuristik yerine explicit event+getter k
 
 ## 12) Güvenlik mimarisi ve trust boundaries
 
-## 12.1 Auth modeli (SIWE + JWT)
-- Nonce → SIWE imzası → verify
-- JWT/refresh cookie tabanlı oturum
-- session wallet authority korunur
+## 12.1 Auth modeli (SIWE + JWT + cookie session)
 
-## 12.2 Cookie-only auth ve session-wallet boundary
-- Backend auth’da cookie wallet authoritative kaynaktır.
-- `x-wallet-address` uyuşmazlığında session invalidate davranışı uygulanır.
+### 12.1.1 Nonce lifecycle (TTL + consume)
+- Nonce Redis’te wallet bazlı tutulur (`nonce:<wallet>`), varsayılan TTL **5 dakika**dır.
+- Yarış durumunda nonce authority’si Redis’tir: `SET NX` başarısızsa yerel üretilen değer döndürülmez; Redis’te yaşayan nonce yeniden okunur.
+- SIWE verify sırasında nonce `getDel` ile consume edilir; replay penceresi daraltılır.
+- SIWE domain/URI doğrulaması request-time’da yapılır (özellikle production’da host/origin eşleşmesi zorunlu).
 
-## 12.2.1 Refresh token family invalidation
-- Session mismatch veya logout durumlarında refresh token family revoke edilerek yeniden kullanım riski azaltılır.
-- Böylece yalnız access token değil, token zinciri de geçersizlenir.
+### 12.1.2 Session token lifecycle
+- Auth JWT cookie (`araf_jwt`) varsayılan kısa ömürlüdür (konfigürasyonla; default 15m).
+- Refresh cookie (`araf_refresh`) daha uzun ömürlüdür (default 7 gün) ve `/api/auth` path scope’u ile sınırlandırılır.
+- Cookie modeli httpOnly + sameSite=lax + credentials:include çizgisini korur; header bearer normal auth authority üretmez.
 
-## 12.3 PII access token boundary
-- Trade-scoped kısa ömürlü PII token
-- Role + state + session eşleşmesi birlikte doğrulanır
-- Hassas yanıtlar no-store/no-cache semantiğinde döndürülür
+## 12.2 Cookie-only auth boundary ve session-wallet mismatch davranışı
 
-## 12.4 Şifreleme modeli
-- AES-256-GCM envelope encryption
-- HKDF/KMS-Vault tabanlı key yönetimi
-- PII plaintext’in kalıcı depoda tutulmaması
+| Kontrol adımı | Ne kontrol edilir | Mismatch sonucu |
+|---|---|---|
+| `requireAuth` | Cookie JWT geçerli mi + blacklist durumu | 401 / 403 |
+| `requireSessionWalletMatch` | `x-wallet-address` == cookie-auth wallet | 409 + session invalidation |
+| Session invalidation | JWT blacklist + refresh revoke + cookie clear | Session güvenli kapatılır |
 
-## 12.5 Rate-limit sınıfları
-- auth, market read, trade, PII, feedback, logs için ayrı limiter sınıfları
-- abuse alanları endpoint semantiğine göre ayrıştırılır
-- Hassas yüzeylerde (özellikle auth/PII) Redis yokken in-memory fallback koruması uygulanır.
-- Genel/public yüzeylerde erişilebilirlik için kontrollü fail-open tercih edilen yerler bulunur.
+> Önemli sınır: `x-wallet-address` tek başına auth kaynağı değildir; yalnız cookie-auth oturumla eşleşme kontrolüdür.
 
-## 12.6 Client error logging boundary
-- Frontend hata telemetrisi kontrollü endpoint’e gider (`/api/logs/client-error`)
-- Hassas veri sızıntısını azaltan scrub/noise politikaları önemlidir
+## 12.3 Refresh token family invalidation
+- Logout ve session-wallet mismatch olaylarında refresh family revoke edilir.
+- Amaç yalnız aktif access token’ı değil, refresh zincirinin yeniden kullanım riskini de kırmaktır.
+- Böylece “tek request reddi” yerine “oturum soy ağacı iptali” uygulanır.
 
-## 12.7 Trust boundary özeti
-- Contract: economic/state authority
-- Backend: coordination + projection
-- Frontend: guardrail UX
-- Off-chain veri: operasyonel kolaylık, authority değil
+## 12.4 PII access boundary (trade-scoped token + canlı state kontrolü)
+- PII token parent order’a değil, tek bir `tradeId`’ye scoped üretilir.
+- `requirePIIToken` token type=`pii`, tradeId eşleşmesi ve token wallet == cookie session wallet koşullarını birlikte doğrular.
+- Token tek başına yeterli değildir; route tekrar canlı trade state kontrolü yapar (`LOCKED/PAID/CHALLENGED` penceresi).
+- Snapshot-first politika: payout snapshot yoksa controlled hata döner; current profile fallback kapalıdır.
+- Hassas PII yanıtları `Cache-Control: no-store` / `Pragma: no-cache` ile döndürülür.
+
+## 12.5 Şifreleme modeli
+- PII ve receipt payload alanları AES-256-GCM ile şifrelenmiş saklanır.
+- Key türetme/yönetim tarafında HKDF + KMS/Vault tabanlı model hedeflenir.
+- Kontrat tarafına plaintext yazılmaz; receipt için zincire yalnız hash izi taşınır.
+
+## 12.6 Rate-limit sınıfları ve fallback davranışı
+- Limiter sınıfları yüzeye göre ayrılır: auth, nonce, market read, orders/trades read-write, PII, feedback, logs.
+- Auth/PII gibi hassas yüzeylerde Redis yoksa in-memory fallback koruması devrededir (fail-open minimize edilir).
+- Public/read yüzeylerinde availability için kontrollü fail-open tercihleri bulunabilir; bu security boundary’yi auth/PII tarafında gevşetmez.
+
+## 12.7 Client-error logging boundary (scrub semantiği)
+- Frontend telemetry yalnız `/api/logs/client-error` endpoint’ine gider.
+- Mesaj/stack alanlarında regex scrub ile IBAN, wallet, email, bearer/JWT benzeri duyarlı parçalar redakte edilir.
+- Log boyutu sınırları ve rate-limit birlikte kullanılarak hem veri minimizasyonu hem abuse direnci sağlanır.
+
+## 12.8 Trust boundary özeti
+- Contract: economic/state authority.
+- Backend: auth/session/PII koordinasyonu + read-model projection.
+- Frontend: runtime guardrail ve kullanıcı geri bildirimi katmanı.
+- Off-chain veri: operasyonel fayda; protocol authority değildir.
 
 ---
 
@@ -383,61 +400,94 @@ Child trade authority worker tarafında heuristik yerine explicit event+getter k
 
 > Mongo canonical protocol authority değildir; ama yüksek performanslı read-model ve operasyonel observability için kritik katmandır.
 
-## 13.1 User modeli
+## 13.1 User modeli (field-aware)
 
-### Authoritative olmayan ama kritik alanlar
-- `wallet_address` kimlik anahtarı
-- `payout_profile` (rail/country/contact/details encrypted)
-- `reputation_cache` (on-chain mirror amaçlı)
-- ban mirror alanları
-- `profileVersion`, `lastBankChangeAt`, `bankChangeCount7d`, `bankChangeCount30d`, `bank_change_history`
+### Kimlik ve payout profile yapısı
+- `wallet_address` birincil kullanıcı kimliğidir (lowercase EVM address).
+- `payout_profile` yapısı rail-aware tutulur:
+  - `rail`, `country`
+  - `contact.{channel, value_enc}`
+  - `payout_details_enc`
+  - `fingerprint.{hash, version, last_changed_at}`
+  - `updated_at`
 
-### Gizlilik ve güvenlik
-- Şifreli payout alanları
-- Public profile projection’da hassas alanların dışarıda bırakılması
-- bank değişim metadata’sının risk sinyali olarak saklanması
-- `toPublicProfile()` sadece allowlist alanları döndürür; PII sızıntı riski sınırlandırılır.
+### Şifreleme ve public projection sınırı
+- `contact.value_enc` ve `payout_details_enc` şifreli saklanır; plaintext kalıcı depoda tutulmaz.
+- `toPublicProfile()` allowlist yaklaşımıyla yalnız güvenli alanları döndürür.
+- `bank_change_history` ve payout detayları public profile’a sızdırılmaz.
 
-### Operasyonel not
-- `profileVersion`, 7d/30d değişim sayaçları, lock-time snapshot kıyaslamaları için kullanılır.
+### Banka profil risk metadata’sı (authority değil)
+- `profileVersion`
+- `lastBankChangeAt`
+- `bankChangeCount7d`
+- `bankChangeCount30d`
+- `bank_change_history` (rolling pencere hesabı için internal dizi)
+- Bu alanlar anti-fraud/risk sinyalidir; kontrat enforcement authority’si değildir.
 
-## 13.2 Order modeli
+### Reputation/ban mirror sınırı
+- `reputation_cache` ve ban mirror alanları (`is_banned`, `banned_until`, `consecutive_bans`, `max_allowed_tier`) query/UI kolaylığı içindir.
+- Kontrat ile çelişki durumunda otorite on-chain veridedir.
 
-### Kimlik ve state
-- `onchain_order_id` (string id)
-- owner, side, status, tier, token
-- amount/reserve/fee snapshot alanları
-- `refs.order_ref` ve order-level timer alanları
-- `stats.*` alanları child-trade türevi read-model yardımcılarıdır
+## 13.2 Order modeli (field-aware)
+
+### Kimlik + lifecycle alanları
+- `onchain_order_id` (numeric-string kimlik)
+- `owner_address`, `side`, `status`, `tier`, `token_address`
+
+### Finansal/snapshot alanları
+- `amounts.{total_amount, remaining_amount, min_fill_amount}` + `*_num` cache
+- `reserves.{remaining_maker_bond_reserve, remaining_taker_bond_reserve}` + `*_num` cache
+- `fee_snapshot.{taker_fee_bps, maker_fee_bps}`
+
+### Referans, timer ve yardımcı istatistik alanları
+- `refs.order_ref` (event trace / idempotent ilişkilendirme için)
+- `timers.{created_at_onchain, last_filled_at, canceled_at}`
+- `stats.*` (`child_trade_count`, `active/resolved/canceled/burned` dağılımı, `total_filled_amount`)
 
 ### Mirror sınırı
-- Remaining amount ve reserve hesapları backend authority’si değildir; kontrat aynasıdır.
+- Remaining/reserve değerleri backend’de hesaplanan authority değil; worker’ın kontrattan taşıdığı projeksiyon verisidir.
 
-## 13.3 Trade modeli
+## 13.3 Trade modeli (field-aware)
 
-### Kimlik ilişkisi
-- child-trade kimliği: `onchain_escrow_id`
-- parent bağ: `parent_order_id`
-- parent side: `parent_order_side`
+### Kimlik ve canonical ilişki
+- `onchain_escrow_id` (child trade birincil kimliği)
+- `parent_order_id`
+- `parent_order_side`
+- `trade_origin` (`ORDER_CHILD` / `DIRECT_ESCROW`)
+- `canonical_refs.{listing_ref, order_ref}`
 
-### Finansal alanlar
-- BigInt-safe string alanları (`crypto_amount`, bond alanları, decayed totals)
-- number cache alanları yalnız query/UI kolaylığı içindir
-- `trade_origin`, `fill_metadata`, `fee_snapshot`, `canonical_refs` gibi alanlar linkage/forensics amaçlı tutulur
+### Fill ve fee ilişkisi
+- `fill_metadata.{fill_amount, filler_address, remaining_amount_after_fill}` (+ num cache’ler)
+- `fee_snapshot.{taker_fee_bps, maker_fee_bps}`
 
-### PII / receipt / snapshot
-- lock-time payout snapshot
-- encrypted receipt payload + hash
-- cancel proposal / chargeback ack audit alanları
+### BigInt-safe finansal strateji
+- Otoritatif finansal alanlar string tutulur:
+  - `financials.crypto_amount`
+  - `financials.maker_bond`
+  - `financials.taker_bond`
+  - `financials.total_decayed`
+- `*_num` alanları yalnız UI/aggregation kolaylığı içindir; enforcement input’u değildir.
 
-### Retention
-- terminal state sonrası TTL/cleanup stratejileri
-- receipt ve snapshot cleanup işleriyle veri minimizasyonu
-- trade belgesi için terminal durumlarda TTL, receipt/snapshot için ayrı retention alanları birlikte çalışır
+### PII / receipt / payout snapshot alanları
+- `evidence.ipfs_receipt_hash`
+- `evidence.receipt_encrypted`
+- `evidence.receipt_timestamp`
+- `evidence.receipt_delete_at`
+- `payout_snapshot.{maker,taker,...}` altında lock-time `profile_version_at_lock`, `bank_change_count_*_at_lock`, `fingerprint_hash_at_lock` gibi risk bağlamı alanları tutulur.
+
+### Cancel / chargeback audit alanları
+- `cancel_proposal.{proposed_by, proposed_at, approved_by, maker_signed, taker_signed, maker_signature, taker_signature, deadline}`
+- `chargeback_ack.{acknowledged, acknowledged_by, acknowledged_at, ip_hash}`
+
+### Retention ve terminal TTL ayrımı
+- Trade dokümanı terminal state’lerde ayrı TTL index politikasıyla temizlenir.
+- Receipt/snapshot alanları için ayrı cleanup alanları (`receipt_delete_at`, `snapshot_delete_at`) ve job’lar kullanılır.
+- Bu ayrım “belge yaşam döngüsü” ile “hassas payload minimizasyonu”nu birbirinden ayırır.
 
 ## 13.4 Feedback / stats/snapshot katmanı
 - Feedback modeli ürün geri bildirimi için ayrı operational yüzeydir.
-- Daily/aggregated stats endpoint’leri operasyonel görünürlük sağlar, protocol authority üretmez.
+- Stats/snapshot katmanı (daily aggregates, dashboard counters) karar desteği üretir; protocol authority üretmez.
+- Read-model snapshot’ları kontrat state’inin yerini almaz; yalnız operatör görünürlüğünü artırır.
 
 ---
 
@@ -473,47 +523,64 @@ Child trade authority worker tarafında heuristik yerine explicit event+getter k
 
 ## 15) Frontend UX guardrail katmanı
 
-## 15.1 `useArafContract` rolü
-- Contract write/read çağrı orkestrasyonu
-- chain/address preflight guard’ları
-- tx receipt takibi
-- `OrderFilled` event decode ile tradeId çıkarımı
+## 15.1 Runtime orchestration: `useArafContract`
+- Tüm write çağrılarında preflight guard:
+  - wallet client var mı
+  - kontrat adresi geçerli mi (`VITE_ESCROW_ADDRESS`)
+  - chain destekli mi
+- İşlem gönderildikten sonra receipt beklenir; pending tx hash’i `localStorage(araf_pending_tx)` altında saklanır.
+- Fill akışlarında `OrderFilled` event decode edilerek `tradeId` çıkarılır; frontend trade kimliği uydurmaz, receipt’ten okur.
 
-## 15.2 `usePII` rolü
-- trade-scoped PII token akışı
-- canonical API path çözümlemesi
-- authenticated fetch entegrasyonu
-- request race cancellation (AbortController)
-- unmount sonrası hassas state temizliği
+## 15.2 Runtime orchestration: `usePII`
+- PII akışı 2 adımlıdır:
+  1) `pii/request-token/:tradeId`
+  2) `pii/:tradeId` (Bearer + cookie session birlikte)
+- API path canonicalization `buildApiUrl(...)` üstünden zorlanır.
+- `authenticatedFetch` ile me/refresh orkestrasyonu merkezileştirilir.
+- Her yeni PII isteğinde önceki request `AbortController` ile iptal edilir; stale response state’i ezemez.
+- Unmount/trade değişiminde hassas PII state temizlenir.
 
-## 15.3 Session/auth UX guardrails
-- auth me/refresh akışları
-- session-wallet mismatch durumunda güvenli logout/recovery
-- yanlış ağ/yanlış adres durumunda kullanıcıya fail-fast uyarı
+## 15.3 Session mismatch ve recovery UX
+- `authenticatedFetch` 409 (`SESSION_WALLET_MISMATCH`) gördüğünde backend logout + local session cleanup uygular.
+- 401 durumunda `auth/refresh` denenir; başarısızsa kullanıcı yeniden imza akışına yönlendirilir.
+- Bağlı cüzdan ile authenticated wallet ayrışırsa fail-fast logout/re-entry davranışı uygulanır.
 
-## 15.4 Frontend enforcement sınırı
-Frontend kontratın yerine geçmez; enforcement kontrattadır. Frontend yalnız doğru yolu kolaylaştırır, yanlış yolu erken yakalar.
+## 15.4 Wrong-network / wrong-address fail-fast
+- Desteklenmeyen chain’de kontrat write çağrısı başlamadan hata verilir.
+- Geçersiz/sıfır kontrat adresi durumunda işlem başlatılmaz.
+- Amaç zincir dışı silent-failure yerine kullanıcıya erken ve net hata geri bildirimi vermektir.
+
+## 15.5 Provider/bootstrap notları
+- App session katmanı açılışta pending tx recovery kontrolü yapar; 24 saatten eski/bozuk hash’ler temizlenir.
+- Aynı katman aktif trade’i otomatik resume ederek kullanıcıyı doğru trade room’a döndürebilir.
+
+## 15.6 Frontend enforcement sınırı
+Frontend kontratın yerine geçmez; enforcement kontrattadır. Frontend guardrail/orchestration katmanıdır.
 
 ---
 
 ## 16) Saldırı vektörleri ve bilinen sınırlamalar
 
-## 16.1 Giderilmiş veya azaltılmış riskler
-- legacy listing authority confusion
-- hardcoded API path drift riskinin azaltılması
-- session mismatch ile sessiz account confusion azaltımı
-- PII erişiminde state/role/token üçlü sınırı
+## 16.1 Azaltılmış / mitigated riskler
+- **Backend authority confusion (kısmen azaltıldı):** doküman + route projection sınırları + worker mirror uyarıları ile backend’in “hakem” gibi yorumlanma riski daraltıldı.
+- **Session/account confusion:** cookie wallet ↔ header wallet mismatch durumunda request reddi + refresh family revoke + cookie clear zinciri uygulanır.
+- **PII overexposure:** trade-scoped token + role/state/session üçlü kontrolü + snapshot-first + no-store semantiği.
+- **API path drift:** frontend canonical path helper kullanımıyla farklı endpoint kökü kaynaklı sessiz hatalar azaltıldı.
+- **Wrong-network tx riski (UX düzeyinde):** chain/address preflight guard’ları ile işlem başlamadan fail-fast.
 
-## 16.2 Kalan risk yüzeyi
-- off-chain ödeme kanıtı semantik belirsizliği (fake receipt / chargeback gerçekliği)
-- governance key risk surface (owner mutable config)
-- backend mirror authority’nin yanlış yorumlanması riski
-- frontend yanlış ağ/yanlış adres konfigurasyon riski
-- operator dokümantasyon yanlış okuma riski
+## 16.2 Kalan / open riskler
+- **Governance key risk:** mutable fee/cooldown/token-direction surface owner kontrolündedir; multisig ve operasyon disiplini gerektirir.
+- **Fake receipt / off-chain payment ambiguity:** dekont hash’i ve encrypted payload fraud’u pahalılaştırır ama fiat transferin maddi gerçekliğini matematiksel kanıtlamaz.
+- **Chargeback reality:** bankacılık katmanındaki geri alma/itiraz süreçleri zincir üstü finaliteyi dış dünyada tartışmalı hale getirebilir.
+- **Off-chain signature staleness:** cancel signature akışında domain/nonce/deadline kontrollerine rağmen kullanıcı tarafında gecikmiş/onaysız imza UX riski kalır.
+- **Backend mirror’in authority sanılması:** operatör veya entegratör, Mongo/state cache’i yanlışlıkla source-of-truth okuyabilir.
+- **Frontend wrong-network/wrong-address configuration riski:** guardrail’e rağmen yanlış env/config dağıtımı kullanıcıyı yanıltabilir.
+- **Operator/doc misunderstanding riski:** eski listing-first veya “backend hakemdir” gibi mental model kalıntıları operasyonel hataya yol açabilir.
 
-## 16.3 Bilinçli sınırlamalar
-- Oracle-free model gereği fiat transferin “gerçekliği” kontrat içinde doğrulanmaz.
-- Sistem oyun-teorik baskıyla yanlış davranışı pahalılaştırır; mutlak hakemlik iddiası yoktur.
+## 16.3 Bilinçli sınırlamalar (oracle-free model)
+- Oracle-free tasarım gereği fiat transferin “gerçekten yapıldı mı” sorusu kontrat içinde kesin doğrulanmaz.
+- Sistem mutlak hakemlik yerine ekonomik teşvik/ceza ve zaman-bazlı decay mekanizmasıyla kötü davranışı pahalılaştırır.
+- Bu bilinçli sınır, merkezi oracle/arbiter güven varsayımını azaltırken sosyal/operasyonel uyuşmazlık riskini tamamen yok etmez.
 
 ---
 

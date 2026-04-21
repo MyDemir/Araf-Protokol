@@ -338,44 +338,61 @@ Child-trade authority is mirrored through explicit event + getter linkage rather
 
 ## 12) Security architecture and trust boundaries
 
-## 12.1 Auth model (SIWE + JWT)
-- nonce → SIWE sign → verify
-- cookie-based auth/refresh session lifecycle
-- session wallet authority enforcement
+## 12.1 Auth model (SIWE + JWT + cookie session)
 
-## 12.2 Cookie-only auth and session-wallet boundary
-- cookie wallet is authoritative in backend auth checks
-- `x-wallet-address` mismatch triggers session invalidation behavior
+### 12.1.1 Nonce lifecycle (TTL + consume)
+- Nonce is stored in Redis per wallet (`nonce:<wallet>`), with default **5-minute** TTL.
+- Under race conditions, Redis is authoritative: if `SET NX` fails, local nonce is not returned; the live Redis nonce is re-read.
+- During SIWE verify, nonce is consumed via `getDel`, shrinking replay window.
+- SIWE domain/URI checks are enforced at request time (host/origin matching is strict in production).
 
-## 12.2.1 Refresh-token family invalidation
-- On mismatch/logout, refresh-token family revocation reduces token-chain replay risk.
-- This invalidates both active access context and long-lived refresh lineage.
+### 12.1.2 Session token lifecycle
+- Auth JWT cookie (`araf_jwt`) is short-lived by default (configurable; default 15m).
+- Refresh cookie (`araf_refresh`) is longer-lived (default 7 days) and path-scoped to `/api/auth`.
+- The model remains httpOnly + sameSite=lax + credentials:include; bearer header is not normal auth authority.
 
-## 12.3 PII access-token boundary
-- short-lived trade-scoped PII token
-- role + state + session checks applied together
-- sensitive responses follow no-store/no-cache semantics
+## 12.2 Cookie-only boundary and session-wallet mismatch behavior
 
-## 12.4 Encryption model
-- AES-256-GCM envelope encryption
-- HKDF/KMS/Vault-oriented key governance
-- no persistent plaintext PII storage by design
+| Control step | What is validated | Mismatch result |
+|---|---|---|
+| `requireAuth` | Cookie JWT validity + blacklist status | 401 / 403 |
+| `requireSessionWalletMatch` | `x-wallet-address` == cookie-auth wallet | 409 + session invalidation |
+| Session invalidation | JWT blacklist + refresh revoke + cookie clear | Session terminated safely |
 
-## 12.5 Rate-limit classes
-- distinct limiters for auth, market read, trade, PII, feedback, logs
-- limiter classes map to abuse surface semantics
-- Sensitive surfaces (auth/PII) apply in-memory fallback protection when Redis is unavailable.
-- General/public surfaces may use controlled fail-open behavior to preserve availability.
+> Boundary note: `x-wallet-address` is never an auth source by itself; it is only a cookie-session consistency check.
 
-## 12.6 Client-error logging boundary
-- frontend runtime telemetry posts to `/api/logs/client-error`
-- data minimization/scrubbing boundaries reduce sensitive leakage risk
+## 12.3 Refresh-token family invalidation
+- On logout and session-wallet mismatch events, refresh family revocation is applied.
+- Goal is to invalidate not only the current access context but also refresh-lineage reuse.
+- This is “session family termination”, not just “single request denial”.
 
-## 12.7 Trust-boundary summary
-- Contract = economic/state authority
-- Backend = coordination/projection
-- Frontend = guardrail
-- Off-chain data = operational utility, not protocol authority
+## 12.4 PII access boundary (trade-scoped token + live-state checks)
+- PII token is scoped to one `tradeId`, not parent order scope.
+- `requirePIIToken` enforces token type=`pii`, tradeId match, and token-wallet == cookie-session-wallet.
+- Token alone is insufficient; route handlers re-check live trade state (`LOCKED/PAID/CHALLENGED` window).
+- Snapshot-first policy: if payout snapshot is missing, endpoint returns controlled error; current-profile fallback is disabled.
+- Sensitive PII responses set `Cache-Control: no-store` / `Pragma: no-cache`.
+
+## 12.5 Encryption model
+- PII and receipt payload fields are persisted encrypted via AES-256-GCM.
+- Key derivation/governance follows HKDF + KMS/Vault-oriented design.
+- Plaintext is not persisted; contract receives only hash traces for receipt proof linking.
+
+## 12.6 Rate-limit classes and fallback behavior
+- Limiter classes are separated by surface: auth, nonce, market read, orders/trades read-write, PII, feedback, logs.
+- Sensitive surfaces (auth/PII) use in-memory fallback protection when Redis is unavailable (minimizing fail-open posture).
+- Public/read surfaces may allow controlled fail-open choices for availability, without relaxing auth/PII boundaries.
+
+## 12.7 Client-error logging boundary (scrub semantics)
+- Frontend telemetry is accepted only via `/api/logs/client-error`.
+- Message/stack text is scrubbed by regex redaction for IBAN-like values, wallet addresses, emails, bearer/JWT-like tokens.
+- Size limits + rate limits support both data minimization and abuse resistance.
+
+## 12.8 Trust-boundary summary
+- Contract = economic/state authority.
+- Backend = auth/session/PII coordination + read-model projection.
+- Frontend = runtime guardrail and user feedback layer.
+- Off-chain data = operational utility, not protocol authority.
 
 ---
 
@@ -383,61 +400,94 @@ Child-trade authority is mirrored through explicit event + getter linkage rather
 
 > Mongo is not canonical protocol authority; it is still critical for read performance and operational observability.
 
-## 13.1 User model
+## 13.1 User model (field-aware)
 
-### Operationally critical fields (non-authoritative)
-- `wallet_address` identity
-- encrypted `payout_profile` (rail/country/contact/details)
-- `reputation_cache` (on-chain mirror intent)
-- local ban mirror fields
-- `profileVersion`, `lastBankChangeAt`, `bankChangeCount7d`, `bankChangeCount30d`, `bank_change_history`
+### Identity and payout-profile structure
+- `wallet_address` is the primary user identity (lowercase EVM address).
+- `payout_profile` is rail-aware:
+  - `rail`, `country`
+  - `contact.{channel, value_enc}`
+  - `payout_details_enc`
+  - `fingerprint.{hash, version, last_changed_at}`
+  - `updated_at`
 
-### Privacy/security notes
-- encrypted payout fields
-- safe public-profile projection that excludes sensitive fields
-- bank-change metadata stored as risk signal
-- `toPublicProfile()` returns allowlisted fields to minimize accidental PII leakage.
+### Encryption and public-projection boundary
+- `contact.value_enc` and `payout_details_enc` are encrypted at rest; plaintext is not persisted.
+- `toPublicProfile()` uses an allowlist strategy to return only safe fields.
+- `bank_change_history` and payout details are excluded from public profile surface.
 
-### Operational note
-- `profileVersion` and 7d/30d counters support lock-time snapshot/risk comparisons.
+### Bank-profile risk metadata (non-authoritative)
+- `profileVersion`
+- `lastBankChangeAt`
+- `bankChangeCount7d`
+- `bankChangeCount30d`
+- `bank_change_history` (internal rolling-window support)
+- These are anti-fraud/risk signals, not contract enforcement authority.
 
-## 13.2 Order model
+### Reputation/ban mirror boundary
+- `reputation_cache` and ban mirrors (`is_banned`, `banned_until`, `consecutive_bans`, `max_allowed_tier`) support query/UI convenience.
+- If mirror state diverges from chain state, on-chain data remains authoritative.
 
-### Identity and state
-- `onchain_order_id` (string identity)
-- owner, side, status, tier, token
-- amount/reserve/fee snapshot mirrors
-- `refs.order_ref` and order-level timers
-- `stats.*` fields as child-trade-derived read-model helpers
+## 13.2 Order model (field-aware)
+
+### Identity + lifecycle fields
+- `onchain_order_id` (numeric-string identity)
+- `owner_address`, `side`, `status`, `tier`, `token_address`
+
+### Financial/snapshot fields
+- `amounts.{total_amount, remaining_amount, min_fill_amount}` + `*_num` caches
+- `reserves.{remaining_maker_bond_reserve, remaining_taker_bond_reserve}` + `*_num` caches
+- `fee_snapshot.{taker_fee_bps, maker_fee_bps}`
+
+### Reference/timer/helper stats fields
+- `refs.order_ref` (event-trace and idempotent linkage aid)
+- `timers.{created_at_onchain, last_filled_at, canceled_at}`
+- `stats.*` (`child_trade_count`, `active/resolved/canceled/burned` breakdown, `total_filled_amount`)
 
 ### Mirror boundary
-- Remaining amount/reserve values are mirrored from contract truth, not backend authority calculations.
+- Remaining/reserve values are not backend-calculated authority; they are worker projections mirrored from contract truth.
 
-## 13.3 Trade model
+## 13.3 Trade model (field-aware)
 
-### Identity relationship
-- child identity: `onchain_escrow_id`
-- parent linkage: `parent_order_id`
-- parent side: `parent_order_side`
+### Identity and canonical linkage
+- `onchain_escrow_id` (primary child-trade identity)
+- `parent_order_id`
+- `parent_order_side`
+- `trade_origin` (`ORDER_CHILD` / `DIRECT_ESCROW`)
+- `canonical_refs.{listing_ref, order_ref}`
 
-### Financial field strategy
-- BigInt-safe string fields (`crypto_amount`, bonds, total_decayed)
-- numeric caches for query/UI convenience only
-- `trade_origin`, `fill_metadata`, `fee_snapshot`, `canonical_refs` retained for linkage/forensics
+### Fill and fee linkage
+- `fill_metadata.{fill_amount, filler_address, remaining_amount_after_fill}` (+ numeric caches)
+- `fee_snapshot.{taker_fee_bps, maker_fee_bps}`
 
-### PII / receipt / snapshot
-- lock-time payout snapshots
-- encrypted receipt payload + receipt hash
-- cancel-proposal + chargeback-ack audit fields
+### BigInt-safe financial strategy
+- Authoritative financial fields are string-based:
+  - `financials.crypto_amount`
+  - `financials.maker_bond`
+  - `financials.taker_bond`
+  - `financials.total_decayed`
+- `*_num` caches are for UI/aggregation convenience only; not enforcement inputs.
 
-### Retention
-- terminal-state TTL/cleanup strategy
-- receipt/snapshot cleanup jobs for data minimization
-- terminal trade TTL and receipt/snapshot retention fields are intentionally separate and complementary
+### PII / receipt / payout snapshot fields
+- `evidence.ipfs_receipt_hash`
+- `evidence.receipt_encrypted`
+- `evidence.receipt_timestamp`
+- `evidence.receipt_delete_at`
+- `payout_snapshot.{maker,taker,...}` carries lock-time risk context like `profile_version_at_lock`, `bank_change_count_*_at_lock`, `fingerprint_hash_at_lock`.
+
+### Cancel / chargeback audit fields
+- `cancel_proposal.{proposed_by, proposed_at, approved_by, maker_signed, taker_signed, maker_signature, taker_signature, deadline}`
+- `chargeback_ack.{acknowledged, acknowledged_by, acknowledged_at, ip_hash}`
+
+### Retention and terminal-TTL separation
+- Trade document lifecycle uses terminal-state TTL policy.
+- Receipt/snapshot payload minimization uses separate cleanup fields (`receipt_delete_at`, `snapshot_delete_at`) and jobs.
+- This separation distinguishes “document lifecycle TTL” from “sensitive payload retention”.
 
 ## 13.4 Feedback / stats snapshot layer
 - Feedback is a separate operational/user-signal surface.
-- Daily/aggregated stats are observability surfaces, not protocol authority.
+- Stats/snapshot layer (daily aggregates, dashboard counters) supports observability and decisions, not protocol authority.
+- Read-model snapshots do not replace contract state; they improve operator visibility.
 
 ---
 
@@ -473,47 +523,64 @@ Child-trade authority is mirrored through explicit event + getter linkage rather
 
 ## 15) Frontend UX guardrail layer
 
-## 15.1 `useArafContract` role
-- contract write/read orchestration
-- chain/address preflight guards
-- tx receipt tracking
-- `OrderFilled` decode for tradeId extraction
+## 15.1 Runtime orchestration: `useArafContract`
+- Write preflight checks enforce:
+  - wallet client availability
+  - valid contract address (`VITE_ESCROW_ADDRESS`)
+  - supported chain
+- After tx send, receipt is awaited; pending tx hash is persisted in `localStorage(araf_pending_tx)`.
+- Fill paths decode `OrderFilled` to extract `tradeId`; frontend does not fabricate trade identity.
 
-## 15.2 `usePII` role
-- trade-scoped PII token flow
-- canonical API path resolution
-- authenticated fetch integration
-- race cancellation via AbortController
-- sensitive-state cleanup after unmount
+## 15.2 Runtime orchestration: `usePII`
+- PII flow is two-step:
+  1) `pii/request-token/:tradeId`
+  2) `pii/:tradeId` (Bearer + cookie session together)
+- API path canonicalization is enforced via `buildApiUrl(...)`.
+- `authenticatedFetch` centralizes me/refresh-aware behavior.
+- Every new PII request aborts previous inflight request with `AbortController`; stale responses cannot overwrite state.
+- Sensitive PII state is cleared on unmount/trade switch.
 
-## 15.3 Session/auth UX guardrails
-- auth me/refresh orchestration
-- safe logout/recovery on session-wallet mismatch
-- early user feedback on wrong network/address states
+## 15.3 Session-mismatch and recovery UX
+- On 409 (`SESSION_WALLET_MISMATCH`), `authenticatedFetch` performs backend logout + local session cleanup.
+- On 401, refresh (`auth/refresh`) is attempted; if refresh fails, user is routed back to sign-in flow.
+- If connected wallet diverges from authenticated wallet, fail-fast logout/re-entry is applied.
 
-## 15.4 Enforcement boundary
-Frontend does not replace contract enforcement; it reduces UX errors and unsafe user paths.
+## 15.4 Wrong-network / wrong-address fail-fast
+- Unsupported chain blocks contract write calls before tx submission.
+- Invalid/zero contract address blocks execution early.
+- Goal is clear early failure instead of silent off-chain drift.
+
+## 15.5 Provider/bootstrap notes
+- App session layer checks pending tx recovery at startup; stale/invalid hashes are cleaned.
+- Same layer can auto-resume the single active trade and route user back to trade room.
+
+## 15.6 Enforcement boundary
+Frontend does not replace contract enforcement; it is a guardrail/orchestration layer.
 
 ---
 
 ## 16) Attack vectors and known limitations
 
-## 16.1 Mitigated/reduced risks
-- legacy listing authority confusion
-- hardcoded API-path drift risks in PII flow
-- silent account/session confusion via mismatch handling
-- PII overexposure reduced by token+role+state boundary
+## 16.1 Mitigated / reduced risks
+- **Backend authority confusion (partially reduced):** documentation + route projection boundaries + worker mirror warnings narrow the chance that backend is treated as adjudicator.
+- **Session/account confusion:** cookie-wallet ↔ header-wallet mismatch now triggers request denial + refresh-family revoke + cookie clear chain.
+- **PII overexposure:** trade-scoped token + role/state/session triple checks + snapshot-first + no-store response semantics.
+- **API-path drift:** canonical path helper usage reduces silent endpoint mismatch risks.
+- **Wrong-network tx risk (UX layer):** chain/address preflight guards fail fast before write submission.
 
-## 16.2 Remaining risk surface
-- off-chain payment-proof ambiguity (fake receipt / chargeback realities)
-- governance-key risk surface (owner mutable config)
-- backend mirror interpreted as authority by operators
-- frontend wrong-network / wrong-address configuration risk
-- documentation/operator misunderstanding risk
+## 16.2 Remaining / open risks
+- **Governance key risk:** mutable fee/cooldown/token-direction surfaces remain owner-controlled and require multisig/ops discipline.
+- **Fake receipt / off-chain payment ambiguity:** encrypted receipt + hash trace raises fraud cost but cannot cryptographically prove fiat transfer truth.
+- **Chargeback reality:** banking reversals/disputes can make off-chain finality differ from on-chain expectations.
+- **Off-chain signature staleness:** cancel-signature domain/nonce/deadline checks help, but user-side stale-sign UX risk remains.
+- **Backend mirror interpreted as authority:** operators/integrators may still mistake Mongo/cache as source of truth.
+- **Frontend wrong-network/wrong-address configuration risk:** guardrails do not fully eliminate deployment/env misconfiguration risk.
+- **Operator/documentation misunderstanding risk:** legacy mental models (“listing-first”, “backend is arbiter”) can still cause operational errors.
 
-## 16.3 Conscious limitations
-- oracle-free design does not prove fiat transfer truth on-chain
-- system enforces economic pressure, not subjective adjudication
+## 16.3 Conscious limitations (oracle-free model)
+- Oracle-free design intentionally does not prove fiat transfer truth fully on-chain.
+- The system applies economic pressure + time-decay incentives, not absolute subjective arbitration.
+- This reduces centralized oracle dependence but does not eliminate social/operational dispute risk.
 
 ---
 
