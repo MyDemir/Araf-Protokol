@@ -6,7 +6,7 @@
 [![Version](https://img.shields.io/badge/version-V3_Order--First-00c9a7?style=flat-square)](.)
 [![Network](https://img.shields.io/badge/network-Base_L2_(8453)-0052FF?style=flat-square&logo=coinbase)](.)
 [![Status](https://img.shields.io/badge/status-Canonical-f5a623?style=flat-square)](.)
-[![Updated](https://img.shields.io/badge/updated-March_2026-purple?style=flat-square)](.)
+[![Updated](https://img.shields.io/badge/updated-April_2026-purple?style=flat-square)](.)
 [![Solidity](https://img.shields.io/badge/Solidity-0.8.24-363636?style=flat-square&logo=solidity)](.)
 [![Docs](https://img.shields.io/badge/docs-Source_of_Truth-green?style=flat-square)](.)
 
@@ -17,9 +17,6 @@
 > **"Contract decides. Off-chain only mirrors, coordinates, and accelerates."**
 
 </div>
-
-> This document preserves the correct V3 core introduced in PR #52 and expands it back to detailed technical-reference depth.  
-> Source-of-truth order: `ArafEscrow.sol` → backend mirror/read layer → frontend guardrail layer → documentation.
 
 ---
 
