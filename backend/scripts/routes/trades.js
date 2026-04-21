@@ -11,7 +11,7 @@ const { tradesLimiter } = require("../middleware/rateLimiter");
 const Trade = require("../models/Trade");
 const User = require("../models/User");
 const logger = require("../utils/logger");
-const { buildBankProfileRisk } = require("./tradeRisk");
+const { buildBankProfileRisk, buildTradeHealthSignals } = require("./tradeRisk");
 
 const CANCEL_VERIFY_ABI = [
   "function sigNonces(address) view returns (uint256)",
@@ -142,6 +142,14 @@ const SAFE_TRADE_PROJECTION = [
   "payout_snapshot.maker.bank_change_count_7d_at_lock",
   "payout_snapshot.maker.bank_change_count_30d_at_lock",
   "payout_snapshot.maker.last_bank_change_at_at_lock",
+  "payout_snapshot.taker.rail",
+  "payout_snapshot.taker.country",
+  "payout_snapshot.taker.profile_version_at_lock",
+  "payout_snapshot.taker.bank_change_count_7d_at_lock",
+  "payout_snapshot.taker.bank_change_count_30d_at_lock",
+  "payout_snapshot.is_complete",
+  "payout_snapshot.incomplete_reason",
+  "payout_snapshot.captured_at",
   "cancel_proposal.proposed_by",
   "cancel_proposal.proposed_at",
   "cancel_proposal.approved_by",
@@ -183,25 +191,33 @@ async function _attachBankProfileRisk(trades) {
     return [];
   }
 
-  const makerAddresses = [
+  const participantAddresses = [
     ...new Set(
       trades
-        .map((trade) => trade?.maker_address)
+        .flatMap((trade) => [trade?.maker_address, trade?.taker_address])
         .filter(Boolean)
     ),
   ];
 
-  const makerUsers = await User.find({ wallet_address: { $in: makerAddresses } })
-    .select("wallet_address profileVersion lastBankChangeAt payout_profile")
+  const participantUsers = await User.find({ wallet_address: { $in: participantAddresses } })
+    .select(
+      "wallet_address profileVersion bankChangeCount7d bankChangeCount30d " +
+      "payout_profile reputation_cache is_banned banned_until consecutive_bans"
+    )
     .lean();
 
-  const makerMap = new Map(
-    makerUsers.map((user) => [user.wallet_address, user])
+  const userMap = new Map(
+    participantUsers.map((user) => [user.wallet_address, user])
   );
 
   return trades.map((trade) => {
-    const makerUser = makerMap.get(trade.maker_address) || null;
+    const makerUser = userMap.get(trade.maker_address) || null;
+    const takerUser = userMap.get(trade.taker_address) || null;
     const bankProfileRisk = buildBankProfileRisk(trade, makerUser);
+    const healthScoreInput =
+      typeof buildTradeHealthSignals === "function"
+        ? buildTradeHealthSignals(trade, makerUser, takerUser)
+        : { readOnly: true, nonBlocking: true, canBlockProtocolActions: false, explainableReasons: [] };
 
     // [TR] Internal snapshot alanlarını response'ta doğrudan açmıyoruz;
     //      onun yerine türetilmiş risk nesnesi veriyoruz.
@@ -210,6 +226,7 @@ async function _attachBankProfileRisk(trades) {
     return {
       ...safeTrade,
       bank_profile_risk: bankProfileRisk,
+      offchain_health_score_input: healthScoreInput,
     };
   });
 }

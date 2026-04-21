@@ -272,4 +272,30 @@ userSchema.methods.markBankProfileChanged = function (now = new Date()) {
   return this.recomputeBankChangeCounters(safeNow);
 };
 
+/**
+ * Trade-scoped health sinyali için güvenli mirror özetini üretir.
+ *
+ * Kritik sınır:
+ *   - Bu veri kesinlikle ekonomik authority üretmez.
+ *   - release/cancel/burn akışlarını bloklamak için kullanılmamalıdır.
+ *   - Yalnız görünürlük / açıklama / friction amaçlı read-model girdisidir.
+ */
+userSchema.methods.toTradeHealthMirror = function () {
+  return {
+    wallet_address: this.wallet_address,
+    profileVersion: this.profileVersion,
+    lastBankChangeAt: this.lastBankChangeAt,
+    bankChangeCount7d: this.bankChangeCount7d,
+    bankChangeCount30d: this.bankChangeCount30d,
+    reputation_cache: {
+      success_rate: this.reputation_cache?.success_rate ?? null,
+      failed_disputes: this.reputation_cache?.failed_disputes ?? null,
+      effective_tier: this.reputation_cache?.effective_tier ?? null,
+    },
+    is_banned: this.is_banned,
+    banned_until: this.banned_until,
+    consecutive_bans: this.consecutive_bans,
+  };
+};
+
 module.exports = mongoose.model("User", userSchema);

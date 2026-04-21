@@ -34,8 +34,10 @@ Araf is a **non-custodial, oracle-free, humanless** fiat ↔ crypto protocol.
   - `SELL_CRYPTO`: owner→maker, filler→taker
   - `BUY_CRYPTO`: owner→taker, filler→maker
 - Fee/cooldown values are **mutable runtime config**, not hard-fixed constants.
+- `setFeeConfig` is bounded by on-chain economic cap: max **2000 bps** per side.
 - Active trade economics are protected by fee snapshots.
 - Reputation clean-slate period is **90 days**; `decayReputation` is not a full amnesty.
+- Supported payout rails are constrained to **TR_IBAN, US_ACH, SEPA_IBAN**.
 - Token permissions are direction-aware: `supported`, `allowSellOrders`, `allowBuyOrders`.
 
 ### Legacy note
@@ -64,8 +66,10 @@ Araf, fiat ↔ kripto takası için **emanet tutmayan, oracle-bağımsız, insan
   - `SELL_CRYPTO`: owner→maker, filler→taker
   - `BUY_CRYPTO`: owner→taker, filler→maker
 - Fee/cooldown değerleri **mutable runtime config**’tir; sabit değildir.
+- `setFeeConfig` on-chain ekonomik tavan ile sınırlıdır: taraf başına en fazla **2000 bps**.
 - Aktif trade economics fee snapshot ile korunur.
 - Reputation clean-slate süresi **90 gün**dür; `decayReputation` tam af değildir.
+- Desteklenen payout rail seti **TR_IBAN, US_ACH, SEPA_IBAN** ile sınırlıdır.
 - Token izinleri direction-aware’dir: `supported`, `allowSellOrders`, `allowBuyOrders`.
 
 ### Legacy not

@@ -455,7 +455,7 @@ Ayrıca `ReputationUpdated` event'i `consecutiveBans` veya `maxAllowedTier` değ
 |---|---|
 | `getReputation(address)` | Sınırlı bir itibar özeti döndürür: `successful`, `failed`, `bannedUntil`, `consecutiveBans` ve `effectiveTier`. `hasTierPenalty`, `maxAllowedTier` veya `firstSuccessfulTradeAt` gibi tüm ilişkili state alanlarını tek başına taşımaz. |
 | `getFirstSuccessfulTradeAt(address)` | Tier yükselişinin zaman bileşenini açıklamak için ilk başarılı işlemin zamanını döndürür. `MIN_ACTIVE_PERIOD` kuralının ne zaman dolacağını frontend ve analitik katmanı buradan görünür kılabilir. |
-| `decayReputation(address)` | "Temiz Sayfa" kuralını on-chain'de uygular. Bir kullanıcının son yasağının üzerinden 180 gün geçtiyse, `consecutiveBans` sayacını sıfırlar, `hasTierPenalty` bayrağını kaldırır ve `maxAllowedTier` değerini tekrar 4'e çeker. Bu yol `onlyOwner` değildir; izinli bir admin değil, **permissionless bakım çağrısı** olarak tasarlanmıştır. Kullanıcının kendisi, backend relayer'ı veya herhangi bir üçüncü taraf uygun koşul oluştuğunda çağırabilir. |
+| `decayReputation(address)` | "Temiz Sayfa" kuralını on-chain'de uygular. Bir kullanıcının son yasağının üzerinden 90 gün geçtiyse, `consecutiveBans` sayacını sıfırlar, `hasTierPenalty` bayrağını kaldırır ve `maxAllowedTier` değerini tekrar 4'e çeker. Bu yol `onlyOwner` değildir; izinli bir admin değil, **permissionless bakım çağrısı** olarak tasarlanmıştır. Kullanıcının kendisi, backend relayer'ı veya herhangi bir üçüncü taraf uygun koşul oluştuğunda çağırabilir. |
 
 ---
 
