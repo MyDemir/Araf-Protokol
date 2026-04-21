@@ -91,4 +91,52 @@ describe("tradeRisk read-model regression", () => {
     expect(health.explainableReasons).toContain("partial_or_incomplete_snapshot");
     expect(health.snapshot.incompleteReason).toBe("maker_payout_profile_missing");
   });
+
+  it("profile_version_at_lock=0 değerini missing snapshot olarak işaretlemez", () => {
+    const trade = makeBaseTrade({
+      payout_snapshot: {
+        is_complete: true,
+        maker: {
+          profile_version_at_lock: 0,
+          bank_change_count_7d_at_lock: 0,
+          bank_change_count_30d_at_lock: 0,
+        },
+      },
+    });
+
+    const health = buildTradeHealthSignals(trade, { profileVersion: 0 }, null);
+    expect(health.explainableReasons).not.toContain("partial_or_incomplete_snapshot");
+  });
+
+  it("taker alanı takerin kendisi yerine maker karşı-taraf özetini taşır", () => {
+    const trade = makeBaseTrade({
+      payout_snapshot: {
+        is_complete: true,
+        maker: {
+          profile_version_at_lock: 2,
+          bank_change_count_7d_at_lock: 4,
+          reputation_context_at_lock: {
+            effective_tier: 1,
+            failed_disputes: 6,
+            is_banned: true,
+          },
+        },
+        taker: {
+          profile_version_at_lock: 9,
+          bank_change_count_7d_at_lock: 0,
+          reputation_context_at_lock: {
+            effective_tier: 4,
+            failed_disputes: 0,
+            is_banned: false,
+          },
+        },
+      },
+    });
+
+    const health = buildTradeHealthSignals(trade, { profileVersion: 4 }, { profileVersion: 999 });
+    expect(health.taker.counterparty).toBe("maker");
+    expect(health.taker.makerEffectiveTierMirrorAtLock).toBe(1);
+    expect(health.taker.makerFailedDisputesMirrorAtLock).toBe(6);
+    expect(health.taker.makerWasBannedMirrorAtLock).toBe(true);
+  });
 });

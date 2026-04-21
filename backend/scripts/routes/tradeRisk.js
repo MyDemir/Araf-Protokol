@@ -7,21 +7,21 @@ function _toSafeNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function _buildMirrorContext(user) {
+function _buildMirrorContext(lockContext, fallbackUser) {
   return {
-    successRate: user?.reputation_cache?.success_rate ?? null,
-    failedDisputes: user?.reputation_cache?.failed_disputes ?? null,
-    effectiveTier: user?.reputation_cache?.effective_tier ?? null,
-    isBannedMirror: user?.is_banned ?? null,
-    bannedUntilMirror: user?.banned_until ?? null,
-    consecutiveBansMirror: user?.consecutive_bans ?? null,
+    successRate: lockContext?.success_rate ?? fallbackUser?.reputation_cache?.success_rate ?? null,
+    failedDisputes: lockContext?.failed_disputes ?? fallbackUser?.reputation_cache?.failed_disputes ?? null,
+    effectiveTier: lockContext?.effective_tier ?? fallbackUser?.reputation_cache?.effective_tier ?? null,
+    isBannedMirror: lockContext?.is_banned ?? fallbackUser?.is_banned ?? null,
+    bannedUntilMirror: lockContext?.banned_until ?? fallbackUser?.banned_until ?? null,
+    consecutiveBansMirror: lockContext?.consecutive_bans ?? fallbackUser?.consecutive_bans ?? null,
   };
 }
 
 function buildTradeHealthSignals(trade, makerUser, takerUser) {
   const payoutSnapshot = trade?.payout_snapshot || {};
   const makerSnapshot = payoutSnapshot?.maker || {};
-  const takerSnapshot = payoutSnapshot?.taker || {};
+  const makerReputationContextAtLock = makerSnapshot?.reputation_context_at_lock || {};
 
   const profileVersionAtLock = _toSafeNumber(makerSnapshot.profile_version_at_lock, 0);
   const currentProfileVersion = _toSafeNumber(
@@ -34,11 +34,15 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
   const bankChangeCount7dAtLock = _toSafeNumber(makerSnapshot.bank_change_count_7d_at_lock, 0);
   const bankChangeCount30dAtLock = _toSafeNumber(makerSnapshot.bank_change_count_30d_at_lock, 0);
   const frequentRecentChanges = bankChangeCount7dAtLock >= BANK_PROFILE_RISK_THRESHOLD_7D;
+  const hasProfileVersionAtLock =
+    makerSnapshot.profile_version_at_lock !== null &&
+    makerSnapshot.profile_version_at_lock !== undefined;
 
+  // [TR] profile_version_at_lock=0 geçerli lock-time değerdir; missing snapshot nedeni sayılmaz.
+  // [EN] profile_version_at_lock=0 is a valid lock-time value; do not mark as missing.
   const snapshotMissing =
-    !payoutSnapshot ||
     payoutSnapshot.is_complete === false ||
-    !makerSnapshot.profile_version_at_lock;
+    !hasProfileVersionAtLock;
 
   const reasons = [];
   if (changedAfterLock) {
@@ -50,7 +54,7 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
   if (snapshotMissing) {
     reasons.push("partial_or_incomplete_snapshot");
   }
-  if (makerUser?.is_banned) {
+  if (_buildMirrorContext(makerReputationContextAtLock, makerUser).isBannedMirror) {
     reasons.push("maker_ban_mirror_active");
   }
 
@@ -68,14 +72,23 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
     lastBankChangeAtAtLock: makerSnapshot.last_bank_change_at_at_lock || null,
     threshold7d: BANK_PROFILE_RISK_THRESHOLD_7D,
     frequentRecentChanges,
-    reputationBanMirrorContext: _buildMirrorContext(makerUser),
+    // [TR] Öncelik lock-time snapshot'tadır; legacy kayıtlar için fallback live mirror.
+    // [EN] Prefer lock-time snapshot; fallback to live mirror only for legacy records.
+    reputationBanMirrorContext: _buildMirrorContext(makerReputationContextAtLock, makerUser),
   };
 
-  const takerCompactSignal = {
-    railAtLock: takerSnapshot.rail || null,
-    hasRecentBankProfileChangeMirror: _toSafeNumber(takerUser?.bankChangeCount7d, 0) > 0,
-    effectiveTierMirror: takerUser?.reputation_cache?.effective_tier ?? null,
-    isBannedMirror: takerUser?.is_banned ?? null,
+  // [TR] "taker" anahtarı compatibility için korunur; payload takerin kendisini değil,
+  //      takerin göreceği maker karşı-taraf risk özetidir.
+  // [EN] Keep "taker" key for compatibility; payload is maker counterparty summary for taker.
+  const takerFacingCounterpartySummary = {
+    counterparty: "maker",
+    highRiskBankProfile: Boolean(changedAfterLock || frequentRecentChanges),
+    changedAfterLock,
+    frequentRecentChanges,
+    reasonCount: reasons.length,
+    makerEffectiveTierMirrorAtLock: makerReputationContextAtLock?.effective_tier ?? null,
+    makerFailedDisputesMirrorAtLock: makerReputationContextAtLock?.failed_disputes ?? null,
+    makerWasBannedMirrorAtLock: makerReputationContextAtLock?.is_banned ?? null,
   };
 
   return {
@@ -86,7 +99,7 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
     canBlockProtocolActions: false,
     explainableReasons: reasons,
     maker: makerBreakdown,
-    taker: takerCompactSignal,
+    taker: takerFacingCounterpartySummary,
     snapshot: {
       capturedAt: payoutSnapshot?.captured_at || null,
       isComplete: payoutSnapshot?.is_complete !== false,

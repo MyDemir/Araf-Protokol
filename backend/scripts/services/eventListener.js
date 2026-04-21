@@ -143,6 +143,21 @@ function _buildIdentityLookup(field, rawId) {
 }
 
 /**
+ * [TR] Lock anındaki reputation/ban aynası (read-model only, non-authoritative).
+ * [EN] Lock-time reputation/ban mirror (read-model only, non-authoritative).
+ */
+function _buildReputationContextAtLock(user) {
+  return {
+    success_rate: user?.reputation_cache?.success_rate ?? null,
+    failed_disputes: user?.reputation_cache?.failed_disputes ?? null,
+    effective_tier: user?.reputation_cache?.effective_tier ?? null,
+    consecutive_bans: user?.consecutive_bans ?? null,
+    is_banned: user?.is_banned ?? null,
+    banned_until: user?.banned_until ?? null,
+  };
+}
+
+/**
  * [TR] Yalnızca *_num cache alanları için güvenli Number dönüşümü.
  *      Kimlik alanları (orderId/tradeId) bu helper'ı kullanmaz; null kimlik drift'i önlenir.
  * [EN] Safe Number conversion only for *_num cache fields.
@@ -1108,12 +1123,18 @@ class EventWorker {
     const [makerUser, takerUser] = await Promise.all([
       normalizedMaker
         ? User.findOne({ wallet_address: normalizedMaker })
-            .select("payout_profile bankChangeCount7d bankChangeCount30d lastBankChangeAt")
+            .select(
+              "payout_profile bankChangeCount7d bankChangeCount30d lastBankChangeAt " +
+              "reputation_cache is_banned banned_until consecutive_bans"
+            )
             .lean()
         : null,
       normalizedTaker
         ? User.findOne({ wallet_address: normalizedTaker })
-            .select("payout_profile bankChangeCount7d bankChangeCount30d lastBankChangeAt")
+            .select(
+              "payout_profile bankChangeCount7d bankChangeCount30d lastBankChangeAt " +
+              "reputation_cache is_banned banned_until consecutive_bans"
+            )
             .lean()
         : null,
     ]);
@@ -1141,6 +1162,7 @@ class EventWorker {
       "payout_snapshot.maker.bank_change_count_7d_at_lock": makerUser?.bankChangeCount7d ?? null,
       "payout_snapshot.maker.bank_change_count_30d_at_lock": makerUser?.bankChangeCount30d ?? null,
       "payout_snapshot.maker.last_bank_change_at_at_lock": makerUser?.lastBankChangeAt ?? null,
+      "payout_snapshot.maker.reputation_context_at_lock": _buildReputationContextAtLock(makerUser),
 
       "payout_snapshot.taker.rail": takerProfile?.rail || null,
       "payout_snapshot.taker.country": takerProfile?.country || null,
@@ -1152,6 +1174,7 @@ class EventWorker {
       "payout_snapshot.taker.bank_change_count_7d_at_lock": takerUser?.bankChangeCount7d ?? null,
       "payout_snapshot.taker.bank_change_count_30d_at_lock": takerUser?.bankChangeCount30d ?? null,
       "payout_snapshot.taker.last_bank_change_at_at_lock": takerUser?.lastBankChangeAt ?? null,
+      "payout_snapshot.taker.reputation_context_at_lock": _buildReputationContextAtLock(takerUser),
       "payout_snapshot.captured_at": lockedAt,
       "payout_snapshot.snapshot_delete_at": new Date(lockedAt.getTime() + 30 * 24 * 3600 * 1000),
       "payout_snapshot.is_complete": snapshotComplete,
