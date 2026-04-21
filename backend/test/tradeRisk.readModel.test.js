@@ -92,6 +92,20 @@ describe("tradeRisk read-model regression", () => {
     expect(health.snapshot.incompleteReason).toBe("maker_payout_profile_missing");
   });
 
+  it("legacy missing snapshot fields de snapshot.isComplete=false döndürür", () => {
+    const trade = makeBaseTrade({
+      payout_snapshot: {
+        maker: {},
+        taker: {},
+      },
+    });
+
+    const health = buildTradeHealthSignals(trade, { profileVersion: 2 }, { profileVersion: 1 });
+
+    expect(health.snapshot.isComplete).toBe(false);
+    expect(health.explainableReasons).toContain("partial_or_incomplete_snapshot");
+  });
+
   it("profile_version_at_lock=0 değerini missing snapshot olarak işaretlemez", () => {
     const trade = makeBaseTrade({
       payout_snapshot: {
@@ -105,6 +119,7 @@ describe("tradeRisk read-model regression", () => {
     });
 
     const health = buildTradeHealthSignals(trade, { profileVersion: 0 }, null);
+    expect(health.snapshot.isComplete).toBe(true);
     expect(health.explainableReasons).not.toContain("partial_or_incomplete_snapshot");
   });
 
