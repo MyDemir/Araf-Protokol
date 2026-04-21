@@ -19,6 +19,7 @@ const Order = require("../models/Order");
 const Trade = require("../models/Trade");
 
 const NUMERIC_BSON_TYPES = ["int", "long", "double", "decimal"];
+const DEFAULT_BATCH_SIZE = 1000;
 
 function parseArgs(argv = process.argv.slice(2)) {
   return {
@@ -76,8 +77,33 @@ function buildBulkOps(docs, field, opts = {}) {
   return { ops, changed };
 }
 
-async function detectLogicalCollisions(Model, field, { allowNull = false } = {}) {
-  const docs = await Model.find({
+function resolveBatchSize(rawValue) {
+  const parsed = Number(rawValue);
+  if (!Number.isInteger(parsed) || parsed <= 0) return DEFAULT_BATCH_SIZE;
+  return parsed;
+}
+
+async function forEachDocChunk(query, { batchSize = DEFAULT_BATCH_SIZE, onChunk }) {
+  const cursor = query.cursor({ batchSize });
+  let chunk = [];
+
+  for await (const doc of cursor) {
+    chunk.push(doc);
+    if (chunk.length >= batchSize) {
+      // [TR] Her adımda bounded chunk işlenir; tüm collection belleğe alınmaz.
+      // [EN] Process bounded chunks to avoid full-collection materialization.
+      await onChunk(chunk);
+      chunk = [];
+    }
+  }
+
+  if (chunk.length) {
+    await onChunk(chunk);
+  }
+}
+
+async function detectLogicalCollisions(Model, field, { allowNull = false, batchSize = DEFAULT_BATCH_SIZE } = {}) {
+  const query = Model.find({
     [field]: {
       $exists: true,
       ...(allowNull ? {} : { $ne: null }),
@@ -86,16 +112,22 @@ async function detectLogicalCollisions(Model, field, { allowNull = false } = {})
   }).select(`_id ${field}`).lean();
 
   const counts = new Map();
-  for (const doc of docs) {
-    let normalized;
-    try {
-      normalized = normalizeIdentityValue(doc[field], { allowZero: true, toNullOnZero: false });
-    } catch (err) {
-      throw new Error(`IDENTITY_COLLISION_PREFLIGHT_INVALID:${field}:${doc._id}:${err.message}`);
+
+  await forEachDocChunk(query, {
+    batchSize,
+    onChunk: async (docs) => {
+      for (const doc of docs) {
+        let normalized;
+        try {
+          normalized = normalizeIdentityValue(doc[field], { allowZero: true, toNullOnZero: false });
+        } catch (err) {
+          throw new Error(`IDENTITY_COLLISION_PREFLIGHT_INVALID:${field}:${doc._id}:${err.message}`);
+        }
+        if (normalized == null) continue;
+        counts.set(normalized, (counts.get(normalized) || 0) + 1);
+      }
     }
-    if (normalized == null) continue;
-    counts.set(normalized, (counts.get(normalized) || 0) + 1);
-  }
+  });
 
   return [...counts.entries()]
     .filter(([, count]) => count > 1)
@@ -103,18 +135,46 @@ async function detectLogicalCollisions(Model, field, { allowNull = false } = {})
     .map(([key, count]) => ({ _id: key, count }));
 }
 
+async function migrateFieldInBatches(Model, {
+  field,
+  findFilter,
+  normalizeOptions,
+  dryRun,
+  batchSize,
+}) {
+  const query = Model.find(findFilter).select(`_id ${field}`).lean();
+
+  let numericFound = 0;
+  let willUpdate = 0;
+
+  await forEachDocChunk(query, {
+    batchSize,
+    onChunk: async (docs) => {
+      numericFound += docs.length;
+      const plan = buildBulkOps(docs, field, normalizeOptions);
+      willUpdate += plan.changed;
+      if (!dryRun && plan.ops.length) {
+        await Model.bulkWrite(plan.ops, { ordered: true });
+      }
+    },
+  });
+
+  return { numericFound, willUpdate };
+}
+
 async function run({ dryRun = false } = {}) {
   const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
   if (!mongoUri) throw new Error("MONGODB_URI/MONGO_URI tanımlı değil.");
 
   await mongoose.connect(mongoUri);
+  const batchSize = resolveBatchSize(process.env.IDENTITY_MIGRATION_BATCH_SIZE);
 
   try {
     // [TR] Collision preflight: aynı mantıksal ID'nin birden çok dokümana düşmesi
     //      migration sonrası unique conflict üretebilir; fail-safe olarak duruyoruz.
     const [orderCollisions, tradeCollisions] = await Promise.all([
-      detectLogicalCollisions(Order, "onchain_order_id"),
-      detectLogicalCollisions(Trade, "onchain_escrow_id"),
+      detectLogicalCollisions(Order, "onchain_order_id", { batchSize }),
+      detectLogicalCollisions(Trade, "onchain_escrow_id", { batchSize }),
     ]);
 
     if (orderCollisions.length || tradeCollisions.length) {
@@ -123,34 +183,43 @@ async function run({ dryRun = false } = {}) {
       );
     }
 
-    const [orderDocs, tradeEscrowDocs, tradeParentDocs] = await Promise.all([
-      Order.find({ onchain_order_id: { $type: NUMERIC_BSON_TYPES } }).select("_id onchain_order_id").lean(),
-      Trade.find({ onchain_escrow_id: { $type: NUMERIC_BSON_TYPES } }).select("_id onchain_escrow_id").lean(),
-      Trade.find({ parent_order_id: { $type: NUMERIC_BSON_TYPES } }).select("_id parent_order_id").lean(),
+    const [orderResult, escrowResult, parentResult] = await Promise.all([
+      migrateFieldInBatches(Order, {
+        field: "onchain_order_id",
+        findFilter: { onchain_order_id: { $type: NUMERIC_BSON_TYPES } },
+        normalizeOptions: { allowZero: false },
+        dryRun,
+        batchSize,
+      }),
+      migrateFieldInBatches(Trade, {
+        field: "onchain_escrow_id",
+        findFilter: { onchain_escrow_id: { $type: NUMERIC_BSON_TYPES } },
+        normalizeOptions: { allowZero: false },
+        dryRun,
+        batchSize,
+      }),
+      migrateFieldInBatches(Trade, {
+        field: "parent_order_id",
+        findFilter: { parent_order_id: { $type: NUMERIC_BSON_TYPES } },
+        normalizeOptions: {
+          allowZero: true,
+          toNullOnZero: true,
+        },
+        dryRun,
+        batchSize,
+      }),
     ]);
-
-    const orderPlan = buildBulkOps(orderDocs, "onchain_order_id", { allowZero: false });
-    const escrowPlan = buildBulkOps(tradeEscrowDocs, "onchain_escrow_id", { allowZero: false });
-    const parentPlan = buildBulkOps(tradeParentDocs, "parent_order_id", {
-      allowZero: true,
-      toNullOnZero: true,
-    });
 
     const report = {
       dryRun,
-      ordersNumericFound: orderDocs.length,
-      ordersWillUpdate: orderPlan.changed,
-      tradesEscrowNumericFound: tradeEscrowDocs.length,
-      tradesEscrowWillUpdate: escrowPlan.changed,
-      tradesParentNumericFound: tradeParentDocs.length,
-      tradesParentWillUpdate: parentPlan.changed,
+      batchSize,
+      ordersNumericFound: orderResult.numericFound,
+      ordersWillUpdate: orderResult.willUpdate,
+      tradesEscrowNumericFound: escrowResult.numericFound,
+      tradesEscrowWillUpdate: escrowResult.willUpdate,
+      tradesParentNumericFound: parentResult.numericFound,
+      tradesParentWillUpdate: parentResult.willUpdate,
     };
-
-    if (!dryRun) {
-      if (orderPlan.ops.length) await Order.bulkWrite(orderPlan.ops, { ordered: true });
-      if (escrowPlan.ops.length) await Trade.bulkWrite(escrowPlan.ops, { ordered: true });
-      if (parentPlan.ops.length) await Trade.bulkWrite(parentPlan.ops, { ordered: true });
-    }
 
     return report;
   } finally {
@@ -178,6 +247,9 @@ module.exports = {
   parseArgs,
   normalizeIdentityValue,
   buildBulkOps,
+  resolveBatchSize,
+  forEachDocChunk,
   detectLogicalCollisions,
+  migrateFieldInBatches,
   run,
 };
