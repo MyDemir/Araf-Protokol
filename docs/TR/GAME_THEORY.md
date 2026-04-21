@@ -1,107 +1,70 @@
-# 🌀 Araf Protocol: Oyun Teorisi Görselleştirmesi
+# Araf Protocol V3 Oyun Teorisi: Order-First Escrow Çözüm Modeli
 
-Bu doküman, Araf Protokolü'nün temel oyun teorisini ve çözümleme yollarını bir durum-akış diyagramı (state-flow diagram) kullanarak görsel olarak açıklar.
+Araf V3, order-first pazar modeli üzerine kurulu, trade seviyesinde çalışan bir escrow state machine tasarımıdır. Parent order kamuya açık likidite primitifidir; her `OrderFilled` olayı ise gerçek ekonomik çözümün yürüdüğü child trade'i üretir. Bu doküman `PAID` sonrası kanonik teşvik tasarımını; liveness, dispute escalation, mutual cancel ve burn finality ekseninde özetler.
+
+> **Geliştirici Notu:** Bu metin, EN sürümüyle birebir aynı mimari kapsamı ve V3 anlamını koruyacak şekilde güncellenmiştir.
 
 ---
 
-## Bleeding Escrow Akış Şeması
-
-Bu diyagram, bir Taker'ın ödeme bildiriminde bulunmasının ardından (`PAID` durumu) bir escrow'un izleyebileceği tüm olası yolları gösterir — buna sorunsuz yol (happy path), otomatik serbest bırakma mekanizması (auto-release) ve çok aşamalı anlaşmazlık çözümü (Purgatory - Araf) dahildir.
-
-> **Güvenlik notu:** `ConflictingPingPath` koruması, her iki "ping" yolunun aynı anda açık olmasını engeller. Eğer Maker `pingTakerForChallenge` çağırırsa, Taker `pingMaker` (autoRelease yolu) çağıramaz veya tam tersi. Bu durum, MEV ve işlem sırası manipülasyonunu (transaction ordering manipulation) önler.
+## Fill sonrası kanonik V3 akışı
 
 ```mermaid
 flowchart TD
-    %% Stil Sınıfları
-    classDef state fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#01579b
-    classDef success fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
-    classDef warning fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#e65100
-    classDef danger fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#b71c1c
-    classDef action fill:#ffffff,stroke:#9e9e9e,stroke-width:1px
-    classDef phase fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px,stroke-dasharray: 4
+    parent_order[Parent order acik] --> fill_event[OrderFilled]
+    fill_event --> child_trade[Child trade LOCKED]
+    child_trade --> paid_state[PAID]
 
-    %% Düğümleri (Nodes) Tanımla
-    PAID(["🔵 DURUM: ÖDENDİ (PAID)<br>(Taker ödemeyi bildirir)"])
-    ActionRelease["Maker: Fonları Serbest Bırakır (releaseFunds)"]
-    ResOk(("✅ ÇÖZÜLDÜ (RESOLVED)<br>(Normal)"))
+    paid_state --> release_call[Maker releaseFunds cagirir]
+    release_call --> resolved_normal[RESOLVED normal release]
 
-    ActionPingMaker["Taker: Maker'ı Dürt (pingMaker)"]
-    ActionAuto["Taker: Otomatik Serbest Bırak (autoRelease)"]
-    ResPen(("⚠️ ÇÖZÜLDÜ (RESOLVED)<br>(%2 Ceza)"))
+    paid_state --> ping_maker[Taker pingMaker cagirir]
+    ping_maker --> auto_release[Taker pencere sonrasi autoRelease cagirir]
+    auto_release --> resolved_penalty[RESOLVED maker inaktif ceza]
 
-    ActionPingTaker["Maker: İtiraz İçin Taker'ı Dürt<br>(pingTakerForChallenge)"]
-    ActionChallenge["Maker: İşleme İtiraz Et (challengeTrade)"]
-    CHALLENGED(["🔴 DURUM: İTİRAZ EDİLDİ (CHALLENGED)<br>(Anlaşmazlık Açıldı)"])
+    paid_state --> ping_taker[Maker pingTakerForChallenge cagirir]
+    ping_taker --> challenge_call[Maker pencere sonrasi challengeTrade cagirir]
+    challenge_call --> challenged_state[CHALLENGED]
 
-    %% Bağlantıları Tanımla
-    PAID -->|"Sorunsuz Yol"| ActionRelease
-    ActionRelease --> ResOk
+    challenged_state --> cancel_dual[proposeOrApproveCancel cift onay]
+    cancel_dual --> canceled_state[CANCELED]
 
-    PAID -->|"Maker İnaktif<br>(48s Bekler)"| ActionPingMaker
-    ActionPingMaker -->|"Yanıt Yok<br>(24s Bekler)"| ActionAuto
-    ActionAuto --> ResPen
-
-    PAID -->|"Ödeme Eksik<br>(24s Bekler)"| ActionPingTaker
-    ActionPingTaker -->|"Çözüm Yok<br>(24s Bekler)"| ActionChallenge
-    ActionChallenge --> CHALLENGED
-
-    %% Purgatory (Araf) Alt Grafiği
-    subgraph Purgatory [Anlaşmazlık Çözüm Aşamaları - Araf]
-        direction TB
-        GRACE["🛡️ 48s Mühlet Süresi<br>(Fon Kaybı Yok)"]
-        CANCELED(("🔄 İPTAL EDİLDİ (CANCELED)<br>(İadeler Yapıldı)"))
-        BLEEDING["🩸 10 Günlük Kanamalı Aşama<br>(Bond decay hemen, principal decay geç başlar)"]
-        ActionBurn["Herhangi Biri: Süresi Dolanları Yak (burnExpired)"]
-        BURNED(("💀 YAKILDI (BURNED)<br>(Fonlar Hazineye)"))
-
-        CHALLENGED --> GRACE
-        GRACE -->|"Karşılıklı Anlaşma<br>(EIP-712)"| CANCELED
-        GRACE -->|"Anlaşma Yok<br>(48s Sonra)"| BLEEDING
-        BLEEDING -->|"Karşılıklı Anlaşma"| CANCELED
-        BLEEDING -->|"Anlaşma Yok<br>(10 Gün Sonra)"| ActionBurn
-        ActionBurn --> BURNED
-    end
-
-    %% Sınıfları Güvenli Bir Şekilde Uygula
-    class PAID,CHALLENGED state;
-    class ResOk success;
-    class ResPen warning;
-    class CANCELED action;
-    class ActionRelease,ActionPingMaker,ActionAuto,ActionPingTaker,ActionChallenge,ActionBurn action;
-    class GRACE phase;
-    class BLEEDING,BURNED danger;
+    challenged_state --> burn_call[Anlasmazlik penceresi sonrasi burnExpired]
+    burn_call --> burn_terminal[BURNED hazineye]
 ```
+
+**Karşılıklı dışlayıcılık kuralı:** Protokol `ConflictingPingPath` tarzı bir koruma uygular. `PAID` durumundan bir ping yolu açıldığında karşıt yol paralel olarak açılamaz. Bu yaklaşım, yarış koşullu yol değiştirme ve MEV tipi sıralama manipülasyonunu engeller.
 
 ---
 
-## Mekanizmanın Yorumu
+## Çözüm yolları özeti
 
-Bleeding Escrow, **haklı tarafı bulmaya çalışan bir arbitraj akışı değil; aşamalı ekonomik zorlama motorudur.** Sistem tarafların niyetini yorumlamaz. Bunun yerine tarafları şu sırayla uzlaşmaya iter:
+| Yol | Giriş koşulu | Gerekli çağrılar | Terminal durum | Ekonomik amaç |
+|---|---|---|---|---|
+| Normal release | Taker ödemeyi işaretler, maker onaylar | `releaseFunds` | `RESOLVED` | Taraflar iş birliği yaptığında hızlı kapanış |
+| Liveness release | `PAID` sonrası maker inaktif kalır | `pingMaker` -> bekleme -> `autoRelease` | `RESOLVED` | İnaktiviteyi cezalandırmak ve dürüst taker'ı kilitten çıkarmak |
+| Dispute escalation | Maker ödeme sorununu bildirir | `pingTakerForChallenge` -> bekleme -> `challengeTrade` | `CHALLENGED` | Çatışmayı deterministik decay penceresine taşımak |
+| Mutual cancel | Her iki taraf unwind konusunda uzlaşır | iki taraf da `proposeOrApproveCancel` çağırır | `CANCELED` | Oracle yargısı olmadan çift taraflı uzlaşma |
+| Terminal burn | Challenge ufku sonunda uzlaşma yok | `burnExpired` | `BURNED` | Permissionless deadlock kapanışı; çıkmazı protokol çözer |
 
-1. **`PAID` aşaması — liveness baskısı:** Önce iki ayrı ping hattı açılır. Taker, `pingMaker → autoRelease`; maker ise `pingTakerForChallenge → challengeTrade` hattını izler.
-2. **`CHALLENGED` iç grace:** Challenge açıldıktan sonraki ilk 48 saatte fon kaybı yoktur. Bu pencere, dispute'u anında para yakma oyununa çevirmeden son bir çözüm alanı bırakır.
-3. **Bond-first bleeding:** Grace sonrası ilk ekonomik baskı principal'e değil, maker ve taker bond'larına uygulanır.
-4. **Gecikmeli principal bleed:** Escrowed crypto decay, bleeding'in 96. saatinde devreye girer. Yani principal decay challenge anında değil, yaklaşık 144 saat sonra başlar.
-5. **Terminal acceleration:** Principal geç başlatıldığı için son pencerenin gerçekten uzlaşma üretmesi gerekir. Bu nedenle kontrat formülünde `CRYPTO_DECAY_BPS_H * 2` uygulanır; taban katsayı 34 BPS/saat olsa da etkin principal decay oranı 68 BPS/saat'tir.
-6. **Permissionless burn:** Süre dolduğunda `burnExpired()` ile kalan her şey hazineye gider. Deadlock'un kazananı taraflar değil, protokol olur.
+---
 
-### Neden `* 2` Kullanılır?
+## Teşvik ve ekonomik baskı modeli
 
-Principal decay bu sistemde erken baskı aracı değildir. Erken fazda sistem önce:
-- cevap verme yükümlülüğünü,
-- ardından bond kaybını,
-- en son da principal kaybını
+| Mekanizma | Ne yapar | V3 açısından neden önemli |
+|---|---|---|
+| `PAID` karar noktası | Trade'i pasif lock durumundan aktif çözüm oyununa taşır | Tüm ödeme-sonrası stratejiyi child-trade seviyesinde toplar |
+| Conflicting ping yolları | Aynı anda tek escalation şeridine izin verir | Eşzamanlı dal manipülasyonu riskini azaltır |
+| Zaman kilitli escalation | `autoRelease` ve `challengeTrade` öncesi bekleme zorunlu kılar | Sübjektif arbitraj yerine net yanıt pencereleri üretir |
+| Dispute decay yüzeyi | Çözülmeyen anlaşmazlıkta ekonomik baskı zamanla artar | Oracle olmadan tarafları uzlaşmaya iter |
+| `getCurrentAmounts(tradeId)` | O anki dağıtılabilir tutarların kanonik on-chain görünümü | Decay/dispute sürecinde frontend/backend bu değeri esas almalıdır; off-chain hesaplar yalnızca yardımcıdır |
+| Permissionless burn | Süresi dolan çıkmazı herhangi biri `burnExpired` ile kapatabilir | İki taraf da kaybolsa dahi protokol liveness garantisini korur |
 
-devreye sokar.
+---
 
-Bu yüzden principal decay **geç** başlatılır. Geç başlatılan decay'in yine de burn öncesi anlamlı bir uzlaşma baskısı üretebilmesi için terminal fazda hızlandırılması gerekir. `CRYPTO_DECAY_BPS_H = 34` taban katsayısı korunur; hesapta kullanılan `* 2` çarpanı ise principal'i son fazda **etkin 68 BPS/saat** hızında eriten acceleration katmanıdır.
+## Otorite sınırları ve belirsizlik yönetimi
 
-### Kısa Özet
-
-```text
-PAID        = önce liveness zorlaması
-CHALLENGED  = 48 saat kayıpsız iç grace
-BLEEDING    = önce bond'lar erir
-LATE BLEED  = principal de hızlandırılmış biçimde erir
-DEADLOCK    = burnExpired() ile permissionless kapanır
-```
+- **Kontrat otoriterdir:** state transition, payout matematiği ve terminal sonuçlar yalnızca on-chain kurallarla belirlenir.
+- **Backend mirror/coordination/read katmanıdır:** event projeksiyonu ve operasyonel akış desteği sağlar; hakemlik yapmaz.
+- **Frontend guardrail/orchestration katmanıdır:** kullanıcıyı geçerli yollara yönlendirir; kontrat sonucunu override edemez.
+- **Oracle-free tasarım:** protokol off-chain fiat doğruluğunu kanıtlamaz; gecikme ve çatışmayı maliyetlendirir.
+- **Chargeback ve off-chain belirsizlik gerçektir:** V3 fiat katmanındaki geri çevrilebilirlik riskini yok etmez; bunu açık lifecycle sınırları ve deterministik on-chain çözüm mekanizmasıyla sınırlar.
