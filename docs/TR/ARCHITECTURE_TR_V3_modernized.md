@@ -18,9 +18,6 @@
 
 </div>
 
-> Bu doküman, PR #52 ile doğru kurulan V3 çekirdeğini **korur** ve onu yeniden ayrıntılı teknik referans seviyesine genişletir.  
-> Source-of-truth sırası: `ArafEscrow.sol` → backend mirror/read katmanı → frontend guardrail katmanı → dokümantasyon.
-
 ---
 
 ## 📋 İçindekiler
