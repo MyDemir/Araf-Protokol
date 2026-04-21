@@ -31,6 +31,7 @@ describe("orders/listings sort semantics on string onchain ids", () => {
       }));
       jest.doMock("../scripts/middleware/rateLimiter", () => ({
         marketReadLimiter: (_req, _res, next) => next(),
+        ordersReadLimiter: (_req, _res, next) => next(),
         ordersWriteLimiter: (_req, _res, next) => next(),
       }));
       jest.doMock("../scripts/models/Order", () => Order);
@@ -67,6 +68,7 @@ describe("orders/listings sort semantics on string onchain ids", () => {
     jest.isolateModules(() => {
       jest.doMock("../scripts/middleware/rateLimiter", () => ({
         marketReadLimiter: (_req, _res, next) => next(),
+        ordersReadLimiter: (_req, _res, next) => next(),
         ordersWriteLimiter: (_req, _res, next) => next(),
       }));
       jest.doMock("../scripts/middleware/auth", () => ({

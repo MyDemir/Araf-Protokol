@@ -34,6 +34,9 @@ describe("orders/trades pagination + big on-chain id", () => {
       findOne: jest.fn(),
     };
 
+    const ordersReadLimiter = jest.fn((_req, _res, next) => next());
+    const ordersWriteLimiter = jest.fn((_req, _res, next) => next());
+
     let router;
     jest.isolateModules(() => {
       jest.doMock("../scripts/middleware/auth", () => ({
@@ -42,7 +45,8 @@ describe("orders/trades pagination + big on-chain id", () => {
       }));
       jest.doMock("../scripts/middleware/rateLimiter", () => ({
         marketReadLimiter: (_req, _res, next) => next(),
-        ordersWriteLimiter: (_req, _res, next) => next(),
+        ordersReadLimiter,
+        ordersWriteLimiter,
       }));
       jest.doMock("../scripts/models/Order", () => Order);
       jest.doMock("../scripts/models/Trade", () => ({ find: jest.fn() }));
@@ -64,6 +68,11 @@ describe("orders/trades pagination + big on-chain id", () => {
 
     const capRes = await request(app).get("/api/orders/my?limit=999");
     expect(capRes.status).toBe(400);
+
+    // [TR] /my read endpoint'i write limiter değil read limiter kullanmalı.
+    // [EN] /my should use read limiter, not write limiter.
+    expect(ordersReadLimiter).toHaveBeenCalled();
+    expect(ordersWriteLimiter).not.toHaveBeenCalled();
   });
 
   it("supports huge string onchain escrow id in /api/trades/by-escrow/:onchainId lookup", async () => {

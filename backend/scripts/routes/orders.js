@@ -14,7 +14,7 @@ const Joi = require("joi");
 const router = express.Router();
 
 const { requireAuth, requireSessionWalletMatch } = require("../middleware/auth");
-const { marketReadLimiter, ordersWriteLimiter } = require("../middleware/rateLimiter");
+const { marketReadLimiter, ordersReadLimiter, ordersWriteLimiter } = require("../middleware/rateLimiter");
 const Order = require("../models/Order");
 const Trade = require("../models/Trade");
 const { getConfig } = require("../services/protocolConfig");
@@ -133,7 +133,11 @@ router.get("/", marketReadLimiter, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get("/my", requireAuth, requireSessionWalletMatch, ordersWriteLimiter, async (req, res, next) => {
+// [TR] Kullanıcının kendi order listesi write-surface değil, paginated read-surface'tür.
+//      Bu yüzden write limiter yerine read limiter uygulanır.
+// [EN] User's own order listing is a paginated read surface, not a write surface.
+//      Apply read limiter instead of write limiter.
+router.get("/my", requireAuth, requireSessionWalletMatch, ordersReadLimiter, async (req, res, next) => {
   try {
     const schema = Joi.object({
       page: Joi.number().integer().min(1).default(1),
