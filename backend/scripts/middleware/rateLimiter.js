@@ -312,6 +312,41 @@ const ordersWriteLimiterWithFallback = makeSensitiveLimiter({
   inMemoryLimiter: ordersWriteInMemoryLimiter,
 });
 
+// ─── Orders Read Surface — Kullanıcıya Ait Listeleme (Paginated) ───────────
+// [TR] /api/orders/my artık sayfalı olduğu için write-limit (5/saat) bu endpoint için
+//      fazla dar kalıyordu. Read odaklı ayrı limit kullanıyoruz.
+// [EN] /api/orders/my is paginated now; write-limit (5/hour) is too restrictive for reads.
+//      Use a dedicated read-oriented limiter for user list pagination.
+const ordersReadLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => req.wallet || req.ip,
+  store: makeStore("orders-read"),
+  skip: makeSkipFn(),
+  handler: (req, res) => {
+    onLimitReached(req);
+    res.status(429).json({ error: "Order okuma limiti aşıldı. Lütfen kısa bir süre sonra tekrar deneyin." });
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const ordersReadInMemoryLimiter = makeInMemoryLimiter({
+  label: "ORDERS-READ",
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: (req) => req.wallet || req.ip,
+  errorMessage: () => ({
+    error: "Order okuma limiti aşıldı. Lütfen kısa bir süre sonra tekrar deneyin.",
+  }),
+});
+
+const ordersReadLimiterWithFallback = makeSensitiveLimiter({
+  label: "ORDERS-READ",
+  redisLimiter: ordersReadLimiter,
+  inMemoryLimiter: ordersReadInMemoryLimiter,
+});
+
 // ─── Trades / Child Trade Room Surface ──────────────────────────────────────
 // 1 dakikada 30 istek — wallet bazlı
 const tradesLimiter = rateLimit({
@@ -387,6 +422,7 @@ module.exports = {
   authLimiter,
   nonceLimiter,
   marketReadLimiter,
+  ordersReadLimiter: ordersReadLimiterWithFallback,
   ordersWriteLimiter: ordersWriteLimiterWithFallback,
   listingsReadLimiter,
   listingsWriteLimiter,
