@@ -85,25 +85,25 @@ Araf must satisfy both hard security and practical operations. This yields a Web
 
 ```mermaid
 graph TB
-    subgraph ONCHAIN ["⛓️ On-Chain"]
+    subgraph ONCHAIN [On-Chain]
         A[ArafEscrow.sol]
         B[Escrow state machine]
         C[Reputation enforcement]
         D[Governance controls]
     end
 
-    subgraph BACKEND ["🖥️ Backend / Worker"]
+    subgraph BACKEND [Backend / Worker]
         E[Session & PII boundary]
         F[Mirror / projection]
         G[Replay / DLQ / checkpoint]
     end
 
-    subgraph DATA ["🗄️ Data Plane"]
+    subgraph DATA [Data Plane]
         H[Mongo read-model]
         I[Redis ephemeral coordination]
     end
 
-    subgraph FE ["🌐 Frontend"]
+    subgraph FE [Frontend]
         J[Contract access layer]
         K[UX guardrails]
     end

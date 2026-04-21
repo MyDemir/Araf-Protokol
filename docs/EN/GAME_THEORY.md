@@ -1,73 +1,68 @@
-# 🌀 Araf Protocol: Game Theory Visualized
+# Araf Protocol V3 Game Theory: Order-First Escrow Resolution
 
-This document visually explains the core game theory and resolution paths of the Araf Protocol using a state-flow diagram.
+Araf V3 is an order-first market with a trade-level escrow machine. The parent order is the public liquidity primitive, while each `OrderFilled` event creates the child trade where real economic resolution happens. This note summarizes the canonical incentive design after `PAID`, including liveness, dispute escalation, mutual cancel, and burn finality.
 
 ---
 
-## Bleeding Escrow Flowchart
-
-This diagram illustrates all possible paths an escrow can take once a Taker reports a payment (`PAID` state) — including the happy path, auto-release mechanism, and the multi-phased dispute resolution (Purgatory).
-
-> **Security note:** A `ConflictingPingPath` guard prevents both ping paths from being open simultaneously. If the Maker calls `pingTakerForChallenge`, the Taker cannot call `pingMaker` (autoRelease path), and vice versa. This prevents MEV and transaction ordering manipulation.
+## Canonical V3 flow after fill
 
 ```mermaid
 flowchart TD
-    %% Styling Classes
-    classDef state fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#01579b
-    classDef success fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
-    classDef warning fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#e65100
-    classDef danger fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#b71c1c
-    classDef action fill:#ffffff,stroke:#9e9e9e,stroke-width:1px
-    classDef phase fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px,stroke-dasharray: 4
+    parent_order[Parent order open] --> fill_event[OrderFilled]
+    fill_event --> child_trade[Child trade LOCKED]
+    child_trade --> paid_state[PAID]
 
-    %% Define Nodes
-    PAID(["🔵 STATE: PAID<br>(Taker reports payment)"])
-    ActionRelease["Maker: releaseFunds()"]
-    ResOk(("✅ RESOLVED<br>(Normal)"))
+    paid_state --> release_call[Maker calls releaseFunds]
+    release_call --> resolved_normal[RESOLVED normal release]
 
-    ActionPingMaker["Taker: pingMaker()"]
-    ActionAuto["Taker: autoRelease()"]
-    ResPen(("⚠️ RESOLVED<br>(2% Penalty)"))
+    paid_state --> ping_maker[Taker calls pingMaker]
+    ping_maker --> auto_release[Taker calls autoRelease after window]
+    auto_release --> resolved_penalty[RESOLVED with maker inactivity penalty]
 
-    ActionPingTaker["Maker: pingTakerForChallenge()"]
-    ActionChallenge["Maker: challengeTrade()"]
-    CHALLENGED(["🔴 STATE: CHALLENGED<br>(Dispute Opened)"])
+    paid_state --> ping_taker[Maker calls pingTakerForChallenge]
+    ping_taker --> challenge_call[Maker calls challengeTrade after window]
+    challenge_call --> challenged_state[CHALLENGED]
 
-    %% Define Connections
-    PAID -->|"Happy Path"| ActionRelease
-    ActionRelease --> ResOk
+    challenged_state --> cancel_dual[proposeOrApproveCancel dual approval]
+    cancel_dual --> canceled_state[CANCELED]
 
-    PAID -->|"Maker Inactive<br>(Waits 48h)"| ActionPingMaker
-    ActionPingMaker -->|"No response<br>(Waits 24h)"| ActionAuto
-    ActionAuto --> ResPen
-
-    PAID -->|"Payment Missing<br>(Waits 24h)"| ActionPingTaker
-    ActionPingTaker -->|"No resolution<br>(Waits 24h)"| ActionChallenge
-    ActionChallenge --> CHALLENGED
-
-    %% Purgatory Subgraph
-    subgraph Purgatory [Dispute Resolution Phases - Purgatory]
-        direction TB
-        GRACE["🛡️ 48h Grace Period<br>(No Fund Decay)"]
-        CANCELED(("🔄 CANCELED<br>(Refunds Issued)"))
-        BLEEDING["🩸 10-Day Bleeding Phase<br>(Hourly Decay Starts)"]
-        ActionBurn["Any: burnExpired()"]
-        BURNED(("💀 BURNED<br>(Funds to Treasury)"))
-
-        CHALLENGED --> GRACE
-        GRACE -->|"Mutual Agreement<br>(EIP-712)"| CANCELED
-        GRACE -->|"No Agreement<br>(After 48h)"| BLEEDING
-        BLEEDING -->|"Mutual Agreement"| CANCELED
-        BLEEDING -->|"No Agreement<br>(After 10 Days)"| ActionBurn
-        ActionBurn --> BURNED
-    end
-
-    %% Apply Classes Safely
-    class PAID,CHALLENGED state;
-    class ResOk success;
-    class ResPen warning;
-    class CANCELED action;
-    class ActionRelease,ActionPingMaker,ActionAuto,ActionPingTaker,ActionChallenge,ActionBurn action;
-    class GRACE phase;
-    class BLEEDING,BURNED danger;
+    challenged_state --> burn_call[burnExpired after dispute window]
+    burn_call --> burn_terminal[BURNED to treasury]
 ```
+
+**Mutual exclusivity rule:** the protocol enforces a `ConflictingPingPath` style guard. Once one ping path is opened from `PAID`, the opposite path cannot be opened in parallel. This prevents race-based path flipping and MEV-style ordering abuse.
+
+---
+
+## Resolution path summary
+
+| Path | Entry condition | Required calls | Terminal state | Economic intent |
+|---|---|---|---|---|
+| Normal release | Taker marked payment and maker confirms | `releaseFunds` | `RESOLVED` | Fast completion when both sides cooperate |
+| Liveness release | Maker is inactive after `PAID` | `pingMaker` -> wait -> `autoRelease` | `RESOLVED` | Penalize inactivity and unblock honest taker |
+| Dispute escalation | Maker claims payment issue after `PAID` | `pingTakerForChallenge` -> wait -> `challengeTrade` | `CHALLENGED` | Move conflict into deterministic decay window |
+| Mutual cancel | Both parties agree to unwind | `proposeOrApproveCancel` by both sides | `CANCELED` | Bilateral settlement without oracle judgment |
+| Terminal burn | No settlement by end of challenge horizon | `burnExpired` | `BURNED` | Permissionless deadlock closure; protocol wins stalemate |
+
+---
+
+## Incentive and economic-pressure model
+
+| Mechanism | What it does | Why it matters in V3 |
+|---|---|---|
+| `PAID` as decision point | Switches trade from passive lock to active resolution game | Concentrates all post-payment strategy at child-trade level |
+| Conflicting ping paths | Enforces one escalation lane at a time | Removes simultaneous-branch manipulation risk |
+| Time-gated escalation | Requires waits before `autoRelease` or `challengeTrade` | Creates explicit response windows instead of subjective arbitration |
+| Dispute decay surface | Economic pressure increases over unresolved time | Pushes parties toward settlement without oracle truth claims |
+| `getCurrentAmounts(tradeId)` | Canonical on-chain view of current distributable amounts | Frontend/backend must read this during decay/dispute; off-chain math is advisory only |
+| Permissionless burn | Any actor can finalize expired deadlock with `burnExpired` | Guarantees liveness even if both original parties disappear |
+
+---
+
+## Authority boundaries and ambiguity handling
+
+- **Contract is authoritative:** state transitions, payout math, and terminal outcomes are defined only by on-chain rules.
+- **Backend is mirror/coordination/read:** it projects events, helps workflows, and exposes operational UX support, but it does not arbitrate truth.
+- **Frontend is guardrail/orchestration:** it steers users into valid paths and clear timing windows, but cannot override contract outcomes.
+- **Oracle-free by design:** the protocol does not prove off-chain fiat truth; it prices delay and conflict so unresolved trades become economically costly.
+- **Chargeback and off-chain ambiguity remain real:** V3 does not eliminate fiat-layer reversibility risk; it contains it through explicit lifecycle boundaries and deterministic on-chain settlement mechanics.

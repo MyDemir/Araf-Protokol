@@ -12,64 +12,22 @@ Bu diyagram, bir Taker'ın ödeme bildiriminde bulunmasının ardından (`PAID` 
 
 ```mermaid
 flowchart TD
-    %% Stil Sınıfları
-    classDef state fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#01579b
-    classDef success fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
-    classDef warning fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#e65100
-    classDef danger fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#b71c1c
-    classDef action fill:#ffffff,stroke:#9e9e9e,stroke-width:1px
-    classDef phase fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px,stroke-dasharray: 4
+    paid_state[PAID odeme bildirildi] --> release_call[Maker releaseFunds]
+    release_call --> resolved_normal[RESOLVED normal]
 
-    %% Düğümleri (Nodes) Tanımla
-    PAID(["🔵 DURUM: ÖDENDİ (PAID)<br>(Taker ödemeyi bildirir)"])
-    ActionRelease["Maker: Fonları Serbest Bırakır (releaseFunds)"]
-    ResOk(("✅ ÇÖZÜLDÜ (RESOLVED)<br>(Normal)"))
+    paid_state --> ping_maker[Taker pingMaker]
+    ping_maker --> auto_release[Taker autoRelease zaman penceresi sonrasi]
+    auto_release --> resolved_penalty[RESOLVED maker inaktif ceza]
 
-    ActionPingMaker["Taker: Maker'ı Dürt (pingMaker)"]
-    ActionAuto["Taker: Otomatik Serbest Bırak (autoRelease)"]
-    ResPen(("⚠️ ÇÖZÜLDÜ (RESOLVED)<br>(%2 Ceza)"))
+    paid_state --> ping_taker[Maker pingTakerForChallenge]
+    ping_taker --> challenge_call[Maker challengeTrade zaman penceresi sonrasi]
+    challenge_call --> challenged_state[CHALLENGED]
 
-    ActionPingTaker["Maker: İtiraz İçin Taker'ı Dürt<br>(pingTakerForChallenge)"]
-    ActionChallenge["Maker: İşleme İtiraz Et (challengeTrade)"]
-    CHALLENGED(["🔴 DURUM: İTİRAZ EDİLDİ (CHALLENGED)<br>(Anlaşmazlık Açıldı)"])
+    challenged_state --> cancel_dual[proposeOrApproveCancel cift onay]
+    cancel_dual --> canceled_state[CANCELED]
 
-    %% Bağlantıları Tanımla
-    PAID -->|"Sorunsuz Yol"| ActionRelease
-    ActionRelease --> ResOk
-
-    PAID -->|"Maker İnaktif<br>(48s Bekler)"| ActionPingMaker
-    ActionPingMaker -->|"Yanıt Yok<br>(24s Bekler)"| ActionAuto
-    ActionAuto --> ResPen
-
-    PAID -->|"Ödeme Eksik<br>(24s Bekler)"| ActionPingTaker
-    ActionPingTaker -->|"Çözüm Yok<br>(24s Bekler)"| ActionChallenge
-    ActionChallenge --> CHALLENGED
-
-    %% Purgatory (Araf) Alt Grafiği
-    subgraph Purgatory [Anlaşmazlık Çözüm Aşamaları - Araf]
-        direction TB
-        GRACE["🛡️ 48s Mühlet Süresi<br>(Fon Kaybı Yok)"]
-        CANCELED(("🔄 İPTAL EDİLDİ (CANCELED)<br>(İadeler Yapıldı)"))
-        BLEEDING["🩸 10 Günlük Kanamalı Aşama<br>(Bond decay hemen, principal decay geç başlar)"]
-        ActionBurn["Herhangi Biri: Süresi Dolanları Yak (burnExpired)"]
-        BURNED(("💀 YAKILDI (BURNED)<br>(Fonlar Hazineye)"))
-
-        CHALLENGED --> GRACE
-        GRACE -->|"Karşılıklı Anlaşma<br>(EIP-712)"| CANCELED
-        GRACE -->|"Anlaşma Yok<br>(48s Sonra)"| BLEEDING
-        BLEEDING -->|"Karşılıklı Anlaşma"| CANCELED
-        BLEEDING -->|"Anlaşma Yok<br>(10 Gün Sonra)"| ActionBurn
-        ActionBurn --> BURNED
-    end
-
-    %% Sınıfları Güvenli Bir Şekilde Uygula
-    class PAID,CHALLENGED state;
-    class ResOk success;
-    class ResPen warning;
-    class CANCELED action;
-    class ActionRelease,ActionPingMaker,ActionAuto,ActionPingTaker,ActionChallenge,ActionBurn action;
-    class GRACE phase;
-    class BLEEDING,BURNED danger;
+    challenged_state --> burn_call[burnExpired sure dolunca]
+    burn_call --> burned_state[BURNED hazineye]
 ```
 
 ---
