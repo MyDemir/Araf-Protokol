@@ -213,6 +213,16 @@ const tradeSchema = new mongoose.Schema(
         bank_change_count_7d_at_lock: { type: Number, default: null, min: 0 },
         bank_change_count_30d_at_lock: { type: Number, default: null, min: 0 },
         last_bank_change_at_at_lock: { type: Date, default: null },
+        // [TR] Read-model health context (authority değil): lock anındaki reputation/ban aynası.
+        // [EN] Read-model health context (non-authoritative): lock-time mirror of reputation/ban.
+        reputation_context_at_lock: {
+          success_rate: { type: Number, default: null },
+          failed_disputes: { type: Number, default: null, min: 0 },
+          effective_tier: { type: Number, default: null, min: 0, max: 4 },
+          consecutive_bans: { type: Number, default: null, min: 0 },
+          is_banned: { type: Boolean, default: null },
+          banned_until: { type: Date, default: null },
+        },
       },
       taker: {
         rail: { type: String, default: null },
@@ -225,6 +235,16 @@ const tradeSchema = new mongoose.Schema(
         bank_change_count_7d_at_lock: { type: Number, default: null, min: 0 },
         bank_change_count_30d_at_lock: { type: Number, default: null, min: 0 },
         last_bank_change_at_at_lock: { type: Date, default: null },
+        // [TR] Read-model health context (authority değil): lock anındaki reputation/ban aynası.
+        // [EN] Read-model health context (non-authoritative): lock-time mirror of reputation/ban.
+        reputation_context_at_lock: {
+          success_rate: { type: Number, default: null },
+          failed_disputes: { type: Number, default: null, min: 0 },
+          effective_tier: { type: Number, default: null, min: 0, max: 4 },
+          consecutive_bans: { type: Number, default: null, min: 0 },
+          is_banned: { type: Boolean, default: null },
+          banned_until: { type: Date, default: null },
+        },
       },
       captured_at: { type: Date, default: null },
       snapshot_delete_at: { type: Date, default: null },
