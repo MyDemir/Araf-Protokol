@@ -59,12 +59,10 @@ function hasCompletePayoutSnapshot(trade) {
 }
 
 let identityGuardChecked = false;
-let identityGuardError = null;
 let identityGuardInFlight = null;
 
 async function ensureIdentityNormalizedForPIIRoutes() {
   if (identityGuardChecked) return;
-  if (identityGuardError) throw identityGuardError;
   if (identityGuardInFlight) return identityGuardInFlight;
 
   const mode = (process.env.PII_IDENTITY_NORMALIZATION_GUARD || process.env.IDENTITY_NORMALIZATION_GUARD || "enforce")
@@ -72,11 +70,9 @@ async function ensureIdentityNormalizedForPIIRoutes() {
 
   identityGuardInFlight = verifyIdentityNormalization({ mode })
     .then(() => {
+      // [TR] Yalnız başarıyı cache'liyoruz. Geçici DB/network hataları sticky outage olmamalı.
+      // [EN] Cache only success. Transient guard failures must not become sticky outages.
       identityGuardChecked = true;
-    })
-    .catch((err) => {
-      identityGuardError = err;
-      throw err;
     })
     .finally(() => {
       identityGuardInFlight = null;

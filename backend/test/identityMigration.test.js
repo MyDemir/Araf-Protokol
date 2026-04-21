@@ -3,8 +3,20 @@
 const {
   normalizeIdentityValue,
   buildBulkOps,
+  resolveBatchSize,
   detectLogicalCollisions,
+  migrateFieldInBatches,
 } = require("../scripts/migrations/normalizeIdentityFields");
+
+function makeCursorQuery(docs) {
+  return {
+    cursor: jest.fn(() => ({
+      async *[Symbol.asyncIterator]() {
+        for (const doc of docs) yield doc;
+      },
+    })),
+  };
+}
 
 describe("identity normalization migration helpers", () => {
   it("normalizes numeric legacy IDs to canonical strings", () => {
@@ -43,18 +55,78 @@ describe("identity normalization migration helpers", () => {
   });
 
   it("detects collisions after decimal canonicalization in preflight", async () => {
+    const query = makeCursorQuery([
+      { _id: "a", onchain_order_id: "42" },
+      { _id: "b", onchain_order_id: "42.0" },
+    ]);
     const model = {
       find: jest.fn().mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue([
-            { _id: "a", onchain_order_id: "42" },
-            { _id: "b", onchain_order_id: "42.0" },
-          ]),
-        }),
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue(query) }),
       }),
     };
 
-    const collisions = await detectLogicalCollisions(model, "onchain_order_id");
+    const collisions = await detectLogicalCollisions(model, "onchain_order_id", { batchSize: 2 });
     expect(collisions).toEqual([{ _id: "42", count: 2 }]);
+    expect(query.cursor).toHaveBeenCalledWith({ batchSize: 2 });
+  });
+
+  it("migrates in bounded chunks without full collection materialization", async () => {
+    const docs = [
+      { _id: "a", onchain_order_id: 1 },
+      { _id: "b", onchain_order_id: 2 },
+      { _id: "c", onchain_order_id: 3 },
+    ];
+    const query = makeCursorQuery(docs);
+    const bulkWrite = jest.fn().mockResolvedValue({});
+    const model = {
+      find: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue(query) }),
+      }),
+      bulkWrite,
+    };
+
+    const result = await migrateFieldInBatches(model, {
+      field: "onchain_order_id",
+      findFilter: { onchain_order_id: { $type: ["int"] } },
+      normalizeOptions: { allowZero: false },
+      dryRun: false,
+      batchSize: 2,
+    });
+
+    expect(query.cursor).toHaveBeenCalledWith({ batchSize: 2 });
+    expect(result).toEqual({ numericFound: 3, willUpdate: 3 });
+    expect(bulkWrite).toHaveBeenCalledTimes(2);
+    expect(bulkWrite.mock.calls[0][0]).toHaveLength(2);
+    expect(bulkWrite.mock.calls[1][0]).toHaveLength(1);
+  });
+
+  it("keeps parent zero/null semantics during chunked migration", async () => {
+    const docs = [{ _id: "a", parent_order_id: 0 }];
+    const query = makeCursorQuery(docs);
+    const bulkWrite = jest.fn().mockResolvedValue({});
+    const model = {
+      find: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue(query) }),
+      }),
+      bulkWrite,
+    };
+
+    const result = await migrateFieldInBatches(model, {
+      field: "parent_order_id",
+      findFilter: { parent_order_id: { $type: ["int"] } },
+      normalizeOptions: { allowZero: true, toNullOnZero: true },
+      dryRun: false,
+      batchSize: 1,
+    });
+
+    expect(result).toEqual({ numericFound: 1, willUpdate: 1 });
+    expect(bulkWrite.mock.calls[0][0][0].updateOne.update.$set.parent_order_id).toBeNull();
+  });
+
+  it("resolves invalid batch size to safe default", () => {
+    expect(resolveBatchSize(undefined)).toBe(1000);
+    expect(resolveBatchSize("0")).toBe(1000);
+    expect(resolveBatchSize("abc")).toBe(1000);
+    expect(resolveBatchSize("256")).toBe(256);
   });
 });
