@@ -1,80 +1,110 @@
-# Araf Protokolü — Kanonik Mimari & Teknik Referans (V3)
+# Araf Protokolü — Kanonik Mimari & Teknik Referans (V3 Order-First)
 
-> Source of truth önceliği: `ArafEscrow.sol` > backend mirror katmanı > frontend UX katmanı > dokümantasyon.
-
-Bu doküman, PR #52 ile getirilen doğru V3 çekirdeğini korur ve ayrıntılı teknik referans seviyesine geri genişletir.
+> Bu doküman, PR #52 ile doğru kurulan V3 çekirdeğini **korur** ve onu yeniden ayrıntılı teknik referans seviyesine genişletir.  
+> Source-of-truth sırası: `ArafEscrow.sol` → backend mirror/read katmanı → frontend guardrail katmanı → dokümantasyon.
 
 ---
 
-## 1) Canonical architecture model
+## 1) Executive canonical model
 
-Araf artık listing-first değil, **order-first** mimaridedir:
+Araf V3’te pazar primitive’i artık listing değil, **parent order**’dır.
 
-- **Parent Order** = kamusal pazar/order katmanı
+- **Parent Order** = kamusal market/order katmanı
 - **Child Trade** = gerçek escrow lifecycle (ekonomik state machine)
 - **Contract** = tek authoritative state machine
-- **Backend** = mirror + coordination + read layer
+- **Backend** = mirror + coordination + operational read layer
 - **Frontend** = UX guardrail + contract access layer
 
-### Authority sınırı
-- On-chain state geçişleri yalnız kontratla belirlenir.
-- Backend hiçbir trade/order state’ini “icat” etmez; event ve getter ile mirror eder.
-- Frontend hiçbir ekonomik karar üretmez; yalnız tx gönderen ve event okuyan istemci katmanıdır.
+### 1.1 Otorite sınırları
+- On-chain state transition ve ekonomik dağıtımın nihai belirleyicisi kontrattır.
+- Backend “hakem” değildir; state üretmez, yalnızca mirror eder ve operasyonel koordinasyon sağlar.
+- Frontend enforcement katmanı değildir; kullanıcıyı doğru akışa zorlayan guardrail katmanıdır.
 
-### Legacy çerçevesi
-`createEscrow/lockEscrow` ve listing-first söylemi V3 için kanonik değildir. Bu kavramlar yalnızca tarihsel bağlamda “legacy/non-canonical” olarak ele alınmalıdır.
-
----
-
-## 2) On-chain public surface (ArafEscrow.sol)
-
-## 2.1 Order write surface
-- `createSellOrder(address token, uint256 totalAmount, uint256 minFillAmount, uint8 tier, bytes32 orderRef)`
-- `fillSellOrder(uint256 orderId, uint256 fillAmount, bytes32 childListingRef)`
-- `cancelSellOrder(uint256 orderId)`
-- `createBuyOrder(address token, uint256 totalAmount, uint256 minFillAmount, uint8 tier, bytes32 orderRef)`
-- `fillBuyOrder(uint256 orderId, uint256 fillAmount, bytes32 childListingRef)`
-- `cancelBuyOrder(uint256 orderId)`
-
-## 2.2 Child-trade (escrow lifecycle) write surface
-- `reportPayment(uint256 tradeId, string ipfsHash)`
-- `releaseFunds(uint256 tradeId)`
-- `challengeTrade(uint256 tradeId)`
-- `autoRelease(uint256 tradeId)`
-- `burnExpired(uint256 tradeId)`
-- `proposeOrApproveCancel(uint256 tradeId, uint256 deadline, bytes sig)`
-
-## 2.3 Yardımcı/liveness write surface
-- `registerWallet()`
-- `pingMaker(uint256 tradeId)`
-- `pingTakerForChallenge(uint256 tradeId)`
-- `decayReputation(address wallet)`
-
-## 2.4 Governance (owner-controlled mutable surface)
-- `setTreasury(address)`
-- `setFeeConfig(uint256 takerFeeBps, uint256 makerFeeBps)`
-- `setCooldownConfig(uint256 tier0TradeCooldown, uint256 tier1TradeCooldown)`
-- `setTokenConfig(address token, bool supported, bool allowSellOrders, bool allowBuyOrders)`
-- `pause()` / `unpause()`
-
-## 2.5 Kritik read surface
-- `getOrder(orderId)`, `getTrade(tradeId)`, `getReputation(wallet)`
-- `getFeeConfig()`, `getCooldownConfig()`, `getCurrentAmounts(tradeId)`
-- `antiSybilCheck(wallet)`, `getCooldownRemaining(wallet)`, `getFirstSuccessfulTradeAt(wallet)`
+### 1.2 V3’ün pratik sonucu
+- Market yüzeyinde konuşulan nesne parent order’dır.
+- Dispute, release, cancel, burn gibi escrow yaşam döngüsü child trade seviyesinde yürür.
+- Kimlik doğrulamada authority: `OrderFilled + getTrade(tradeId)` kombinasyonu.
 
 ---
 
-## 3) Parent order vs child trade state modeli
+## 2) Hibrit mimari ve teknoloji stack
 
-## 3.1 Parent Order state machine
+## 2.1 Neden hibrit tasarım?
+Araf hem güvenlik hem operasyonel gereksinimleri birlikte taşır:
+- **On-chain:** fon custody, state transition, ekonomik kurallar, reputasyon enforcement
+- **Off-chain (Mongo):** read model, performans, PII ve operasyonel metadata
+- **Redis:** checkpoint, readiness, rate limit, kısa ömürlü koordinasyon
+
+Bu nedenle mimari “Web2.5” hibrittir: on-chain authority + off-chain operational acceleration.
+
+## 2.2 Katman matrisi
+
+| Katman | Ana sorumluluk | Authority seviyesi | Teknoloji |
+|---|---|---|---|
+| Contract | Escrow state machine, payout, dispute economics, governance controls | **Authoritative** | Solidity / Base |
+| Backend API | Session, projection, coordination, PII güvenlik sınırı | Non-authoritative | Node.js + Express |
+| Event Worker | Event mirror, replay, checkpoint/DLQ | Non-authoritative | ethers + Mongo + Redis |
+| Mongo | Read model / operasyonel cache | Non-authoritative | MongoDB + Mongoose |
+| Redis | Ephemeral coordination / safety signals | Non-authoritative | Redis |
+| Frontend | Contract write/read orchestration + UX guardrails | Non-authoritative | React + Wagmi + viem |
+
+## 2.3 Non-custodial backend modeli
+- Backend kullanıcı fonlarını hareket ettiren custody anahtarı taşımaz.
+- Backend, kontrat adına release/challenge/cancel sonucu “uyduramaz”.
+- Backend’in güçlü olduğu yer: session/policy/PII access boundary ve operasyonel görünürlük.
+
+---
+
+## 3) On-chain public surface (ArafEscrow.sol)
+
+## 3.1 Parent-order write surface
+- `createSellOrder`
+- `fillSellOrder`
+- `cancelSellOrder`
+- `createBuyOrder`
+- `fillBuyOrder`
+- `cancelBuyOrder`
+
+## 3.2 Child-trade lifecycle write surface
+- `reportPayment`
+- `releaseFunds`
+- `challengeTrade`
+- `autoRelease`
+- `burnExpired`
+- `proposeOrApproveCancel`
+
+## 3.3 Liveness / yardımcı write surface
+- `registerWallet`
+- `pingMaker`
+- `pingTakerForChallenge`
+- `decayReputation`
+
+## 3.4 Governance / mutable admin surface
+- `setTreasury`
+- `setFeeConfig`
+- `setCooldownConfig`
+- `setTokenConfig`
+- `pause` / `unpause`
+
+## 3.5 Read surface
+- `getOrder`, `getTrade`, `getReputation`
+- `getFeeConfig`, `getCooldownConfig`
+- `getCurrentAmounts`
+- `antiSybilCheck`, `getCooldownRemaining`, `getFirstSuccessfulTradeAt`
+
+---
+
+## 4) Parent order vs child trade state modeli
+
+## 4.1 Parent order state
 - `OPEN`
 - `PARTIALLY_FILLED`
 - `FILLED`
 - `CANCELED`
 
-Parent order, pazar erişim katmanıdır; escrow çözümleme mantığı child trade tarafında yürür.
+Parent order market görünürlüğünü taşır; escrow uyuşmazlığı çözmez.
 
-## 3.2 Child Trade state machine (gerçek escrow)
+## 4.2 Child trade state
 - `OPEN` (V3 fill path’inde pratikte kullanılmıyor)
 - `LOCKED`
 - `PAID`
@@ -83,246 +113,386 @@ Parent order, pazar erişim katmanıdır; escrow çözümleme mantığı child t
 - `CANCELED`
 - `BURNED`
 
-V3’te child trade, fill anında aynı tx içinde doğrudan `LOCKED` oluşturulur.
+## 4.3 Fill anında child trade yaratımı
+Hem `fillSellOrder` hem `fillBuyOrder` akışında child trade aynı tx içinde doğrudan `LOCKED` oluşur. Böylece eski create+lock zinciri yerine tek adımda escrow entry gerçekleşir.
 
-## 3.3 Child-trade authority linkage
-V3’te child trade kimliği/bağlamı:
-1. `OrderFilled(orderId, tradeId, filler, fillAmount, remainingAmount, childListingRef)`
-2. `getTrade(tradeId)`
-
-kombinasyonundan authoritative biçimde alınır.
-
----
-
-## 4) Akışlar: Sell order ve Buy order
-
-## 4.1 Sell order flow
-1. Owner `createSellOrder` çağırır.
-   - Token inventory + maker bond reserve upfront kontrata kilitlenir.
-2. Counterparty `fillSellOrder` çağırır.
-   - Filler için `_enforceTakerEntry` uygulanır.
-   - Child trade `LOCKED` olarak doğar.
-3. Taker `reportPayment` çağırır (`PAID`).
-4. Maker `releaseFunds` ile çözer (`RESOLVED`) veya koşullara göre dispute/cancel path’e gider.
-
-## 4.2 Buy order flow
-1. Owner `createBuyOrder` çağırır.
-   - Owner eventual taker olduğu için create aşamasında `_enforceTakerEntry` uygulanır.
-   - Taker bond reserve upfront kilitlenir.
-2. Counterparty `fillBuyOrder` çağırır.
-   - Buy owner (taker) fill anında tekrar `_enforceTakerEntry` kontrolünden geçer.
-   - Filler maker olur, owner taker olur.
-   - Child trade `LOCKED` doğar.
-3. Taker `reportPayment` çağırır.
-4. Maker `releaseFunds` veya dispute/cancel yoluna gider.
+## 4.4 Kimlik ilişkisi
+- Parent order identity: `orderId`
+- Child trade identity: `tradeId` (`onchain_escrow_id` mirror)
+- Link authority: `OrderFilled(orderId, tradeId, ...)` + `getTrade(tradeId)`
 
 ---
 
-## 5) Role mapping: owner/filler ↔ maker/taker
+## 5) Sell flow, Buy flow ve role mapping
 
-Mutlak “maker=seller, taker=buyer” kuralı yoktur; eşleşme side-dependent’tir:
+## 5.1 Sell order flow
+1. Owner `createSellOrder`
+2. Filler `fillSellOrder` (taker gate uygulanır)
+3. Child trade `LOCKED`
+4. Taker `reportPayment`
+5. Maker `releaseFunds` veya dispute/cancel yolları
 
-- `SELL_CRYPTO`
-  - order owner => maker
-  - filler => taker
-- `BUY_CRYPTO`
-  - order owner => taker
-  - filler => maker
+## 5.2 Buy order flow
+1. Owner `createBuyOrder` (owner eventual taker olduğu için gate create-time’da uygulanır)
+2. Filler `fillBuyOrder`
+3. Owner (taker) fill-time’da yeniden gate kontrolünden geçer
+4. Child trade `LOCKED`
+5. `reportPayment` → `releaseFunds` / dispute / cancel
 
-Bu eşleşme, hem ekonomik dağıtım hem de anti-sybil gate noktasını belirler.
-
----
-
-## 6) Anti-sybil enforcement semantiği
-
-Kanonik enforcement helper: `_enforceTakerEntry(wallet, tier)`
-
-Uyguladığı kapılar:
-- `bannedUntil` aktif ban kontrolü
-- cüzdan yaş eşiği (`WALLET_AGE_MIN`)
-- native dust eşiği (`DUST_LIMIT`)
-- tier bazlı cooldown (`tier0TradeCooldown`, `tier1TradeCooldown`; tier2+ yok)
-
-### V3 uygulama noktaları
-- `fillSellOrder`: filler/taker girişi
-- `createBuyOrder`: owner/eventual taker ön kapısı
-- `fillBuyOrder`: owner/taker için yeniden kontrol
-
-Dolayısıyla anti-sybil modeli lockEscrow merkezli legacy değil, V3 child-trade entry merkezlidir.
+## 5.3 Side-dependent role mapping
+Mutlak “maker=seller, taker=buyer” yoktur:
+- `SELL_CRYPTO`: owner→maker, filler→taker
+- `BUY_CRYPTO`: owner→taker, filler→maker
 
 ---
 
-## 7) Dispute sistemi (Bleeding Escrow)
+## 6) Anti-sybil enforcement semantiği (V3)
 
-Child trade `PAID` sonrası üç temel çözüm hattı vardır:
+Kanonik gate helper: `_enforceTakerEntry(wallet, tier)`
 
-1. **Normal çözüm:** maker `releaseFunds`
-2. **Dispute hattı:** maker `pingTakerForChallenge` → bekleme → `challengeTrade`
-3. **Liveness hattı:** taker `pingMaker` → bekleme → `autoRelease`
+Gate bileşenleri:
+- aktif ban kontrolü (`bannedUntil`)
+- wallet age (`WALLET_AGE_MIN`)
+- native balance dust eşiği (`DUST_LIMIT`)
+- tier bazlı cooldown (`tier0TradeCooldown`, `tier1TradeCooldown`)
 
-### Bleeding mekanizması
-- `CHALLENGED` state’inde zamanla maker bond, taker bond ve (eşik sonrası) crypto tarafında decay hesaplanır.
-- `getCurrentAmounts` anlık ekonomik durumu verir.
-- `burnExpired`, `MAX_BLEEDING` dolduğunda kalanları treasury’ye yakar/aktarır.
+V3 uygulama noktaları:
+- `fillSellOrder` (filler taker)
+- `createBuyOrder` (owner eventual taker)
+- `fillBuyOrder` (owner taker re-check)
 
-### Mutual cancel
-- `proposeOrApproveCancel` ile iki taraf EIP-712 imza iradesi sunar.
-- Her iki taraf onayı tamamlanınca `_executeCancel` çalışır.
-- State’e göre ücret/refund dağıtımı farklılaşır; kontrat içi kurala bağlıdır.
+Sonuç: anti-sybil enforcement lockEscrow-merkezli legacy değildir; V3 child-trade entry path merkezlidir.
 
 ---
 
-## 8) Reputation, ban, clean-slate
+## 7) Dispute/Bleeding Escrow teknik akışı
 
-Reputation mapping alanları:
+## 7.1 `PAID` sonrası çözüm yolları
+- **Normal kapanış:** maker `releaseFunds`
+- **Dispute hattı:** maker `pingTakerForChallenge` → bekleme → `challengeTrade`
+- **Liveness hattı:** taker `pingMaker` → bekleme → `autoRelease`
+- **Mutual cancel:** iki tarafın imzalı iradesiyle `proposeOrApproveCancel`
+- **Terminal burn:** challenge sonrası süre dolunca `burnExpired`
+
+## 7.2 Bleeding bileşenleri
+- maker bond decay
+- taker bond decay
+- belirli eşik sonrası crypto side decay
+
+`getCurrentAmounts(tradeId)`, o anki ekonomik bakiyeyi kanonik olarak çıkarır.
+
+## 7.3 Challenge ve liveness ping semantiği
+- Ping yolları birbirini dışlayan şekilde tasarlanır (conflicting path koruması).
+- Bekleme pencereleri state-guard ile enforce edilir.
+
+## 7.4 Burn semantiği
+- `burnExpired` permissionless pattern’e yakındır: challenge süresi dolan state’i finalize eder.
+- Kalan ekonomik değer treasury yönüne gider.
+
+## 7.5 Cancel semantiği
+- `proposeOrApproveCancel` EIP-712 imza + nonce + deadline disiplinini kontrat içinde doğrular.
+- Her iki taraf imzası tamamlanmadan cancel finalize edilmez.
+
+---
+
+## 8) Reputation / bans / clean-slate
+
+## 8.1 Reputation alanları
 - `successfulTrades`
 - `failedDisputes`
 - `bannedUntil`
 - `consecutiveBans`
 
-### Ban/Tier etkisi
-- Başarısız dispute birikimi ban escalation üretir.
-- Tier ceiling cezası (`hasTierPenalty`, `maxAllowedTier`) devreye girebilir.
+## 8.2 Tier etkisi
+- Başarı/başarısızlık geçmişi efektif tier’ı etkiler.
+- Ceza sonrası tier ceiling (`maxAllowedTier`) devreye girebilir.
+- `MIN_ACTIVE_PERIOD` tier progression’da zaman bileşeni uygular.
 
-### Clean-slate davranışı
-- `decayReputation(wallet)` için clean period zorunlu.
-- Güncel clean period: **90 gün** (`REPUTATION_DECAY_CLEAN_PERIOD = 90 days`).
-- Bu mekanizma tam af değildir:
-  - `consecutiveBans` resetlenebilir,
-  - `hasTierPenalty` kaldırılabilir,
-  - fakat `failedDisputes` geçmişi silinmez.
+## 8.3 Clean-slate kuralı
+- `decayReputation` clean period tamamlanınca çağrılabilir.
+- Güncel clean period: **90 gün**.
+- Bu tam af değildir; `failedDisputes` silinmez.
 
 ---
 
-## 9) Treasury, fee modeli, mutable config
+## 9) Finalized parameters ve mutable config ayrımı
 
 ## 9.1 Immutable/public constant sınıfı
-- tier max amounts (`TIER_MAX_AMOUNT_TIER0..3`)
-- decay rates (`TAKER_BOND_DECAY_BPS_H`, `MAKER_BOND_DECAY_BPS_H`, `CRYPTO_DECAY_BPS_H`)
-- `WALLET_AGE_MIN`, `DUST_LIMIT`, `MAX_BLEEDING`
-- `MIN_ACTIVE_PERIOD`, `AUTO_RELEASE_PENALTY_BPS`, `MAX_CANCEL_DEADLINE`
-- `GOOD_REP_DISCOUNT_BPS`, `BAD_REP_PENALTY_BPS`
+- tier max amount seti (`TIER_MAX_AMOUNT_*`)
+- decay sabitleri (`*_DECAY_BPS_H`)
+- wallet age / dust / bleeding / active period limitleri
+- auto release penalty
+- max cancel deadline
+- rep discount/penalty BPS
 
-## 9.2 Mutable runtime config sınıfı
+## 9.2 Mutable runtime config
 - `takerFeeBps`
 - `makerFeeBps`
 - `tier0TradeCooldown`
 - `tier1TradeCooldown`
+- direction-aware token config (`setTokenConfig`)
 
-### Fee snapshot koruması
-- Fee snapshot order oluşturulurken alınır.
-- Child trade bu snapshot’ı taşır.
-- Sonradan `setFeeConfig` çağrısı aktif trade economics’ini geriye dönük değiştirmez.
-
----
-
-## 10) TokenConfig: direction-aware token support
-
-Token yönetimi tek bool yerine yön-bilinçli yapıdadır:
-- `supported`
-- `allowSellOrders`
-- `allowBuyOrders`
-
-Bu sayede bir token global olarak açık olup sadece belirli order yönünde kullanılabilir.
-Eski `supportedTokens/setSupportedToken` dili V3 için stale’dir.
+## 9.3 Fee snapshot semantiği
+- Snapshot order create anında alınır.
+- Child trade, parent snapshot’ını taşır.
+- Sonraki `setFeeConfig` aktif trade economics’ini geriye dönük değiştirmez.
 
 ---
 
-## 11) Backend mimarisi (authoritative olmayan katman)
+## 10) Runtime bağlantı ve operasyon politikaları
 
-`backend/scripts/app.js` ve route/service katmanlarının rolü:
+## 10.1 Bootstrap sırası (backend)
+1. Env ve güvenlik kontrolleri
+2. Mongo bağlantısı
+3. Redis bağlantısı
+4. Worker init + protocol config load
+5. Route mount
+6. Health/readiness aktiflenmesi
 
-- Oturum, rate-limit, PII güvenlik sınırı ve API orchestration.
-- On-chain event’leri Mongo mirror’a yansıtma.
-- Read endpoint’leri ile hızlı sorgu yüzeyi.
+## 10.2 Readiness-first yaklaşımı
+- Liveness (`/health`) süreç ayakta mı sorusuna bakar.
+- Readiness (`/ready`) bağımlılıkların gerçekten hazır olup olmadığını doğrular.
+- Trafik açma kararı readiness’e göre verilmelidir.
 
-### Non-authoritative ilke
-- Backend order/trade kural üretmez.
-- Kontratın reddettiği akış backend ile geçerli kılınamaz.
-- Mongo verisi canonical değil, mirror/read modeldir.
+## 10.3 Fail-fast / fail-open kararları
+- Kritik bağımlılık kopuşlarında fail-fast yaklaşımı uygulanır (özellikle DB/worker bütünlüğü için).
+- Güvenlik sınırında fail-open yerine fail-closed tercih edilir (ör. auth/session sınırları).
 
----
+## 10.4 Timeout ve bağlantı politikaları
+- Mongo timeout/selection ayarları API davranışıyla hizalı tutulur.
+- Redis readiness durumu ayrı takip edilir; “connected” olmak tek başına yeterli kabul edilmez.
 
-## 12) Event worker / replay / mirror reliability
+## 10.5 Graceful shutdown sırası
+- Yeni istekleri kes
+- Worker’ı durdur
+- scheduler interval/timeout’ları temizle
+- Mongo/Redis bağlantılarını kapat
+- süreçten kontrollü çık
 
-`eventListener.js` tasarım ilkeleri:
-- `ArafEscrow.sol` authority, worker mirror.
-- Parent order ve child trade explicit kimliklerle tutulur (`orderId`, `tradeId`, `orderRef`).
-- Child trade authority’si `OrderFilled + getTrade` üzerinden mirror edilir.
-
-### Güvenilirlik katmanları
-- Redis checkpoint (`worker:last_block`, `worker:last_safe_block`)
-- retry + DLQ mekanizması
-- block batch replay
-- kimlik normalizasyonu (numeric id string disiplini)
-- trade state regression korumaları
-
-Bu yapı, reorg/yeniden-işleme/yarım güncelleme senaryolarında mirror tutarlılığını artırır.
-
----
-
-## 13) Data model katmanı (User / Order / Trade)
-
-## 13.1 Order modeli
-- Parent order’ın on-chain alanlarını mirror eder.
-- Remaining amount, reserve, fee snapshot backend’de hesaplanmaz; kontrattan yansıtılır.
-
-## 13.2 Trade modeli
-- Child trade merkezli kimlik: `onchain_escrow_id`.
-- `parent_order_id`, `parent_order_side`, `fee_snapshot`, `financials`, `timers` mirror alanları.
-- PII/dekont/snapshot alanları coordination amacıyla tutulur; authority değildir.
-
-## 13.3 User modeli
-- Payout profile AES-256-GCM şifreli tutulur.
-- `reputation_cache`, `is_banned` gibi alanlar local cache/mirror niteliğindedir.
-- Nihai enforcement kontrattaki reputation ve anti-sybil kapılarındadır.
+## 10.6 Scheduler / cleanup jobs
+- reputation decay tetikleyicileri
+- stats snapshot
+- receipt & PII retention cleanup
+- user bank risk metadata cleanup
+- DLQ processing
 
 ---
 
-## 14) Frontend mimarisi / contract hook / UX guardrails
+## 11) Event worker / replay / mirror reliability
 
-`useArafContract.js` write yüzeyi order-first modelledir:
-- sell/buy order create/fill/cancel
-- child trade lifecycle write çağrıları
-- EIP-712 cancel akışı
+## 11.1 Worker state mantığı
+Worker kontrat event’lerini consume eder, Mongo’yu authoritative olmadan günceller.
 
-### Runtime guardrails
-- chain doğrulaması
-- escrow adres doğrulaması
-- receipt/event decode
-- fill sonrası `OrderFilled` event’inden `tradeId` çıkarımı
+## 11.2 Checkpoint yaklaşımı
+- son işlenen blok
+- last safe checkpoint
+- replay başlangıç güvenliği
 
-Frontend authoritative karar vermez; kontrat gerçekliğini güvenli biçimde kullanıcıya taşır.
+## 11.3 Replay ve batch işleme
+- bloklar batch halinde işlenir
+- replay’de idempotent davranış hedeflenir
+- state regression guard’larıyla geriye düşüş engellenir
 
----
+## 11.4 DLQ ve poison event görünürlüğü
+- işlemeye alınamayan event’ler DLQ’ya taşınır
+- tekrar deneme/backoff uygulanır
+- operasyonel görünürlük için log/metric izi korunur
 
-## 15) Güvenlik mimarisi
+## 11.5 Kimlik normalizasyonu
+- on-chain id alanları numeric-string disipliniyle tutulur
+- parent order id ve child trade id karışmasını önleyen explicit lookup stratejisi uygulanır
 
-- **Non-custodial:** kullanıcı fonlarına backend erişimi yok.
-- **Pausable yönetim:** emergency’de yeni girişler durdurulabilir.
-- **EIP-712 cancel:** imza/nonce/doğrulama kontrat içinde.
-- **PII boundary:** trade-scoped token + session wallet eşleşmesi + no-store yanıt politikası.
-- **Data minimization:** read route’larda hassas alanlar projection dışı tutulur.
-- **Operational security:** health/readiness, scheduler lock’ları, graceful shutdown, cleanup job’ları.
-
----
-
-## 16) Operasyonel notlar
-
-- Startup akışında DB/Redis/worker/config yükleme sırası kritik.
-- Readiness başarısızken trafik açılmamalıdır.
-- DLQ birikimi ve replay metrikleri düzenli izlenmelidir.
-- PII retention cleanup ve receipt cleanup job’ları devrede olmalıdır.
+## 11.6 OrderFilled + getTrade linkage
+Child trade authority worker tarafında heuristik yerine explicit event+getter kombinasyonuyla mirror edilir.
 
 ---
 
-## 17) Deprecated / reframed legacy concepts
+## 12) Güvenlik mimarisi ve trust boundaries
 
-Aşağıdaki kavramlar artık kanonik model değildir:
-- listing-first pazar primitive anlatısı
-- `createEscrow/lockEscrow` canonical işlem akışı
-- sabit fee/sabit cooldown varsayımı
-- maker/taker için mutlak seller/buyer eşleşmesi
-- tek boyutlu token support dili
+## 12.1 Auth modeli (SIWE + JWT)
+- Nonce → SIWE imzası → verify
+- JWT/refresh cookie tabanlı oturum
+- session wallet authority korunur
 
-Legacy referanslar yalnız tarihsel bağlam amacıyla kullanılmalı; canlı protokol davranışı için bu doküman ve kontrat gerçekliği esas alınmalıdır.
+## 12.2 Cookie-only auth ve session-wallet boundary
+- Backend auth’da cookie wallet authoritative kaynaktır.
+- `x-wallet-address` uyuşmazlığında session invalidate davranışı uygulanır.
+
+## 12.3 PII access token boundary
+- Trade-scoped kısa ömürlü PII token
+- Role + state + session eşleşmesi birlikte doğrulanır
+- Hassas yanıtlar no-store/no-cache semantiğinde döndürülür
+
+## 12.4 Şifreleme modeli
+- AES-256-GCM envelope encryption
+- HKDF/KMS-Vault tabanlı key yönetimi
+- PII plaintext’in kalıcı depoda tutulmaması
+
+## 12.5 Rate-limit sınıfları
+- auth, market read, trade, PII, feedback, logs için ayrı limiter sınıfları
+- abuse alanları endpoint semantiğine göre ayrıştırılır
+
+## 12.6 Client error logging boundary
+- Frontend hata telemetrisi kontrollü endpoint’e gider (`/api/logs/client-error`)
+- Hassas veri sızıntısını azaltan scrub/noise politikaları önemlidir
+
+## 12.7 Trust boundary özeti
+- Contract: economic/state authority
+- Backend: coordination + projection
+- Frontend: guardrail UX
+- Off-chain veri: operasyonel kolaylık, authority değil
+
+---
+
+## 13) Veri modelleri (Mongo read-model katmanı)
+
+> Mongo canonical protocol authority değildir; ama yüksek performanslı read-model ve operasyonel observability için kritik katmandır.
+
+## 13.1 User modeli
+
+### Authoritative olmayan ama kritik alanlar
+- `wallet_address` kimlik anahtarı
+- `payout_profile` (rail/country/contact/details encrypted)
+- `reputation_cache` (on-chain mirror amaçlı)
+- ban mirror alanları
+
+### Gizlilik ve güvenlik
+- Şifreli payout alanları
+- Public profile projection’da hassas alanların dışarıda bırakılması
+- bank değişim metadata’sının risk sinyali olarak saklanması
+
+### Operasyonel not
+- `profileVersion`, 7d/30d değişim sayaçları, lock-time snapshot kıyaslamaları için kullanılır.
+
+## 13.2 Order modeli
+
+### Kimlik ve state
+- `onchain_order_id` (string id)
+- owner, side, status, tier, token
+- amount/reserve/fee snapshot alanları
+
+### Mirror sınırı
+- Remaining amount ve reserve hesapları backend authority’si değildir; kontrat aynasıdır.
+
+## 13.3 Trade modeli
+
+### Kimlik ilişkisi
+- child-trade kimliği: `onchain_escrow_id`
+- parent bağ: `parent_order_id`
+- parent side: `parent_order_side`
+
+### Finansal alanlar
+- BigInt-safe string alanları (`crypto_amount`, bond alanları, decayed totals)
+- number cache alanları yalnız query/UI kolaylığı içindir
+
+### PII / receipt / snapshot
+- lock-time payout snapshot
+- encrypted receipt payload + hash
+- cancel proposal / chargeback ack audit alanları
+
+### Retention
+- terminal state sonrası TTL/cleanup stratejileri
+- receipt ve snapshot cleanup işleriyle veri minimizasyonu
+
+## 13.4 Feedback / stats/snapshot katmanı
+- Feedback modeli ürün geri bildirimi için ayrı operational yüzeydir.
+- Daily/aggregated stats endpoint’leri operasyonel görünürlük sağlar, protocol authority üretmez.
+
+---
+
+## 14) Backend route surface ve coordination semantiği
+
+## 14.1 Orders routes
+- Parent order read/config yüzeyi
+- Owner-scope child-trade listesi
+
+## 14.2 Trades routes
+- active/history/by-escrow kimlikli okuma
+- cancel signature coordination
+- chargeback ack audit surface
+
+## 14.3 Auth routes
+- nonce/verify/refresh/logout/me/profile
+- session-wallet mismatch guard
+
+## 14.4 PII routes
+- `/my`, `taker-name`, request-token, trade-scoped retrieve
+- snapshot-first ve role-bound access
+
+## 14.5 Receipts routes
+- file validation + encryption + hash
+- yalnız taker + `LOCKED` state kabulü
+
+## 14.6 Logs/stats/feedback
+- client error logs
+- protocol stats read surface
+- feedback intake
+
+---
+
+## 15) Frontend UX guardrail katmanı
+
+## 15.1 `useArafContract` rolü
+- Contract write/read çağrı orkestrasyonu
+- chain/address preflight guard’ları
+- tx receipt takibi
+- `OrderFilled` event decode ile tradeId çıkarımı
+
+## 15.2 `usePII` rolü
+- trade-scoped PII token akışı
+- canonical API path çözümlemesi
+- authenticated fetch entegrasyonu
+- request race cancellation (AbortController)
+- unmount sonrası hassas state temizliği
+
+## 15.3 Session/auth UX guardrails
+- auth me/refresh akışları
+- session-wallet mismatch durumunda güvenli logout/recovery
+- yanlış ağ/yanlış adres durumunda kullanıcıya fail-fast uyarı
+
+## 15.4 Frontend enforcement sınırı
+Frontend kontratın yerine geçmez; enforcement kontrattadır. Frontend yalnız doğru yolu kolaylaştırır, yanlış yolu erken yakalar.
+
+---
+
+## 16) Saldırı vektörleri ve bilinen sınırlamalar
+
+## 16.1 Giderilmiş veya azaltılmış riskler
+- legacy listing authority confusion
+- hardcoded API path drift riskinin azaltılması
+- session mismatch ile sessiz account confusion azaltımı
+- PII erişiminde state/role/token üçlü sınırı
+
+## 16.2 Kalan risk yüzeyi
+- off-chain ödeme kanıtı semantik belirsizliği (fake receipt / chargeback gerçekliği)
+- governance key risk surface (owner mutable config)
+- backend mirror authority’nin yanlış yorumlanması riski
+- frontend yanlış ağ/yanlış adres konfigurasyon riski
+- operator dokümantasyon yanlış okuma riski
+
+## 16.3 Bilinçli sınırlamalar
+- Oracle-free model gereği fiat transferin “gerçekliği” kontrat içinde doğrulanmaz.
+- Sistem oyun-teorik baskıyla yanlış davranışı pahalılaştırır; mutlak hakemlik iddiası yoktur.
+
+---
+
+## 17) Legacy concepts (historical / deprecated / non-canonical)
+
+Aşağıdakiler canlı V3 mimarinin canonical yüzeyi değildir:
+- createEscrow/lockEscrow merkezli anlatı
+- listing-first market primitive
+- fixed fee/fixed cooldown varsayımları
+- maker=seller, taker=buyer mutlaklığı
+- old single-dimension token support dili
+
+Legacy içerik yalnız tarihsel bağlam için tutulmalı; operasyonel kararlar bu doküman + source-of-truth kod üzerinden verilmelidir.
+
+---
+
+## 18) Sonuç: bu dokümanın rolü
+
+Bu metin iki rolü aynı anda taşır:
+1. V3 canonical modelin kısa ve net çerçevesi
+2. Ekip içi operasyonel/teknik referans (security, data model, runtime reliability, guardrails, attack surface)
+
+Dolayısıyla doküman ne yalnız “özet”, ne de stale legacy metin kopyasıdır; güncel V3 gerçekliğe hizalanmış kapsamlı teknik referanstır.

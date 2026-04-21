@@ -1,80 +1,110 @@
-# Araf Protocol — Canonical Architecture & Technical Reference (V3)
+# Araf Protocol — Canonical Architecture & Technical Reference (V3 Order-First)
 
-> Source-of-truth priority: `ArafEscrow.sol` > backend mirror layer > frontend UX layer > documentation.
-
-This document preserves the correct V3 core introduced in PR #52 and restores detailed technical-reference depth.
+> This document preserves the correct V3 core introduced in PR #52 and expands it back to detailed technical-reference depth.  
+> Source-of-truth order: `ArafEscrow.sol` → backend mirror/read layer → frontend guardrail layer → documentation.
 
 ---
 
-## 1) Canonical architecture model
+## 1) Executive canonical model
 
-Araf is no longer listing-first; it is **order-first**:
+In Araf V3, the public market primitive is no longer listing-first; it is **parent-order first**.
 
 - **Parent Order** = public market/order layer
-- **Child Trade** = real escrow lifecycle (economic state machine)
+- **Child Trade** = actual escrow lifecycle (economic state machine)
 - **Contract** = single authoritative state machine
-- **Backend** = mirror + coordination + read layer
+- **Backend** = mirror + coordination + operational read layer
 - **Frontend** = UX guardrail + contract access layer
 
-### Authority boundary
-- On-chain state transitions are defined only by the contract.
-- Backend does not invent order/trade state; it mirrors events/getters.
-- Frontend does not create economic truth; it sends tx and reads receipts/events.
+### 1.1 Authority boundaries
+- Final state transitions and economic payouts are contract-enforced.
+- Backend is not an arbiter; it mirrors state and provides coordination surfaces.
+- Frontend is not enforcement; it is a guardrail/orchestration layer.
 
-### Legacy framing
-`createEscrow/lockEscrow` and listing-first narratives are not canonical in V3. They may only appear as historical/legacy context.
-
----
-
-## 2) On-chain public surface (ArafEscrow.sol)
-
-## 2.1 Order write surface
-- `createSellOrder(address token, uint256 totalAmount, uint256 minFillAmount, uint8 tier, bytes32 orderRef)`
-- `fillSellOrder(uint256 orderId, uint256 fillAmount, bytes32 childListingRef)`
-- `cancelSellOrder(uint256 orderId)`
-- `createBuyOrder(address token, uint256 totalAmount, uint256 minFillAmount, uint8 tier, bytes32 orderRef)`
-- `fillBuyOrder(uint256 orderId, uint256 fillAmount, bytes32 childListingRef)`
-- `cancelBuyOrder(uint256 orderId)`
-
-## 2.2 Child-trade (escrow lifecycle) write surface
-- `reportPayment(uint256 tradeId, string ipfsHash)`
-- `releaseFunds(uint256 tradeId)`
-- `challengeTrade(uint256 tradeId)`
-- `autoRelease(uint256 tradeId)`
-- `burnExpired(uint256 tradeId)`
-- `proposeOrApproveCancel(uint256 tradeId, uint256 deadline, bytes sig)`
-
-## 2.3 Auxiliary/liveness write surface
-- `registerWallet()`
-- `pingMaker(uint256 tradeId)`
-- `pingTakerForChallenge(uint256 tradeId)`
-- `decayReputation(address wallet)`
-
-## 2.4 Governance (owner-controlled mutable surface)
-- `setTreasury(address)`
-- `setFeeConfig(uint256 takerFeeBps, uint256 makerFeeBps)`
-- `setCooldownConfig(uint256 tier0TradeCooldown, uint256 tier1TradeCooldown)`
-- `setTokenConfig(address token, bool supported, bool allowSellOrders, bool allowBuyOrders)`
-- `pause()` / `unpause()`
-
-## 2.5 Critical read surface
-- `getOrder(orderId)`, `getTrade(tradeId)`, `getReputation(wallet)`
-- `getFeeConfig()`, `getCooldownConfig()`, `getCurrentAmounts(tradeId)`
-- `antiSybilCheck(wallet)`, `getCooldownRemaining(wallet)`, `getFirstSuccessfulTradeAt(wallet)`
+### 1.2 Practical V3 consequence
+- Market-facing primitive = parent order.
+- Escrow/dispute/release/cancel/burn semantics live at child-trade level.
+- Child-trade identity authority comes from `OrderFilled + getTrade(tradeId)`.
 
 ---
 
-## 3) Parent-order vs child-trade state model
+## 2) Hybrid architecture and technology stack
 
-## 3.1 Parent Order state machine
+## 2.1 Why hybrid?
+Araf must satisfy both hard security and practical operations:
+- **On-chain:** custody, state transitions, economics, reputation enforcement
+- **Off-chain (Mongo):** read model, performance, PII and operational metadata
+- **Redis:** checkpoints, readiness, rate limiting, short-lived coordination
+
+This yields a Web2.5 model: on-chain authority + off-chain operational acceleration.
+
+## 2.2 Layer matrix
+
+| Layer | Primary responsibility | Authority level | Technology |
+|---|---|---|---|
+| Contract | Escrow state machine, payouts, dispute economics, governance controls | **Authoritative** | Solidity / Base |
+| Backend API | Session/security boundaries, projection, coordination | Non-authoritative | Node.js + Express |
+| Event Worker | Event mirror, replay, checkpoint/DLQ handling | Non-authoritative | ethers + Mongo + Redis |
+| Mongo | Read model / operational cache | Non-authoritative | MongoDB + Mongoose |
+| Redis | Ephemeral coordination / runtime safety signals | Non-authoritative | Redis |
+| Frontend | Contract write/read orchestration + UX guardrails | Non-authoritative | React + Wagmi + viem |
+
+## 2.3 Non-custodial backend model
+- Backend does not hold user-fund custody authority.
+- Backend cannot fabricate release/challenge/cancel outcomes against contract rules.
+- Backend strength lies in coordination, observability, and secure PII boundaries.
+
+---
+
+## 3) On-chain public surface (ArafEscrow.sol)
+
+## 3.1 Parent-order write surface
+- `createSellOrder`
+- `fillSellOrder`
+- `cancelSellOrder`
+- `createBuyOrder`
+- `fillBuyOrder`
+- `cancelBuyOrder`
+
+## 3.2 Child-trade lifecycle write surface
+- `reportPayment`
+- `releaseFunds`
+- `challengeTrade`
+- `autoRelease`
+- `burnExpired`
+- `proposeOrApproveCancel`
+
+## 3.3 Liveness / auxiliary write surface
+- `registerWallet`
+- `pingMaker`
+- `pingTakerForChallenge`
+- `decayReputation`
+
+## 3.4 Governance / mutable admin surface
+- `setTreasury`
+- `setFeeConfig`
+- `setCooldownConfig`
+- `setTokenConfig`
+- `pause` / `unpause`
+
+## 3.5 Read surface
+- `getOrder`, `getTrade`, `getReputation`
+- `getFeeConfig`, `getCooldownConfig`
+- `getCurrentAmounts`
+- `antiSybilCheck`, `getCooldownRemaining`, `getFirstSuccessfulTradeAt`
+
+---
+
+## 4) Parent order vs child trade state model
+
+## 4.1 Parent-order states
 - `OPEN`
 - `PARTIALLY_FILLED`
 - `FILLED`
 - `CANCELED`
 
-Parent order is market access logic; escrow resolution logic runs at child-trade level.
+Parent orders carry market visibility and fillability, not escrow dispute semantics.
 
-## 3.2 Child Trade state machine (actual escrow)
+## 4.2 Child-trade states
 - `OPEN` (not practically used in pure V3 fill path)
 - `LOCKED`
 - `PAID`
@@ -83,244 +113,386 @@ Parent order is market access logic; escrow resolution logic runs at child-trade
 - `CANCELED`
 - `BURNED`
 
-In V3, child trades are created directly as `LOCKED` in the fill transaction.
+## 4.3 Fill-time child-trade creation
+Both `fillSellOrder` and `fillBuyOrder` spawn child trades directly in `LOCKED` state in the same transaction.
 
-## 3.3 Child-trade authority linkage
-In V3, child-trade identity/context is authoritative through:
-1. `OrderFilled(orderId, tradeId, filler, fillAmount, remainingAmount, childListingRef)`
-2. `getTrade(tradeId)`
-
----
-
-## 4) Flows: Sell order and Buy order
-
-## 4.1 Sell-order flow
-1. Owner calls `createSellOrder`.
-   - Token inventory + maker bond reserve are locked upfront.
-2. Counterparty calls `fillSellOrder`.
-   - `_enforceTakerEntry` is applied to the filler.
-   - Child trade is spawned as `LOCKED`.
-3. Taker calls `reportPayment` (`PAID`).
-4. Maker resolves via `releaseFunds` (`RESOLVED`) or goes to dispute/cancel path.
-
-## 4.2 Buy-order flow
-1. Owner calls `createBuyOrder`.
-   - Since owner is eventual taker, `_enforceTakerEntry` is applied at create-time.
-   - Taker bond reserve is locked upfront.
-2. Counterparty calls `fillBuyOrder`.
-   - Buy owner (taker) is checked again via `_enforceTakerEntry` at fill-time.
-   - Filler becomes maker; owner becomes taker.
-   - Child trade is spawned as `LOCKED`.
-3. Taker calls `reportPayment`.
-4. Maker resolves via `releaseFunds` or dispute/cancel path.
+## 4.4 Identity relationship
+- Parent identity: `orderId`
+- Child identity: `tradeId` (`onchain_escrow_id` mirror)
+- Link authority: `OrderFilled(orderId, tradeId, ...)` + `getTrade(tradeId)`
 
 ---
 
-## 5) Role mapping: owner/filler ↔ maker/taker
+## 5) Sell flow, buy flow, and role mapping
 
-No universal “maker=seller, taker=buyer” rule exists; mapping is side-dependent:
+## 5.1 Sell-order flow
+1. Owner calls `createSellOrder`
+2. Filler calls `fillSellOrder` (taker gate enforced)
+3. Child trade enters `LOCKED`
+4. Taker calls `reportPayment`
+5. Maker resolves with `releaseFunds` or dispute/cancel paths
 
-- `SELL_CRYPTO`
-  - order owner => maker
-  - filler => taker
-- `BUY_CRYPTO`
-  - order owner => taker
-  - filler => maker
+## 5.2 Buy-order flow
+1. Owner calls `createBuyOrder` (owner is eventual taker; gate enforced at create-time)
+2. Filler calls `fillBuyOrder`
+3. Owner (taker) is re-checked at fill-time
+4. Child trade enters `LOCKED`
+5. `reportPayment` then resolution/dispute/cancel paths
 
-This mapping drives both payout economics and anti-sybil entry points.
+## 5.3 Side-dependent role mapping
+No universal “maker=seller, taker=buyer” rule:
+- `SELL_CRYPTO`: owner→maker, filler→taker
+- `BUY_CRYPTO`: owner→taker, filler→maker
 
 ---
 
-## 6) Anti-sybil enforcement semantics
+## 6) Anti-sybil enforcement semantics (V3)
 
-Canonical enforcement helper: `_enforceTakerEntry(wallet, tier)`
+Canonical gate helper: `_enforceTakerEntry(wallet, tier)`
 
-Enforced gates:
+Gate components:
 - active ban gate (`bannedUntil`)
 - wallet age (`WALLET_AGE_MIN`)
 - native dust threshold (`DUST_LIMIT`)
-- tier cooldown (`tier0TradeCooldown`, `tier1TradeCooldown`; none for tier2+)
+- tier cooldown (`tier0TradeCooldown`, `tier1TradeCooldown`)
 
-### V3 enforcement points
-- `fillSellOrder`: filler/taker entry
-- `createBuyOrder`: owner/eventual taker pre-gate
-- `fillBuyOrder`: owner/taker re-check
+V3 enforcement points:
+- `fillSellOrder` (filler/taker)
+- `createBuyOrder` (owner/eventual taker)
+- `fillBuyOrder` (owner/taker re-check)
 
-Therefore anti-sybil is no longer lockEscrow-centered legacy; it is V3 child-trade-entry centered.
-
----
-
-## 7) Dispute system (Bleeding Escrow)
-
-After `PAID`, three main resolution paths exist:
-
-1. **Normal path:** maker `releaseFunds`
-2. **Dispute path:** maker `pingTakerForChallenge` → wait window → `challengeTrade`
-3. **Liveness path:** taker `pingMaker` → wait window → `autoRelease`
-
-### Bleeding mechanics
-- In `CHALLENGED`, maker bond, taker bond, and (after threshold) crypto side decay over time.
-- `getCurrentAmounts` exposes real-time economics.
-- `burnExpired` sweeps remaining value to treasury once `MAX_BLEEDING` expires.
-
-### Mutual cancel
-- `proposeOrApproveCancel` captures both parties’ EIP-712 signed intent.
-- Once both approvals exist, `_executeCancel` runs.
-- Refund/fee behavior is state-dependent and contract-enforced.
+So anti-sybil is no longer lockEscrow-centered legacy; it is child-trade-entry centered in V3.
 
 ---
 
-## 8) Reputation, bans, and clean-slate behavior
+## 7) Dispute / Bleeding Escrow technical flow
 
-Reputation mapping fields:
+## 7.1 Resolution paths after `PAID`
+- **Normal close:** maker `releaseFunds`
+- **Dispute path:** maker `pingTakerForChallenge` → wait window → `challengeTrade`
+- **Liveness path:** taker `pingMaker` → wait window → `autoRelease`
+- **Mutual cancel:** dual-signature `proposeOrApproveCancel`
+- **Terminal burn:** `burnExpired` after challenge timeout
+
+## 7.2 Bleeding components
+- maker bond decay
+- taker bond decay
+- post-threshold crypto-side decay
+
+`getCurrentAmounts(tradeId)` exposes authoritative real-time economics.
+
+## 7.3 Challenge and liveness ping semantics
+- Ping paths are mutually exclusive (conflict guard).
+- Required wait windows are enforced by state guards.
+
+## 7.4 Burn semantics
+- `burnExpired` finalizes stale challenged trades once max window elapses.
+- Remaining value is routed to treasury according to contract rules.
+
+## 7.5 Cancel semantics
+- `proposeOrApproveCancel` validates EIP-712 signature + nonce + deadline on-chain.
+- Cancel finalization requires both party approvals.
+
+---
+
+## 8) Reputation / bans / clean-slate
+
+## 8.1 Reputation fields
 - `successfulTrades`
 - `failedDisputes`
 - `bannedUntil`
 - `consecutiveBans`
 
-### Ban/tier impact
-- Failed-dispute accumulation can trigger ban escalation.
-- Tier-ceiling penalty (`hasTierPenalty`, `maxAllowedTier`) may be activated.
+## 8.2 Tier impact
+- Success/failure history affects effective tier.
+- Penalty ceilings (`maxAllowedTier`) may apply.
+- `MIN_ACTIVE_PERIOD` enforces time-based progression discipline.
 
-### Clean-slate semantics
-- `decayReputation(wallet)` requires clean-period completion.
-- Current clean period: **90 days** (`REPUTATION_DECAY_CLEAN_PERIOD = 90 days`).
-- This is not full amnesty:
-  - `consecutiveBans` may reset,
-  - `hasTierPenalty` may clear,
-  - historical `failedDisputes` does not disappear.
+## 8.3 Clean-slate rule
+- `decayReputation` requires clean-period completion.
+- Current clean period: **90 days**.
+- Not full amnesty: `failedDisputes` history is not erased.
 
 ---
 
-## 9) Treasury, fee model, mutable config
+## 9) Finalized parameters vs mutable config
 
 ## 9.1 Immutable/public-constant class
-- tier max amounts (`TIER_MAX_AMOUNT_TIER0..3`)
-- decay rates (`TAKER_BOND_DECAY_BPS_H`, `MAKER_BOND_DECAY_BPS_H`, `CRYPTO_DECAY_BPS_H`)
-- `WALLET_AGE_MIN`, `DUST_LIMIT`, `MAX_BLEEDING`
-- `MIN_ACTIVE_PERIOD`, `AUTO_RELEASE_PENALTY_BPS`, `MAX_CANCEL_DEADLINE`
-- `GOOD_REP_DISCOUNT_BPS`, `BAD_REP_PENALTY_BPS`
+- tier max amount constants (`TIER_MAX_AMOUNT_*`)
+- decay constants (`*_DECAY_BPS_H`)
+- wallet age / dust / bleeding / active period limits
+- auto-release penalty
+- max cancel deadline
+- reputation discount/penalty BPS
 
-## 9.2 Mutable runtime-config class
+## 9.2 Mutable runtime config class
 - `takerFeeBps`
 - `makerFeeBps`
 - `tier0TradeCooldown`
 - `tier1TradeCooldown`
+- direction-aware token config via `setTokenConfig`
 
-### Fee snapshot protection
-- Fee snapshots are taken at order creation.
-- Child trades inherit those snapshots.
+## 9.3 Fee snapshot semantics
+- Snapshot is captured at order creation.
+- Child trade inherits parent snapshots.
 - Later `setFeeConfig` changes do not retroactively rewrite active-trade economics.
 
 ---
 
-## 10) TokenConfig: direction-aware token support
+## 10) Runtime connectivity and operational policies
 
-Token management is direction-aware (not single-boolean):
-- `supported`
-- `allowSellOrders`
-- `allowBuyOrders`
+## 10.1 Backend bootstrap ordering
+1. env/security prechecks
+2. Mongo connect
+3. Redis connect
+4. worker init + protocol config load
+5. route mount
+6. health/readiness activation
 
-A token can be globally supported but enabled only for one order direction.
-Legacy `supportedTokens/setSupportedToken` wording is stale in V3.
+## 10.2 Readiness-first operations
+- Liveness (`/health`) answers “is process alive?”.
+- Readiness (`/ready`) answers “are dependencies actually ready?”.
+- Traffic gating should follow readiness, not liveness alone.
 
----
+## 10.3 Fail-fast / fail-open choices
+- Critical dependency failures follow fail-fast patterns (DB/worker integrity).
+- Security boundaries prefer fail-closed semantics (auth/session/PII).
 
-## 11) Backend architecture (non-authoritative)
+## 10.4 Timeout/connectivity policy
+- Mongo selection/socket timeouts are tuned for API behavior.
+- Redis `ready` state is evaluated explicitly; connected != operationally ready.
 
-Role of `backend/scripts/app.js` and route/service layers:
+## 10.5 Graceful shutdown ordering
+- stop new requests
+- stop worker
+- clear scheduler timers
+- close Mongo/Redis
+- controlled process exit
 
-- session/rate-limit/PII security boundary and API orchestration
-- mirroring on-chain events into Mongo read models
-- exposing fast read endpoints for UI/ops
-
-### Non-authoritative principle
-- Backend does not define order/trade rules.
-- Contract rejection cannot be overridden by backend logic.
-- Mongo data is canonical for read performance, not protocol authority.
-
----
-
-## 12) Event worker / replay / mirror reliability
-
-`eventListener.js` design principles:
-- contract is authority, worker is mirror
-- parent order and child trade use explicit identities (`orderId`, `tradeId`, `orderRef`)
-- child-trade authority mirrors `OrderFilled + getTrade`
-
-### Reliability layers
-- Redis checkpoints (`worker:last_block`, `worker:last_safe_block`)
-- retry + DLQ
-- block-batch replay
-- identity normalization (numeric ID string discipline)
-- trade-state regression guards
-
-This improves mirror consistency under reprocessing/replay/partial-update conditions.
+## 10.6 Scheduler and cleanup jobs
+- reputation decay trigger job
+- stats snapshot job
+- receipt + PII retention cleanup
+- user bank-risk metadata cleanup
+- DLQ processing
 
 ---
 
-## 13) Data model layer (User / Order / Trade)
+## 11) Event worker / replay / mirror reliability
 
-## 13.1 Order model
-- Mirrors on-chain parent-order fields.
-- Remaining amount/reserve/fee snapshots are mirrored from contract, not computed as authority in backend.
+## 11.1 Worker state model
+Worker consumes contract events and updates Mongo without becoming authority.
 
-## 13.2 Trade model
-- Child-trade-centric identity: `onchain_escrow_id`.
-- `parent_order_id`, `parent_order_side`, `fee_snapshot`, `financials`, `timers` as mirror fields.
-- PII/receipt/snapshot fields are for coordination and legal/audit boundaries, not protocol authority.
+## 11.2 Checkpoint approach
+- last processed block
+- last safe checkpoint
+- replay-safe startup logic
 
-## 13.3 User model
-- Payout profile stored with AES-256-GCM encryption.
-- `reputation_cache` and local ban fields are cache/mirror aids.
-- Final enforcement remains on-chain via reputation + anti-sybil gates.
+## 11.3 Replay and batch processing
+- block-batch processing
+- idempotent mirror intent
+- state-regression guards to prevent backward drift
 
----
+## 11.4 DLQ and poison-event visibility
+- unprocessable events go to DLQ
+- retry/backoff applies
+- operational logs preserve observability of failure modes
 
-## 14) Frontend architecture / contract hook / UX guardrails
+## 11.5 Identity normalization
+- on-chain IDs stored with numeric-string discipline
+- explicit lookup strategy prevents parent/child identity confusion
 
-`useArafContract.js` exposes an order-first write surface:
-- sell/buy order create/fill/cancel
-- child-trade lifecycle writes
-- EIP-712 cancel flows
-
-### Runtime guardrails
-- chain validation
-- escrow-address validation
-- receipt/event decoding
-- post-fill `tradeId` extraction from `OrderFilled`
-
-Frontend does not generate authority; it safely projects contract truth into UX.
+## 11.6 OrderFilled + getTrade linkage
+Child-trade authority is mirrored through explicit event + getter linkage rather than heuristics.
 
 ---
 
-## 15) Security architecture
+## 12) Security architecture and trust boundaries
 
-- **Non-custodial:** backend does not control user funds.
-- **Pausable governance:** new entries can be stopped in emergencies.
-- **EIP-712 cancel:** signature/nonce checks in contract.
-- **PII boundary:** trade-scoped token + session-wallet match + no-store responses.
-- **Data minimization:** sensitive fields excluded from read projections.
-- **Operational security:** health/readiness, scheduler locks, graceful shutdown, cleanup jobs.
+## 12.1 Auth model (SIWE + JWT)
+- nonce → SIWE sign → verify
+- cookie-based auth/refresh session lifecycle
+- session wallet authority enforcement
+
+## 12.2 Cookie-only auth and session-wallet boundary
+- cookie wallet is authoritative in backend auth checks
+- `x-wallet-address` mismatch triggers session invalidation behavior
+
+## 12.3 PII access-token boundary
+- short-lived trade-scoped PII token
+- role + state + session checks applied together
+- sensitive responses follow no-store/no-cache semantics
+
+## 12.4 Encryption model
+- AES-256-GCM envelope encryption
+- HKDF/KMS/Vault-oriented key governance
+- no persistent plaintext PII storage by design
+
+## 12.5 Rate-limit classes
+- distinct limiters for auth, market read, trade, PII, feedback, logs
+- limiter classes map to abuse surface semantics
+
+## 12.6 Client-error logging boundary
+- frontend runtime telemetry posts to `/api/logs/client-error`
+- data minimization/scrubbing boundaries reduce sensitive leakage risk
+
+## 12.7 Trust-boundary summary
+- Contract = economic/state authority
+- Backend = coordination/projection
+- Frontend = guardrail
+- Off-chain data = operational utility, not protocol authority
 
 ---
 
-## 16) Operational notes
+## 13) Data models (Mongo read-model layer)
 
-- Startup ordering (DB/Redis/worker/config) is operationally critical.
-- Traffic should not open while readiness fails.
-- DLQ backlog and replay metrics require active monitoring.
-- PII retention and receipt cleanup jobs must remain enabled.
+> Mongo is not canonical protocol authority; it is still critical for read performance and operational observability.
+
+## 13.1 User model
+
+### Operationally critical fields (non-authoritative)
+- `wallet_address` identity
+- encrypted `payout_profile` (rail/country/contact/details)
+- `reputation_cache` (on-chain mirror intent)
+- local ban mirror fields
+
+### Privacy/security notes
+- encrypted payout fields
+- safe public-profile projection that excludes sensitive fields
+- bank-change metadata stored as risk signal
+
+### Operational note
+- `profileVersion` and 7d/30d counters support lock-time snapshot/risk comparisons.
+
+## 13.2 Order model
+
+### Identity and state
+- `onchain_order_id` (string identity)
+- owner, side, status, tier, token
+- amount/reserve/fee snapshot mirrors
+
+### Mirror boundary
+- Remaining amount/reserve values are mirrored from contract truth, not backend authority calculations.
+
+## 13.3 Trade model
+
+### Identity relationship
+- child identity: `onchain_escrow_id`
+- parent linkage: `parent_order_id`
+- parent side: `parent_order_side`
+
+### Financial field strategy
+- BigInt-safe string fields (`crypto_amount`, bonds, total_decayed)
+- numeric caches for query/UI convenience only
+
+### PII / receipt / snapshot
+- lock-time payout snapshots
+- encrypted receipt payload + receipt hash
+- cancel-proposal + chargeback-ack audit fields
+
+### Retention
+- terminal-state TTL/cleanup strategy
+- receipt/snapshot cleanup jobs for data minimization
+
+## 13.4 Feedback / stats snapshot layer
+- Feedback is a separate operational/user-signal surface.
+- Daily/aggregated stats are observability surfaces, not protocol authority.
 
 ---
 
-## 17) Deprecated / reframed legacy concepts
+## 14) Backend route surface and coordination semantics
 
-The following are no longer canonical:
-- listing-first market primitive narrative
-- `createEscrow/lockEscrow` canonical happy path
+## 14.1 Orders routes
+- parent-order read/config surfaces
+- owner-scoped child-trade listing route
+
+## 14.2 Trades routes
+- active/history/by-escrow reads
+- cancel-signature coordination
+- chargeback-ack audit surface
+
+## 14.3 Auth routes
+- nonce/verify/refresh/logout/me/profile
+- session-wallet mismatch guard behavior
+
+## 14.4 PII routes
+- `/my`, `taker-name`, request-token, trade-scoped retrieval
+- snapshot-first and role-bound access
+
+## 14.5 Receipts routes
+- file validation + encryption + hash storage
+- restricted to taker while `LOCKED`
+
+## 14.6 Logs/stats/feedback
+- client error logs
+- protocol stats read surface
+- feedback intake endpoint
+
+---
+
+## 15) Frontend UX guardrail layer
+
+## 15.1 `useArafContract` role
+- contract write/read orchestration
+- chain/address preflight guards
+- tx receipt tracking
+- `OrderFilled` decode for tradeId extraction
+
+## 15.2 `usePII` role
+- trade-scoped PII token flow
+- canonical API path resolution
+- authenticated fetch integration
+- race cancellation via AbortController
+- sensitive-state cleanup after unmount
+
+## 15.3 Session/auth UX guardrails
+- auth me/refresh orchestration
+- safe logout/recovery on session-wallet mismatch
+- early user feedback on wrong network/address states
+
+## 15.4 Enforcement boundary
+Frontend does not replace contract enforcement; it reduces UX errors and unsafe user paths.
+
+---
+
+## 16) Attack vectors and known limitations
+
+## 16.1 Mitigated/reduced risks
+- legacy listing authority confusion
+- hardcoded API-path drift risks in PII flow
+- silent account/session confusion via mismatch handling
+- PII overexposure reduced by token+role+state boundary
+
+## 16.2 Remaining risk surface
+- off-chain payment-proof ambiguity (fake receipt / chargeback realities)
+- governance-key risk surface (owner mutable config)
+- backend mirror interpreted as authority by operators
+- frontend wrong-network / wrong-address configuration risk
+- documentation/operator misunderstanding risk
+
+## 16.3 Conscious limitations
+- oracle-free design does not prove fiat transfer truth on-chain
+- system enforces economic pressure, not subjective adjudication
+
+---
+
+## 17) Legacy concepts (historical / deprecated / non-canonical)
+
+The following are not part of live V3 canonical behavior:
+- createEscrow/lockEscrow-centered flow
+- listing-first market primitive assumption
 - fixed-fee/fixed-cooldown assumptions
-- absolute seller/buyer maker-taker mapping
-- single-dimension token-support language
+- absolute maker=seller / taker=buyer mapping
+- old single-dimension token-support language
 
-Legacy references should be treated as historical context only. Live behavior must follow contract truth and this V3 architecture reference.
+Legacy references should be treated as historical context only; operational decisions must follow source-of-truth code and this V3 reference.
+
+---
+
+## 18) Final role of this document
+
+This architecture document deliberately serves both:
+1. an executive V3 canonical model
+2. a deep technical reference (security, data models, runtime reliability, guardrails, attack surface)
+
+So it is neither a shallow summary nor a stale legacy dump; it is a modern, operationally mature V3 architecture reference.
