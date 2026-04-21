@@ -217,6 +217,14 @@ So anti-sybil is no longer lockEscrow-centered legacy; it is child-trade-entry c
 
 ## 9) Finalized parameters vs mutable config
 
+## 9.0 Parameter-classification table
+
+| Class | Parameters | Notes |
+|---|---|---|
+| Immutable/public constants | `TIER_MAX_AMOUNT_*`, `*_DECAY_BPS_H`, `WALLET_AGE_MIN`, `DUST_LIMIT`, `MAX_BLEEDING`, `MIN_ACTIVE_PERIOD`, `AUTO_RELEASE_PENALTY_BPS`, `MAX_CANCEL_DEADLINE`, `GOOD_REP_DISCOUNT_BPS`, `BAD_REP_PENALTY_BPS` | Not mutable via owner runtime calls. |
+| Mutable runtime config | `takerFeeBps`, `makerFeeBps`, `tier0TradeCooldown`, `tier1TradeCooldown` | Adjustable through owner governance surface. |
+| Direction-aware token runtime policy | `tokenConfigs[token] => {supported, allowSellOrders, allowBuyOrders}` | Token support is managed per order direction. |
+
 ## 9.1 Immutable/public-constant class
 - tier max amount constants (`TIER_MAX_AMOUNT_*`)
 - decay constants (`*_DECAY_BPS_H`)
@@ -236,6 +244,11 @@ So anti-sybil is no longer lockEscrow-centered legacy; it is child-trade-entry c
 - Snapshot is captured at order creation.
 - Child trade inherits parent snapshots.
 - Later `setFeeConfig` changes do not retroactively rewrite active-trade economics.
+
+## 9.4 Toolchain / deployment assumptions
+- Deploy flow starts with `constructor(treasury)` and token direction config.
+- Post-deploy token-direction policy should be verified on-chain via `tokenConfigs(token)`.
+- Production guidance assumes owner governance key is managed by multisig to reduce key risk.
 
 ---
 
@@ -259,8 +272,10 @@ So anti-sybil is no longer lockEscrow-centered legacy; it is child-trade-entry c
 - Security boundaries prefer fail-closed semantics (auth/session/PII).
 
 ## 10.4 Timeout/connectivity policy
-- Mongo selection/socket timeouts are tuned for API behavior.
-- Redis `ready` state is evaluated explicitly; connected != operationally ready.
+- Mongo uses tuned `maxPoolSize`, `socketTimeoutMS`, and `serverSelectionTimeoutMS` values for combined worker+API load.
+- Mongo disconnect path favors fail-fast restart to reduce stale/partial-connection drift.
+- Redis `isReady` is explicitly treated as distinct from mere connectivity.
+- Redis TLS (`rediss://`) and managed-service assumptions are part of runtime configuration behavior.
 
 ## 10.5 Graceful shutdown ordering
 - stop new requests
@@ -275,6 +290,11 @@ So anti-sybil is no longer lockEscrow-centered legacy; it is child-trade-entry c
 - receipt + PII retention cleanup
 - user bank-risk metadata cleanup
 - DLQ processing
+
+## 10.7 Operational meaning of health vs ready
+- `/health`: process liveness only.
+- `/ready`: dependency + config + worker lag/replay safety gate.
+- During replay/high lag, liveness may be true while readiness is intentionally false.
 
 ---
 
@@ -293,6 +313,11 @@ Worker consumes contract events and updates Mongo without becoming authority.
 - idempotent mirror intent
 - state-regression guards to prevent backward drift
 
+## 11.3.1 Last-safe-block semantics
+- Worker tracks not only last seen block, but also last safe checkpoint block.
+- Readiness includes lag between provider head and worker safe checkpoint.
+- This prevents “appears alive but silently behind” operational blind spots.
+
 ## 11.4 DLQ and poison-event visibility
 - unprocessable events go to DLQ
 - retry/backoff applies
@@ -304,6 +329,10 @@ Worker consumes contract events and updates Mongo without becoming authority.
 
 ## 11.6 OrderFilled + getTrade linkage
 Child-trade authority is mirrored through explicit event + getter linkage rather than heuristics.
+
+## 11.7 Mirror-authority warning
+- Event worker does not define protocol rules; it only projects authoritative chain state.
+- If Mongo mirror fields and contract storage diverge, contract state is authoritative.
 
 ---
 
@@ -318,6 +347,10 @@ Child-trade authority is mirrored through explicit event + getter linkage rather
 - cookie wallet is authoritative in backend auth checks
 - `x-wallet-address` mismatch triggers session invalidation behavior
 
+## 12.2.1 Refresh-token family invalidation
+- On mismatch/logout, refresh-token family revocation reduces token-chain replay risk.
+- This invalidates both active access context and long-lived refresh lineage.
+
 ## 12.3 PII access-token boundary
 - short-lived trade-scoped PII token
 - role + state + session checks applied together
@@ -331,6 +364,8 @@ Child-trade authority is mirrored through explicit event + getter linkage rather
 ## 12.5 Rate-limit classes
 - distinct limiters for auth, market read, trade, PII, feedback, logs
 - limiter classes map to abuse surface semantics
+- Sensitive surfaces (auth/PII) apply in-memory fallback protection when Redis is unavailable.
+- General/public surfaces may use controlled fail-open behavior to preserve availability.
 
 ## 12.6 Client-error logging boundary
 - frontend runtime telemetry posts to `/api/logs/client-error`
@@ -355,11 +390,13 @@ Child-trade authority is mirrored through explicit event + getter linkage rather
 - encrypted `payout_profile` (rail/country/contact/details)
 - `reputation_cache` (on-chain mirror intent)
 - local ban mirror fields
+- `profileVersion`, `lastBankChangeAt`, `bankChangeCount7d`, `bankChangeCount30d`, `bank_change_history`
 
 ### Privacy/security notes
 - encrypted payout fields
 - safe public-profile projection that excludes sensitive fields
 - bank-change metadata stored as risk signal
+- `toPublicProfile()` returns allowlisted fields to minimize accidental PII leakage.
 
 ### Operational note
 - `profileVersion` and 7d/30d counters support lock-time snapshot/risk comparisons.
@@ -370,6 +407,8 @@ Child-trade authority is mirrored through explicit event + getter linkage rather
 - `onchain_order_id` (string identity)
 - owner, side, status, tier, token
 - amount/reserve/fee snapshot mirrors
+- `refs.order_ref` and order-level timers
+- `stats.*` fields as child-trade-derived read-model helpers
 
 ### Mirror boundary
 - Remaining amount/reserve values are mirrored from contract truth, not backend authority calculations.
@@ -384,6 +423,7 @@ Child-trade authority is mirrored through explicit event + getter linkage rather
 ### Financial field strategy
 - BigInt-safe string fields (`crypto_amount`, bonds, total_decayed)
 - numeric caches for query/UI convenience only
+- `trade_origin`, `fill_metadata`, `fee_snapshot`, `canonical_refs` retained for linkage/forensics
 
 ### PII / receipt / snapshot
 - lock-time payout snapshots
@@ -393,6 +433,7 @@ Child-trade authority is mirrored through explicit event + getter linkage rather
 ### Retention
 - terminal-state TTL/cleanup strategy
 - receipt/snapshot cleanup jobs for data minimization
+- terminal trade TTL and receipt/snapshot retention fields are intentionally separate and complementary
 
 ## 13.4 Feedback / stats snapshot layer
 - Feedback is a separate operational/user-signal surface.

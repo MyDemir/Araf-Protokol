@@ -217,6 +217,14 @@ Sonuç: anti-sybil enforcement lockEscrow-merkezli legacy değildir; V3 child-tr
 
 ## 9) Finalized parameters ve mutable config ayrımı
 
+## 9.0 Parametre sınıflandırma tablosu
+
+| Sınıf | Parametreler | Not |
+|---|---|---|
+| Immutable/public constants | `TIER_MAX_AMOUNT_*`, `*_DECAY_BPS_H`, `WALLET_AGE_MIN`, `DUST_LIMIT`, `MAX_BLEEDING`, `MIN_ACTIVE_PERIOD`, `AUTO_RELEASE_PENALTY_BPS`, `MAX_CANCEL_DEADLINE`, `GOOD_REP_DISCOUNT_BPS`, `BAD_REP_PENALTY_BPS` | Runtime’da owner çağrısıyla değişmez. |
+| Mutable runtime config | `takerFeeBps`, `makerFeeBps`, `tier0TradeCooldown`, `tier1TradeCooldown` | Owner governance surface ile değişebilir. |
+| Direction-aware token runtime policy | `tokenConfigs[token] => {supported, allowSellOrders, allowBuyOrders}` | Token desteği yön-bilinçli yönetilir. |
+
 ## 9.1 Immutable/public constant sınıfı
 - tier max amount seti (`TIER_MAX_AMOUNT_*`)
 - decay sabitleri (`*_DECAY_BPS_H`)
@@ -236,6 +244,11 @@ Sonuç: anti-sybil enforcement lockEscrow-merkezli legacy değildir; V3 child-tr
 - Snapshot order create anında alınır.
 - Child trade, parent snapshot’ını taşır.
 - Sonraki `setFeeConfig` aktif trade economics’ini geriye dönük değiştirmez.
+
+## 9.4 Toolchain / deployment assumptions
+- Kontrat deploy akışı `constructor(treasury)` + token direction config ile başlar.
+- Deploy sonrası token yön politikası zincir üstünde `tokenConfigs(token)` ile doğrulanmalıdır.
+- Production rehberinde owner key’in multisig altında tutulması governance risk azaltımı için varsayımdır.
 
 ---
 
@@ -259,8 +272,10 @@ Sonuç: anti-sybil enforcement lockEscrow-merkezli legacy değildir; V3 child-tr
 - Güvenlik sınırında fail-open yerine fail-closed tercih edilir (ör. auth/session sınırları).
 
 ## 10.4 Timeout ve bağlantı politikaları
-- Mongo timeout/selection ayarları API davranışıyla hizalı tutulur.
-- Redis readiness durumu ayrı takip edilir; “connected” olmak tek başına yeterli kabul edilmez.
+- Mongo tarafında `maxPoolSize`, `socketTimeoutMS`, `serverSelectionTimeoutMS` ayarları worker+API yükünü birlikte kaldıracak şekilde kullanılır.
+- Mongo kopuşunda fail-fast yaklaşımıyla süreç yeniden başlatma tercih edilir (stale/yarım bağlantı drift’ini azaltmak için).
+- Redis tarafında `isReady` sinyali `connected` durumundan ayrı ele alınır; middleware kararları buna göre verilir.
+- Redis TLS (`rediss://`) ve managed servis senaryoları runtime config’te dikkate alınır.
 
 ## 10.5 Graceful shutdown sırası
 - Yeni istekleri kes
@@ -275,6 +290,11 @@ Sonuç: anti-sybil enforcement lockEscrow-merkezli legacy değildir; V3 child-tr
 - receipt & PII retention cleanup
 - user bank risk metadata cleanup
 - DLQ processing
+
+## 10.7 Health vs ready operasyonel anlamı
+- `/health`: süreç ayakta mı? (process liveness)
+- `/ready`: bağımlılıklar + config + worker lag + replay durumu güvenli mi? (traffic gate)
+- Worker replay veya yüksek lag durumunda liveness true kalsa bile readiness false olabilir; bu bilinçli tasarım tercihidir.
 
 ---
 
@@ -293,6 +313,11 @@ Worker kontrat event’lerini consume eder, Mongo’yu authoritative olmadan gü
 - replay’de idempotent davranış hedeflenir
 - state regression guard’larıyla geriye düşüş engellenir
 
+## 11.3.1 Last-safe-block semantiği
+- Worker yalnız son görülen blok değil, son güvenli checkpoint bloğunu da izler.
+- Ready kararı, provider block yüksekliği ile worker safe checkpoint farkını (lag) hesaba katar.
+- Bu yaklaşım “işleniyor gibi görünüp geride kalma” durumunu operasyonel olarak görünür kılar.
+
 ## 11.4 DLQ ve poison event görünürlüğü
 - işlemeye alınamayan event’ler DLQ’ya taşınır
 - tekrar deneme/backoff uygulanır
@@ -304,6 +329,10 @@ Worker kontrat event’lerini consume eder, Mongo’yu authoritative olmadan gü
 
 ## 11.6 OrderFilled + getTrade linkage
 Child trade authority worker tarafında heuristik yerine explicit event+getter kombinasyonuyla mirror edilir.
+
+## 11.7 Mirror authority uyarısı
+- Event worker, protokol kuralı üretmez; yalnız authoritative zincir durumunu operasyonel modele taşır.
+- Mongo’daki bir alan ile kontrat storage çelişirse otorite kontrattadır.
 
 ---
 
@@ -318,6 +347,10 @@ Child trade authority worker tarafında heuristik yerine explicit event+getter k
 - Backend auth’da cookie wallet authoritative kaynaktır.
 - `x-wallet-address` uyuşmazlığında session invalidate davranışı uygulanır.
 
+## 12.2.1 Refresh token family invalidation
+- Session mismatch veya logout durumlarında refresh token family revoke edilerek yeniden kullanım riski azaltılır.
+- Böylece yalnız access token değil, token zinciri de geçersizlenir.
+
 ## 12.3 PII access token boundary
 - Trade-scoped kısa ömürlü PII token
 - Role + state + session eşleşmesi birlikte doğrulanır
@@ -331,6 +364,8 @@ Child trade authority worker tarafında heuristik yerine explicit event+getter k
 ## 12.5 Rate-limit sınıfları
 - auth, market read, trade, PII, feedback, logs için ayrı limiter sınıfları
 - abuse alanları endpoint semantiğine göre ayrıştırılır
+- Hassas yüzeylerde (özellikle auth/PII) Redis yokken in-memory fallback koruması uygulanır.
+- Genel/public yüzeylerde erişilebilirlik için kontrollü fail-open tercih edilen yerler bulunur.
 
 ## 12.6 Client error logging boundary
 - Frontend hata telemetrisi kontrollü endpoint’e gider (`/api/logs/client-error`)
@@ -355,11 +390,13 @@ Child trade authority worker tarafında heuristik yerine explicit event+getter k
 - `payout_profile` (rail/country/contact/details encrypted)
 - `reputation_cache` (on-chain mirror amaçlı)
 - ban mirror alanları
+- `profileVersion`, `lastBankChangeAt`, `bankChangeCount7d`, `bankChangeCount30d`, `bank_change_history`
 
 ### Gizlilik ve güvenlik
 - Şifreli payout alanları
 - Public profile projection’da hassas alanların dışarıda bırakılması
 - bank değişim metadata’sının risk sinyali olarak saklanması
+- `toPublicProfile()` sadece allowlist alanları döndürür; PII sızıntı riski sınırlandırılır.
 
 ### Operasyonel not
 - `profileVersion`, 7d/30d değişim sayaçları, lock-time snapshot kıyaslamaları için kullanılır.
@@ -370,6 +407,8 @@ Child trade authority worker tarafında heuristik yerine explicit event+getter k
 - `onchain_order_id` (string id)
 - owner, side, status, tier, token
 - amount/reserve/fee snapshot alanları
+- `refs.order_ref` ve order-level timer alanları
+- `stats.*` alanları child-trade türevi read-model yardımcılarıdır
 
 ### Mirror sınırı
 - Remaining amount ve reserve hesapları backend authority’si değildir; kontrat aynasıdır.
@@ -384,6 +423,7 @@ Child trade authority worker tarafında heuristik yerine explicit event+getter k
 ### Finansal alanlar
 - BigInt-safe string alanları (`crypto_amount`, bond alanları, decayed totals)
 - number cache alanları yalnız query/UI kolaylığı içindir
+- `trade_origin`, `fill_metadata`, `fee_snapshot`, `canonical_refs` gibi alanlar linkage/forensics amaçlı tutulur
 
 ### PII / receipt / snapshot
 - lock-time payout snapshot
@@ -393,6 +433,7 @@ Child trade authority worker tarafında heuristik yerine explicit event+getter k
 ### Retention
 - terminal state sonrası TTL/cleanup stratejileri
 - receipt ve snapshot cleanup işleriyle veri minimizasyonu
+- trade belgesi için terminal durumlarda TTL, receipt/snapshot için ayrı retention alanları birlikte çalışır
 
 ## 13.4 Feedback / stats/snapshot katmanı
 - Feedback modeli ürün geri bildirimi için ayrı operational yüzeydir.
