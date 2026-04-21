@@ -27,6 +27,7 @@ Session-wallet consistency is enforced (`requireSessionWalletMatch`) on protecte
 - `/api/feedback`
 - `/api/stats`
 - `/api/receipts`
+- `/api/logs`
 - `/health` (liveness)
 - `/ready` (readiness)
 
@@ -200,6 +201,10 @@ Authenticated feedback submission endpoint.
 
 ### `GET /api/stats`
 Public protocol statistics read endpoint.
+
+### `POST /api/logs/client-error`
+Client-side non-blocking error telemetry endpoint used by frontend runtime.
+Payload is expected to include severity/message/context fields; endpoint is rate-limited.
 
 ---
 

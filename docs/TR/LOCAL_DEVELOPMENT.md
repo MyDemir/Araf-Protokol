@@ -95,7 +95,7 @@ KMS_PROVIDER=env
 # node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 MASTER_ENCRYPTION_KEY=bunu_kendin_olustur_32_byte
 
-BASE_RPC_URL=[http://127.0.0.1:8545](http://127.0.0.1:8545)
+BASE_RPC_URL=http://127.0.0.1:8545
 ARAF_ESCROW_ADDRESS=<deploy_ciktisindaki_adres>
 CHAIN_ID=31337
 
@@ -227,7 +227,7 @@ tail -f araf_full_stack.log.txt
 cat > contracts/.env << 'EOF'
 DEPLOYER_PRIVATE_KEY=0x<testnet_deployer_private_key>
 TREASURY_ADDRESS=0x<testnet_treasury_wallet>
-BASE_SEPOLIA_RPC_URL=[https://base-sepolia.g.alchemy.com/v2/](https://base-sepolia.g.alchemy.com/v2/)<API_KEY>
+BASE_SEPOLIA_RPC_URL=https://base-sepolia.g.alchemy.com/v2/<API_KEY>
 BASESCAN_API_KEY=<basescan_api_key>
 REPORT_GAS=true
 EOF
@@ -274,7 +274,7 @@ npx hardhat verify --network base-sepolia \
 
 ```bash
 # Fly.io CLI kur (macOS/Linux)
-curl -L [https://fly.io/install.sh](https://fly.io/install.sh) | sh
+curl -L https://fly.io/install.sh | sh
 
 # Giriş yap
 fly auth login
@@ -295,14 +295,14 @@ fly secrets set \
   PII_TOKEN_EXPIRES_IN="15m" \
   KMS_PROVIDER="env" \
   MASTER_ENCRYPTION_KEY="<32_byte_hex>" \
-  BASE_RPC_URL="[https://base-sepolia.g.alchemy.com/v2/](https://base-sepolia.g.alchemy.com/v2/)<API_KEY>" \
-  BASE_WS_RPC_URL="wss://[base-sepolia.g.alchemy.com/v2/](https://base-sepolia.g.alchemy.com/v2/)<API_KEY>" \
+  BASE_RPC_URL="https://base-sepolia.g.alchemy.com/v2/<API_KEY>" \
+  BASE_WS_RPC_URL="wss://base-sepolia.g.alchemy.com/v2/<API_KEY>" \
   ARAF_ESCROW_ADDRESS="<DEPLOY_ADRES>" \
   CHAIN_ID="84532" \
   TREASURY_ADDRESS="<TREASURY_WALLET>" \
   RELAYER_PRIVATE_KEY="0x<relayer_private_key>" \
   SIWE_DOMAIN="araf-protocol-backend.fly.dev" \
-  ALLOWED_ORIGINS="[https://araf-protocol.vercel.app](https://araf-protocol.vercel.app)" \
+  ALLOWED_ORIGINS="https://araf-protocol.vercel.app" \
   ARAF_DEPLOYMENT_BLOCK="<DEPLOY_BLOCK_NO>"
 
 # İlk kurulum: checkpoint seed et (genesis replay'i önler)
@@ -328,11 +328,11 @@ npm install -g vercel
 cd frontend
 
 # vercel.json'daki proxy URL'ini güncelle
-# "destination" → "[https://araf-protocol-backend.fly.dev/api/$1](https://araf-protocol-backend.fly.dev/api/$1)"
+# "destination" → "https://araf-protocol-backend.fly.dev/api/$1"
 
 # Production env dosyası oluştur
 cat > .env.production << 'EOF'
-VITE_API_URL=[https://araf-protocol-backend.fly.dev](https://araf-protocol-backend.fly.dev)
+VITE_API_URL=https://araf-protocol-backend.fly.dev
 VITE_ESCROW_ADDRESS=<DEPLOY_ADRES>
 VITE_USDT_ADDRESS=<USDT_ADRES>
 VITE_USDC_ADDRESS=<USDC_ADRES>
@@ -434,7 +434,7 @@ aws kms generate-data-key \
 cat > contracts/.env << 'EOF'
 DEPLOYER_PRIVATE_KEY=0x<mainnet_deployer_private_key>
 TREASURY_ADDRESS=0x<gnosis_safe_address>
-BASE_RPC_URL=[https://base-mainnet.g.alchemy.com/v2/](https://base-mainnet.g.alchemy.com/v2/)<API_KEY>
+BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/<API_KEY>
 BASESCAN_API_KEY=<basescan_api_key>
 MAINNET_USDT_ADDRESS=0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2
 MAINNET_USDC_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
@@ -458,13 +458,13 @@ fly secrets set \
   AWS_KMS_KEY_ARN="arn:aws:kms:eu-west-1:...:key/..." \
   AWS_ENCRYPTED_DATA_KEY="<base64_CiphertextBlob>" \
   AWS_REGION="eu-west-1" \
-  BASE_RPC_URL="[https://base-mainnet.g.alchemy.com/v2/](https://base-mainnet.g.alchemy.com/v2/)<API_KEY>" \
-  BASE_WS_RPC_URL="wss://[base-mainnet.g.alchemy.com/v2/](https://base-mainnet.g.alchemy.com/v2/)<API_KEY>" \
+  BASE_RPC_URL="https://base-mainnet.g.alchemy.com/v2/<API_KEY>" \
+  BASE_WS_RPC_URL="wss://base-mainnet.g.alchemy.com/v2/<API_KEY>" \
   CHAIN_ID="8453" \
   ARAF_ESCROW_ADDRESS="<MAINNET_ESCROW>" \
   TREASURY_ADDRESS="<GNOSIS_SAFE>" \
   SIWE_DOMAIN="app.araf.xyz" \
-  ALLOWED_ORIGINS="[https://app.araf.xyz](https://app.araf.xyz)"
+  ALLOWED_ORIGINS="https://app.araf.xyz"
   # RELAYER_PRIVATE_KEY → Mainnet'te Gelato Automation kullan
 
 fly deploy
@@ -477,7 +477,7 @@ fly deploy
 import { base } from 'wagmi/chains'
 
 # .env.production
-VITE_API_URL=[https://api.araf.xyz](https://api.araf.xyz)
+VITE_API_URL=https://api.araf.xyz
 VITE_ESCROW_ADDRESS=<MAINNET_ESCROW>
 # VITE_USDT_ADDRESS ve VITE_USDC_ADDRESS → gerçek Base USDT/USDC adresleri
 # Base USDT: 0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2

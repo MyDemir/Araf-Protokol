@@ -3,7 +3,6 @@
  *
  * Bu sürüm, V3 kontrat yüzeyine göre hazırlanmıştır:
  *   - constructor(address treasury)
- *   - setSupportedToken(address,bool)
  *   - setTokenConfig(address,bool,bool,bool)
  *   - getFeeConfig()
  *   - getCooldownConfig()

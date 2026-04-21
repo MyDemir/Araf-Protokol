@@ -32,8 +32,12 @@ describe('frontend ↔ backend API path alignment', () => {
       "buildApiUrl('auth/refresh')",
     ].forEach((pathPart) => expect(session).toContain(pathPart));
     const pii = readFront('src/hooks/usePII.js');
-    expect(pii).toContain('/api/pii/request-token/');
-    expect(pii).toContain('/api/pii/${tradeId}');
+    // [TR] PII endpoint çözümlemesi artık hardcoded /api yerine
+    //      canonical buildApiUrl helper'ı üstünden yürür.
+    // [EN] PII endpoint resolution now uses canonical buildApiUrl
+    //      instead of hardcoded /api strings.
+    expect(pii).toContain('buildApiUrl(`pii/request-token/${tradeId}`)');
+    expect(pii).toContain('buildApiUrl(`pii/${tradeId}`)');
 
     const contract = readFront('src/hooks/useArafContract.js');
     expect(contract).toContain('resolveClientErrorLogUrl');

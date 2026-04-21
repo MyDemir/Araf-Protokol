@@ -2,6 +2,8 @@
 >
 > Bu dosya tarihsel analiz notları içerir ve güncel V3 source-of-truth referansı değildir.
 > Kanonik mimari için: `docs/TR/ARCHITECTURE.md` ve `docs/EN/ARCHITECTURE.md` dosyalarını esas alın.
+> Not: Bu arşiv dosyasında legacy `createEscrow/lockEscrow/listing` terimleri korunmuş olabilir;
+> bunlar canlı protokol davranışını temsil etmez.
 >
 
 # 🌀 Araf Protokolü — Kanonik Mimari & Teknik Referans

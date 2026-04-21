@@ -29,10 +29,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-
-const API_BASE = import.meta.env.VITE_API_URL || (
-  import.meta.env.DEV ? 'http://localhost:4000' : ''
-);
+import { buildApiUrl } from '../app/apiConfig';
 
 /**
  * @param {string}   tradeId           Backend trade ID (MongoDB _id)
@@ -84,7 +81,11 @@ export function usePII(tradeId, authenticatedFetch) {
       );
 
       const tokenRes = await doFetch(
-        `${API_BASE}/api/pii/request-token/${tradeId}`,
+        // [TR] API base çözümlemesi tek canonical helper üzerinden yapılır.
+        //      Böylece production same-origin /api politikası ihlal edilmez.
+        // [EN] Resolve API base through the canonical helper to preserve
+        //      production same-origin /api policy.
+        buildApiUrl(`pii/request-token/${tradeId}`),
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -105,7 +106,7 @@ export function usePII(tradeId, authenticatedFetch) {
       // ADIM 2: Trade-scoped PII endpoint'i hem Bearer token
       //         hem de cookie/session-wallet guard ister.
       //         Bu nedenle authenticatedFetch kullanmak zorunludur.
-      const piiRes = await doFetch(`${API_BASE}/api/pii/${tradeId}`, {
+      const piiRes = await doFetch(buildApiUrl(`pii/${tradeId}`), {
         headers: { 'Authorization': `Bearer ${piiToken}` },
         signal,
       });

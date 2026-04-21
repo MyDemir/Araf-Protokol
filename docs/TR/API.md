@@ -27,6 +27,7 @@ Korunan route’larda session-wallet eşleşmesi (`requireSessionWalletMatch`) z
 - `/api/feedback`
 - `/api/stats`
 - `/api/receipts`
+- `/api/logs`
 - `/health` (liveness)
 - `/ready` (readiness)
 
@@ -200,6 +201,10 @@ Auth gerektiren kullanıcı geri bildirim endpoint’i.
 
 ### `GET /api/stats`
 Public protokol istatistik endpoint’i.
+
+### `POST /api/logs/client-error`
+Frontend runtime tarafından kullanılan, non-blocking istemci hata telemetri endpoint’i.
+Payload seviye/mesaj/bağlam alanları içerir; endpoint rate-limit altındadır.
 
 ---
 
