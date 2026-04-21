@@ -43,6 +43,7 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
   const snapshotMissing =
     payoutSnapshot.is_complete === false ||
     !hasProfileVersionAtLock;
+  const isSnapshotComplete = !snapshotMissing;
 
   const reasons = [];
   if (changedAfterLock) {
@@ -102,7 +103,7 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
     taker: takerFacingCounterpartySummary,
     snapshot: {
       capturedAt: payoutSnapshot?.captured_at || null,
-      isComplete: payoutSnapshot?.is_complete !== false,
+      isComplete: isSnapshotComplete,
       incompleteReason: payoutSnapshot?.incomplete_reason || null,
     },
   };
