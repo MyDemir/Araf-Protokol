@@ -493,7 +493,7 @@ vercel --prod
 - [ ] AWS KMS is active and encrypted data key is tested
 - [ ] `NODE_ENV=production` — MockERC20 was not deployed ✅
 - [ ] `MAINNET_USDT_ADDRESS` and `MAINNET_USDC_ADDRESS` are set (mandatory)
-- [ ] You saw post-`setSupportedToken` on-chain checks in logs (`supportedTokens(token)==true`)
+- [ ] You saw post-`setTokenConfig` on-chain checks in logs (`tokenConfigs(token).supported == true`)
 - [ ] Contract verified on BaseScan
 - [ ] Ownership transferred to Gnosis Safe ✅
 - [ ] `pause()` / `unpause()` is operational from Gnosis Safe

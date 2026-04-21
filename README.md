@@ -1,81 +1,87 @@
-# ⏳ Araf Protocol / P2P Escrow
+# ⏳ Araf Protocol / P2P Escrow (V3)
 **"Trust the Time, Not the Oracle. / Zamana Güven, Hakeme Değil."**
 
-[![Version: 2.0](https://img.shields.io/badge/Version-2.0-blue.svg)]()
+[![Version: 3.x architecture](https://img.shields.io/badge/Architecture-V3_Order--First-blue.svg)]()
 [![Network: Base L2](https://img.shields.io/badge/Network-Base-blueviolet.svg)]()
-[![Architecture: Web 2.5](https://img.shields.io/badge/Architecture-Web_2.5-orange.svg)]()
+[![Model: Web 2.5](https://img.shields.io/badge/Model-Web_2.5-orange.svg)]()
 
 ---
 
 ## 🌍 Language / Dil Selection
-* [English Version](#-english-version)
-* [Türkçe Versiyon](#-türkçe-versiyon)
+- [English](#-english)
+- [Türkçe](#-türkçe)
 
 ---
 
-## 🇬🇧 English Version
+## 🇬🇧 English
 
-Araf Protocol is a **non-custodial**, **humanless**, and **oracle-free** peer-to-peer (P2P) escrow system between fiat currencies and crypto assets (USDT, USDC).
+Araf is a **non-custodial, oracle-free, humanless** fiat ↔ crypto protocol.
 
-Traditional P2P platforms rely on human moderators and subjective decisions. Araf eliminates intermediaries with uncompromising mathematics and time-based economic game theory.
+### Canonical V3 model
+- **Parent Order** is the public market primitive.
+- **Child Trade** is the real escrow lifecycle.
+- **ArafEscrow.sol** is the only authoritative state machine.
+- Backend is a **mirror + coordination** layer (not authority).
+- Frontend is a **UX guardrail + contract access** layer (not authority).
 
-### 🏗 Why Web 2.5?
-Araf operates as a **Web 2.5 Hybrid System**, combining blockchain security with the performance and privacy of modern web standards.
+### Core interaction surface (contract)
+- Order layer: `create/fill/cancel` for sell and buy orders
+- Child-trade lifecycle: `reportPayment`, `releaseFunds`, `challengeTrade`, `autoRelease`, `burnExpired`, `proposeOrApproveCancel`
+- Governance surface (owner): `setTreasury`, `setFeeConfig`, `setCooldownConfig`, `setTokenConfig`, `pause/unpause`
 
-| Layer | Function | Technology | Rationale |
-| :--- | :--- | :--- | :--- |
-| **Web3 (On-Chain)** | Asset Security & Dispute | Solidity (Base L2) | Funds are never held by a central entity. Bleeding Escrow timers are immutable. |
-| **Web2 (Off-Chain)** | Privacy & Performance | Node.js, MongoDB, Redis | PII data (IBAN) is not stored on-chain for GDPR compliance. Sub-50ms listing queries. |
+### Important protocol truths
+- Role mapping is side-dependent (not universally maker=seller):
+  - `SELL_CRYPTO`: owner→maker, filler→taker
+  - `BUY_CRYPTO`: owner→taker, filler→maker
+- Fee/cooldown values are **mutable runtime config**, not hard-fixed constants.
+- Active trade economics are protected by fee snapshots.
+- Reputation clean-slate period is **90 days**; `decayReputation` is not a full amnesty.
+- Token permissions are direction-aware: `supported`, `allowSellOrders`, `allowBuyOrders`.
 
-### ⚡ Key Engineering Solutions
-* **🔐 Non-custodial Backend Key Model:** The backend does not hold user-fund custody keys; optional relayer/automation signer keys may exist for operational jobs.
-* **🛡 Anti-Sybil Shield:** Filters like Wallet Age (min. 7 days), Dust limits, and cooldowns prevent bot attacks.
-* **🔒 Envelope Encryption:** Sensitive data is encrypted with AES-256-GCM; even a DB leak won't expose PII.
-* **🤝 Gasless Agreement (EIP-712):** Mutual decisions like cancellations are signed off-chain without gas fees.
-* **⚠️ Triangulation Fraud Prevention:** Makers are shown the Taker's decrypted real name to verify the sender's identity.
-
-### 🌊 Standard Transaction Flow
-1. **Create:** Maker locks funds and collateral (`OPEN`).
-2. **Lock:** Taker locks collateral after Anti-Sybil check (`LOCKED`).
-3. **Pay:** Taker reports payment with IPFS receipt (`PAID`).
-4. **Release:** Maker confirms and funds are distributed (`RESOLVED`).
-
----
-
-## 🇹🇷 Türkçe Versiyon
-
-Araf Protokolü; fiat para birimleri ile kripto varlıklar (USDT, USDC) arasında, **emanet tutmayan (non-custodial)**, **insansız** ve **oracle-bağımsız** bir eşten eşe (P2P) takas protokolüdür.
-
-Geleneksel P2P platformlarının aksine Araf, uyuşmazlıkları çözmek için moderatörlere güvenmez; bunun yerine dürüstsüzlüğü pahalıya mal eden on-chain zamanlayıcıları kullanır.
-
-### 🏗 Neden Web 2.5?
-Araf, blokzincirin tavizsiz güvenliğini modern webin kullanıcı deneyimi ve gizlilik standartlarıyla birleştirir.
-
-| Katman | İşlev | Teknoloji | Gerekçe |
-| :--- | :--- | :--- | :--- |
-| **Web3 (On-Chain)** | Fon Güvenliği & Hakemlik | Solidity (Base L2) | Fonlar asla merkezi bir cüzdanda toplanmaz. Bleeding Escrow zamanlayıcıları değiştirilemez. |
-| **Web2 (Off-Chain)** | Gizlilik & Performans | Node.js, MongoDB, Redis | IBAN verileri KVKK/GDPR gereği on-chain'e yazılmaz. İlanlar 50ms altında sorgulanır. |
-
-### ⚡ Öne Çıkan Mühendislik Çözümleri
-* **🔐 Non-custodial Anahtar Modeli:** Backend kullanıcı fonlarını kontrol eden anahtar taşımaz; operasyonel relayer/automation signer anahtarı bulunabilir.
-* **🛡 Anti-Sybil Kalkanı:** Cüzdan yaşı (min. 7 gün), Dust limiti ve cooldown filtreleri ile bot saldırıları engellenir.
-* **🔒 Zarf Şifreleme (Envelope Encryption):** Hassas veriler AES-256-GCM ile şifrelenir. Master Key sadece KMS ortamında yaşar.
-* **🤝 Gassız Uzlaşma (EIP-712):** İptal gibi ortak kararlar off-chain imzalanarak gassız ve cezasız gerçekleştirilir.
-* **⚠️ Üçgen Dolandırıcılık Koruması:** Satıcıya, alıcının şifresi çözülmüş gerçek adı gösterilerek kimlik doğrulaması zorunlu kılınır.
-
-### 🌊 Standart İşlem Akışı
-1. **Create:** Maker fonları ve teminatı kilitler (`OPEN`).
-2. **Lock:** Taker teminatını kilitler (`LOCKED`).
-3. **Pay:** Taker ödemeyi bildirir ve kanıtını sunar (`PAID`).
-4. **Release:** Maker onaylar ve fonlar dağıtılır (`RESOLVED`).
+### Legacy note
+Legacy listing-first / `createEscrow` / `lockEscrow` narratives are **no longer canonical architecture**.
 
 ---
 
-## 📖 Documentation / Dokümantasyon
-* **Canonical Architecture / Kanonik Mimari:** [English Version (EN)](./docs/EN/ARCHITECTURE.md) | [Türkçe Versiyon (TR)](./docs/TR/ARCHITECTURE.md)
-* **API Reference / API Referansı:** [Documentation](./docs/EN/API.md)
-* **Game Theory / Oyun Teorisi:** [Flowcharts & Logic](./docs/EN/GAME_THEORY.md)
-* **Project Structure / Dosya Yapısı:** [Directory Guide](./docs/EN/ux.md)
+## 🇹🇷 Türkçe
+
+Araf, fiat ↔ kripto takası için **emanet tutmayan, oracle-bağımsız, insansız** bir protokoldür.
+
+### Kanonik V3 model
+- **Parent Order** kamusal pazar primitive’idir.
+- **Child Trade** gerçek escrow yaşam döngüsüdür.
+- Tek authoritative state machine: **ArafEscrow.sol**
+- Backend: **mirror + koordinasyon** katmanı (authority değildir)
+- Frontend: **UX guardrail + contract access** katmanı (authority değildir)
+
+### Temel etkileşim yüzeyi (kontrat)
+- Order katmanı: sell ve buy için `create/fill/cancel`
+- Child-trade lifecycle: `reportPayment`, `releaseFunds`, `challengeTrade`, `autoRelease`, `burnExpired`, `proposeOrApproveCancel`
+- Governance yüzeyi (owner): `setTreasury`, `setFeeConfig`, `setCooldownConfig`, `setTokenConfig`, `pause/unpause`
+
+### Kritik gerçekler
+- Rol eşleşmesi side-dependent’tir (genel maker=seller kuralı yoktur):
+  - `SELL_CRYPTO`: owner→maker, filler→taker
+  - `BUY_CRYPTO`: owner→taker, filler→maker
+- Fee/cooldown değerleri **mutable runtime config**’tir; sabit değildir.
+- Aktif trade economics fee snapshot ile korunur.
+- Reputation clean-slate süresi **90 gün**dür; `decayReputation` tam af değildir.
+- Token izinleri direction-aware’dir: `supported`, `allowSellOrders`, `allowBuyOrders`.
+
+### Legacy not
+Listing-first / `createEscrow` / `lockEscrow` anlatısı artık **kanonik mimari** değildir.
 
 ---
-*Araf Protocol — "The system doesn't judge. It makes dishonesty expensive."*
+
+## 📖 Documentation
+- Canonical Architecture:
+  - [docs/EN/ARCHITECTURE.md](./docs/EN/ARCHITECTURE.md)
+  - [docs/TR/ARCHITECTURE.md](./docs/TR/ARCHITECTURE.md)
+- API Reference:
+  - [docs/EN/API.md](./docs/EN/API.md)
+  - [docs/TR/API.md](./docs/TR/API.md)
+- Game Theory:
+  - [docs/EN/GAME_THEORY.md](./docs/EN/GAME_THEORY.md)
+
+---
+*Araf Protocol — “The system does not judge. It makes dishonesty expensive.”*
