@@ -2,6 +2,8 @@
 
 Araf V3 is an order-first market with a trade-level escrow machine. The parent order is the public liquidity primitive, while each `OrderFilled` event creates the child trade where real economic resolution happens. This note summarizes the canonical incentive design after `PAID`, including liveness, dispute escalation, mutual cancel, and burn finality.
 
+> **Developer note:** This file is intentionally aligned section-by-section with the TR version to keep canonical V3 semantics synchronized.
+
 ---
 
 ## Canonical V3 flow after fill
