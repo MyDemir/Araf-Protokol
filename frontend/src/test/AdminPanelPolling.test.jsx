@@ -1,19 +1,18 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, waitFor, screen, act } from '@testing-library/react';
+import fs from 'node:fs';
+import path from 'node:path';
 import AdminPanel from '../AdminPanel';
 
 describe('AdminPanel polling auth behavior', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
   });
 
   it('stops polling after unauthorized and resumes when auth becomes valid again', async () => {
+    vi.useFakeTimers();
     const responses = [
       { status: 401, ok: false, json: async () => ({}) },
       { status: 200, ok: true, json: async () => ({ readiness: {}, stats: {}, tradeCounts: {}, dlq: {} }) },
@@ -26,14 +25,16 @@ describe('AdminPanel polling auth behavior', () => {
         authenticatedFetch={authenticatedFetch}
         isAuthenticated={false}
         authChecked={true}
+        showToast={vi.fn()}
       />
     );
 
-    await waitFor(() => {
-      expect(authenticatedFetch).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await Promise.resolve();
     });
+    expect(authenticatedFetch).toHaveBeenCalledTimes(1);
 
-    vi.advanceTimersByTime(10 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
     expect(authenticatedFetch).toHaveBeenCalledTimes(1);
 
     rerender(
@@ -42,11 +43,26 @@ describe('AdminPanel polling auth behavior', () => {
         authenticatedFetch={authenticatedFetch}
         isAuthenticated={true}
         authChecked={true}
+        showToast={vi.fn()}
       />
     );
 
-    await waitFor(() => {
-      expect(authenticatedFetch).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      await Promise.resolve();
     });
+    expect(authenticatedFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps manual refresh showToast contract wired (no dead reference)', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/AdminPanel.jsx'), 'utf8');
+    expect(source).toContain('function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, showToast })');
+    expect(source).toContain("if (typeof showToast === 'function')");
+    expect(source).toContain("showToast(lang === 'TR' ? 'Özet yenilendi.' : 'Summary refreshed.', 'info')");
+  });
+
+  it('includes explicit UI hint for windowed pagination scope', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/AdminPanel.jsx'), 'utf8');
+    expect(source).toContain('const isWindowedTradeTotal = tradesPaginationScope?.isWindowed === true;');
+    expect(source).toContain('Window total (not global)');
   });
 });

@@ -16,9 +16,16 @@ function buildApp(router) {
 }
 
 describe("admin routes resilience + pagination semantics", () => {
+  const previousAdminWallets = process.env.ADMIN_WALLETS;
+
+  beforeEach(() => {
+    process.env.ADMIN_WALLETS = "0x1111111111111111111111111111111111111111";
+  });
+
   afterEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
+    process.env.ADMIN_WALLETS = previousAdminWallets;
   });
 
   it("returns degraded summary payload instead of 500 when secondary deps fail", async () => {

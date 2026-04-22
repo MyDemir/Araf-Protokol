@@ -138,7 +138,6 @@ export function useAppSessionData({
     setChargebackAccepted(false);
     setPaymentIpfsHash('');
     setIsLoggingIn(false);
-    sessionToastShownRef.current = false;
     pendingTxCheckedRef.current = false;
     autoTradeResumeRef.current = false;
     if (typeof window !== 'undefined') {
@@ -218,6 +217,10 @@ export function useAppSessionData({
         return res;
       }
 
+      // [TR] Oturum başarıyla yenilendiğinde auth-toast dalgası sıfırlanır.
+      // [EN] Reset auth-toast wave only after successful session refresh.
+      sessionToastShownRef.current = false;
+
       return fetch(url, {
         ...requestOptions,
         headers: {
@@ -231,6 +234,14 @@ export function useAppSessionData({
       return res;
     }
   }, [connectedWallet, address, clearLocalSessionState, lang, showToast]);
+
+  useEffect(() => {
+    // [TR] Dedupe bayrağını yalnız doğrulanmış auth geri geldiğinde sıfırlarız.
+    // [EN] Reset dedupe flag only when authenticated state is recovered.
+    if (isAuthenticated) {
+      sessionToastShownRef.current = false;
+    }
+  }, [isAuthenticated]);
 
   const formatAddress = (addr) => addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : '—';
 

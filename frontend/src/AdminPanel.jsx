@@ -40,7 +40,7 @@ const toBoolBadgeClass = (value) => (
     : 'bg-[#1a1a1f] text-slate-300 border border-[#333]'
 );
 
-function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked }) {
+function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, showToast }) {
   const [activeTab, setActiveTab] = React.useState(TAB_OVERVIEW);
 
   const [summary, setSummary] = React.useState(null);
@@ -57,6 +57,7 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked }) 
 
   const [trades, setTrades] = React.useState([]);
   const [tradesTotal, setTradesTotal] = React.useState(0);
+  const [tradesPaginationScope, setTradesPaginationScope] = React.useState(null);
   const [tradesLoading, setTradesLoading] = React.useState(false);
   const [tradesError, setTradesError] = React.useState('');
   const [tradesUnauthorized, setTradesUnauthorized] = React.useState(false);
@@ -192,6 +193,7 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked }) 
     setTradesLoading(true);
     setTradesError('');
     setTradesUnauthorized(false);
+    setTradesPaginationScope(null);
 
     try {
       const qs = new URLSearchParams();
@@ -239,6 +241,7 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked }) 
       authInvalidRef.current = false;
       setTrades(Array.isArray(data.trades) ? data.trades : []);
       setTradesTotal(Number(data.total) || 0);
+      setTradesPaginationScope(data?.paginationScope || null);
       setLastRefreshedAt(new Date().toISOString());
     } catch (_err) {
       setTradesError(lang === 'TR' ? 'Trades isteğinde hata oluştu.' : 'Trades request failed.');
@@ -320,19 +323,25 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked }) 
 
   const refreshFeedbackNow = async () => {
     await fetchFeedback();
-    showToast(lang === 'TR' ? 'Feedback yenilendi.' : 'Feedback refreshed.', 'info');
+    if (typeof showToast === 'function') {
+      showToast(lang === 'TR' ? 'Feedback yenilendi.' : 'Feedback refreshed.', 'info');
+    }
   };
 
   const refreshSummaryNow = async () => {
     setSummaryPollingEnabled(true);
     await fetchSummary();
-    showToast(lang === 'TR' ? 'Özet yenilendi.' : 'Summary refreshed.', 'info');
+    if (typeof showToast === 'function') {
+      showToast(lang === 'TR' ? 'Özet yenilendi.' : 'Summary refreshed.', 'info');
+    }
   };
 
   const refreshTradesNow = async () => {
     setTradesPollingEnabled(true);
     await fetchTrades();
-    showToast(lang === 'TR' ? 'Trades yenilendi.' : 'Trades refreshed.', 'info');
+    if (typeof showToast === 'function') {
+      showToast(lang === 'TR' ? 'Trades yenilendi.' : 'Trades refreshed.', 'info');
+    }
   };
 
   const toggleTradeExpanded = (tradeId) => {
@@ -351,6 +360,8 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked }) 
       <p className="text-slate-300 text-sm">{description}</p>
     </div>
   );
+
+  const isWindowedTradeTotal = tradesPaginationScope?.isWindowed === true;
 
   return (
     <div className="p-4 md:p-8 max-w-[1200px] w-full">
@@ -740,6 +751,13 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked }) 
           {!tradesUnauthorized && (
             <div className="text-xs text-slate-500">
               {lang === 'TR' ? 'Toplam trade kaydı' : 'Total trade records'}: {tradesTotal}
+              {isWindowedTradeTotal && (
+                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded border border-orange-800/40 text-orange-300">
+                  {lang === 'TR'
+                    ? 'Pencere toplamı (global değil)'
+                    : 'Window total (not global)'}
+                </span>
+              )}
             </div>
           )}
         </section>

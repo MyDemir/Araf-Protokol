@@ -1576,6 +1576,7 @@ const handleCreateOrder = async () => {
                     authenticatedFetch={authenticatedFetch}
                     isAuthenticated={isAuthenticated}
                     authChecked={authChecked}
+                    showToast={showToast}
                   />
                 )
                 : renderTradeRoom()}

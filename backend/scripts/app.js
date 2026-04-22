@@ -52,6 +52,7 @@ const {
 const { getReadiness, getLiveness } = require("./services/health");
 const { verifyIdentityNormalization } = require("./services/identityNormalizationGuard");
 const { parsePositiveTimerMs } = require("./utils/timeEnv");
+const { didScheduledJobSucceed } = require("./utils/schedulerSuccess");
 
 // [TR] Global Express hata yakalayıcı
 // [EN] Global Express error handler
@@ -73,14 +74,6 @@ app.locals.schedulerState = {
 let server = null;
 let isShuttingDown = false;
 const FATAL_EXIT_TIMEOUT_MS = 8_000;
-
-function _didScheduledJobSucceed(result) {
-  if (result === false) return false;
-  if (result && typeof result === "object" && typeof result.success === "boolean") {
-    return result.success;
-  }
-  return true;
-}
 
 function _envMs(name, fallbackMs) {
   return parsePositiveTimerMs(process.env[name], fallbackMs);
@@ -221,9 +214,9 @@ async function bootstrap() {
     jobLocks[jobKey] = true;
     try {
       const result = await jobFn();
-      if (_didScheduledJobSucceed(result) && typeof onSuccess === "function") {
+      if (didScheduledJobSucceed(result) && typeof onSuccess === "function") {
         onSuccess();
-      } else if (!_didScheduledJobSucceed(result)) {
+      } else if (!didScheduledJobSucceed(result)) {
         logger.warn(`[Scheduler] ${jobKey} completed with unsuccessful result contract.`);
       }
     } catch (err) {
@@ -244,7 +237,7 @@ async function bootstrap() {
     const receipt = await runReceiptCleanup();
     const pii = await runPIISnapshotCleanup();
     return {
-      success: _didScheduledJobSucceed(receipt) && _didScheduledJobSucceed(pii),
+      success: didScheduledJobSucceed(receipt) && didScheduledJobSucceed(pii),
     };
   };
 
@@ -501,4 +494,3 @@ bootstrap();
 module.exports = app;
 module.exports._resolveIdentityGuardMode = _resolveIdentityGuardMode;
 module.exports._envMs = _envMs;
-module.exports._didScheduledJobSucceed = _didScheduledJobSucceed;
