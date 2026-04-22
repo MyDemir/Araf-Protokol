@@ -38,6 +38,14 @@ function getRetrySuccessRate() {
   return Math.round((_redriveSuccess / total) * 100);
 }
 
+function getDlqMetrics() {
+  return {
+    redriveSuccess: _redriveSuccess,
+    redriveFailure: _redriveFailure,
+    retrySuccessRate: getRetrySuccessRate(),
+  };
+}
+
 function getBackoffMs(attempt) {
   return Math.min(BASE_BACKOFF_MS * (2 ** Math.max(attempt - 1, 0)), 30 * 60 * 1000);
 }
@@ -218,4 +226,4 @@ async function processDLQ() {
   }
 }
 
-module.exports = { processDLQ };
+module.exports = { processDLQ, getDlqMetrics };
