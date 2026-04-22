@@ -74,6 +74,14 @@ let server = null;
 let isShuttingDown = false;
 const FATAL_EXIT_TIMEOUT_MS = 8_000;
 
+function _didScheduledJobSucceed(result) {
+  if (result === false) return false;
+  if (result && typeof result === "object" && typeof result.success === "boolean") {
+    return result.success;
+  }
+  return true;
+}
+
 function _envMs(name, fallbackMs) {
   return parsePositiveTimerMs(process.env[name], fallbackMs);
 }
@@ -212,15 +220,11 @@ async function bootstrap() {
 
     jobLocks[jobKey] = true;
     try {
-      await jobFn();
-      // [TR] Bu timestamp güncellemesi "best-effort" semantiğindedir.
-      //      Bazı job'lar iç hataları kendi içinde swallow edebildiği için
-      //      promise resolve olsa da gerçek iş-semantik başarısı iyimser kalabilir.
-      // [EN] This timestamp update is best-effort.
-      //      Some jobs may swallow internal failures, so promise resolution
-      //      can still be optimistic vs. true semantic job success.
-      if (typeof onSuccess === "function") {
+      const result = await jobFn();
+      if (_didScheduledJobSucceed(result) && typeof onSuccess === "function") {
         onSuccess();
+      } else if (!_didScheduledJobSucceed(result)) {
+        logger.warn(`[Scheduler] ${jobKey} completed with unsuccessful result contract.`);
       }
     } catch (err) {
       logger.error(`[Scheduler] ${jobKey} başarısız: ${err.message}`, { stack: err.stack });
@@ -237,8 +241,11 @@ async function bootstrap() {
    *      so the scheduler treats it as a single job.
    */
   const runSensitiveCleanupBundle = async () => {
-    await runReceiptCleanup();
-    await runPIISnapshotCleanup();
+    const receipt = await runReceiptCleanup();
+    const pii = await runPIISnapshotCleanup();
+    return {
+      success: _didScheduledJobSucceed(receipt) && _didScheduledJobSucceed(pii),
+    };
   };
 
   const shutdown = async ({ signal = "UNKNOWN", exitCode = 0, reason = null }) => {
@@ -362,10 +369,8 @@ async function bootstrap() {
 
     // [TR] İlk çalıştırma 30 sn geciktirilir — cold start'ta DB'ye eş zamanlı yük binmesini önler
     // [EN] First run delayed by 30s — prevents simultaneous DB load on cold start
-    // [TR] schedulerState *LastRunAt alanları best-effort'tur; bazı job'lar iç hatayı swallow ederse
-    //      bu timestamp'ler gerçek semantik başarıya göre iyimser kalabilir.
-    // [EN] schedulerState *LastRunAt fields are best-effort; if a job swallows internal failures,
-    //      these timestamps may be optimistic vs. true semantic success.
+    // [TR] schedulerState *LastRunAt yalnız job başarı sözleşmesi true olduğunda güncellenir.
+    // [EN] schedulerState *LastRunAt is updated only when job success contract resolves true.
     reputationDecayDelay = setTimeout(() => {
       runScheduledJob("reputationDecay", runReputationDecay, () => {
         app.locals.schedulerState.reputationDecayLastRunAt = new Date().toISOString();
@@ -496,3 +501,4 @@ bootstrap();
 module.exports = app;
 module.exports._resolveIdentityGuardMode = _resolveIdentityGuardMode;
 module.exports._envMs = _envMs;
+module.exports._didScheduledJobSucceed = _didScheduledJobSucceed;

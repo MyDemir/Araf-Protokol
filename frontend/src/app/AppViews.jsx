@@ -108,9 +108,9 @@ export const buildAppViews = (ctx) => {
     .map((w) => w.trim().toLowerCase())
     .filter(Boolean);
   const connectedWalletLower = typeof address === "string" ? address.toLowerCase() : null;
-  const canSeeAdminEntry =
-    Boolean(isConnected && isAuthenticated && connectedWalletLower) &&
-    adminWalletAllowlist.includes(connectedWalletLower);
+  const isLikelyAdminWallet =
+    Boolean(connectedWalletLower) && adminWalletAllowlist.includes(connectedWalletLower);
+  const canSeeAdminEntry = Boolean(isConnected && isAuthenticated && connectedWalletLower);
 
   const renderSlimRail = () => (
     <div className="hidden md:flex w-16 bg-black border-r border-[#1a1a1a] flex-col items-center py-6 justify-between z-50 shrink-0 shadow-2xl">
@@ -121,10 +121,20 @@ export const buildAppViews = (ctx) => {
         <button onClick={openSidebar} title={lang === 'TR' ? 'Filtreler' : 'Filters'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${sidebarOpen ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>☰</button>
         <button onClick={() => setCurrentView('home')} title={lang === 'TR' ? 'Ana Sayfa' : 'Home'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'home' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🏠</button>
         <button onClick={() => setCurrentView('market')} title={lang === 'TR' ? 'Pazar Yeri' : 'Marketplace'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'market' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🛒</button>
-        {/* [TR] Admin paneline giriş yalnız allowlist + aktif session için görünür.
-            [EN] Show admin rail entry only for allowlisted active sessions. */}
+        {/* [TR] Admin girişi authenticated kullanıcıya her zaman görünür;
+            VITE_ADMIN_WALLETS yalnızca UX ipucu amaçlıdır.
+            [EN] Admin entry is always visible for authenticated users;
+            VITE_ADMIN_WALLETS is only a UX hint. */}
         {canSeeAdminEntry && (
-          <button onClick={() => setCurrentView('admin')} title={lang === 'TR' ? 'Admin Paneli' : 'Admin Panel'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'admin' ? 'bg-emerald-900/30 text-emerald-400' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🧭</button>
+          <button
+            onClick={() => setCurrentView('admin')}
+            title={isLikelyAdminWallet
+              ? (lang === 'TR' ? 'Admin Paneli' : 'Admin Panel')
+              : (lang === 'TR' ? 'Admin Gözlem (sunucu yetkisine bağlı)' : 'Admin Observability (server-authorized)')}
+            className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'admin' ? 'bg-emerald-900/30 text-emerald-400' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}
+          >
+            🧭
+          </button>
         )}
         <button onClick={() => setCurrentView('tradeRoom')} title={lang === 'TR' ? 'İşlem Odası' : 'Trade Room'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition relative ${currentView === 'tradeRoom' ? 'bg-orange-600/20 text-orange-500' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>
           💼 {activeEscrows.length > 0 && <span className="absolute top-2 right-2 w-2 h-2 bg-orange-500 rounded-full animate-pulse"></span>}
@@ -869,8 +879,8 @@ export const buildAppViews = (ctx) => {
       <button onClick={() => setCurrentView('tradeRoom')} className={`p-2 text-xl transition-all relative ${currentView === 'tradeRoom' ? 'text-orange-500 drop-shadow-[0_0_8px_rgba(249,115,22,0.5)] -translate-y-1' : 'text-slate-600'}`}>
         💼{activeEscrows.length > 0 && <span className="absolute top-2 right-1 w-2.5 h-2.5 bg-orange-500 border border-[#060608] rounded-full animate-pulse"></span>}
       </button>
-      {/* [TR] Mobil admin girişi yalnız allowlist + aktif oturum eşleşirse görünür.
-          [EN] Show mobile admin entry only for allowlisted active sessions. */}
+      {/* [TR] Mobil admin girişi authenticated kullanıcıya açık kalır; backend nihai otoritedir.
+          [EN] Mobile admin entry remains reachable for authenticated users; backend is authoritative. */}
       {canSeeAdminEntry && (
         <button onClick={() => setCurrentView('admin')} className={`p-2 text-xl transition-all ${currentView === 'admin' ? 'text-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] -translate-y-1' : 'text-slate-600'}`}>🧭</button>
       )}

@@ -37,10 +37,10 @@ async function runReceiptCleanup(now = new Date()) {
       );
     }
 
-    return result.modifiedCount;
+    return { success: true, modifiedCount: result.modifiedCount };
   } catch (err) {
     logger.error(`[Job:ReceiptCleanup] Temizlik başarısız: ${err.message}`);
-    return 0;
+    return { success: false, modifiedCount: 0, error: err.message };
   }
 }
 
@@ -105,10 +105,10 @@ async function runPIISnapshotCleanup(now = new Date()) {
       );
     }
 
-    return result.modifiedCount;
+    return { success: true, modifiedCount: result.modifiedCount };
   } catch (err) {
     logger.error(`[Job:PIISnapshotCleanup] Temizlik başarısız: ${err.message}`);
-    return 0;
+    return { success: false, modifiedCount: 0, error: err.message };
   }
 }
 

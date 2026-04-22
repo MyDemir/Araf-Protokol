@@ -104,10 +104,10 @@ async function runUserBankRiskMetadataCleanup(now = new Date()) {
       );
     }
 
-    return { scanned, updated };
+    return { success: true, scanned, updated };
   } catch (err) {
     logger.error(`[Job:UserBankRiskCleanup] Temizlik başarısız: ${err.message}`);
-    return { scanned, updated };
+    return { success: false, scanned, updated, error: err.message };
   }
 }
 

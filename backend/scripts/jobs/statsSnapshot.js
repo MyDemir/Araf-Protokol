@@ -193,8 +193,10 @@ async function runStatsSnapshot() {
       `executed_volume=${Number(stats.executed_volume_usdt || 0).toFixed(2)}, ` +
       `child_trades=${stats.child_trade_count}`
     );
+    return { success: true };
   } catch (err) {
     logger.error(`[Job:StatsSnapshot] Görev başarısız oldu: ${err.message}`, { stack: err.stack });
+    return { success: false, error: err.message };
   }
 }
 
