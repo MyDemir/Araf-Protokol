@@ -74,6 +74,13 @@ router.get("/summary", async (req, res, next) => {
         completed_trades: latestStat?.completed_trades ?? 0,
         child_trade_count: latestStat?.child_trade_count ?? 0,
         active_child_trades: latestStat?.active_child_trades ?? 0,
+        // [TR] Frontend admin overview için HistoricalStat alanlarını eksiksiz döndürürüz.
+        // [EN] Return complete HistoricalStat fields for frontend admin overview.
+        open_sell_orders: latestStat?.open_sell_orders ?? 0,
+        open_buy_orders: latestStat?.open_buy_orders ?? 0,
+        partially_filled_orders: latestStat?.partially_filled_orders ?? 0,
+        filled_orders: latestStat?.filled_orders ?? 0,
+        canceled_orders: latestStat?.canceled_orders ?? 0,
         burned_bonds_usdt: latestStat?.burned_bonds_usdt ?? 0,
         burned_bonds_usdt_str: latestStat?.burned_bonds_usdt_str || "0",
         avg_trade_hours: latestStat?.avg_trade_hours ?? null,
