@@ -854,7 +854,11 @@ export const buildAppViews = (ctx) => {
       <button onClick={() => setCurrentView('tradeRoom')} className={`p-2 text-xl transition-all relative ${currentView === 'tradeRoom' ? 'text-orange-500 drop-shadow-[0_0_8px_rgba(249,115,22,0.5)] -translate-y-1' : 'text-slate-600'}`}>
         💼{activeEscrows.length > 0 && <span className="absolute top-2 right-1 w-2.5 h-2.5 bg-orange-500 border border-[#060608] rounded-full animate-pulse"></span>}
       </button>
-      <button onClick={() => setCurrentView('admin')} className={`p-2 text-xl transition-all ${currentView === 'admin' ? 'text-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] -translate-y-1' : 'text-slate-600'}`}>🧭</button>
+      {/* [TR] Mobilde admin girişi yalnız aktif auth session varken görünür.
+          [EN] On mobile, admin entry is shown only when auth session is active. */}
+      {(isConnected && isAuthenticated) && (
+        <button onClick={() => setCurrentView('admin')} className={`p-2 text-xl transition-all ${currentView === 'admin' ? 'text-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] -translate-y-1' : 'text-slate-600'}`}>🧭</button>
+      )}
       <button onClick={openSidebar} className={`p-2 text-xl transition-all ${sidebarOpen ? 'text-white -translate-y-1' : 'text-slate-600'}`}>☰</button>
       <button onClick={handleAuthAction} className={`p-2 text-xl transition-all ${isConnected && isAuthenticated ? 'text-emerald-500 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] -translate-y-1' : 'text-slate-600'}`}>
         {isConnected && isAuthenticated ? '👤' : '👛'}
