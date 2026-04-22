@@ -4,10 +4,16 @@ import { buildApiUrl } from './app/apiConfig';
 const TAB_OVERVIEW = 'overview';
 const TAB_SYNC = 'sync';
 const TAB_FEEDBACK = 'feedback';
+const TAB_TRADES = 'trades';
 
 const FEEDBACK_CATEGORY_OPTIONS = ['', 'bug', 'suggestion', 'ui/ux', 'other'];
 const FEEDBACK_RATING_OPTIONS = ['', '1', '2', '3', '4', '5'];
 const FEEDBACK_LIMIT_OPTIONS = [10, 20, 50];
+const TRADES_STATUS_OPTIONS = ['ALL', 'LOCKED', 'PAID', 'CHALLENGED', 'RESOLVED', 'CANCELED', 'BURNED'];
+const TRADES_TIER_OPTIONS = ['', '0', '1', '2', '3', '4'];
+const TRADES_ORIGIN_OPTIONS = ['ALL', 'ORDER_CHILD', 'DIRECT_ESCROW'];
+const TRADES_SNAPSHOT_OPTIONS = ['ALL', 'true', 'false'];
+const TRADES_LIMIT_OPTIONS = [10, 20, 50];
 
 const shortenWallet = (wallet) => {
   const value = String(wallet || '').trim();
@@ -27,6 +33,12 @@ const toWorkerLagLabel = (lag) => {
   return `${lag}`;
 };
 
+const toBoolBadgeClass = (value) => (
+  value
+    ? 'bg-emerald-900/30 text-emerald-300 border border-emerald-700/40'
+    : 'bg-[#1a1a1f] text-slate-300 border border-[#333]'
+);
+
 function AdminPanel({ lang, authenticatedFetch, showToast }) {
   const [activeTab, setActiveTab] = React.useState(TAB_OVERVIEW);
 
@@ -42,9 +54,27 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
   const [feedbackError, setFeedbackError] = React.useState('');
   const [feedbackUnauthorized, setFeedbackUnauthorized] = React.useState(false);
 
+  const [trades, setTrades] = React.useState([]);
+  const [tradesTotal, setTradesTotal] = React.useState(0);
+  const [tradesLoading, setTradesLoading] = React.useState(false);
+  const [tradesError, setTradesError] = React.useState('');
+  const [tradesUnauthorized, setTradesUnauthorized] = React.useState(false);
+  const [tradesPollingEnabled, setTradesPollingEnabled] = React.useState(true);
+  const [expandedTradeIds, setExpandedTradeIds] = React.useState({});
+
   const [feedbackFilters, setFeedbackFilters] = React.useState({
     category: '',
     rating: '',
+    page: 1,
+    limit: 20,
+  });
+
+  const [tradesFilters, setTradesFilters] = React.useState({
+    status: 'CHALLENGED',
+    tier: '',
+    origin: 'ALL',
+    riskOnly: false,
+    snapshotComplete: 'ALL',
     page: 1,
     limit: 20,
   });
@@ -133,6 +163,59 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
     }
   }, [authenticatedFetch, feedbackFilters, lang]);
 
+  const fetchTrades = React.useCallback(async () => {
+    setTradesLoading(true);
+    setTradesError('');
+    setTradesUnauthorized(false);
+
+    try {
+      const qs = new URLSearchParams();
+      qs.set('status', tradesFilters.status);
+      if (tradesFilters.tier !== '') qs.set('tier', tradesFilters.tier);
+      qs.set('origin', tradesFilters.origin);
+      qs.set('riskOnly', String(tradesFilters.riskOnly));
+      qs.set('snapshotComplete', tradesFilters.snapshotComplete);
+      qs.set('page', String(tradesFilters.page || 1));
+      qs.set('limit', String(tradesFilters.limit || 20));
+
+      const res = await authenticatedFetch(buildApiUrl(`admin/trades?${qs.toString()}`));
+
+      if (res.status === 403) {
+        setTrades([]);
+        setTradesTotal(0);
+        setTradesUnauthorized(true);
+        setTradesPollingEnabled(false);
+        return;
+      }
+
+      if (res.status === 401 || res.status === 409) {
+        setTrades([]);
+        setTradesTotal(0);
+        setTradesPollingEnabled(false);
+        setTradesError(
+          lang === 'TR'
+            ? 'Admin trades oturumu doğrulanamadı. Yeniden giriş yapın.'
+            : 'Admin trades session is no longer valid. Please sign in again.'
+        );
+        return;
+      }
+
+      if (!res.ok) {
+        setTradesError(lang === 'TR' ? 'Trades verisi alınamadı.' : 'Failed to load trades data.');
+        return;
+      }
+
+      const data = await res.json();
+      setTrades(Array.isArray(data.trades) ? data.trades : []);
+      setTradesTotal(Number(data.total) || 0);
+      setLastRefreshedAt(new Date().toISOString());
+    } catch (_err) {
+      setTradesError(lang === 'TR' ? 'Trades isteğinde hata oluştu.' : 'Trades request failed.');
+    } finally {
+      setTradesLoading(false);
+    }
+  }, [authenticatedFetch, lang, tradesFilters]);
+
   React.useEffect(() => {
     if (!summaryPollingEnabled) return undefined;
     fetchSummary();
@@ -144,6 +227,14 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
     if (activeTab !== TAB_FEEDBACK) return;
     fetchFeedback();
   }, [activeTab, fetchFeedback]);
+
+  React.useEffect(() => {
+    if (activeTab !== TAB_TRADES) return undefined;
+    if (!tradesPollingEnabled) return undefined;
+    fetchTrades();
+    const timer = setInterval(fetchTrades, 30_000);
+    return () => clearInterval(timer);
+  }, [activeTab, fetchTrades, tradesPollingEnabled]);
 
   const readiness = summary?.readiness || {};
   const checks = readiness?.checks || {};
@@ -176,9 +267,30 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
     }));
   };
 
+  const updateTradesFilter = (key, value) => {
+    setTradesFilters((prev) => ({
+      ...prev,
+      [key]: key === 'page' || key === 'limit' ? Number(value) : value,
+      ...(key !== 'page' ? { page: 1 } : {}),
+    }));
+    if (key === 'status' || key === 'tier' || key === 'origin' || key === 'riskOnly' || key === 'snapshotComplete') {
+      setTradesPollingEnabled(true);
+    }
+  };
+
   const refreshFeedbackNow = async () => {
     await fetchFeedback();
     showToast(lang === 'TR' ? 'Feedback yenilendi.' : 'Feedback refreshed.', 'info');
+  };
+
+  const refreshTradesNow = async () => {
+    setTradesPollingEnabled(true);
+    await fetchTrades();
+    showToast(lang === 'TR' ? 'Trades yenilendi.' : 'Trades refreshed.', 'info');
+  };
+
+  const toggleTradeExpanded = (tradeId) => {
+    setExpandedTradeIds((prev) => ({ ...prev, [tradeId]: !prev[tradeId] }));
   };
 
   const renderErrorBox = (message) => (
@@ -207,12 +319,14 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
       </div>
 
       <div className="mb-6 flex gap-2">
-        {[TAB_OVERVIEW, TAB_SYNC, TAB_FEEDBACK].map((tab) => {
+        {[TAB_OVERVIEW, TAB_SYNC, TAB_FEEDBACK, TAB_TRADES].map((tab) => {
           const label = tab === TAB_OVERVIEW
             ? (lang === 'TR' ? 'Overview' : 'Overview')
             : tab === TAB_SYNC
               ? (lang === 'TR' ? 'Sync' : 'Sync')
-              : (lang === 'TR' ? 'Feedback' : 'Feedback');
+              : tab === TAB_FEEDBACK
+                ? (lang === 'TR' ? 'Feedback' : 'Feedback')
+                : (lang === 'TR' ? 'Trades' : 'Trades');
           const active = activeTab === tab;
           return (
             <button
@@ -398,6 +512,176 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
           {!feedbackUnauthorized && <div className="text-xs text-slate-500">
             {lang === 'TR' ? 'Toplam kayıt' : 'Total records'}: {feedbackTotal}
           </div>}
+        </section>
+      )}
+
+      {activeTab === TAB_TRADES && (
+        <section className="space-y-4">
+          {tradesUnauthorized && renderUnauthorizedBox(
+            lang === 'TR' ? 'Yetkisiz Erişim' : 'Unauthorized Access',
+            lang === 'TR'
+              ? 'Bu admin trades ekranını görüntüleme yetkiniz bulunmuyor.'
+              : 'You are not authorized to view this admin trades screen.'
+          )}
+          {!tradesUnauthorized && tradesError && renderErrorBox(tradesError)}
+
+          {!tradesUnauthorized && (
+            <div className="bg-[#111113] border border-[#222] rounded-xl p-4 space-y-3">
+              <p className="text-xs text-slate-400">
+                {lang === 'TR'
+                  ? 'Admin trades yüzeyi yalnız gözlem amaçlıdır; hiçbir aksiyon/authority içermez.'
+                  : 'Admin trades surface is observability-only; no actions/authority are exposed.'}
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-7 gap-3">
+                <label className="text-sm text-slate-300 flex flex-col gap-1">
+                  <span>Status</span>
+                  <select value={tradesFilters.status} onChange={(e) => updateTradesFilter('status', e.target.value)} className="bg-[#0d0d0f] border border-[#222] rounded-lg px-3 py-2 text-white">
+                    {TRADES_STATUS_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                </label>
+
+                <label className="text-sm text-slate-300 flex flex-col gap-1">
+                  <span>Tier</span>
+                  <select value={tradesFilters.tier} onChange={(e) => updateTradesFilter('tier', e.target.value)} className="bg-[#0d0d0f] border border-[#222] rounded-lg px-3 py-2 text-white">
+                    {TRADES_TIER_OPTIONS.map((opt) => <option key={opt || 'all'} value={opt}>{opt === '' ? 'ALL' : opt}</option>)}
+                  </select>
+                </label>
+
+                <label className="text-sm text-slate-300 flex flex-col gap-1">
+                  <span>Origin</span>
+                  <select value={tradesFilters.origin} onChange={(e) => updateTradesFilter('origin', e.target.value)} className="bg-[#0d0d0f] border border-[#222] rounded-lg px-3 py-2 text-white">
+                    {TRADES_ORIGIN_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                </label>
+
+                <label className="text-sm text-slate-300 flex flex-col gap-1">
+                  <span>Snapshot</span>
+                  <select value={tradesFilters.snapshotComplete} onChange={(e) => updateTradesFilter('snapshotComplete', e.target.value)} className="bg-[#0d0d0f] border border-[#222] rounded-lg px-3 py-2 text-white">
+                    {TRADES_SNAPSHOT_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt === 'ALL' ? 'ALL' : opt === 'true' ? 'Complete' : 'Incomplete'}</option>)}
+                  </select>
+                </label>
+
+                <label className="text-sm text-slate-300 flex flex-col gap-1">
+                  <span>Page</span>
+                  <input type="number" min="1" value={tradesFilters.page} onChange={(e) => updateTradesFilter('page', e.target.value)} className="bg-[#0d0d0f] border border-[#222] rounded-lg px-3 py-2 text-white" />
+                </label>
+
+                <label className="text-sm text-slate-300 flex flex-col gap-1">
+                  <span>Limit</span>
+                  <select value={tradesFilters.limit} onChange={(e) => updateTradesFilter('limit', e.target.value)} className="bg-[#0d0d0f] border border-[#222] rounded-lg px-3 py-2 text-white">
+                    {TRADES_LIMIT_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                </label>
+
+                <div className="flex flex-col justify-end gap-2">
+                  <label className="text-sm text-slate-300 flex items-center gap-2">
+                    <input type="checkbox" checked={tradesFilters.riskOnly} onChange={(e) => updateTradesFilter('riskOnly', e.target.checked)} />
+                    Risk Only
+                  </label>
+                  <button onClick={refreshTradesNow} disabled={tradesLoading} className="bg-[#173428] hover:bg-[#1b3d2e] disabled:opacity-60 border border-emerald-800/50 text-emerald-300 rounded-lg px-3 py-2 text-sm font-semibold">
+                    {tradesLoading ? (lang === 'TR' ? 'Yükleniyor...' : 'Loading...') : (lang === 'TR' ? 'Yenile' : 'Refresh')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!tradesUnauthorized && (
+            <div className="bg-[#111113] border border-[#222] rounded-xl overflow-x-auto">
+              <table className="w-full min-w-[1700px] text-sm">
+                <thead>
+                  <tr className="bg-[#0d0d0f] border-b border-[#222] text-slate-300">
+                    <th className="text-left px-3 py-2">Escrow ID</th>
+                    <th className="text-left px-3 py-2">Parent Order ID</th>
+                    <th className="text-left px-3 py-2">Maker</th>
+                    <th className="text-left px-3 py-2">Taker</th>
+                    <th className="text-left px-3 py-2">Status</th>
+                    <th className="text-left px-3 py-2">Tier</th>
+                    <th className="text-left px-3 py-2">Origin</th>
+                    <th className="text-left px-3 py-2">Token</th>
+                    <th className="text-left px-3 py-2">Snapshot Complete</th>
+                    <th className="text-left px-3 py-2">Incomplete Reason</th>
+                    <th className="text-left px-3 py-2">High Risk</th>
+                    <th className="text-left px-3 py-2">Changed After Lock</th>
+                    <th className="text-left px-3 py-2">Frequent Recent Changes</th>
+                    <th className="text-left px-3 py-2">Explainable Reasons</th>
+                    <th className="text-left px-3 py-2">Captured At</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trades.map((row) => {
+                    const id = row._id;
+                    const reasons = Array.isArray(row?.offchain_health_score_input?.explainableReasons)
+                      ? row.offchain_health_score_input.explainableReasons
+                      : [];
+                    const shownReasons = reasons.slice(0, 2);
+                    const hiddenCount = Math.max(reasons.length - shownReasons.length, 0);
+                    const expanded = Boolean(expandedTradeIds[id]);
+
+                    return (
+                      <React.Fragment key={id}>
+                        <tr className="border-b border-[#1c1c1f] cursor-pointer hover:bg-[#121217]" onClick={() => toggleTradeExpanded(id)}>
+                          <td className="px-3 py-2 text-emerald-300 font-mono">{row.onchain_escrow_id || '—'}</td>
+                          <td className="px-3 py-2 text-slate-300 font-mono">{row.parent_order_id || '—'}</td>
+                          <td className="px-3 py-2 text-slate-300 font-mono">{shortenWallet(row.maker_address)}</td>
+                          <td className="px-3 py-2 text-slate-300 font-mono">{shortenWallet(row.taker_address)}</td>
+                          <td className="px-3 py-2"><span className={`px-2 py-1 rounded text-xs ${row.status === 'CHALLENGED' ? 'bg-red-900/40 text-red-300 border border-red-700/40' : 'bg-[#1a1a1f] text-slate-200 border border-[#333]'}`}>{row.status || '—'}</span></td>
+                          <td className="px-3 py-2 text-white">{row.tier ?? '—'}</td>
+                          <td className="px-3 py-2 text-slate-300">{row.trade_origin || '—'}</td>
+                          <td className="px-3 py-2 text-slate-300 font-mono">{row.token_address ? shortenWallet(row.token_address) : '—'}</td>
+                          <td className="px-3 py-2"><span className={`px-2 py-1 rounded text-xs ${toBoolBadgeClass(row?.payout_snapshot?.is_complete === true)}`}>{row?.payout_snapshot?.is_complete === true ? 'true' : 'false'}</span></td>
+                          <td className="px-3 py-2 text-slate-300">{row?.payout_snapshot?.incomplete_reason || '—'}</td>
+                          <td className="px-3 py-2"><span className={`px-2 py-1 rounded text-xs ${toBoolBadgeClass(row?.bank_profile_risk?.highRiskBankProfile === true)}`}>{row?.bank_profile_risk?.highRiskBankProfile ? 'true' : 'false'}</span></td>
+                          <td className="px-3 py-2"><span className={`px-2 py-1 rounded text-xs ${toBoolBadgeClass(row?.bank_profile_risk?.changedAfterLock === true)}`}>{row?.bank_profile_risk?.changedAfterLock ? 'true' : 'false'}</span></td>
+                          <td className="px-3 py-2"><span className={`px-2 py-1 rounded text-xs ${toBoolBadgeClass(row?.bank_profile_risk?.frequentRecentChanges === true)}`}>{row?.bank_profile_risk?.frequentRecentChanges ? 'true' : 'false'}</span></td>
+                          <td className="px-3 py-2 text-slate-300">
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {shownReasons.map((reason) => (
+                                <span key={reason} className="px-2 py-0.5 rounded bg-[#1a1a1f] border border-[#333] text-xs">{reason}</span>
+                              ))}
+                              {hiddenCount > 0 && <span className="px-2 py-0.5 rounded bg-[#1a1a1f] border border-[#333] text-xs">+{hiddenCount}</span>}
+                              {reasons.length === 0 && '—'}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-slate-300">{formatDate(row?.offchain_health_score_input?.snapshot?.capturedAt || row?.payout_snapshot?.captured_at)}</td>
+                        </tr>
+                        {expanded && (
+                          <tr className="bg-[#0c0c0f] border-b border-[#1c1c1f]">
+                            <td colSpan={15} className="px-4 py-3">
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+                                <div className="bg-[#111113] border border-[#222] rounded p-2"><span className="text-slate-500">railAtLock:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.railAtLock || '—'}</span></div>
+                                <div className="bg-[#111113] border border-[#222] rounded p-2"><span className="text-slate-500">countryAtLock:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.countryAtLock || '—'}</span></div>
+                                <div className="bg-[#111113] border border-[#222] rounded p-2"><span className="text-slate-500">profileVersionAtLock:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.profileVersionAtLock ?? '—'}</span></div>
+                                <div className="bg-[#111113] border border-[#222] rounded p-2"><span className="text-slate-500">currentProfileVersion:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.currentProfileVersion ?? '—'}</span></div>
+                                <div className="bg-[#111113] border border-[#222] rounded p-2"><span className="text-slate-500">bankChangeCount7dAtLock:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.bankChangeCount7dAtLock ?? '—'}</span></div>
+                                <div className="bg-[#111113] border border-[#222] rounded p-2"><span className="text-slate-500">bankChangeCount30dAtLock:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.bankChangeCount30dAtLock ?? '—'}</span></div>
+                                <div className="bg-[#111113] border border-[#222] rounded p-2"><span className="text-slate-500">lastBankChangeAtAtLock:</span> <span className="text-white">{formatDate(row?.offchain_health_score_input?.maker?.lastBankChangeAtAtLock)}</span></div>
+                                <div className="bg-[#111113] border border-[#222] rounded p-2"><span className="text-slate-500">snapshot.capturedAt:</span> <span className="text-white">{formatDate(row?.offchain_health_score_input?.snapshot?.capturedAt)}</span></div>
+                                <div className="bg-[#111113] border border-[#222] rounded p-2"><span className="text-slate-500">snapshot.isComplete:</span> <span className="text-white">{String(row?.offchain_health_score_input?.snapshot?.isComplete ?? false)}</span></div>
+                                <div className="bg-[#111113] border border-[#222] rounded p-2 md:col-span-3"><span className="text-slate-500">snapshot.incompleteReason:</span> <span className="text-white">{row?.offchain_health_score_input?.snapshot?.incompleteReason || '—'}</span></div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                  {!tradesLoading && trades.length === 0 && (
+                    <tr>
+                      <td colSpan={15} className="px-3 py-5 text-center text-slate-500">{lang === 'TR' ? 'Trade kaydı bulunamadı.' : 'No trade records found.'}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {!tradesUnauthorized && (
+            <div className="text-xs text-slate-500">
+              {lang === 'TR' ? 'Toplam trade kaydı' : 'Total trade records'}: {tradesTotal}
+            </div>
+          )}
         </section>
       )}
     </div>

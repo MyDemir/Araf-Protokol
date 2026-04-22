@@ -9,13 +9,57 @@ const { getReadiness } = require("../services/health");
 const { getDlqMetrics } = require("../services/dlqProcessor");
 const worker = require("../services/eventListener");
 const Trade = require("../models/Trade");
+const User = require("../models/User");
 const Feedback = require("../models/Feedback");
 const HistoricalStat = require("../models/HistoricalStat");
+const { buildBankProfileRisk, buildTradeHealthSignals } = require("./tradeRisk");
 
 const router = express.Router();
 
 const TERMINAL_TRADE_STATUSES = ["RESOLVED", "CANCELED", "BURNED"];
 const DLQ_KEY = "worker:dlq";
+const ADMIN_TRADES_STATUS_VALUES = ["ALL", "LOCKED", "PAID", "CHALLENGED", "RESOLVED", "CANCELED", "BURNED"];
+const ADMIN_TRADES_ORIGIN_VALUES = ["ALL", "ORDER_CHILD", "DIRECT_ESCROW"];
+const ADMIN_TRADES_SNAPSHOT_VALUES = ["ALL", "true", "false"];
+
+const ADMIN_TRADE_PROJECTION = [
+  "_id",
+  "onchain_escrow_id",
+  "parent_order_id",
+  "trade_origin",
+  "maker_address",
+  "taker_address",
+  "token_address",
+  "status",
+  "tier",
+  "created_at",
+  "payout_snapshot.maker.rail",
+  "payout_snapshot.maker.country",
+  "payout_snapshot.maker.profile_version_at_lock",
+  "payout_snapshot.maker.bank_change_count_7d_at_lock",
+  "payout_snapshot.maker.bank_change_count_30d_at_lock",
+  "payout_snapshot.maker.last_bank_change_at_at_lock",
+  "payout_snapshot.maker.reputation_context_at_lock.success_rate",
+  "payout_snapshot.maker.reputation_context_at_lock.failed_disputes",
+  "payout_snapshot.maker.reputation_context_at_lock.effective_tier",
+  "payout_snapshot.maker.reputation_context_at_lock.consecutive_bans",
+  "payout_snapshot.maker.reputation_context_at_lock.is_banned",
+  "payout_snapshot.maker.reputation_context_at_lock.banned_until",
+  "payout_snapshot.taker.rail",
+  "payout_snapshot.taker.country",
+  "payout_snapshot.taker.profile_version_at_lock",
+  "payout_snapshot.taker.bank_change_count_7d_at_lock",
+  "payout_snapshot.taker.bank_change_count_30d_at_lock",
+  "payout_snapshot.taker.reputation_context_at_lock.success_rate",
+  "payout_snapshot.taker.reputation_context_at_lock.failed_disputes",
+  "payout_snapshot.taker.reputation_context_at_lock.effective_tier",
+  "payout_snapshot.taker.reputation_context_at_lock.consecutive_bans",
+  "payout_snapshot.taker.reputation_context_at_lock.is_banned",
+  "payout_snapshot.taker.reputation_context_at_lock.banned_until",
+  "payout_snapshot.is_complete",
+  "payout_snapshot.incomplete_reason",
+  "payout_snapshot.captured_at",
+].join(" ");
 
 function requireAdminWallet(req, res, next) {
   const allowed = String(process.env.ADMIN_WALLETS || "")
@@ -28,6 +72,64 @@ function requireAdminWallet(req, res, next) {
   }
 
   return next();
+}
+
+async function _attachAdminTradeRisk(trades) {
+  if (!Array.isArray(trades) || trades.length === 0) return [];
+
+  const participantAddresses = [
+    ...new Set(
+      trades
+        .flatMap((trade) => [trade?.maker_address, trade?.taker_address])
+        .filter(Boolean)
+    ),
+  ];
+
+  const users = await User.find({ wallet_address: { $in: participantAddresses } })
+    .select(
+      "wallet_address profileVersion bankChangeCount7d bankChangeCount30d " +
+      "payout_profile reputation_cache is_banned banned_until consecutive_bans"
+    )
+    .lean();
+
+  const userMap = new Map(users.map((user) => [user.wallet_address, user]));
+
+  return trades.map((trade) => {
+    const makerUser = userMap.get(trade.maker_address) || null;
+    const takerUser = userMap.get(trade.taker_address) || null;
+
+    return {
+      ...trade,
+      bank_profile_risk: buildBankProfileRisk(trade, makerUser),
+      offchain_health_score_input: buildTradeHealthSignals(trade, makerUser, takerUser),
+    };
+  });
+}
+
+function _toMillisSafe(value) {
+  const ms = new Date(value || 0).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function _sortAdminTradesDeterministic(trades) {
+  return [...trades].sort((a, b) => {
+    const challengedA = a?.status === "CHALLENGED" ? 0 : 1;
+    const challengedB = b?.status === "CHALLENGED" ? 0 : 1;
+    if (challengedA !== challengedB) return challengedA - challengedB;
+
+    const incompleteA = a?.payout_snapshot?.is_complete === false ? 0 : 1;
+    const incompleteB = b?.payout_snapshot?.is_complete === false ? 0 : 1;
+    if (incompleteA !== incompleteB) return incompleteA - incompleteB;
+
+    const highRiskA = a?.bank_profile_risk?.highRiskBankProfile ? 0 : 1;
+    const highRiskB = b?.bank_profile_risk?.highRiskBankProfile ? 0 : 1;
+    if (highRiskA !== highRiskB) return highRiskA - highRiskB;
+
+    const createdAtDiff = _toMillisSafe(b?.created_at) - _toMillisSafe(a?.created_at);
+    if (createdAtDiff !== 0) return createdAtDiff;
+
+    return String(a?.onchain_escrow_id || "").localeCompare(String(b?.onchain_escrow_id || ""));
+  });
 }
 
 // [TR] Tüm admin yüzeyi read-only gözlem amaçlıdır; auth zinciri zorunludur.
@@ -141,6 +243,78 @@ router.get("/feedback", async (req, res, next) => {
 
     return res.json({
       feedback,
+      total,
+      page: value.page,
+      limit: value.limit,
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+router.get("/trades", async (req, res, next) => {
+  try {
+    const schema = Joi.object({
+      status: Joi.string().valid(...ADMIN_TRADES_STATUS_VALUES).default("CHALLENGED"),
+      tier: Joi.number().integer().min(0).max(4).optional(),
+      origin: Joi.string().valid(...ADMIN_TRADES_ORIGIN_VALUES).default("ALL"),
+      riskOnly: Joi.boolean().truthy("true").falsy("false").default(false),
+      snapshotComplete: Joi.string().valid(...ADMIN_TRADES_SNAPSHOT_VALUES).default("ALL"),
+      page: Joi.number().integer().min(1).default(1),
+      limit: Joi.number().integer().min(1).max(50).default(20),
+    });
+
+    const { error, value } = schema.validate(req.query);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const filter = {};
+
+    if (value.status !== "ALL") filter.status = value.status;
+    if (typeof value.tier === "number") filter.tier = value.tier;
+    if (value.origin !== "ALL") filter.trade_origin = value.origin;
+    if (value.snapshotComplete === "true") filter["payout_snapshot.is_complete"] = true;
+    if (value.snapshotComplete === "false") filter["payout_snapshot.is_complete"] = false;
+
+    const skip = (value.page - 1) * value.limit;
+    let total = 0;
+    let pageTrades = [];
+
+    if (value.riskOnly) {
+      // [TR] highRisk türetilmiş bir sinyal olduğu için (maker current profile ile hesaplanır),
+      //      bu filtrede doğru total için dataset enrichment gerekir.
+      // [EN] highRisk is derived, so accurate total under this filter requires enrichment.
+      const allTrades = await Trade.find(filter)
+        .select(ADMIN_TRADE_PROJECTION)
+        .sort({ created_at: -1, _id: -1 })
+        .lean();
+
+      const enriched = await _attachAdminTradeRisk(allTrades);
+      const riskOnlyTrades = enriched.filter((trade) => trade?.bank_profile_risk?.highRiskBankProfile === true);
+      const sorted = _sortAdminTradesDeterministic(riskOnlyTrades);
+
+      total = sorted.length;
+      pageTrades = sorted.slice(skip, skip + value.limit);
+    } else {
+      total = await Trade.countDocuments(filter);
+
+      // [TR] Derived sıralama için pragmatik pencere: created_at desc tabanından yeterli örnek alıp
+      //      JS tarafında deterministic risk öncelik sırası uygularız.
+      // [EN] Pragmatic window for derived sorting: fetch a reasonable sample then deterministic JS sort.
+      const windowSize = Math.min(Math.max(value.limit * 3, value.page * value.limit), 500);
+
+      const windowTrades = await Trade.find(filter)
+        .select(ADMIN_TRADE_PROJECTION)
+        .sort({ created_at: -1, _id: -1 })
+        .limit(windowSize)
+        .lean();
+
+      const enriched = await _attachAdminTradeRisk(windowTrades);
+      const sorted = _sortAdminTradesDeterministic(enriched);
+      pageTrades = sorted.slice(skip, skip + value.limit);
+    }
+
+    return res.json({
+      trades: pageTrades,
       total,
       page: value.page,
       limit: value.limit,
