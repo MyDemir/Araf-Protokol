@@ -100,6 +100,22 @@ const baseCtx = {
 };
 
 describe('AppViews market side-aware rendering', () => {
+  it('keeps admin entry reachable for authenticated users even when VITE_ADMIN_WALLETS is empty', () => {
+    const previous = import.meta.env.VITE_ADMIN_WALLETS;
+    import.meta.env.VITE_ADMIN_WALLETS = '';
+    try {
+      const views = buildAppViews({
+        ...baseCtx,
+        isConnected: true,
+        isAuthenticated: true,
+      });
+      render(<div>{views.renderSlimRail()}</div>);
+      expect(screen.getByTitle('Admin Observability (server-authorized)')).toBeInTheDocument();
+    } finally {
+      import.meta.env.VITE_ADMIN_WALLETS = previous;
+    }
+  });
+
   it('renders side badge and side CTA labels', () => {
     const views = buildAppViews({
       ...baseCtx,

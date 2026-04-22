@@ -110,6 +110,7 @@ export function useAppSessionData({
   const authValidationKeyRef = React.useRef(null);
   const showToastRef = React.useRef(showToast);
   const langRef = React.useRef(lang);
+  const sessionToastShownRef = React.useRef(false);
 
   useEffect(() => {
     showToastRef.current = showToast;
@@ -154,12 +155,17 @@ export function useAppSessionData({
   }, []);
 
   const authenticatedFetch = React.useCallback(async (url, options = {}) => {
+    const {
+      skipRefresh = false,
+      suppressAuthToast = false,
+      ...requestOptions
+    } = options || {};
     const walletHeader = connectedWallet ? { 'x-wallet-address': connectedWallet } : {};
     const res = await fetch(url, {
-      ...options,
+      ...requestOptions,
       headers: {
         'Content-Type': 'application/json',
-        ...options.headers,
+        ...requestOptions.headers,
         ...walletHeader,
       },
       credentials: 'include',
@@ -174,16 +180,20 @@ export function useAppSessionData({
       } catch (_) {}
 
       clearLocalSessionState({ navigateHome: false, closeModals: true });
-      showToast(
-        lang === 'TR'
-          ? 'Oturum cüzdan uyuşmazlığı nedeniyle sonlandırıldı. Lütfen yeniden giriş yapın.'
-          : 'Session ended due to wallet mismatch. Please sign in again.',
-        'error'
-      );
+      if (!suppressAuthToast && !sessionToastShownRef.current) {
+        sessionToastShownRef.current = true;
+        showToast(
+          lang === 'TR'
+            ? 'Oturum cüzdan uyuşmazlığı nedeniyle sonlandırıldı. Lütfen yeniden giriş yapın.'
+            : 'Session ended due to wallet mismatch. Please sign in again.',
+          'error'
+        );
+      }
       return res;
     }
 
     if (res.status !== 401) return res;
+    if (skipRefresh) return res;
 
     try {
       const refreshRes = await fetch(buildApiUrl('auth/refresh'), {
@@ -195,20 +205,27 @@ export function useAppSessionData({
 
       if (!refreshRes.ok) {
         clearLocalSessionState({ navigateHome: false, closeModals: true });
-        showToast(
-          lang === 'TR'
-            ? 'Oturumunuz sona erdi. Lütfen tekrar imzalayın.'
-            : 'Session expired. Please sign in again.',
-          'error'
-        );
+        if (!suppressAuthToast && !sessionToastShownRef.current) {
+          sessionToastShownRef.current = true;
+          showToast(
+            lang === 'TR'
+              ? 'Oturumunuz sona erdi. Lütfen tekrar imzalayın.'
+              : 'Session expired. Please sign in again.',
+            'error'
+          );
+        }
         return res;
       }
 
+      // [TR] Oturum başarıyla yenilendiğinde auth-toast dalgası sıfırlanır.
+      // [EN] Reset auth-toast wave only after successful session refresh.
+      sessionToastShownRef.current = false;
+
       return fetch(url, {
-        ...options,
+        ...requestOptions,
         headers: {
           'Content-Type': 'application/json',
-          ...options.headers,
+          ...requestOptions.headers,
           ...walletHeader,
         },
         credentials: 'include',
@@ -217,6 +234,14 @@ export function useAppSessionData({
       return res;
     }
   }, [connectedWallet, address, clearLocalSessionState, lang, showToast]);
+
+  useEffect(() => {
+    // [TR] Dedupe bayrağını yalnız doğrulanmış auth geri geldiğinde sıfırlarız.
+    // [EN] Reset dedupe flag only when authenticated state is recovered.
+    if (isAuthenticated) {
+      sessionToastShownRef.current = false;
+    }
+  }, [isAuthenticated]);
 
   const formatAddress = (addr) => addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : '—';
 

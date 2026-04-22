@@ -68,9 +68,10 @@ async function runReputationDecay() {
   logger.info("[DecayJob] V3 itibar temizleme görevi başlatıldı...");
 
   const contract = getDecayContract();
-  if (!contract) return;
+  if (!contract) return { success: false, reason: "contract_unavailable" };
 
   const cutoffMs = Date.now() - CLEAN_SLATE_DAYS * 24 * 3600 * 1000;
+  let hadErrors = false;
 
   // [TR] Mirror alanları stale olabilir. Bu yüzden query yalnız aday havuzu içindir.
   //      Nihai eligibility kararı kontratın getReputation() çağrısından gelir.
@@ -86,7 +87,7 @@ async function runReputationDecay() {
 
   if (candidates.length === 0) {
     logger.info("[DecayJob] Aday havuzunda kullanıcı bulunamadı.");
-    return;
+    return { success: true, candidates: 0, processed: 0 };
   }
 
   const usersToClean = [];
@@ -104,12 +105,13 @@ async function runReputationDecay() {
       if (usersToClean.length >= DEFAULT_TX_LIMIT) break;
     } catch (err) {
       logger.warn(`[DecayJob] getReputation() okunamadı: ${user.wallet_address} err=${err.message}`);
+      hadErrors = true;
     }
   }
 
   if (usersToClean.length === 0) {
     logger.info("[DecayJob] On-chain koşullara göre temizlenecek kullanıcı bulunamadı.");
-    return;
+    return { success: !hadErrors, candidates: candidates.length, processed: 0 };
   }
 
   logger.info(`[DecayJob] ${usersToClean.length} kullanıcı için decayReputation() denenecek.`);
@@ -123,8 +125,15 @@ async function runReputationDecay() {
       );
     } catch (err) {
       logger.error(`[DecayJob] ${wallet} için itibar temizleme başarısız: ${err.reason || err.message}`);
+      hadErrors = true;
     }
   }
+
+  return {
+    success: !hadErrors,
+    candidates: candidates.length,
+    processed: usersToClean.length,
+  };
 }
 
 module.exports = { runReputationDecay };

@@ -14,7 +14,7 @@ const TRADES_TIER_OPTIONS = ['', '0', '1', '2', '3', '4'];
 const TRADES_ORIGIN_OPTIONS = ['ALL', 'ORDER_CHILD', 'DIRECT_ESCROW'];
 const TRADES_SNAPSHOT_OPTIONS = ['ALL', 'true', 'false'];
 const TRADES_LIMIT_OPTIONS = [10, 20, 50];
-const TRADES_POLL_INTERVAL_MS = 5 * 60 * 1000;
+const ADMIN_POLL_INTERVAL_MS = 10 * 60 * 1000;
 
 const shortenWallet = (wallet) => {
   const value = String(wallet || '').trim();
@@ -40,7 +40,7 @@ const toBoolBadgeClass = (value) => (
     : 'bg-[#1a1a1f] text-slate-300 border border-[#333]'
 );
 
-function AdminPanel({ lang, authenticatedFetch, showToast }) {
+function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, showToast }) {
   const [activeTab, setActiveTab] = React.useState(TAB_OVERVIEW);
 
   const [summary, setSummary] = React.useState(null);
@@ -57,6 +57,7 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
 
   const [trades, setTrades] = React.useState([]);
   const [tradesTotal, setTradesTotal] = React.useState(0);
+  const [tradesPaginationScope, setTradesPaginationScope] = React.useState(null);
   const [tradesLoading, setTradesLoading] = React.useState(false);
   const [tradesError, setTradesError] = React.useState('');
   const [tradesUnauthorized, setTradesUnauthorized] = React.useState(false);
@@ -81,6 +82,7 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
   });
 
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState(null);
+  const authInvalidRef = React.useRef(false);
 
   // [TR] Admin summary fetch; 403 durumunu net ve görünür şekilde işler.
   // [EN] Admin summary fetch with explicit, visible 403 handling.
@@ -90,12 +92,16 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
     setSummaryUnauthorized(false);
 
     try {
-      const res = await authenticatedFetch(buildApiUrl('admin/summary'));
+      const res = await authenticatedFetch(buildApiUrl('admin/summary'), {
+        skipRefresh: authInvalidRef.current,
+        suppressAuthToast: true,
+      });
 
       if (res.status === 403) {
         setSummary(null);
         setSummaryUnauthorized(true);
         setSummaryPollingEnabled(false);
+        authInvalidRef.current = true;
         return;
       }
 
@@ -104,6 +110,7 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
       if (res.status === 401 || res.status === 409) {
         setSummary(null);
         setSummaryPollingEnabled(false);
+        authInvalidRef.current = true;
         setSummaryError(
           lang === 'TR'
             ? 'Admin oturumu doğrulanamadı. Yeniden giriş yapın.'
@@ -118,6 +125,7 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
       }
 
       const data = await res.json();
+      authInvalidRef.current = false;
       setSummary(data || null);
       setLastRefreshedAt(new Date().toISOString());
     } catch (_err) {
@@ -139,18 +147,23 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
       qs.set('page', String(feedbackFilters.page || 1));
       qs.set('limit', String(feedbackFilters.limit || 20));
 
-      const res = await authenticatedFetch(buildApiUrl(`admin/feedback?${qs.toString()}`));
+      const res = await authenticatedFetch(buildApiUrl(`admin/feedback?${qs.toString()}`), {
+        skipRefresh: authInvalidRef.current,
+        suppressAuthToast: true,
+      });
 
       if (res.status === 403) {
         setFeedback([]);
         setFeedbackTotal(0);
         setFeedbackUnauthorized(true);
+        authInvalidRef.current = true;
         return;
       }
 
       if (res.status === 401 || res.status === 409) {
         setFeedback([]);
         setFeedbackTotal(0);
+        authInvalidRef.current = true;
         setFeedbackError(
           lang === 'TR'
             ? 'Admin feedback oturumu doğrulanamadı. Yeniden giriş yapın.'
@@ -165,6 +178,7 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
       }
 
       const data = await res.json();
+      authInvalidRef.current = false;
       setFeedback(Array.isArray(data.feedback) ? data.feedback : []);
       setFeedbackTotal(Number(data.total) || 0);
       setLastRefreshedAt(new Date().toISOString());
@@ -179,6 +193,7 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
     setTradesLoading(true);
     setTradesError('');
     setTradesUnauthorized(false);
+    setTradesPaginationScope(null);
 
     try {
       const qs = new URLSearchParams();
@@ -190,13 +205,17 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
       qs.set('page', String(tradesFilters.page || 1));
       qs.set('limit', String(tradesFilters.limit || 20));
 
-      const res = await authenticatedFetch(buildApiUrl(`admin/trades?${qs.toString()}`));
+      const res = await authenticatedFetch(buildApiUrl(`admin/trades?${qs.toString()}`), {
+        skipRefresh: authInvalidRef.current,
+        suppressAuthToast: true,
+      });
 
       if (res.status === 403) {
         setTrades([]);
         setTradesTotal(0);
         setTradesUnauthorized(true);
         setTradesPollingEnabled(false);
+        authInvalidRef.current = true;
         return;
       }
 
@@ -204,6 +223,7 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
         setTrades([]);
         setTradesTotal(0);
         setTradesPollingEnabled(false);
+        authInvalidRef.current = true;
         setTradesError(
           lang === 'TR'
             ? 'Admin trades oturumu doğrulanamadı. Yeniden giriş yapın.'
@@ -218,8 +238,10 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
       }
 
       const data = await res.json();
+      authInvalidRef.current = false;
       setTrades(Array.isArray(data.trades) ? data.trades : []);
       setTradesTotal(Number(data.total) || 0);
+      setTradesPaginationScope(data?.paginationScope || null);
       setLastRefreshedAt(new Date().toISOString());
     } catch (_err) {
       setTradesError(lang === 'TR' ? 'Trades isteğinde hata oluştu.' : 'Trades request failed.');
@@ -231,7 +253,7 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
   React.useEffect(() => {
     if (!summaryPollingEnabled) return undefined;
     fetchSummary();
-    const timer = setInterval(fetchSummary, 15_000);
+    const timer = setInterval(fetchSummary, ADMIN_POLL_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [fetchSummary, summaryPollingEnabled]);
 
@@ -246,9 +268,16 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
     fetchTrades();
     // [TR] Trades endpoint'inde enrichment maliyeti yüksek olabileceği için polling daha seyrek tutulur.
     // [EN] Keep trades polling less frequent due to heavier enrichment cost on this endpoint.
-    const timer = setInterval(fetchTrades, TRADES_POLL_INTERVAL_MS);
+    const timer = setInterval(fetchTrades, ADMIN_POLL_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [activeTab, fetchTrades, tradesPollingEnabled]);
+
+  React.useEffect(() => {
+    if (!authChecked || !isAuthenticated) return;
+    authInvalidRef.current = false;
+    setSummaryPollingEnabled(true);
+    setTradesPollingEnabled(true);
+  }, [authChecked, isAuthenticated]);
 
   const readiness = summary?.readiness || {};
   const checks = readiness?.checks || {};
@@ -294,19 +323,25 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
 
   const refreshFeedbackNow = async () => {
     await fetchFeedback();
-    showToast(lang === 'TR' ? 'Feedback yenilendi.' : 'Feedback refreshed.', 'info');
+    if (typeof showToast === 'function') {
+      showToast(lang === 'TR' ? 'Feedback yenilendi.' : 'Feedback refreshed.', 'info');
+    }
   };
 
   const refreshSummaryNow = async () => {
     setSummaryPollingEnabled(true);
     await fetchSummary();
-    showToast(lang === 'TR' ? 'Özet yenilendi.' : 'Summary refreshed.', 'info');
+    if (typeof showToast === 'function') {
+      showToast(lang === 'TR' ? 'Özet yenilendi.' : 'Summary refreshed.', 'info');
+    }
   };
 
   const refreshTradesNow = async () => {
     setTradesPollingEnabled(true);
     await fetchTrades();
-    showToast(lang === 'TR' ? 'Trades yenilendi.' : 'Trades refreshed.', 'info');
+    if (typeof showToast === 'function') {
+      showToast(lang === 'TR' ? 'Trades yenilendi.' : 'Trades refreshed.', 'info');
+    }
   };
 
   const toggleTradeExpanded = (tradeId) => {
@@ -325,6 +360,8 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
       <p className="text-slate-300 text-sm">{description}</p>
     </div>
   );
+
+  const isWindowedTradeTotal = tradesPaginationScope?.isWindowed === true;
 
   return (
     <div className="p-4 md:p-8 max-w-[1200px] w-full">
@@ -714,6 +751,13 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
           {!tradesUnauthorized && (
             <div className="text-xs text-slate-500">
               {lang === 'TR' ? 'Toplam trade kaydı' : 'Total trade records'}: {tradesTotal}
+              {isWindowedTradeTotal && (
+                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded border border-orange-800/40 text-orange-300">
+                  {lang === 'TR'
+                    ? 'Pencere toplamı (global değil)'
+                    : 'Window total (not global)'}
+                </span>
+              )}
             </div>
           )}
         </section>

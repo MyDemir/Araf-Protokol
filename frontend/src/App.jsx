@@ -1570,7 +1570,15 @@ const handleCreateOrder = async () => {
             : currentView === 'market'
               ? renderMarket()
               : currentView === 'admin'
-                ? <AdminPanel lang={lang} authenticatedFetch={authenticatedFetch} showToast={showToast} />
+                ? (
+                  <AdminPanel
+                    lang={lang}
+                    authenticatedFetch={authenticatedFetch}
+                    isAuthenticated={isAuthenticated}
+                    authChecked={authChecked}
+                    showToast={showToast}
+                  />
+                )
                 : renderTradeRoom()}
           {renderFooter()}
         </div>

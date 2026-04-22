@@ -139,34 +139,75 @@ router.use(requireAuth, requireSessionWalletMatch, requireAdminWallet);
 
 router.get("/summary", async (req, res, next) => {
   try {
-    const readinessPromise = getReadiness({ worker, provider: worker.provider });
-    const latestStatPromise = HistoricalStat.findOne()
-      .sort({ date: -1 })
-      .lean()
-      .catch(() => null);
+    const degraded = {
+      isDegraded: false,
+      sources: {
+        latestStatFallbackUsed: false,
+        tradeCountsFallbackUsed: false,
+        dlqDepthFallbackUsed: false,
+      },
+      errors: [],
+    };
+
+    let readiness = null;
+    try {
+      readiness = await getReadiness({ worker, provider: worker.provider });
+    } catch (err) {
+      degraded.isDegraded = true;
+      degraded.errors.push({
+        source: "readiness",
+        message: err.message,
+      });
+      readiness = {
+        ok: false,
+        degraded: true,
+        error: "readiness_unavailable",
+      };
+    }
+
+    let latestStat = null;
+    try {
+      latestStat = await HistoricalStat.findOne().sort({ date: -1 }).lean();
+    } catch (err) {
+      degraded.isDegraded = true;
+      degraded.sources.latestStatFallbackUsed = true;
+      degraded.errors.push({
+        source: "latest_stat",
+        message: err.message,
+      });
+      latestStat = null;
+    }
 
     const activeFilter = { status: { $nin: TERMINAL_TRADE_STATUSES } };
+    let tradeCounts = [0, 0, 0, 0, 0];
+    try {
+      tradeCounts = await Promise.all([
+        Trade.countDocuments(activeFilter),
+        Trade.countDocuments({ status: "LOCKED" }),
+        Trade.countDocuments({ status: "PAID" }),
+        Trade.countDocuments({ status: "CHALLENGED" }),
+        Trade.countDocuments({ "payout_snapshot.is_complete": false }),
+      ]);
+    } catch (err) {
+      degraded.isDegraded = true;
+      degraded.sources.tradeCountsFallbackUsed = true;
+      degraded.errors.push({
+        source: "trade_counts",
+        message: err.message,
+      });
+    }
 
-    const tradeCountsPromise = Promise.all([
-      Trade.countDocuments(activeFilter),
-      Trade.countDocuments({ status: "LOCKED" }),
-      Trade.countDocuments({ status: "PAID" }),
-      Trade.countDocuments({ status: "CHALLENGED" }),
-      Trade.countDocuments({ "payout_snapshot.is_complete": false }),
-    ]).catch(() => [0, 0, 0, 0, 0]);
-
-    // [TR] DLQ derinliği okunamazsa summary endpoint'ini düşürmeyiz; 0 fallback veririz.
-    // [EN] Do not fail summary endpoint if DLQ depth lookup fails; fallback to 0.
-    const dlqDepthPromise = getRedisClient()
-      .lLen(DLQ_KEY)
-      .catch(() => 0);
-
-    const [readiness, latestStat, tradeCounts, dlqDepth] = await Promise.all([
-      readinessPromise,
-      latestStatPromise,
-      tradeCountsPromise,
-      dlqDepthPromise,
-    ]);
+    let dlqDepth = 0;
+    try {
+      dlqDepth = await getRedisClient().lLen(DLQ_KEY);
+    } catch (err) {
+      degraded.isDegraded = true;
+      degraded.sources.dlqDepthFallbackUsed = true;
+      degraded.errors.push({
+        source: "dlq_depth",
+        message: err.message,
+      });
+    }
 
     const schedulerState = req.app.locals.schedulerState || {};
 
@@ -210,6 +251,7 @@ router.get("/summary", async (req, res, next) => {
         sensitiveCleanupLastRunAt: schedulerState.sensitiveCleanupLastRunAt || null,
         userBankRiskCleanupLastRunAt: schedulerState.userBankRiskCleanupLastRunAt || null,
       },
+      degraded,
     });
   } catch (err) {
     return next(err);
@@ -279,36 +321,57 @@ router.get("/trades", async (req, res, next) => {
 
     const skip = (value.page - 1) * value.limit;
 
-    // [TR] Full collection scan yerine bounded candidate penceresi kullanırız:
-    //      - recent created_at desc window alınır
-    //      - enrichment + derived sort bu pencere üzerinde deterministik uygulanır
-    //      - total yalnız bu erişilebilir pencereyi temsil eder (misleading full total dönmeyiz)
-    // [EN] Bounded candidate window avoids unbounded scans; total reflects reachable window only.
-    const candidateWindowSize = Math.min(
-      Math.max(value.limit * 5, value.page * value.limit * 2),
-      ADMIN_TRADES_MAX_CANDIDATE_SCAN
-    );
+    if (!value.riskOnly) {
+      const [rows, total] = await Promise.all([
+        Trade.find(filter)
+          .select(ADMIN_TRADE_PROJECTION)
+          .sort({ created_at: -1, _id: -1 })
+          .skip(skip)
+          .limit(value.limit)
+          .lean(),
+        Trade.countDocuments(filter),
+      ]);
 
+      const enrichedPage = await _attachAdminTradeRisk(rows);
+
+      return res.json({
+        trades: enrichedPage,
+        total,
+        page: value.page,
+        limit: value.limit,
+        paginationScope: {
+          mode: "global_db_order",
+          order: "created_at_desc_id_desc",
+          totalRepresents: "global_query_total",
+          isWindowed: false,
+        },
+      });
+    }
+
+    // [TR] riskOnly modu enrichment tabanlı olduğu için bounded pencereyi açıkça işaretleriz.
+    // [EN] riskOnly mode is enrichment-driven; response explicitly signals bounded-window semantics.
     const candidateTrades = await Trade.find(filter)
       .select(ADMIN_TRADE_PROJECTION)
       .sort({ created_at: -1, _id: -1 })
-      .limit(candidateWindowSize)
+      .limit(ADMIN_TRADES_MAX_CANDIDATE_SCAN)
       .lean();
 
     const enriched = await _attachAdminTradeRisk(candidateTrades);
-    const derivedFiltered = value.riskOnly
-      ? enriched.filter((trade) => trade?.bank_profile_risk?.highRiskBankProfile === true)
-      : enriched;
-    const sorted = _sortAdminTradesDeterministic(derivedFiltered);
-
-    const total = sorted.length;
-    const pageTrades = sorted.slice(skip, skip + value.limit);
+    const highRiskOnly = enriched.filter((trade) => trade?.bank_profile_risk?.highRiskBankProfile === true);
+    const sorted = _sortAdminTradesDeterministic(highRiskOnly);
 
     return res.json({
-      trades: pageTrades,
-      total,
+      trades: sorted.slice(skip, skip + value.limit),
+      total: sorted.length,
       page: value.page,
       limit: value.limit,
+      paginationScope: {
+        mode: "risk_only_bounded_window",
+        order: "derived_risk_priority",
+        isWindowed: true,
+        windowSize: ADMIN_TRADES_MAX_CANDIDATE_SCAN,
+        totalRepresents: "window_filtered_total",
+      },
     });
   } catch (err) {
     return next(err);
