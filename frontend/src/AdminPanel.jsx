@@ -147,6 +147,17 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
         return;
       }
 
+      if (res.status === 401 || res.status === 409) {
+        setFeedback([]);
+        setFeedbackTotal(0);
+        setFeedbackError(
+          lang === 'TR'
+            ? 'Admin feedback oturumu doğrulanamadı. Yeniden giriş yapın.'
+            : 'Admin feedback session is no longer valid. Please sign in again.'
+        );
+        return;
+      }
+
       if (!res.ok) {
         setFeedbackError(lang === 'TR' ? 'Feedback verisi alınamadı.' : 'Failed to load feedback data.');
         return;
@@ -350,6 +361,9 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
           )}
           {!summaryUnauthorized && summaryError && renderErrorBox(summaryError)}
           {summaryLoading && <div className="text-slate-400 text-sm">{lang === 'TR' ? 'Özet yükleniyor...' : 'Loading summary...'}</div>}
+          {!summaryUnauthorized && !summaryLoading && !summaryError && !summary && (
+            <div className="text-slate-500 text-sm">{lang === 'TR' ? 'Özet verisi henüz yok.' : 'No summary data yet.'}</div>
+          )}
 
           {!summaryUnauthorized && (
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
@@ -373,6 +387,10 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
               : 'You are not authorized to view this admin sync screen.'
           )}
           {!summaryUnauthorized && summaryError && renderErrorBox(summaryError)}
+          {!summaryUnauthorized && summaryLoading && <div className="text-slate-400 text-sm">{lang === 'TR' ? 'Sync verisi yükleniyor...' : 'Loading sync data...'}</div>}
+          {!summaryUnauthorized && !summaryLoading && !summaryError && !summary && (
+            <div className="text-slate-500 text-sm">{lang === 'TR' ? 'Sync verisi henüz yok.' : 'No sync data yet.'}</div>
+          )}
           {summaryUnauthorized ? null : (
             <>
           <div className="bg-[#111113] border border-[#222] rounded-xl p-4">
@@ -434,6 +452,7 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
               : 'You are not authorized to view this admin feedback screen.'
           )}
           {!feedbackUnauthorized && feedbackError && renderErrorBox(feedbackError)}
+          {!feedbackUnauthorized && feedbackLoading && <div className="text-slate-400 text-sm">{lang === 'TR' ? 'Feedback yükleniyor...' : 'Loading feedback...'}</div>}
 
           {!feedbackUnauthorized && <div className="bg-[#111113] border border-[#222] rounded-xl p-4">
             <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
@@ -524,6 +543,7 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
               : 'You are not authorized to view this admin trades screen.'
           )}
           {!tradesUnauthorized && tradesError && renderErrorBox(tradesError)}
+          {!tradesUnauthorized && tradesLoading && <div className="text-slate-400 text-sm">{lang === 'TR' ? 'Trades yükleniyor...' : 'Loading trades...'}</div>}
 
           {!tradesUnauthorized && (
             <div className="bg-[#111113] border border-[#222] rounded-xl p-4 space-y-3">
