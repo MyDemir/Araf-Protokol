@@ -33,11 +33,13 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
   const [summary, setSummary] = React.useState(null);
   const [summaryLoading, setSummaryLoading] = React.useState(false);
   const [summaryError, setSummaryError] = React.useState('');
+  const [summaryUnauthorized, setSummaryUnauthorized] = React.useState(false);
 
   const [feedback, setFeedback] = React.useState([]);
   const [feedbackTotal, setFeedbackTotal] = React.useState(0);
   const [feedbackLoading, setFeedbackLoading] = React.useState(false);
   const [feedbackError, setFeedbackError] = React.useState('');
+  const [feedbackUnauthorized, setFeedbackUnauthorized] = React.useState(false);
 
   const [feedbackFilters, setFeedbackFilters] = React.useState({
     category: '',
@@ -53,13 +55,14 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
   const fetchSummary = React.useCallback(async () => {
     setSummaryLoading(true);
     setSummaryError('');
+    setSummaryUnauthorized(false);
 
     try {
       const res = await authenticatedFetch(buildApiUrl('admin/summary'));
 
       if (res.status === 403) {
         setSummary(null);
-        setSummaryError(lang === 'TR' ? 'Admin erişim yetkiniz yok.' : 'You are not authorized for admin access.');
+        setSummaryUnauthorized(true);
         return;
       }
 
@@ -81,6 +84,7 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
   const fetchFeedback = React.useCallback(async () => {
     setFeedbackLoading(true);
     setFeedbackError('');
+    setFeedbackUnauthorized(false);
 
     try {
       const qs = new URLSearchParams();
@@ -94,7 +98,7 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
       if (res.status === 403) {
         setFeedback([]);
         setFeedbackTotal(0);
-        setFeedbackError(lang === 'TR' ? 'Admin feedback erişim yetkiniz yok.' : 'You are not authorized to view admin feedback.');
+        setFeedbackUnauthorized(true);
         return;
       }
 
@@ -167,6 +171,13 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
     </div>
   );
 
+  const renderUnauthorizedBox = (title, description) => (
+    <div className="bg-[#111113] border border-red-800/40 rounded-xl p-6">
+      <h3 className="text-red-300 text-lg font-semibold mb-2">{title}</h3>
+      <p className="text-slate-300 text-sm">{description}</p>
+    </div>
+  );
+
   return (
     <div className="p-4 md:p-8 max-w-[1200px] w-full">
       <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -199,25 +210,41 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
         })}
       </div>
 
-      {summaryError && renderErrorBox(summaryError)}
-
       {activeTab === TAB_OVERVIEW && (
         <section className="space-y-4">
+          {summaryUnauthorized && renderUnauthorizedBox(
+            lang === 'TR' ? 'Yetkisiz Erişim' : 'Unauthorized Access',
+            lang === 'TR'
+              ? 'Bu admin özet ekranını görüntüleme yetkiniz bulunmuyor.'
+              : 'You are not authorized to view this admin summary screen.'
+          )}
+          {!summaryUnauthorized && summaryError && renderErrorBox(summaryError)}
           {summaryLoading && <div className="text-slate-400 text-sm">{lang === 'TR' ? 'Özet yükleniyor...' : 'Loading summary...'}</div>}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-            {kpis.map((kpi) => (
-              <div key={kpi.labelEN} className="bg-[#111113] border border-[#222] rounded-xl px-4 py-3">
-                <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">{lang === 'TR' ? kpi.labelTR : kpi.labelEN}</div>
-                <div className={`text-xl font-bold ${kpi.tone}`}>{kpi.value}</div>
-              </div>
-            ))}
-          </div>
+          {!summaryUnauthorized && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              {kpis.map((kpi) => (
+                <div key={kpi.labelEN} className="bg-[#111113] border border-[#222] rounded-xl px-4 py-3">
+                  <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-1">{lang === 'TR' ? kpi.labelTR : kpi.labelEN}</div>
+                  <div className={`text-xl font-bold ${kpi.tone}`}>{kpi.value}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
       {activeTab === TAB_SYNC && (
         <section className="space-y-4">
+          {summaryUnauthorized && renderUnauthorizedBox(
+            lang === 'TR' ? 'Yetkisiz Erişim' : 'Unauthorized Access',
+            lang === 'TR'
+              ? 'Bu admin senkronizasyon ekranını görüntüleme yetkiniz bulunmuyor.'
+              : 'You are not authorized to view this admin sync screen.'
+          )}
+          {!summaryUnauthorized && summaryError && renderErrorBox(summaryError)}
+          {summaryUnauthorized ? null : (
+            <>
           <div className="bg-[#111113] border border-[#222] rounded-xl p-4">
             <h2 className="text-sm font-bold text-white mb-3">{lang === 'TR' ? 'Health Checklist' : 'Health Checklist'}</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -263,14 +290,22 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
               </ul>
             )}
           </div>
+            </>
+          )}
         </section>
       )}
 
       {activeTab === TAB_FEEDBACK && (
         <section className="space-y-4">
-          {feedbackError && renderErrorBox(feedbackError)}
+          {feedbackUnauthorized && renderUnauthorizedBox(
+            lang === 'TR' ? 'Yetkisiz Erişim' : 'Unauthorized Access',
+            lang === 'TR'
+              ? 'Bu admin feedback ekranını görüntüleme yetkiniz bulunmuyor.'
+              : 'You are not authorized to view this admin feedback screen.'
+          )}
+          {!feedbackUnauthorized && feedbackError && renderErrorBox(feedbackError)}
 
-          <div className="bg-[#111113] border border-[#222] rounded-xl p-4">
+          {!feedbackUnauthorized && <div className="bg-[#111113] border border-[#222] rounded-xl p-4">
             <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
               <label className="text-sm text-slate-300 flex flex-col gap-1">
                 <span>{lang === 'TR' ? 'Kategori' : 'Category'}</span>
@@ -310,9 +345,9 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
                 </button>
               </div>
             </div>
-          </div>
+          </div>}
 
-          <div className="bg-[#111113] border border-[#222] rounded-xl overflow-x-auto">
+          {!feedbackUnauthorized && <div className="bg-[#111113] border border-[#222] rounded-xl overflow-x-auto">
             <table className="w-full min-w-[900px] text-sm">
               <thead>
                 <tr className="bg-[#0d0d0f] border-b border-[#222] text-slate-300">
@@ -342,11 +377,11 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
                 )}
               </tbody>
             </table>
-          </div>
+          </div>}
 
-          <div className="text-xs text-slate-500">
+          {!feedbackUnauthorized && <div className="text-xs text-slate-500">
             {lang === 'TR' ? 'Toplam kayıt' : 'Total records'}: {feedbackTotal}
-          </div>
+          </div>}
         </section>
       )}
     </div>

@@ -51,7 +51,11 @@ router.get("/summary", async (req, res, next) => {
       Trade.countDocuments({ "payout_snapshot.is_complete": false }),
     ]);
 
-    const dlqDepthPromise = getRedisClient().lLen(DLQ_KEY);
+    // [TR] DLQ derinliği okunamazsa summary endpoint'ini düşürmeyiz; 0 fallback veririz.
+    // [EN] Do not fail summary endpoint if DLQ depth lookup fails; fallback to 0.
+    const dlqDepthPromise = getRedisClient()
+      .lLen(DLQ_KEY)
+      .catch(() => 0);
 
     const [readiness, latestStat, tradeCounts, dlqDepth] = await Promise.all([
       readinessPromise,
