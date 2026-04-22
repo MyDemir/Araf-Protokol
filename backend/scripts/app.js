@@ -62,6 +62,14 @@ const { globalErrorHandler } = require("./middleware/errorHandler");
 const { clearMasterKeyCache } = require("./services/encryption");
 
 const app = express();
+// [TR] Admin read-only gözlem endpoint'leri için scheduler çalışma zamanını paylaşır.
+// [EN] Shared scheduler runtime state for admin read-only observability endpoints.
+app.locals.schedulerState = {
+  reputationDecayLastRunAt: null,
+  statsSnapshotLastRunAt: null,
+  sensitiveCleanupLastRunAt: null,
+  userBankRiskCleanupLastRunAt: null,
+};
 let server = null;
 let isShuttingDown = false;
 const FATAL_EXIT_TIMEOUT_MS = 8_000;
@@ -196,7 +204,7 @@ async function bootstrap() {
    * [EN] Prevents overlapping job execution.
    *      If the same job is still running, the next tick is skipped.
    */
-  const runScheduledJob = async (jobKey, jobFn) => {
+  const runScheduledJob = async (jobKey, jobFn, onSuccess) => {
     if (jobLocks[jobKey]) {
       logger.warn(`[Scheduler] ${jobKey} hâlâ çalışıyor — bu tick atlandı.`);
       return;
@@ -205,6 +213,15 @@ async function bootstrap() {
     jobLocks[jobKey] = true;
     try {
       await jobFn();
+      // [TR] Bu timestamp güncellemesi "best-effort" semantiğindedir.
+      //      Bazı job'lar iç hataları kendi içinde swallow edebildiği için
+      //      promise resolve olsa da gerçek iş-semantik başarısı iyimser kalabilir.
+      // [EN] This timestamp update is best-effort.
+      //      Some jobs may swallow internal failures, so promise resolution
+      //      can still be optimistic vs. true semantic job success.
+      if (typeof onSuccess === "function") {
+        onSuccess();
+      }
     } catch (err) {
       logger.error(`[Scheduler] ${jobKey} başarısız: ${err.message}`, { stack: err.stack });
     } finally {
@@ -345,22 +362,34 @@ async function bootstrap() {
 
     // [TR] İlk çalıştırma 30 sn geciktirilir — cold start'ta DB'ye eş zamanlı yük binmesini önler
     // [EN] First run delayed by 30s — prevents simultaneous DB load on cold start
+    // [TR] schedulerState *LastRunAt alanları best-effort'tur; bazı job'lar iç hatayı swallow ederse
+    //      bu timestamp'ler gerçek semantik başarıya göre iyimser kalabilir.
+    // [EN] schedulerState *LastRunAt fields are best-effort; if a job swallows internal failures,
+    //      these timestamps may be optimistic vs. true semantic success.
     reputationDecayDelay = setTimeout(() => {
-      runScheduledJob("reputationDecay", runReputationDecay);
+      runScheduledJob("reputationDecay", runReputationDecay, () => {
+        app.locals.schedulerState.reputationDecayLastRunAt = new Date().toISOString();
+      });
       logger.info("Periyodik İtibar İyileştirme görevi zamanlandı (her 24 saatte bir).");
     }, REPUTATION_DECAY_DELAY_MS);
 
     reputationDecayInterval = setInterval(() => {
-      runScheduledJob("reputationDecay", runReputationDecay);
+      runScheduledJob("reputationDecay", runReputationDecay, () => {
+        app.locals.schedulerState.reputationDecayLastRunAt = new Date().toISOString();
+      });
     }, REPUTATION_DECAY_INTERVAL_MS);
 
     statsSnapshotDelay = setTimeout(() => {
-      runScheduledJob("statsSnapshot", runStatsSnapshot);
+      runScheduledJob("statsSnapshot", runStatsSnapshot, () => {
+        app.locals.schedulerState.statsSnapshotLastRunAt = new Date().toISOString();
+      });
       logger.info("Periyodik V3 istatistik snapshot görevi zamanlandı (her 24 saatte bir).");
     }, STATS_SNAPSHOT_DELAY_MS);
 
     statsSnapshotInterval = setInterval(() => {
-      runScheduledJob("statsSnapshot", runStatsSnapshot);
+      runScheduledJob("statsSnapshot", runStatsSnapshot, () => {
+        app.locals.schedulerState.statsSnapshotLastRunAt = new Date().toISOString();
+      });
     }, STATS_SNAPSHOT_INTERVAL_MS);
 
     // [TR] Hassas veri retention cleanup — her 30 dakikada bir
@@ -371,12 +400,16 @@ async function bootstrap() {
     //      süre dolunca temizlenir.
     // [EN] Sensitive-data retention cleanup every 30 minutes.
     sensitiveCleanupDelay = setTimeout(() => {
-      runScheduledJob("sensitiveCleanup", runSensitiveCleanupBundle);
+      runScheduledJob("sensitiveCleanup", runSensitiveCleanupBundle, () => {
+        app.locals.schedulerState.sensitiveCleanupLastRunAt = new Date().toISOString();
+      });
       logger.info("Receipt/PII snapshot retention cleanup görevi zamanlandı (her 30 dakikada bir).");
     }, SENSITIVE_CLEANUP_DELAY_MS);
 
     sensitiveCleanupInterval = setInterval(() => {
-      runScheduledJob("sensitiveCleanup", runSensitiveCleanupBundle);
+      runScheduledJob("sensitiveCleanup", runSensitiveCleanupBundle, () => {
+        app.locals.schedulerState.sensitiveCleanupLastRunAt = new Date().toISOString();
+      });
     }, SENSITIVE_CLEANUP_INTERVAL_MS);
 
     // [TR] User bank risk metadata prune — her 6 saatte bir
@@ -387,12 +420,16 @@ async function bootstrap() {
     //
     // [EN] User bank risk metadata prune every 6 hours.
     userBankRiskCleanupDelay = setTimeout(() => {
-      runScheduledJob("userBankRiskCleanup", runUserBankRiskMetadataCleanup);
+      runScheduledJob("userBankRiskCleanup", runUserBankRiskMetadataCleanup, () => {
+        app.locals.schedulerState.userBankRiskCleanupLastRunAt = new Date().toISOString();
+      });
       logger.info("User bank risk metadata cleanup görevi zamanlandı (her 6 saatte bir).");
     }, USER_BANK_RISK_CLEANUP_DELAY_MS);
 
     userBankRiskCleanupInterval = setInterval(() => {
-      runScheduledJob("userBankRiskCleanup", runUserBankRiskMetadataCleanup);
+      runScheduledJob("userBankRiskCleanup", runUserBankRiskMetadataCleanup, () => {
+        app.locals.schedulerState.userBankRiskCleanupLastRunAt = new Date().toISOString();
+      });
     }, USER_BANK_RISK_CLEANUP_INTERVAL_MS);
 
     // [TR] Rotalar DB ve Redis hazır olduktan sonra yüklenir
@@ -408,6 +445,7 @@ async function bootstrap() {
     const feedbackRoutes = require("./routes/feedback");
     const statsRoutes = require("./routes/stats");
     const receiptRoutes = require("./routes/receipts");
+    const adminRoutes = require("./routes/admin");
 
     // [TR] Log rotası en üstte tanımlanır
     app.use("/api/logs", logRoutes);
@@ -419,6 +457,7 @@ async function bootstrap() {
     app.use("/api/feedback", feedbackRoutes);
     app.use("/api/stats", statsRoutes);
     app.use("/api/receipts", receiptRoutes);
+    app.use("/api/admin", adminRoutes);
 
     app.get("/health", (_req, res) => res.json(getLiveness()));
 
