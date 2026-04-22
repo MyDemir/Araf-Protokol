@@ -7,6 +7,7 @@ import PIIDisplay from './components/PIIDisplay';
 import { buildAppViews } from './app/AppViews';
 import { EnvWarningBanner, buildAppModals } from './app/AppModals';
 import { useAppSessionData } from './app/useAppSessionData';
+import AdminPanel from './AdminPanel';
 import { getInitialLang, getInitialTermsAccepted, APP_LANG_STORAGE_KEY } from './app/bootstrapState';
 import { resolveOrderActionFns, normalizeOrderSide, removeOrderByOnchainId } from './app/orderUiModel';
 import { buildApiUrl } from './app/apiConfig';
@@ -1564,7 +1565,13 @@ const handleCreateOrder = async () => {
 
       <div className="flex-1 overflow-y-auto relative bg-[#060608]">
         <div className="min-h-full flex flex-col pt-4 md:pt-10 pb-24 md:pb-10 items-center">
-          {currentView === 'home' ? renderHome() : currentView === 'market' ? renderMarket() : renderTradeRoom()}
+          {currentView === 'home'
+            ? renderHome()
+            : currentView === 'market'
+              ? renderMarket()
+              : currentView === 'admin'
+                ? <AdminPanel lang={lang} authenticatedFetch={authenticatedFetch} showToast={showToast} />
+                : renderTradeRoom()}
           {renderFooter()}
         </div>
       </div>
