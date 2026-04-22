@@ -141,7 +141,8 @@ router.get("/summary", async (req, res, next) => {
     const readinessPromise = getReadiness({ worker, provider: worker.provider });
     const latestStatPromise = HistoricalStat.findOne()
       .sort({ date: -1 })
-      .lean();
+      .lean()
+      .catch(() => null);
 
     const activeFilter = { status: { $nin: TERMINAL_TRADE_STATUSES } };
 
@@ -151,7 +152,7 @@ router.get("/summary", async (req, res, next) => {
       Trade.countDocuments({ status: "PAID" }),
       Trade.countDocuments({ status: "CHALLENGED" }),
       Trade.countDocuments({ "payout_snapshot.is_complete": false }),
-    ]);
+    ]).catch(() => [0, 0, 0, 0, 0]);
 
     // [TR] DLQ derinliği okunamazsa summary endpoint'ini düşürmeyiz; 0 fallback veririz.
     // [EN] Do not fail summary endpoint if DLQ depth lookup fails; fallback to 0.
@@ -276,42 +277,22 @@ router.get("/trades", async (req, res, next) => {
     if (value.snapshotComplete === "false") filter["payout_snapshot.is_complete"] = false;
 
     const skip = (value.page - 1) * value.limit;
-    let total = 0;
-    let pageTrades = [];
+    // [TR] Derived sıralama + risk filtresi doğruluğu için önce tam filtrelenmiş set enrich edilir,
+    //      sonra deterministic sort uygulanıp sayfalama dilimlenir.
+    // [EN] To guarantee correct derived sorting and pagination, enrich full filtered set first.
+    const allTrades = await Trade.find(filter)
+      .select(ADMIN_TRADE_PROJECTION)
+      .sort({ created_at: -1, _id: -1 })
+      .lean();
 
-    if (value.riskOnly) {
-      // [TR] highRisk türetilmiş bir sinyal olduğu için (maker current profile ile hesaplanır),
-      //      bu filtrede doğru total için dataset enrichment gerekir.
-      // [EN] highRisk is derived, so accurate total under this filter requires enrichment.
-      const allTrades = await Trade.find(filter)
-        .select(ADMIN_TRADE_PROJECTION)
-        .sort({ created_at: -1, _id: -1 })
-        .lean();
+    const enriched = await _attachAdminTradeRisk(allTrades);
+    const derivedFiltered = value.riskOnly
+      ? enriched.filter((trade) => trade?.bank_profile_risk?.highRiskBankProfile === true)
+      : enriched;
+    const sorted = _sortAdminTradesDeterministic(derivedFiltered);
 
-      const enriched = await _attachAdminTradeRisk(allTrades);
-      const riskOnlyTrades = enriched.filter((trade) => trade?.bank_profile_risk?.highRiskBankProfile === true);
-      const sorted = _sortAdminTradesDeterministic(riskOnlyTrades);
-
-      total = sorted.length;
-      pageTrades = sorted.slice(skip, skip + value.limit);
-    } else {
-      total = await Trade.countDocuments(filter);
-
-      // [TR] Derived sıralama için pragmatik pencere: created_at desc tabanından yeterli örnek alıp
-      //      JS tarafında deterministic risk öncelik sırası uygularız.
-      // [EN] Pragmatic window for derived sorting: fetch a reasonable sample then deterministic JS sort.
-      const windowSize = Math.min(Math.max(value.limit * 3, value.page * value.limit), 500);
-
-      const windowTrades = await Trade.find(filter)
-        .select(ADMIN_TRADE_PROJECTION)
-        .sort({ created_at: -1, _id: -1 })
-        .limit(windowSize)
-        .lean();
-
-      const enriched = await _attachAdminTradeRisk(windowTrades);
-      const sorted = _sortAdminTradesDeterministic(enriched);
-      pageTrades = sorted.slice(skip, skip + value.limit);
-    }
+    const total = sorted.length;
+    const pageTrades = sorted.slice(skip, skip + value.limit);
 
     return res.json({
       trades: pageTrades,

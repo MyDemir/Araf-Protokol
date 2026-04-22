@@ -294,6 +294,12 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
     showToast(lang === 'TR' ? 'Feedback yenilendi.' : 'Feedback refreshed.', 'info');
   };
 
+  const refreshSummaryNow = async () => {
+    setSummaryPollingEnabled(true);
+    await fetchSummary();
+    showToast(lang === 'TR' ? 'Özet yenilendi.' : 'Summary refreshed.', 'info');
+  };
+
   const refreshTradesNow = async () => {
     setTradesPollingEnabled(true);
     await fetchTrades();
@@ -324,8 +330,13 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
           <h1 className="text-2xl md:text-3xl font-bold text-white">{lang === 'TR' ? 'Admin Paneli' : 'Admin Panel'}</h1>
           <p className="text-slate-400 text-sm mt-1">{lang === 'TR' ? 'Read-only gözlem: Overview + Sync + Feedback' : 'Read-only observability: Overview + Sync + Feedback'}</p>
         </div>
-        <div className="text-xs text-slate-500">
-          {lang === 'TR' ? 'Son yenileme' : 'Last refreshed'}: {formatDate(lastRefreshedAt)}
+        <div className="flex items-center gap-2">
+          <div className="text-xs text-slate-500">
+            {lang === 'TR' ? 'Son yenileme' : 'Last refreshed'}: {formatDate(lastRefreshedAt)}
+          </div>
+          <button onClick={refreshSummaryNow} disabled={summaryLoading} className="bg-[#173428] hover:bg-[#1b3d2e] disabled:opacity-60 border border-emerald-800/50 text-emerald-300 rounded-lg px-3 py-1.5 text-xs font-semibold">
+            {summaryLoading ? '…' : (lang === 'TR' ? 'Özet Yenile' : 'Refresh Summary')}
+          </button>
         </div>
       </div>
 
