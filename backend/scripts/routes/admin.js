@@ -21,6 +21,7 @@ const DLQ_KEY = "worker:dlq";
 const ADMIN_TRADES_STATUS_VALUES = ["ALL", "LOCKED", "PAID", "CHALLENGED", "RESOLVED", "CANCELED", "BURNED"];
 const ADMIN_TRADES_ORIGIN_VALUES = ["ALL", "ORDER_CHILD", "DIRECT_ESCROW"];
 const ADMIN_TRADES_SNAPSHOT_VALUES = ["ALL", "true", "false"];
+const ADMIN_TRADES_MAX_CANDIDATE_SCAN = 1000;
 
 const ADMIN_TRADE_PROJECTION = [
   "_id",
@@ -277,15 +278,24 @@ router.get("/trades", async (req, res, next) => {
     if (value.snapshotComplete === "false") filter["payout_snapshot.is_complete"] = false;
 
     const skip = (value.page - 1) * value.limit;
-    // [TR] Derived sıralama + risk filtresi doğruluğu için önce tam filtrelenmiş set enrich edilir,
-    //      sonra deterministic sort uygulanıp sayfalama dilimlenir.
-    // [EN] To guarantee correct derived sorting and pagination, enrich full filtered set first.
-    const allTrades = await Trade.find(filter)
+
+    // [TR] Full collection scan yerine bounded candidate penceresi kullanırız:
+    //      - recent created_at desc window alınır
+    //      - enrichment + derived sort bu pencere üzerinde deterministik uygulanır
+    //      - total yalnız bu erişilebilir pencereyi temsil eder (misleading full total dönmeyiz)
+    // [EN] Bounded candidate window avoids unbounded scans; total reflects reachable window only.
+    const candidateWindowSize = Math.min(
+      Math.max(value.limit * 5, value.page * value.limit * 2),
+      ADMIN_TRADES_MAX_CANDIDATE_SCAN
+    );
+
+    const candidateTrades = await Trade.find(filter)
       .select(ADMIN_TRADE_PROJECTION)
       .sort({ created_at: -1, _id: -1 })
+      .limit(candidateWindowSize)
       .lean();
 
-    const enriched = await _attachAdminTradeRisk(allTrades);
+    const enriched = await _attachAdminTradeRisk(candidateTrades);
     const derivedFiltered = value.riskOnly
       ? enriched.filter((trade) => trade?.bank_profile_risk?.highRiskBankProfile === true)
       : enriched;
