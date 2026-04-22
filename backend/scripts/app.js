@@ -362,6 +362,10 @@ async function bootstrap() {
 
     // [TR] İlk çalıştırma 30 sn geciktirilir — cold start'ta DB'ye eş zamanlı yük binmesini önler
     // [EN] First run delayed by 30s — prevents simultaneous DB load on cold start
+    // [TR] schedulerState *LastRunAt alanları best-effort'tur; bazı job'lar iç hatayı swallow ederse
+    //      bu timestamp'ler gerçek semantik başarıya göre iyimser kalabilir.
+    // [EN] schedulerState *LastRunAt fields are best-effort; if a job swallows internal failures,
+    //      these timestamps may be optimistic vs. true semantic success.
     reputationDecayDelay = setTimeout(() => {
       runScheduledJob("reputationDecay", runReputationDecay, () => {
         app.locals.schedulerState.reputationDecayLastRunAt = new Date().toISOString();
