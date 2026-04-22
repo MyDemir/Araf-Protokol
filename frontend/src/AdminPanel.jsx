@@ -14,6 +14,7 @@ const TRADES_TIER_OPTIONS = ['', '0', '1', '2', '3', '4'];
 const TRADES_ORIGIN_OPTIONS = ['ALL', 'ORDER_CHILD', 'DIRECT_ESCROW'];
 const TRADES_SNAPSHOT_OPTIONS = ['ALL', 'true', 'false'];
 const TRADES_LIMIT_OPTIONS = [10, 20, 50];
+const TRADES_POLL_INTERVAL_MS = 5 * 60 * 1000;
 
 const shortenWallet = (wallet) => {
   const value = String(wallet || '').trim();
@@ -243,7 +244,9 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
     if (activeTab !== TAB_TRADES) return undefined;
     if (!tradesPollingEnabled) return undefined;
     fetchTrades();
-    const timer = setInterval(fetchTrades, 30_000);
+    // [TR] Trades endpoint'inde enrichment maliyeti yüksek olabileceği için polling daha seyrek tutulur.
+    // [EN] Keep trades polling less frequent due to heavier enrichment cost on this endpoint.
+    const timer = setInterval(fetchTrades, TRADES_POLL_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [activeTab, fetchTrades, tradesPollingEnabled]);
 
