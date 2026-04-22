@@ -213,6 +213,12 @@ async function bootstrap() {
     jobLocks[jobKey] = true;
     try {
       await jobFn();
+      // [TR] Bu timestamp güncellemesi "best-effort" semantiğindedir.
+      //      Bazı job'lar iç hataları kendi içinde swallow edebildiği için
+      //      promise resolve olsa da gerçek iş-semantik başarısı iyimser kalabilir.
+      // [EN] This timestamp update is best-effort.
+      //      Some jobs may swallow internal failures, so promise resolution
+      //      can still be optimistic vs. true semantic job success.
       if (typeof onSuccess === "function") {
         onSuccess();
       }

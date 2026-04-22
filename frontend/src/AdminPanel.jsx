@@ -34,6 +34,7 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
   const [summaryLoading, setSummaryLoading] = React.useState(false);
   const [summaryError, setSummaryError] = React.useState('');
   const [summaryUnauthorized, setSummaryUnauthorized] = React.useState(false);
+  const [summaryPollingEnabled, setSummaryPollingEnabled] = React.useState(true);
 
   const [feedback, setFeedback] = React.useState([]);
   const [feedbackTotal, setFeedbackTotal] = React.useState(0);
@@ -63,6 +64,20 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
       if (res.status === 403) {
         setSummary(null);
         setSummaryUnauthorized(true);
+        setSummaryPollingEnabled(false);
+        return;
+      }
+
+      // [TR] 401/409 sonrası interval'ı durdururuz; tekrar refresh/toast döngüsü oluşmasın.
+      // [EN] Stop polling on 401/409 to prevent repeated refresh/toast loops.
+      if (res.status === 401 || res.status === 409) {
+        setSummary(null);
+        setSummaryPollingEnabled(false);
+        setSummaryError(
+          lang === 'TR'
+            ? 'Admin oturumu doğrulanamadı. Yeniden giriş yapın.'
+            : 'Admin session is no longer valid. Please sign in again.'
+        );
         return;
       }
 
@@ -119,10 +134,11 @@ function AdminPanel({ lang, authenticatedFetch, showToast }) {
   }, [authenticatedFetch, feedbackFilters, lang]);
 
   React.useEffect(() => {
+    if (!summaryPollingEnabled) return undefined;
     fetchSummary();
     const timer = setInterval(fetchSummary, 15_000);
     return () => clearInterval(timer);
-  }, [fetchSummary]);
+  }, [fetchSummary, summaryPollingEnabled]);
 
   React.useEffect(() => {
     if (activeTab !== TAB_FEEDBACK) return;
