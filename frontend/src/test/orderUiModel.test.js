@@ -135,30 +135,4 @@ describe('orderUiModel mapping', () => {
     expect(ui.reasonLabels.length).toBe(2);
   });
 
-  it('maps compact trust summary for market hover without exposing detailed reasons', () => {
-    const ui = mapApiOrderToUi({
-      order: {
-        ...baseOrder,
-        side: 'SELL_CRYPTO',
-        offchain_health_score_input: {
-          readOnly: true,
-          nonBlocking: true,
-          canBlockProtocolActions: false,
-          explainableReasons: ['maker_ban_mirror_active'],
-        },
-      },
-      lang: 'EN',
-      bondMap,
-      tokenMap: {},
-      formatAddress: (a) => a,
-    });
-
-    expect(ui.trustSummary.available).toBe(true);
-    expect(ui.trustSummary.band).toBe('YELLOW');
-    expect(ui.trustSummary.label).toBe('Medium Signal');
-    expect(ui.trustSummary.readOnly).toBe(true);
-    expect(ui.trustSummary.nonBlocking).toBe(true);
-    expect(ui.trustSummary.canBlockProtocolActions).toBe(false);
-    expect(ui.trustSummary.reasonLabels).toBeUndefined();
-  });
 });

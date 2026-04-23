@@ -584,13 +584,13 @@ export const buildAppModals = (ctx) => {
                         if (trustRows.length === 0) {
                           return (
                             <div className="bg-[#151518] p-4 rounded-xl border border-[#2a2a2e]">
-                              <p className="text-xs font-bold tracking-widest text-slate-300 mb-1">
-                                {lang === 'TR' ? 'TRUST VISIBILITY LAYER' : 'TRUST VISIBILITY LAYER'}
+                              <p className="text-sm font-semibold text-slate-200 mb-1">
+                                {lang === 'TR' ? 'Trust Visibility' : 'Trust Visibility'}
                               </p>
                               <p className="text-[11px] text-slate-500">
                                 {lang === 'TR'
-                                  ? 'Henüz görüntülenecek offchain sağlık sinyali yok. Veri gelmediğinde bu alan soft-fail ile gizlenir.'
-                                  : 'No offchain health signal is available yet. When payload is missing, this area fails soft.'}
+                                  ? 'Aktif maker-bağlantılı işlemler için görüntülenecek sinyal yok. Veri yoksa alan soft-fail ile sade kalır.'
+                                  : 'No signal is available for active maker-linked trades. If payload is missing, this area soft-fails gracefully.'}
                               </p>
                             </div>
                           );
@@ -599,17 +599,17 @@ export const buildAppModals = (ctx) => {
                         return (
                           <div className="bg-[#151518] p-4 rounded-xl border border-[#2a2a2e] space-y-3">
                             <div className="flex flex-wrap items-center justify-between gap-2">
-                              <p className="text-xs font-bold tracking-widest text-slate-300">
-                                {lang === 'TR' ? 'TRUST VISIBILITY LAYER' : 'TRUST VISIBILITY LAYER'}
+                              <p className="text-sm font-semibold text-slate-200">
+                                {lang === 'TR' ? 'Trust Visibility' : 'Trust Visibility'}
                               </p>
                               <span className="text-[10px] px-2 py-1 rounded border text-slate-400 border-slate-700 bg-[#0c0c0e]">
-                                {lang === 'TR' ? 'Maker / Self Görünüm' : 'Maker / Self View'}
+                                {lang === 'TR' ? 'Aktif maker-bağlantılı işlemler' : 'Active maker-linked trades'}
                               </span>
                             </div>
                             <p className="text-[11px] text-slate-500">
                               {lang === 'TR'
-                                ? 'Bilgilendirme katmanıdır: read-only, non-blocking ve protokol hükmü değildir.'
-                                : 'Informational layer: read-only, non-blocking, and not a protocol verdict.'}
+                                ? 'Bilgilendirme amaçlıdır: read-only, non-blocking ve protokol hükmü değildir.'
+                                : 'Informational only: read-only, non-blocking, and not a protocol verdict.'}
                             </p>
                             <div className="grid gap-2">
                               {trustRows.map(({ escrowId, ui }) => (

@@ -136,12 +136,6 @@ describe('AppViews market side-aware rendering', () => {
           limitLabel: 'Min Fill 10 USDT • Remaining 50 USDT',
           tier: 1,
           ownerSideHint: 'Order owner is selling crypto',
-          trustSummary: {
-            available: true,
-            band: 'YELLOW',
-            label: 'Medium Signal',
-            chipClass: 'text-amber-400 border-amber-700/60 bg-amber-900/20',
-          },
           tokenPolicy: { supported: true, allowSellOrders: true, allowBuyOrders: true },
         },
         {
@@ -160,12 +154,6 @@ describe('AppViews market side-aware rendering', () => {
           limitLabel: 'Min Fill 5 USDT • Remaining 20 USDT',
           tier: 1,
           ownerSideHint: 'Order owner is buying crypto',
-          trustSummary: {
-            available: true,
-            band: 'GREEN',
-            label: 'Low Signal',
-            chipClass: 'text-emerald-400 border-emerald-700/60 bg-emerald-900/20',
-          },
           tokenPolicy: { supported: true, allowSellOrders: true, allowBuyOrders: true },
         },
       ],
@@ -181,9 +169,6 @@ describe('AppViews market side-aware rendering', () => {
     expect(screen.getAllByText('ORDER OWNER SUMMARY').length).toBeGreaterThan(0);
     expect(screen.getByText('Order owner is selling crypto')).toBeInTheDocument();
     expect(screen.getByText('Order owner is buying crypto')).toBeInTheDocument();
-    expect(screen.getAllByText(/Trust Visibility/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/YELLOW · Medium Signal/i)).toBeInTheDocument();
-    expect(screen.getByText(/GREEN · Low Signal/i)).toBeInTheDocument();
     expect(screen.queryByText(/maker_profile_changed_after_lock/i)).not.toBeInTheDocument();
     expect(screen.queryByText('SELLER PROFILE')).not.toBeInTheDocument();
     expect(screen.getAllByText('Open').length).toBeGreaterThan(0);

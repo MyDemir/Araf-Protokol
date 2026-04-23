@@ -428,21 +428,6 @@ export const buildAppViews = (ctx) => {
                             <p className="text-yellow-500 font-bold">T{order.tier} 🛡️</p>
                           </div>
                         </div>
-                        <div className="mt-3 rounded-lg border border-[#2e2e2e] bg-[#151518] px-2.5 py-2">
-                          {/* [TR] Market hover'da yalnız sınırlı güven görünürlüğü gösterilir; detaylar Profil Merkezi'ndedir.
-                              [EN] Market hover shows only limited trust visibility; details remain in Profile Center. */}
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-[10px] text-slate-500 uppercase">{lang === 'TR' ? 'Trust Görünürlüğü' : 'Trust Visibility'}</p>
-                            <span className={`text-[10px] px-2 py-0.5 rounded border ${order?.trustSummary?.chipClass || 'text-slate-400 border-slate-700/60 bg-slate-900/20'}`}>
-                              {order?.trustSummary?.band ? `${order.trustSummary.band} · ${order.trustSummary.label}` : (order?.trustSummary?.label || (lang === 'TR' ? 'Sinyal yok' : 'Signal unavailable'))}
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-slate-500 mt-1">
-                            {lang === 'TR'
-                              ? 'Kısıtlı pazar özeti: read-only, non-blocking, nihai hüküm değildir.'
-                              : 'Limited market summary: read-only, non-blocking, not a final verdict.'}
-                          </p>
-                        </div>
                         <p className="text-[10px] text-slate-500 mt-3 leading-relaxed">
                           {lang === 'TR'
                             ? 'Not: Bu kart hızlı bir özet gösterir; nihai güven/hüküm değerlendirmesi değildir.'

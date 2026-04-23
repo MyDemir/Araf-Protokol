@@ -187,8 +187,8 @@ describe('AppModals side-aware behaviors', () => {
     }));
 
     render(<div>{modals.renderProfileModal()}</div>);
-    expect(screen.getByText('TRUST VISIBILITY LAYER')).toBeInTheDocument();
-    expect(screen.getByText(/Informational layer/i)).toBeInTheDocument();
+    expect(screen.getByText('Trust Visibility')).toBeInTheDocument();
+    expect(screen.getByText(/Informational only/i)).toBeInTheDocument();
     expect(screen.getByText(/readOnly: true/i)).toBeInTheDocument();
     expect(screen.getByText(/nonBlocking: true/i)).toBeInTheDocument();
     expect(screen.getByText(/canBlockProtocolActions: false/i)).toBeInTheDocument();
@@ -202,6 +202,6 @@ describe('AppModals side-aware behaviors', () => {
     }));
 
     render(<div>{modals.renderProfileModal()}</div>);
-    expect(screen.getByText(/No offchain health signal is available yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/No signal is available for active maker-linked trades/i)).toBeInTheDocument();
   });
 });

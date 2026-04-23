@@ -165,30 +165,6 @@ export const mapOffchainHealthToUi = ({ signal, lang = 'TR' }) => {
   };
 };
 
-export const mapCompactTrustSummary = ({ signal, lang = 'TR' }) => {
-  const mapped = mapOffchainHealthToUi({ signal, lang });
-  if (!mapped) {
-    return {
-      available: false,
-      band: null,
-      label: lang === 'TR' ? 'Sinyal yok' : 'Signal unavailable',
-      chipClass: 'text-slate-400 border-slate-700/60 bg-slate-900/20',
-    };
-  }
-
-  // [TR] Market hover yüzeyi için privacy-conscious kısa özet döner; nedenleri ifşa etmez.
-  // [EN] Returns privacy-conscious compact summary for market hover; does not expose reason details.
-  return {
-    available: true,
-    band: mapped.severityBand,
-    label: mapped.severityLabel,
-    chipClass: mapped.severityChipClass,
-    readOnly: mapped.readOnly,
-    nonBlocking: mapped.nonBlocking,
-    canBlockProtocolActions: mapped.canBlockProtocolActions,
-  };
-};
-
 export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {}, formatAddress = (v) => v }) => {
   const side = normalizeOrderSide(order?.side);
   const sideMeta = SIDE_META[side] || null;
@@ -226,11 +202,6 @@ export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {
       ? (lang === 'TR' ? 'Order sahibi kripto alıyor' : 'Order owner is buying crypto')
       : (lang === 'TR' ? 'Order sahibi rolü doğrulanamadı' : 'Order owner side could not be verified');
   const fillsCount = Number(order?.stats?.fills_count ?? 0);
-  const trustSummary = mapCompactTrustSummary({
-    signal: order?.offchain_health_score_input || null,
-    lang,
-  });
-
   return {
     id: order?._id,
     onchainId: order?.onchain_order_id ?? null,
@@ -257,7 +228,6 @@ export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {
     // [TR] V3 market hover kartı için taraf-bağımlı kısa açıklama (seller-only dilinden kaçınır).
     // [EN] Side-aware summary hint for V3 hover card (avoids seller-only terminology).
     ownerSideHint,
-    trustSummary,
     // legacy ui analytics fields
     successRate: Number(order?.stats?.fill_rate_pct ?? 100),
     txCount: fillsCount,
