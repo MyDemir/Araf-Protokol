@@ -154,7 +154,103 @@ function _buildReputationContextAtLock(user) {
     consecutive_bans: user?.consecutive_bans ?? null,
     is_banned: user?.is_banned ?? null,
     banned_until: user?.banned_until ?? null,
+    burn_count: user?.reputation_breakdown?.burn_count ?? null,
+    auto_release_count: user?.reputation_breakdown?.auto_release_count ?? null,
+    mutual_cancel_count: user?.reputation_breakdown?.mutual_cancel_count ?? null,
+    disputed_but_resolved_count: user?.reputation_breakdown?.disputed_but_resolved_count ?? null,
   };
+}
+
+function _hasDisputeEvidence(trade, tradeData) {
+  return Boolean(
+    trade?.timers?.challenged_at ||
+    _toNum(tradeData?.challengedAt) > 0
+  );
+}
+
+function _hasDeterministicAutoReleaseEvidence(trade, tradeData) {
+  return Boolean(
+    trade?.timers?.pinged_at ||
+    trade?.pinged_by_taker === true ||
+    Boolean(tradeData?.pingedByTaker)
+  );
+}
+
+/**
+ * [TR] Semantik sınıflandırma sadece mirror/event verisine dayanır, authority üretmez.
+ * [EN] Semantic classification is mirror/event-only and non-authoritative.
+ */
+function _classifyTerminalSemanticOutcome({ terminalStatus, trade, tradeData }) {
+  if (terminalStatus === "BURNED") {
+    return { historyType: "burned", counterField: "burn_count" };
+  }
+
+  if (terminalStatus === "CANCELED") {
+    // [TR] Öncelik zincirden çekilen cancel flag'lerdedir; Mongo mirror gecikmesine karşı drift'i önler.
+    // [EN] Prefer on-chain cancel flags first to avoid permanent drift on mirror lag/failure.
+    const makerSignedOnChain = tradeData?.cancelProposedByMaker;
+    const takerSignedOnChain = tradeData?.cancelProposedByTaker;
+    const makerSignedMirror = trade?.cancel_proposal?.maker_signed;
+    const takerSignedMirror = trade?.cancel_proposal?.taker_signed;
+    const mutualCanceled = Boolean(
+      (makerSignedOnChain ?? makerSignedMirror) &&
+      (takerSignedOnChain ?? takerSignedMirror)
+    );
+    return mutualCanceled
+      ? { historyType: "mutual_canceled", counterField: "mutual_cancel_count" }
+      : { historyType: "canceled_unclassified", counterField: null };
+  }
+
+  if (terminalStatus === "RESOLVED") {
+    if (_hasDisputeEvidence(trade, tradeData)) {
+      return { historyType: "disputed_resolved", counterField: "disputed_but_resolved_count" };
+    }
+
+    if (_hasDeterministicAutoReleaseEvidence(trade, tradeData)) {
+      return { historyType: "auto_released", counterField: "auto_release_count" };
+    }
+
+    return { historyType: "resolved_unclassified", counterField: null };
+  }
+
+  return { historyType: "terminal_unclassified", counterField: null };
+}
+
+async function _applySemanticOutcomeToParticipants({
+  session,
+  addresses,
+  semantic,
+  eventAt,
+  tradeId,
+  pushHistory = true,
+}) {
+  for (const addr of addresses.filter(Boolean)) {
+    const update = {
+      $set: {
+        last_onchain_sync_at: eventAt,
+        "reputation_breakdown.last_semantic_event_at": eventAt,
+      },
+    };
+
+    if (pushHistory) {
+      update.$push = {
+        reputation_history: {
+          $each: [{ type: semantic.historyType, score: 0, date: eventAt, tradeId }],
+          $slice: -MAX_REPUTATION_HISTORY,
+        },
+      };
+    }
+
+    if (semantic.counterField) {
+      update.$inc = { [`reputation_breakdown.${semantic.counterField}`]: 1 };
+    }
+
+    await User.findOneAndUpdate(
+      { wallet_address: addr },
+      update,
+      { session }
+    );
+  }
 }
 
 /**
@@ -1125,7 +1221,7 @@ class EventWorker {
         ? User.findOne({ wallet_address: normalizedMaker })
             .select(
               "payout_profile bankChangeCount7d bankChangeCount30d lastBankChangeAt " +
-              "reputation_cache is_banned banned_until consecutive_bans"
+              "reputation_cache reputation_breakdown is_banned banned_until consecutive_bans"
             )
             .lean()
         : null,
@@ -1133,7 +1229,7 @@ class EventWorker {
         ? User.findOne({ wallet_address: normalizedTaker })
             .select(
               "payout_profile bankChangeCount7d bankChangeCount30d lastBankChangeAt " +
-              "reputation_cache is_banned banned_until consecutive_bans"
+              "reputation_cache reputation_breakdown is_banned banned_until consecutive_bans"
             )
             .lean()
         : null,
@@ -1275,6 +1371,19 @@ class EventWorker {
         );
       }
 
+      const semantic = _classifyTerminalSemanticOutcome({
+        terminalStatus: "RESOLVED",
+        trade,
+        tradeData,
+      });
+      await _applySemanticOutcomeToParticipants({
+        session,
+        addresses: [trade.maker_address, trade.taker_address],
+        semantic,
+        eventAt: resolvedAt,
+        tradeId: tradeIdNum,
+      });
+
       if (trade.parent_order_id) {
         await Order.findOneAndUpdate(
           _buildIdentityLookup("onchain_order_id", trade.parent_order_id),
@@ -1318,27 +1427,68 @@ class EventWorker {
   async _onEscrowCanceled(event) {
     const { tradeId } = event.args;
     const canceledAt = await this._getEventDate(event);
+    const tradeIdNum = _toIdentityString(tradeId);
+    let tradeData = null;
+    try {
+      // [TR] Cancel semantiğinde authoritative çift-imza sınıflandırması için zincir snapshot'ı kullanılır.
+      // [EN] Use chain snapshot for authoritative mutual-cancel classification.
+      tradeData = await this._fetchTradeFromChain(tradeId);
+    } catch (err) {
+      // [TR] Fail-closed: chain fetch yoksa mirror verisiyle neutral/unclassified kalınabilir.
+      // [EN] Fail-closed: if chain fetch is unavailable, fallback mirror may remain unclassified.
+      logger.warn(`[Worker] EscrowCanceled chain snapshot alınamadı: trade=${tradeIdNum} err=${err.message}`);
+    }
 
-    const trade = await Trade.findOneAndUpdate(
-      {
-        ..._buildIdentityLookup("onchain_escrow_id", tradeId),
-        status: { $in: ["OPEN", "LOCKED", "PAID", "CHALLENGED"] },
-      },
-      {
-        $set: {
-          status: "CANCELED",
-          "timers.resolved_at": canceledAt,
-          "evidence.receipt_delete_at": new Date(canceledAt.getTime() + 24 * 3600 * 1000),
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    try {
+      const trade = await Trade.findOneAndUpdate(
+        {
+          ..._buildIdentityLookup("onchain_escrow_id", tradeIdNum),
+          status: { $in: ["OPEN", "LOCKED", "PAID", "CHALLENGED"] },
         },
-      },
-      { new: true }
-    ).lean();
-
-    if (trade?.parent_order_id) {
-      await Order.findOneAndUpdate(
-        _buildIdentityLookup("onchain_order_id", trade.parent_order_id),
-        { $inc: { "stats.active_child_trade_count": -1, "stats.canceled_child_trade_count": 1 } }
+        {
+          $set: {
+            status: "CANCELED",
+            "timers.resolved_at": canceledAt,
+            "evidence.receipt_delete_at": new Date(canceledAt.getTime() + 24 * 3600 * 1000),
+          },
+        },
+        { new: true, session }
       );
+
+      if (!trade) {
+        await session.abortTransaction();
+        return;
+      }
+
+      const semantic = _classifyTerminalSemanticOutcome({
+        terminalStatus: "CANCELED",
+        trade,
+        tradeData,
+      });
+      await _applySemanticOutcomeToParticipants({
+        session,
+        addresses: [trade.maker_address, trade.taker_address],
+        semantic,
+        eventAt: canceledAt,
+        tradeId: tradeIdNum,
+      });
+
+      if (trade.parent_order_id) {
+        await Order.findOneAndUpdate(
+          _buildIdentityLookup("onchain_order_id", trade.parent_order_id),
+          { $inc: { "stats.active_child_trade_count": -1, "stats.canceled_child_trade_count": 1 } },
+          { session }
+        );
+      }
+
+      await session.commitTransaction();
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      await session.endSession();
     }
   }
 
@@ -1387,6 +1537,23 @@ class EventWorker {
             { session }
           );
         }
+
+        const semantic = _classifyTerminalSemanticOutcome({
+          terminalStatus: "BURNED",
+          trade,
+        });
+        await _applySemanticOutcomeToParticipants({
+          session,
+          addresses,
+          semantic,
+          eventAt: burnedAt,
+          tradeId: tradeIdNum,
+          // [TR] BURNED için failure_score audit kaydı zaten { type: "burned" } olarak yazılıyor.
+          //      Aynı terminal outcome için ikinci bir history satırı üretmiyoruz.
+          // [EN] BURNED already writes { type: "burned" } via failure-score audit path.
+          //      Skip duplicate semantic-history row for the same terminal outcome.
+          pushHistory: false,
+        });
       }
 
       if (trade?.parent_order_id) {
@@ -1593,3 +1760,4 @@ worker.reprocessDLQEntry = async function reprocessDLQEntry(entry) {
 };
 
 module.exports = worker;
+module.exports._classifyTerminalSemanticOutcome = _classifyTerminalSemanticOutcome;

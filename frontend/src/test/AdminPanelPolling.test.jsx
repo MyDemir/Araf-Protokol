@@ -65,4 +65,10 @@ describe('AdminPanel polling auth behavior', () => {
     expect(source).toContain('const isWindowedTradeTotal = tradesPaginationScope?.isWindowed === true;');
     expect(source).toContain('Window total (not global)');
   });
+
+  it('keeps informational semantics label in component source for read-only UI wording', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/AdminPanel.jsx'), 'utf8');
+    expect(source).toContain('Reputation semantics (informational/read-only)');
+    expect(source).toContain('reputation_semantics?.burn_count');
+  });
 });
