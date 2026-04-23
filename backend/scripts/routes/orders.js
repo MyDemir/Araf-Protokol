@@ -72,8 +72,8 @@ const DEFAULT_MY_ORDERS_LIMIT = 20;
 const MAX_MY_ORDERS_LIMIT = 50;
 const LOCK_OR_SNAPSHOT_CAPTURED_MATCH = {
   $or: [
-    { "timers.locked_at": { $ne: null } },
-    { "payout_snapshot.captured_at": { $ne: null } },
+    { "timers.locked_at": { $exists: true, $ne: null } },
+    { "payout_snapshot.captured_at": { $exists: true, $ne: null } },
   ],
 };
 

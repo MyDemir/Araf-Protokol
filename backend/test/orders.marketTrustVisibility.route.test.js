@@ -93,8 +93,8 @@ describe("orders route market trust visibility summary", () => {
         $match: {
           maker_address: { $in: ["0x1111111111111111111111111111111111111111"] },
           $or: [
-            { "timers.locked_at": { $ne: null } },
-            { "payout_snapshot.captured_at": { $ne: null } },
+            { "timers.locked_at": { $exists: true, $ne: null } },
+            { "payout_snapshot.captured_at": { $exists: true, $ne: null } },
           ],
         },
       },
