@@ -8,6 +8,12 @@ function _toSafeNumber(value, fallback = 0) {
 }
 
 function _buildMirrorContext(lockContext, fallbackUser) {
+  const semanticLock = {
+    burn_count: lockContext?.burn_count,
+    auto_release_count: lockContext?.auto_release_count,
+    mutual_cancel_count: lockContext?.mutual_cancel_count,
+    disputed_but_resolved_count: lockContext?.disputed_but_resolved_count,
+  };
   return {
     successRate: lockContext?.success_rate ?? fallbackUser?.reputation_cache?.success_rate ?? null,
     failedDisputes: lockContext?.failed_disputes ?? fallbackUser?.reputation_cache?.failed_disputes ?? null,
@@ -15,6 +21,17 @@ function _buildMirrorContext(lockContext, fallbackUser) {
     isBannedMirror: lockContext?.is_banned ?? fallbackUser?.is_banned ?? null,
     bannedUntilMirror: lockContext?.banned_until ?? fallbackUser?.banned_until ?? null,
     consecutiveBansMirror: lockContext?.consecutive_bans ?? fallbackUser?.consecutive_bans ?? null,
+    reputation_semantics: {
+      burn_count: semanticLock.burn_count ?? fallbackUser?.reputation_breakdown?.burn_count ?? null,
+      auto_release_count:
+        semanticLock.auto_release_count ?? fallbackUser?.reputation_breakdown?.auto_release_count ?? null,
+      mutual_cancel_count:
+        semanticLock.mutual_cancel_count ?? fallbackUser?.reputation_breakdown?.mutual_cancel_count ?? null,
+      disputed_but_resolved_count:
+        semanticLock.disputed_but_resolved_count ??
+        fallbackUser?.reputation_breakdown?.disputed_but_resolved_count ??
+        null,
+    },
   };
 }
 
@@ -90,6 +107,7 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
     makerEffectiveTierMirrorAtLock: makerReputationContextAtLock?.effective_tier ?? null,
     makerFailedDisputesMirrorAtLock: makerReputationContextAtLock?.failed_disputes ?? null,
     makerWasBannedMirrorAtLock: makerReputationContextAtLock?.is_banned ?? null,
+    reputation_semantics: _buildMirrorContext(makerReputationContextAtLock, makerUser).reputation_semantics,
   };
 
   return {
@@ -101,6 +119,8 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
     explainableReasons: reasons,
     maker: makerBreakdown,
     taker: takerFacingCounterpartySummary,
+    informational_only: true,
+    non_authoritative_semantics: true,
     snapshot: {
       capturedAt: payoutSnapshot?.captured_at || null,
       isComplete: isSnapshotComplete,

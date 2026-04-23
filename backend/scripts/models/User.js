@@ -103,6 +103,16 @@ const userSchema = new mongoose.Schema(
       default: [],
     },
 
+    // [TR] Reputation semantiği read-model aynasıdır; protokol authority'si değildir.
+    // [EN] Reputation semantics are mirror/read-model only; never protocol authority.
+    reputation_breakdown: {
+      burn_count: { type: Number, default: 0, min: 0 },
+      auto_release_count: { type: Number, default: 0, min: 0 },
+      mutual_cancel_count: { type: Number, default: 0, min: 0 },
+      disputed_but_resolved_count: { type: Number, default: 0, min: 0 },
+      last_semantic_event_at: { type: Date, default: null },
+    },
+
     // ── Ban Aynası (authority değil, chain sync cache) ───────────────────────
     is_banned: { type: Boolean, default: false },
     banned_until: { type: Date, default: null },
