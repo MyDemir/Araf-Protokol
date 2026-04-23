@@ -184,6 +184,9 @@ describe("orders/trades pagination + big on-chain id", () => {
       findOne: jest.fn(),
     };
 
+    const roomReadLimiter = jest.fn((_req, _res, next) => next());
+    const coordinationWriteLimiter = jest.fn((_req, _res, next) => next());
+
     let router;
     jest.isolateModules(() => {
       jest.doMock("../scripts/middleware/auth", () => ({
@@ -191,8 +194,8 @@ describe("orders/trades pagination + big on-chain id", () => {
         requireSessionWalletMatch: (_req, _res, next) => next(),
       }));
       jest.doMock("../scripts/middleware/rateLimiter", () => ({
-        roomReadLimiter: (_req, _res, next) => next(),
-        coordinationWriteLimiter: (_req, _res, next) => next(),
+        roomReadLimiter,
+        coordinationWriteLimiter,
       }));
       jest.doMock("../scripts/models/Trade", () => Trade);
       jest.doMock("../scripts/models/User", () => ({
@@ -218,6 +221,8 @@ describe("orders/trades pagination + big on-chain id", () => {
 
     const capRes = await request(app).get("/api/trades/my?limit=999");
     expect(capRes.status).toBe(400);
+    expect(roomReadLimiter).toHaveBeenCalled();
+    expect(coordinationWriteLimiter).not.toHaveBeenCalled();
   });
 
   it("receipt upload rejects non-numeric onchainEscrowId and supports huge numeric string", async () => {

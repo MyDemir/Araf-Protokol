@@ -17,6 +17,8 @@ describe("rate limiter alias cleanup", () => {
 
     expect(limiterSource).not.toContain("const tradesLimiter =");
     expect(limiterSource).not.toMatch(/\btradesLimiter\b/);
+    expect(limiterSource).not.toContain("listingsReadLimiter");
+    expect(limiterSource).not.toContain("listingsWriteLimiter");
     expect(limiterSource).toContain("coordinationWriteLimiter");
   });
 });

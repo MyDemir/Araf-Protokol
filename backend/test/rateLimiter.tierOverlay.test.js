@@ -91,12 +91,49 @@ describe("rate limiter tier-aware overlay", () => {
     expect(redisClient.setEx).toHaveBeenCalled();
   });
 
+  it("does not perform duplicate mirror reads on repeated resolve calls in same request", async () => {
+    const lean = jest.fn().mockResolvedValue({
+      reputation_cache: { effective_tier: 3 },
+      max_allowed_tier: 4,
+    });
+    const select = jest.fn().mockReturnValue({ lean });
+    userFindOne.mockReturnValue({ select });
+
+    const req = { wallet: "0xaaa" };
+    const tierA = await rateLimiter.__private.resolveRequestTier(req);
+    const tierB = await rateLimiter.__private.resolveRequestTier(req);
+
+    expect(tierA).toBe(3);
+    expect(tierB).toBe(3);
+    expect(userFindOne).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to tier0 when Redis read fails and mirror lookup also fails", async () => {
+    redisClient.get.mockRejectedValueOnce(new Error("redis read failure"));
+    userFindOne.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockRejectedValue(new Error("mongo down")),
+      }),
+    });
+
+    const req = { wallet: "0xbeef" };
+    const tier = await rateLimiter.__private.resolveRequestTier(req);
+
+    expect(tier).toBe(0);
+  });
+
   it("defaults to anonymous tier when wallet is missing", async () => {
     const req = { ip: "127.0.0.1" };
     const tier = await rateLimiter.__private.resolveRequestTier(req);
 
     expect(tier).toBe(0);
     expect(userFindOne).not.toHaveBeenCalled();
+  });
+
+  it("clamps edge tier values to [0..4]", () => {
+    expect(rateLimiter.__private.clampTier(-99)).toBe(0);
+    expect(rateLimiter.__private.clampTier(999)).toBe(4);
+    expect(rateLimiter.__private.clampTier("not-a-number")).toBe(0);
   });
 
   it("selects tier-specific max for ordersReadLimiter while fixed stats limiter remains fixed", async () => {

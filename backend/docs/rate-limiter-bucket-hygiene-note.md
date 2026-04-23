@@ -56,6 +56,7 @@ Bu not, route semantiği ile limiter semantiğini hizalamak için yapılan bucke
   - wallet yoksa anonymous tier `0`
   - Redis cache hit varsa direkt kullan
   - cache miss’te Mongo dar projection ile oku
+  - aynı request içinde duplicate DB read’i önlemek için request-scope promise cache kullan
   - `effective_tier || 0`, ardından `max_allowed_tier` üst sınırı uygula
   - final tier `0..4` clamp edilir
   - kısa TTL ile tekrar cache’e yazılır
@@ -64,8 +65,16 @@ Bu not, route semantiği ile limiter semantiğini hizalamak için yapılan bucke
 
 - `tradesLimiter` alias export kaldırıldı; trades route canonical `roomReadLimiter` kullanır.
 - `coordinationWriteLimiter` artık ölü export değil; trade coordination write endpoint’lerinde (`propose-cancel`, `chargeback-ack`) aktif kullanılır.
+- `listingsReadLimiter` / `listingsWriteLimiter` compatibility alias exportları da kaldırıldı; export yüzeyi canonical bucket adlarına indirildi.
 
 ## Authority sınırı
 
 Bu refactor yalnız abuse/fair-use katmanını temizler.
 Limiter girişleri economic outcome üretmez; settlement/release/cancel/burn/dispute sonucunu belirlemez ve contract authority alanına müdahale etmez.
+
+## Frontend etkisi
+
+Repo inspection sonucunda bu değişiklikler için zorunlu frontend kod değişikliği gerekmemiştir:
+- API path contract’ları (`/api/trades`, `/api/receipts`, `/api/feedback`, `/api/stats`, `/api/logs/client-error`) korunmuştur.
+- Limiter adları backend içi implementation detayıdır; frontend bu export isimlerine bağlı değildir.
+- Bu nedenle “mandatory frontend change” yoktur.

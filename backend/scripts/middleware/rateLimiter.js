@@ -191,41 +191,59 @@ function normalizeTierFromMirror(mirrorUser) {
 
 async function resolveRequestTier(req) {
   if (typeof req?.rateLimitTier === "number") return req.rateLimitTier;
+  if (req?._rateLimitTierPromise) return req._rateLimitTierPromise;
 
-  const normalizedWallet = String(req?.wallet || "").toLowerCase().trim();
-  if (!normalizedWallet) {
-    req.rateLimitTier = DEFAULT_ANON_TIER;
-    return req.rateLimitTier;
-  }
+  req._rateLimitTierPromise = (async () => {
+    const normalizedWallet = String(req?.wallet || "").toLowerCase().trim();
+    if (!normalizedWallet) {
+      req.rateLimitTier = DEFAULT_ANON_TIER;
+      return req.rateLimitTier;
+    }
 
-  const cacheKey = `ratelimit:tier:${normalizedWallet}`;
-  if (isReady()) {
-    try {
-      const cachedTier = await getRedisClient().get(cacheKey);
-      if (cachedTier !== null) {
-        req.rateLimitTier = clampTier(cachedTier);
-        return req.rateLimitTier;
+    const cacheKey = `ratelimit:tier:${normalizedWallet}`;
+    if (isReady()) {
+      try {
+        const cachedTier = await getRedisClient().get(cacheKey);
+        if (cachedTier !== null) {
+          req.rateLimitTier = clampTier(cachedTier);
+          return req.rateLimitTier;
+        }
+      } catch (err) {
+        logger.warn(`[RateLimit:TIER] Redis cache read başarısız: ${err.message}`);
       }
-    } catch (err) {
-      logger.warn(`[RateLimit:TIER] Redis cache read başarısız: ${err.message}`);
     }
-  }
 
-  const mirrorUser = await User.findOne({ wallet_address: normalizedWallet })
-    .select("reputation_cache.effective_tier max_allowed_tier")
-    .lean();
-
-  req.rateLimitTier = normalizeTierFromMirror(mirrorUser);
-
-  if (isReady()) {
     try {
-      await getRedisClient().setEx(cacheKey, RATE_LIMIT_TIER_CACHE_TTL_SECONDS, String(req.rateLimitTier));
+      const mirrorUser = await User.findOne({ wallet_address: normalizedWallet })
+        .select("reputation_cache.effective_tier max_allowed_tier")
+        .lean();
+      req.rateLimitTier = normalizeTierFromMirror(mirrorUser);
     } catch (err) {
-      logger.warn(`[RateLimit:TIER] Redis cache write başarısız: ${err.message}`);
+      // [TR] Tier çözümü mirror/caching bağımlılığıdır; request'i kırmak yerine güvenli tier0'a düş.
+      // [EN] Tier resolution is auxiliary mirror/cache logic; degrade safely to tier0 instead of failing request.
+      logger.warn(`[RateLimit:TIER] Mirror fallback başarısız, tier0 uygulanıyor: ${err.message}`);
+      req.rateLimitTier = DEFAULT_ANON_TIER;
     }
-  }
 
-  return req.rateLimitTier;
+    if (isReady()) {
+      try {
+        await getRedisClient().setEx(cacheKey, RATE_LIMIT_TIER_CACHE_TTL_SECONDS, String(req.rateLimitTier));
+      } catch (err) {
+        logger.warn(`[RateLimit:TIER] Redis cache write başarısız: ${err.message}`);
+      }
+    }
+
+    return req.rateLimitTier;
+  })();
+
+  try {
+    return await req._rateLimitTierPromise;
+  } finally {
+    // [TR] Aynı request boyunca duplicate DB read'i önlemek için promise cache kullanıyoruz.
+    //      Request bitiminde bu internal alan temizlenir.
+    // [EN] Promise cache prevents duplicate reads within the same request scope.
+    delete req._rateLimitTierPromise;
+  }
 }
 
 function makeTieredSensitiveLimiter({
@@ -267,7 +285,12 @@ function makeTieredSensitiveLimiter({
   });
 
   return async (req, res, next) => {
-    const tier = await resolveRequestTier(req);
+    let tier = DEFAULT_ANON_TIER;
+    try {
+      tier = await resolveRequestTier(req);
+    } catch (err) {
+      logger.warn(`[RateLimit:${label}] Tier çözümü beklenmedik hatayla düştü, tier0 uygulanıyor: ${err.message}`);
+    }
     const normalizedTier = clampTier(tier);
     return handlersByTier[normalizedTier](req, res, next);
   };
@@ -561,12 +584,6 @@ const feedbackLimiter = makeTieredSensitiveLimiter({
   }),
 });
 
-// ── Backward-compatible aliases ──────────────────────────────────────────────
-// [TR] Route katmanını bir turda tamamen taşımak zorunda kalmamak için alias veriyoruz.
-// [EN] Aliases keep existing imports working while routes migrate toward V3 naming.
-const listingsReadLimiter = marketReadLimiter;
-const listingsWriteLimiter = ordersWriteLimiterWithFallback;
-
 module.exports = {
   piiLimiter,
   authLimiter,
@@ -580,8 +597,6 @@ module.exports = {
   coordinationWriteLimiter,
   adminReadLimiter: adminReadLimiterWithFallback,
   clientLogLimiter,
-  listingsReadLimiter,
-  listingsWriteLimiter,
   feedbackLimiter,
   __private: {
     clampTier,
