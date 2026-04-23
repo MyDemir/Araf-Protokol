@@ -53,6 +53,7 @@ Backend burada authority üretmez; yalnız abuse yüzeyini daraltır.
 const rateLimit = require("express-rate-limit");
 const { RedisStore } = require("rate-limit-redis");
 const { getRedisClient, isReady } = require("../config/redis");
+const User = require("../models/User");
 const logger = require("../utils/logger");
 
 /**
@@ -161,6 +162,137 @@ function makeSensitiveLimiter({
       return redisLimiter(req, res, next);
     }
     return inMemoryLimiter(req, res, next);
+  };
+}
+
+const RATE_LIMIT_TIER_CACHE_TTL_SECONDS = Number(process.env.RATE_LIMIT_TIER_CACHE_TTL_SECONDS || 120);
+const DEFAULT_ANON_TIER = 0;
+const MIN_TIER = 0;
+const MAX_TIER = 4;
+
+function _safeInt(value, fallback = 0) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function clampTier(value) {
+  const tier = _safeInt(value, DEFAULT_ANON_TIER);
+  return Math.max(MIN_TIER, Math.min(MAX_TIER, tier));
+}
+
+function normalizeTierFromMirror(mirrorUser) {
+  const effectiveTier = _safeInt(mirrorUser?.reputation_cache?.effective_tier, DEFAULT_ANON_TIER);
+  const maxAllowedTier = mirrorUser?.max_allowed_tier;
+  const boundedTier = maxAllowedTier === undefined || maxAllowedTier === null
+    ? effectiveTier
+    : Math.min(effectiveTier, _safeInt(maxAllowedTier, MAX_TIER));
+  return clampTier(boundedTier);
+}
+
+async function resolveRequestTier(req) {
+  if (typeof req?.rateLimitTier === "number") return req.rateLimitTier;
+  if (req?._rateLimitTierPromise) return req._rateLimitTierPromise;
+
+  req._rateLimitTierPromise = (async () => {
+    const normalizedWallet = String(req?.wallet || "").toLowerCase().trim();
+    if (!normalizedWallet) {
+      req.rateLimitTier = DEFAULT_ANON_TIER;
+      return req.rateLimitTier;
+    }
+
+    const cacheKey = `ratelimit:tier:${normalizedWallet}`;
+    if (isReady()) {
+      try {
+        const cachedTier = await getRedisClient().get(cacheKey);
+        if (cachedTier !== null) {
+          req.rateLimitTier = clampTier(cachedTier);
+          return req.rateLimitTier;
+        }
+      } catch (err) {
+        logger.warn(`[RateLimit:TIER] Redis cache read başarısız: ${err.message}`);
+      }
+    }
+
+    try {
+      const mirrorUser = await User.findOne({ wallet_address: normalizedWallet })
+        .select("reputation_cache.effective_tier max_allowed_tier")
+        .lean();
+      req.rateLimitTier = normalizeTierFromMirror(mirrorUser);
+    } catch (err) {
+      // [TR] Tier çözümü mirror/caching bağımlılığıdır; request'i kırmak yerine güvenli tier0'a düş.
+      // [EN] Tier resolution is auxiliary mirror/cache logic; degrade safely to tier0 instead of failing request.
+      logger.warn(`[RateLimit:TIER] Mirror fallback başarısız, tier0 uygulanıyor: ${err.message}`);
+      req.rateLimitTier = DEFAULT_ANON_TIER;
+    }
+
+    if (isReady()) {
+      try {
+        await getRedisClient().setEx(cacheKey, RATE_LIMIT_TIER_CACHE_TTL_SECONDS, String(req.rateLimitTier));
+      } catch (err) {
+        logger.warn(`[RateLimit:TIER] Redis cache write başarısız: ${err.message}`);
+      }
+    }
+
+    return req.rateLimitTier;
+  })();
+
+  try {
+    return await req._rateLimitTierPromise;
+  } finally {
+    // [TR] Aynı request boyunca duplicate DB read'i önlemek için promise cache kullanıyoruz.
+    //      Request bitiminde bu internal alan temizlenir.
+    // [EN] Promise cache prevents duplicate reads within the same request scope.
+    delete req._rateLimitTierPromise;
+  }
+}
+
+function makeTieredSensitiveLimiter({
+  label,
+  windowMs,
+  keyGenerator,
+  storePrefix,
+  limitsByTier,
+  errorMessageFactory,
+}) {
+  const handlersByTier = limitsByTier.map((tierMax, tierIndex) => {
+    const redisLimiter = rateLimit({
+      windowMs,
+      max: tierMax,
+      keyGenerator,
+      store: makeStore(`${storePrefix}:t${tierIndex}`),
+      skip: makeSkipFn(),
+      handler: (req, res) => {
+        onLimitReached(req);
+        res.status(429).json(errorMessageFactory(req, { tier: tierIndex, max: tierMax, windowMs }));
+      },
+      standardHeaders: true,
+      legacyHeaders: false,
+    });
+
+    const inMemoryLimiter = makeInMemoryLimiter({
+      label: `${label}:T${tierIndex}`,
+      windowMs,
+      max: tierMax,
+      keyGenerator,
+      errorMessage: (req) => errorMessageFactory(req, { tier: tierIndex, max: tierMax, windowMs }),
+    });
+
+    return makeSensitiveLimiter({
+      label: `${label}:T${tierIndex}`,
+      redisLimiter,
+      inMemoryLimiter,
+    });
+  });
+
+  return async (req, res, next) => {
+    let tier = DEFAULT_ANON_TIER;
+    try {
+      tier = await resolveRequestTier(req);
+    } catch (err) {
+      logger.warn(`[RateLimit:${label}] Tier çözümü beklenmedik hatayla düştü, tier0 uygulanıyor: ${err.message}`);
+    }
+    const normalizedTier = clampTier(tier);
+    return handlersByTier[normalizedTier](req, res, next);
   };
 }
 
@@ -280,6 +412,23 @@ const marketReadLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// ─── Stats Read Surface — Public/Lightweight Telemetry ─────────────────────
+// [TR] Public stats yüzeyi availability odaklıdır; Redis down olduğunda fail-open kalabilir.
+// [EN] Public stats surface is availability-first and may remain fail-open on Redis degradation.
+const statsReadLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.ip,
+  store: makeStore("stats-read"),
+  skip: makeSkipFn(),
+  handler: (req, res) => {
+    onLimitReached(req);
+    res.status(429).json({ error: "Stats isteği limiti aşıldı. Lütfen kısa bir süre sonra tekrar deneyin." });
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // ─── Orders Write Surface — Parent Order Oluşturma / Güncelleme ─────────────
 // Saatte 5 istek — wallet bazlı
 const ordersWriteLimiter = rateLimit({
@@ -317,115 +466,142 @@ const ordersWriteLimiterWithFallback = makeSensitiveLimiter({
 //      fazla dar kalıyordu. Read odaklı ayrı limit kullanıyoruz.
 // [EN] /api/orders/my is paginated now; write-limit (5/hour) is too restrictive for reads.
 //      Use a dedicated read-oriented limiter for user list pagination.
-const ordersReadLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 120,
-  keyGenerator: (req) => req.wallet || req.ip,
-  store: makeStore("orders-read"),
-  skip: makeSkipFn(),
-  handler: (req, res) => {
-    onLimitReached(req);
-    res.status(429).json({ error: "Order okuma limiti aşıldı. Lütfen kısa bir süre sonra tekrar deneyin." });
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-const ordersReadInMemoryLimiter = makeInMemoryLimiter({
+const ordersReadLimiter = makeTieredSensitiveLimiter({
   label: "ORDERS-READ",
   windowMs: 60 * 1000,
-  max: 120,
   keyGenerator: (req) => req.wallet || req.ip,
-  errorMessage: () => ({
-    error: "Order okuma limiti aşıldı. Lütfen kısa bir süre sonra tekrar deneyin.",
+  storePrefix: "orders-read",
+  // [TR] Tier-aware throughput farkı yalnız abuse/fair-use içindir; authority üretmez.
+  // [EN] Tier-aware throughput only tunes fair-use capacity and remains non-authoritative.
+  limitsByTier: [70, 110, 150, 190, 230],
+  errorMessageFactory: (_req, { max }) => ({
+    error: `Order okuma limiti aşıldı. Bu seviye için dakikada maksimum ${max} istek.`,
   }),
 });
 
-const ordersReadLimiterWithFallback = makeSensitiveLimiter({
-  label: "ORDERS-READ",
-  redisLimiter: ordersReadLimiter,
-  inMemoryLimiter: ordersReadInMemoryLimiter,
-});
-
-// ─── Trades / Child Trade Room Surface ──────────────────────────────────────
+// ─── Room / Child Trade Read Surface ────────────────────────────────────────
 // 1 dakikada 30 istek — wallet bazlı
-const tradesLimiter = rateLimit({
+const roomReadLimiter = makeTieredSensitiveLimiter({
+  label: "ROOM-READ",
   windowMs: 60 * 1000,
-  max: 30,
   keyGenerator: (req) => req.wallet || req.ip,
-  store: makeStore("trades"),
+  storePrefix: "room-read",
+  limitsByTier: [20, 30, 40, 55, 70],
+  errorMessageFactory: (_req, { max }) => ({
+    error: `Trade okuma limiti aşıldı. Bu seviye için dakikada maksimum ${max} istek.`,
+  }),
+});
+
+// ─── Receipt Upload — Write-adjacent Coordination Surface ──────────────────
+// [TR] Dekont yükleme trade-room read yüzeyinden ayrıdır; write-adjacent kabul edilir.
+//      Redis down olduğunda fail-open yapılmaz, in-memory fallback ile korunur.
+// [EN] Receipt upload is separate from room reads; it is write-adjacent and protected with
+//      in-memory fallback when Redis is unavailable.
+const receiptUploadLimiter = makeTieredSensitiveLimiter({
+  label: "RECEIPT-UPLOAD",
+  windowMs: 10 * 60 * 1000,
+  keyGenerator: (req) => req.wallet || req.ip,
+  storePrefix: "receipt-upload",
+  limitsByTier: [6, 8, 10, 12, 14],
+  errorMessageFactory: (_req, { max }) => ({
+    error: `Dekont yükleme limiti aşıldı. Bu seviye için 10 dakikada maksimum ${max} istek.`,
+  }),
+});
+
+// ─── Coordination Write Surface (Cancel/Ack vb.) ────────────────────────────
+const coordinationWriteLimiter = makeTieredSensitiveLimiter({
+  label: "COORDINATION-WRITE",
+  windowMs: 10 * 60 * 1000,
+  keyGenerator: (req) => req.wallet || req.ip,
+  storePrefix: "coordination-write",
+  limitsByTier: [8, 12, 16, 20, 24],
+  errorMessageFactory: (_req, { max }) => ({
+    error: `Koordinasyon yazım limiti aşıldı. Bu seviye için 10 dakikada maksimum ${max} istek.`,
+  }),
+});
+
+// ─── Admin Read-only Observability Surface ──────────────────────────────────
+// [TR] Admin endpoint'leri public değildir; read-only olsa da hassas operasyonel metrik taşır.
+//      Redis down durumunda fail-open yerine in-memory fallback uygulanır.
+// [EN] Admin endpoints are not public; even read-only observability is protected via in-memory fallback.
+const adminReadLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.wallet || req.ip,
+  store: makeStore("admin-read"),
   skip: makeSkipFn(),
   handler: (req, res) => {
     onLimitReached(req);
-    res.status(429).json({ error: "Çok fazla trade isteği. Dakikada maksimum 30 istek." });
+    res.status(429).json({ error: "Admin gözlem limiti aşıldı. Kısa süre sonra tekrar deneyin." });
   },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-const tradesInMemoryLimiter = makeInMemoryLimiter({
-  label: "TRADES",
+const adminReadInMemoryLimiter = makeInMemoryLimiter({
+  label: "ADMIN-READ",
   windowMs: 60 * 1000,
-  max: 30,
+  max: 60,
   keyGenerator: (req) => req.wallet || req.ip,
   errorMessage: () => ({
-    error: "Çok fazla trade isteği. Dakikada maksimum 30 istek.",
+    error: "Admin gözlem limiti aşıldı. Kısa süre sonra tekrar deneyin.",
   }),
 });
 
-const tradesLimiterWithFallback = makeSensitiveLimiter({
-  label: "TRADES",
-  redisLimiter: tradesLimiter,
-  inMemoryLimiter: tradesInMemoryLimiter,
+const adminReadLimiterWithFallback = makeSensitiveLimiter({
+  label: "ADMIN-READ",
+  redisLimiter: adminReadLimiter,
+  inMemoryLimiter: adminReadInMemoryLimiter,
+});
+
+// ─── Client Error Log Surface — Public Write (Telemetry) ───────────────────
+// [TR] Client crash log endpoint'i public telemetry yüzeyidir; erişilebilirlik önceliklidir.
+// [EN] Client crash logging is a public telemetry surface and remains availability-first.
+const clientLogLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.ip,
+  store: makeStore("client-log"),
+  skip: makeSkipFn(),
+  handler: (req, res) => {
+    onLimitReached(req);
+    res.status(429).json({ error: "Client log limiti aşıldı. Lütfen daha sonra tekrar deneyin." });
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // ─── Feedback — Spam Engeli ───────────────────────────────────────────────────
 // Saatte 3 istek — wallet bazlı
-const feedbackLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 3,
-  keyGenerator: (req) => req.wallet || req.ip,
-  store: makeStore("feedback"),
-  skip: makeSkipFn(),
-  handler: (req, res) => {
-    onLimitReached(req);
-    res.status(429).json({ error: "Geri bildirim limiti: Saatte 3 istek." });
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-const feedbackInMemoryLimiter = makeInMemoryLimiter({
+const feedbackLimiter = makeTieredSensitiveLimiter({
   label: "FEEDBACK",
   windowMs: 60 * 60 * 1000,
-  max: 3,
   keyGenerator: (req) => req.wallet || req.ip,
-  errorMessage: () => ({
-    error: "Geri bildirim limiti: Saatte 3 istek.",
+  storePrefix: "feedback",
+  limitsByTier: [2, 3, 4, 5, 6],
+  errorMessageFactory: (_req, { max }) => ({
+    error: `Geri bildirim limiti aşıldı. Bu seviye için saatte maksimum ${max} istek.`,
   }),
 });
-
-const feedbackLimiterWithFallback = makeSensitiveLimiter({
-  label: "FEEDBACK",
-  redisLimiter: feedbackLimiter,
-  inMemoryLimiter: feedbackInMemoryLimiter,
-});
-
-// ── Backward-compatible aliases ──────────────────────────────────────────────
-// [TR] Route katmanını bir turda tamamen taşımak zorunda kalmamak için alias veriyoruz.
-// [EN] Aliases keep existing imports working while routes migrate toward V3 naming.
-const listingsReadLimiter = marketReadLimiter;
-const listingsWriteLimiter = ordersWriteLimiterWithFallback;
 
 module.exports = {
   piiLimiter,
   authLimiter,
   nonceLimiter,
   marketReadLimiter,
-  ordersReadLimiter: ordersReadLimiterWithFallback,
+  statsReadLimiter,
+  ordersReadLimiter,
   ordersWriteLimiter: ordersWriteLimiterWithFallback,
-  listingsReadLimiter,
-  listingsWriteLimiter,
-  tradesLimiter: tradesLimiterWithFallback,
-  feedbackLimiter: feedbackLimiterWithFallback,
+  roomReadLimiter,
+  receiptUploadLimiter,
+  coordinationWriteLimiter,
+  adminReadLimiter: adminReadLimiterWithFallback,
+  clientLogLimiter,
+  feedbackLimiter,
+  __private: {
+    clampTier,
+    normalizeTierFromMirror,
+    resolveRequestTier,
+    RATE_LIMIT_TIER_CACHE_TTL_SECONDS,
+  },
 };

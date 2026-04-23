@@ -3,6 +3,8 @@ const request = require('supertest');
 
 process.env.BASE_RPC_URL = 'http://localhost:8545';
 process.env.ARAF_ESCROW_ADDRESS = '0x' + '22'.repeat(20);
+const mockRoomReadLimiter = jest.fn((_req, _res, next) => next());
+const mockCoordinationWriteLimiter = jest.fn((_req, _res, next) => next());
 
 jest.mock('../scripts/middleware/auth', () => ({
   requireAuth: (req, _res, next) => {
@@ -13,7 +15,8 @@ jest.mock('../scripts/middleware/auth', () => ({
 }));
 
 jest.mock('../scripts/middleware/rateLimiter', () => ({
-  tradesLimiter: (_req, _res, next) => next(),
+  roomReadLimiter: (...args) => mockRoomReadLimiter(...args),
+  coordinationWriteLimiter: (...args) => mockCoordinationWriteLimiter(...args),
 }));
 
 jest.mock('../scripts/models/User', () => ({
@@ -65,6 +68,8 @@ describe('POST /api/trades/propose-cancel signature verification', () => {
     mockSigNonces.mockClear();
     mockVerifyTypedData.mockClear();
     mockHashDomain.mockClear();
+    mockRoomReadLimiter.mockClear();
+    mockCoordinationWriteLimiter.mockClear();
   });
 
   const buildApp = () => {
@@ -86,6 +91,8 @@ describe('POST /api/trades/propose-cancel signature verification', () => {
     const res = await sendRequest(buildApp());
 
     expect(res.status).toBe(200);
+    expect(mockCoordinationWriteLimiter).toHaveBeenCalled();
+    expect(mockRoomReadLimiter).not.toHaveBeenCalled();
     expect(mockSigNonces).toHaveBeenCalled();
     expect(mockHashDomain).toHaveBeenCalled();
     expect(mockVerifyTypedData).toHaveBeenCalled();

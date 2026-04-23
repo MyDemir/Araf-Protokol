@@ -2,8 +2,7 @@
 const express = require("express");
 const router = express.Router();
 const logger = require("../utils/logger");
-const rateLimit = require("express-rate-limit");
-const logRateLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, keyGenerator: (req) => req.ip, standardHeaders: true, legacyHeaders: false });
+const { clientLogLimiter } = require("../middleware/rateLimiter");
 
 function scrubClientErrorText(value) {
   if (!value || typeof value !== "string") return value;
@@ -18,7 +17,7 @@ function scrubClientErrorText(value) {
     .replace(/\b(eyJ[^\s]+)\b/g, "[REDACTED]");
 }
 
-router.post("/client-error", logRateLimiter, (req, res) => {
+router.post("/client-error", clientLogLimiter, (req, res) => {
   const { message, stack, componentStack, url } = req.body || {};
   if (!message || typeof message !== "string") return res.status(400).json({ error: "message alanı zorunludur." });
   logger.error("[FRONTEND-CRASH]", {

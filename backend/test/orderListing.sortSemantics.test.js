@@ -118,7 +118,8 @@ describe("orders/listings sort semantics on string onchain ids", () => {
         requireSessionWalletMatch: (_req, _res, next) => next(),
       }));
       jest.doMock("../scripts/middleware/rateLimiter", () => ({
-        tradesLimiter: (_req, _res, next) => next(),
+        roomReadLimiter: (_req, _res, next) => next(),
+        coordinationWriteLimiter: (_req, _res, next) => next(),
       }));
       jest.doMock("../scripts/models/Trade", () => Trade);
       jest.doMock("../scripts/models/User", () => ({
