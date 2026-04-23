@@ -69,21 +69,26 @@ Kilit davranışlar:
 - Aktif trade (`LOCKED/PAID/CHALLENGED`) varken banka profil değişimi engellenir.
 - Bank profile version/sayaçları risk sinyali için güncellenir.
 
-Kabul edilen alanlar:
+Kabul edilen request body:
 ```json
 {
-  "rail": "TR_IBAN | US_ACH | SEPA_IBAN",
-  "country": "TR | US | EU | ...",
-  "contactChannel": "telegram | email | phone",
-  "contactValue": "string",
-  "bankOwner": "string",
-  "iban": "string",
-  "routingNumber": "string",
-  "accountNumber": "string",
-  "accountType": "checking | savings",
-  "bic": "string",
-  "bankName": "string",
-  "telegram": "legacy optional"
+  "payoutProfile": {
+    "rail": "TR_IBAN | US_ACH | SEPA_IBAN",
+    "country": "TR | US | DE | ...",
+    "contact": {
+      "channel": "telegram | email | phone | null",
+      "value": "string | null"
+    },
+    "fields": {
+      "account_holder_name": "string",
+      "iban": "string | null",
+      "routing_number": "string | null",
+      "account_number": "string | null",
+      "account_type": "checking | savings | null",
+      "bic": "string | null",
+      "bank_name": "string | null"
+    }
+  }
 }
 ```
 

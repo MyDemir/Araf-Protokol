@@ -1,11 +1,11 @@
 "use strict";
 
 /**
- * usePII — Güvenli IBAN + Telegram Fetch Hook
+ * usePII — Güvenli payout profile + contact fetch hook
  *
  * Güvenlik Özellikleri:
- *   - IBAN asla React state'te kalıcı olarak saklanmaz
- *   - Trade room unmount olduğunda IBAN + Telegram otomatik temizlenir
+ *   - Payout profile verisi React state'te kalıcı olarak saklanmaz
+ *   - Trade room unmount olduğunda payout/contact state temizlenir
  *   - Her gösterimde yeniden fetch yapılır (cache yok)
  *   - Kısa ömürlü PII token ile 2 adımlı erişim
  *   - tüm authentication httpOnly cookie üzerinden (credentials: include)
@@ -50,7 +50,7 @@ export function usePII(tradeId, authenticatedFetch) {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      setPii(null); // unmount → IBAN + Telegram bellekten sil
+      setPii(null); // unmount → payout profile bellekten sil
       if (abortCtrlRef.current) {
         abortCtrlRef.current.abort();
       }

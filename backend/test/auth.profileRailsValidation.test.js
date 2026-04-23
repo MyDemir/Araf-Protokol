@@ -6,6 +6,7 @@ const request = require("supertest");
 describe("auth profile payout rail validation", () => {
   let app;
   let UserMock;
+  let TradeMock;
 
   beforeEach(() => {
     jest.resetModules();
@@ -62,7 +63,8 @@ describe("auth profile payout rail validation", () => {
         buildPayoutFingerprint: jest.fn().mockReturnValue("fp"),
       }));
       jest.doMock("../scripts/models/User", () => UserMock);
-      jest.doMock("../scripts/models/Trade", () => ({ exists: jest.fn().mockResolvedValue(false) }));
+      TradeMock = { exists: jest.fn().mockResolvedValue(false) };
+      jest.doMock("../scripts/models/Trade", () => TradeMock);
       jest.doMock("../scripts/utils/logger", () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }));
 
       const router = require("../scripts/routes/auth");
@@ -74,31 +76,58 @@ describe("auth profile payout rail validation", () => {
 
   it("accepts only supported rails and validates rail-specific fields", async () => {
     const okTr = await request(app).put("/api/auth/profile").send({
-      rail: "TR_IBAN", country: "TR", bankOwner: "Test User", iban: "TR123456789012345678901234",
-      routingNumber: "", accountNumber: "", accountType: "", bic: "", bankName: "",
-      contactChannel: "telegram", contactValue: "tester1", telegram: "tester1",
+      payoutProfile: {
+        rail: "TR_IBAN",
+        country: "TR",
+        contact: { channel: "telegram", value: "tester1" },
+        fields: {
+          account_holder_name: "Test User",
+          iban: "TR123456789012345678901234",
+          routing_number: null, account_number: null, account_type: null, bic: null, bank_name: "Bank",
+        },
+      },
     });
     expect(okTr.status).toBe(200);
 
     const badRail = await request(app).put("/api/auth/profile").send({
-      rail: "SWIFT", country: "TR", bankOwner: "Test User", iban: "TR123456789012345678901234",
-      routingNumber: "", accountNumber: "", accountType: "", bic: "", bankName: "",
-      contactChannel: "telegram", contactValue: "tester1", telegram: "tester1",
+      payoutProfile: {
+        rail: "SWIFT", country: "TR", contact: { channel: "telegram", value: "tester1" },
+        fields: { account_holder_name: "Test User", iban: "TR123456789012345678901234", routing_number: null, account_number: null, account_type: null, bic: null, bank_name: "Bank" },
+      },
     });
     expect(badRail.status).toBe(400);
 
     const badAch = await request(app).put("/api/auth/profile").send({
-      rail: "US_ACH", country: "US", bankOwner: "Test User", iban: "",
-      routingNumber: "123", accountNumber: "12", accountType: "checking", bic: "", bankName: "Bank",
-      contactChannel: "telegram", contactValue: "tester1", telegram: "tester1",
+      payoutProfile: {
+        rail: "US_ACH", country: "US", contact: { channel: "telegram", value: "tester1" },
+        fields: { account_holder_name: "Test User", iban: null, routing_number: "123", account_number: "12", account_type: "checking", bic: null, bank_name: "Bank" },
+      },
     });
     expect(badAch.status).toBe(400);
 
     const badSepa = await request(app).put("/api/auth/profile").send({
-      rail: "SEPA_IBAN", country: "DE", bankOwner: "Test User", iban: "INVALIDIBAN",
-      routingNumber: "", accountNumber: "", accountType: "", bic: "DEUTDEFF",
-      bankName: "Bank", contactChannel: "telegram", contactValue: "tester1", telegram: "tester1",
+      payoutProfile: {
+        rail: "SEPA_IBAN", country: "DE", contact: { channel: "telegram", value: "tester1" },
+        fields: { account_holder_name: "Test User", iban: "INVALIDIBAN", routing_number: null, account_number: null, account_type: null, bic: "DEUTDEFF", bank_name: "Bank" },
+      },
     });
     expect(badSepa.status).toBe(400);
+  });
+
+  it("returns 409 when active trade exists and payout profile changed", async () => {
+    TradeMock.exists.mockResolvedValue(true);
+    const res = await request(app).put("/api/auth/profile").send({
+      payoutProfile: {
+        rail: "TR_IBAN",
+        country: "TR",
+        contact: { channel: "email", value: "a@b.com" },
+        fields: {
+          account_holder_name: "Test User",
+          iban: "TR123456789012345678901234",
+          routing_number: null, account_number: null, account_type: null, bic: null, bank_name: null,
+        },
+      },
+    });
+    expect(res.status).toBe(409);
   });
 });

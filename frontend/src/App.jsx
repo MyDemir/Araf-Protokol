@@ -94,7 +94,7 @@ function App() {
   };
   const [makerToken, setMakerToken] = useState('USDT');
   const [makerSide, setMakerSide] = useState('SELL_CRYPTO');
-  const [profileTab, setProfileTab] = useState('hesabim');
+  const [profileTab, setProfileTab] = useState('ayarlar');
   const [lang, setLang] = useState(getInitialLang);
   const [loadingText, setLoadingText] = useState('');
   const [isContractLoading, setIsContractLoading] = useState(false);
@@ -189,12 +189,8 @@ function App() {
     isLoggingIn,
     setIsLoggingIn,
     userReputation,
-    piiBankOwner,
-    setPiiBankOwner,
-    piiIban,
-    setPiiIban,
-    piiTelegram,
-    setPiiTelegram,
+    payoutProfileDraft,
+    setPayoutProfileDraft,
     tradeHistory,
     historyLoading,
     tradeHistoryPage,
@@ -1000,8 +996,8 @@ function App() {
     }
   };
 
-  // [TR] Kullanıcının banka/IBAN/Telegram bilgilerini günceller (AES-256 şifreli, off-chain)
-  // [EN] Updates user's bank/IBAN/Telegram info (AES-256 encrypted, off-chain)
+  // [TR] Kullanıcının payout profile + contact bilgisini V3 nested contract ile günceller.
+  // [EN] Updates payout profile + contact with V3 nested contract payload.
   const handleUpdatePII = async (e) => {
     e.preventDefault();
     if (isContractLoading) return;
@@ -1011,26 +1007,20 @@ function App() {
       const res = await authenticatedFetch(buildApiUrl('auth/profile'), {
         method: 'PUT',
         body: JSON.stringify({
-          rail: 'TR_IBAN',
-          country: 'TR',
-          contactChannel: 'telegram',
-          contactValue: piiTelegram.replace(/^@/, '').trim(),
-          bankOwner: piiBankOwner,
-          iban:      piiIban.replace(/\s/g, ''),
-          telegram:  piiTelegram.replace(/^@/, '').trim(),
-          routingNumber: '',
-          accountNumber: '',
-          accountType: '',
-          bic: '',
-          bankName: '',
+          payoutProfile: payoutProfileDraft,
         }),
       });
       const data = await res.json();
+      if (res.status === 409) {
+        throw new Error(lang === 'TR'
+          ? 'Aktif trade varken payout profili değiştirilemez.'
+          : 'Payout profile cannot be changed during active trades.');
+      }
       if (!res.ok) throw new Error(data.error || 'Güncelleme başarısız oldu.');
-      showToast(lang === 'TR' ? 'Bilgileriniz başarıyla güncellendi.' : 'Your information has been updated successfully.', 'success');
+      showToast(lang === 'TR' ? 'Ödeme profili güncellendi.' : 'Payout profile updated.', 'success');
     } catch (err) {
       console.error('PII update error:', err);
-      showToast(err.message, 'error');
+    showToast(err.message || (lang === 'TR' ? 'Profil güncelleme başarısız.' : 'Profile update failed.'), 'error');
     } finally {
       setIsContractLoading(false);
     }
@@ -1499,12 +1489,8 @@ const handleCreateOrder = async () => {
     setChargebackAccepted,
     setCurrentView,
     handleUpdatePII,
-    piiBankOwner,
-    setPiiBankOwner,
-    piiIban,
-    setPiiIban,
-    piiTelegram,
-    setPiiTelegram,
+    payoutProfileDraft,
+    setPayoutProfileDraft,
     getSafeTelegramUrl,
     handleLogoutAndDisconnect,
     isConnected,

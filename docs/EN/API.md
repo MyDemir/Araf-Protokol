@@ -69,21 +69,26 @@ Key behavior:
 - Bank-profile changes are blocked while active trades exist (`LOCKED/PAID/CHALLENGED`).
 - Bank profile version/counters are updated for risk signaling.
 
-Accepted payload fields:
+Accepted request body:
 ```json
 {
-  "rail": "TR_IBAN | US_ACH | SEPA_IBAN",
-  "country": "TR | US | EU | ...",
-  "contactChannel": "telegram | email | phone",
-  "contactValue": "string",
-  "bankOwner": "string",
-  "iban": "string",
-  "routingNumber": "string",
-  "accountNumber": "string",
-  "accountType": "checking | savings",
-  "bic": "string",
-  "bankName": "string",
-  "telegram": "legacy optional"
+  "payoutProfile": {
+    "rail": "TR_IBAN | US_ACH | SEPA_IBAN",
+    "country": "TR | US | DE | ...",
+    "contact": {
+      "channel": "telegram | email | phone | null",
+      "value": "string | null"
+    },
+    "fields": {
+      "account_holder_name": "string",
+      "iban": "string | null",
+      "routing_number": "string | null",
+      "account_number": "string | null",
+      "account_type": "checking | savings | null",
+      "bic": "string | null",
+      "bank_name": "string | null"
+    }
+  }
 }
 ```
 

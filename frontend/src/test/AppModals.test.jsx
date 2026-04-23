@@ -79,12 +79,13 @@ const makeCtx = (overrides = {}) => ({
   setChargebackAccepted: vi.fn(),
   setCurrentView: vi.fn(),
   handleUpdatePII: vi.fn(),
-  piiBankOwner: '',
-  setPiiBankOwner: vi.fn(),
-  piiIban: '',
-  setPiiIban: vi.fn(),
-  piiTelegram: '',
-  setPiiTelegram: vi.fn(),
+  payoutProfileDraft: {
+    rail: 'TR_IBAN',
+    country: 'TR',
+    contact: { channel: null, value: null },
+    fields: { account_holder_name: '', iban: null, routing_number: null, account_number: null, account_type: null, bic: null, bank_name: null },
+  },
+  setPayoutProfileDraft: vi.fn(),
   getSafeTelegramUrl: () => '#',
   handleLogoutAndDisconnect: vi.fn(),
   isConnected: true,
@@ -203,5 +204,14 @@ describe('AppModals side-aware behaviors', () => {
 
     render(<div>{modals.renderProfileModal()}</div>);
     expect(screen.getByText(/No signal is available for active maker-linked trades/i)).toBeInTheDocument();
+  });
+
+  it('renders generic contact channel selector in settings form', () => {
+    const modals = buildAppModals(makeCtx({ showMakerModal: false, profileTab: 'ayarlar' }));
+    render(<div>{modals.renderProfileModal()}</div>);
+    expect(screen.getByText(/Payout Profile & Contact/i)).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'telegram' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'email' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'phone' })).toBeInTheDocument();
   });
 });

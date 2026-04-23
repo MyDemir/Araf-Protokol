@@ -1,6 +1,8 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import fs from 'node:fs';
+import path from 'node:path';
 
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: undefined, isConnected: false, connector: null }),
@@ -60,12 +62,13 @@ vi.mock('../app/useAppSessionData', () => ({
     isLoggingIn: false,
     setIsLoggingIn: vi.fn(),
     userReputation: null,
-    piiBankOwner: '',
-    setPiiBankOwner: vi.fn(),
-    piiIban: '',
-    setPiiIban: vi.fn(),
-    piiTelegram: '',
-    setPiiTelegram: vi.fn(),
+    payoutProfileDraft: {
+      rail: 'TR_IBAN',
+      country: 'TR',
+      contact: { channel: null, value: null },
+      fields: { account_holder_name: '', iban: null, routing_number: null, account_number: null, account_type: null, bic: null, bank_name: null },
+    },
+    setPayoutProfileDraft: vi.fn(),
     tradeHistory: [],
     historyLoading: false,
     tradeHistoryPage: 1,
@@ -155,5 +158,10 @@ describe('App smoke', () => {
   it('mounts and renders the home view without hitting ErrorBoundary path', () => {
     render(<App />);
     expect(screen.getByTestId('home-view')).toBeInTheDocument();
+  });
+
+  it('keeps profile tab default aligned with modal tabs', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
+    expect(source).toContain("useState('ayarlar')");
   });
 });
