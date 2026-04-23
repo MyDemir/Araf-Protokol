@@ -85,10 +85,20 @@ describe("admin routes resilience + pagination semantics", () => {
       {
         _id: "1",
         onchain_escrow_id: "1",
-        maker_address: "0xaaa",
-        taker_address: "0xbbb",
+        maker_address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        taker_address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         status: "CHALLENGED",
-        payout_snapshot: { is_complete: false },
+        payout_snapshot: {
+          is_complete: false,
+          maker: {
+            reputation_context_at_lock: {
+              burn_count: 4,
+              auto_release_count: 3,
+              mutual_cancel_count: 2,
+              disputed_but_resolved_count: 1,
+            },
+          },
+        },
         created_at: new Date("2026-01-01T00:00:00Z"),
       },
     ];
@@ -130,7 +140,20 @@ describe("admin routes resilience + pagination semantics", () => {
       }));
       jest.doMock("../scripts/models/User", () => ({
         find: jest.fn(() => ({
-          select: jest.fn(() => ({ lean: jest.fn().mockResolvedValue([]) })),
+          select: jest.fn(() => ({
+            lean: jest.fn().mockResolvedValue([
+              {
+                wallet_address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                profileVersion: 0,
+                reputation_breakdown: {
+                  burn_count: 4,
+                  auto_release_count: 3,
+                  mutual_cancel_count: 2,
+                  disputed_but_resolved_count: 1,
+                },
+              },
+            ]),
+          })),
         })),
       }));
       jest.doMock("../scripts/models/Feedback", () => ({ find: jest.fn(), countDocuments: jest.fn() }));
@@ -142,6 +165,17 @@ describe("admin routes resilience + pagination semantics", () => {
     expect(normalRes.status).toBe(200);
     expect(normalRes.body.total).toBe(321);
     expect(normalRes.body.paginationScope.isWindowed).toBe(false);
+    expect(normalRes.body.trades[0].offchain_health_score_input.informational_only).toBe(true);
+    expect(normalRes.body.trades[0].offchain_health_score_input.non_authoritative_semantics).toBe(true);
+    expect(
+      normalRes.body.trades[0].offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_semantics
+    ).toMatchObject({
+      burn_count: 4,
+      auto_release_count: 3,
+      mutual_cancel_count: 2,
+      disputed_but_resolved_count: 1,
+    });
+    expect(normalRes.body.trades[0].bank_profile_risk).toBeDefined();
 
     const riskRes = await request(app).get("/api/admin/trades?status=ALL&page=1&limit=20&riskOnly=true");
     expect(riskRes.status).toBe(200);

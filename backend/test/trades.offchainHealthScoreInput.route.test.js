@@ -110,9 +110,14 @@ describe("trades route offchain_health_score_input regression", () => {
       readOnly: true,
       nonBlocking: true,
       canBlockProtocolActions: false,
+      informational_only: true,
+      non_authoritative_semantics: true,
       taker: {
         counterparty: "maker",
         frequentRecentChanges: true,
+      },
+      snapshot: {
+        isComplete: true,
       },
     });
     expect(res.body.trades[0].offchain_health_score_input.explainableReasons).not.toContain("partial_or_incomplete_snapshot");

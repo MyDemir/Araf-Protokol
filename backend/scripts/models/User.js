@@ -163,13 +163,6 @@ userSchema.methods.toPublicProfile = function () {
       effective_tier: this.reputation_cache.effective_tier,
       failure_score: this.reputation_cache.failure_score,
     },
-    reputation_breakdown: {
-      burn_count: this.reputation_breakdown?.burn_count ?? 0,
-      auto_release_count: this.reputation_breakdown?.auto_release_count ?? 0,
-      mutual_cancel_count: this.reputation_breakdown?.mutual_cancel_count ?? 0,
-      disputed_but_resolved_count: this.reputation_breakdown?.disputed_but_resolved_count ?? 0,
-      last_semantic_event_at: this.reputation_breakdown?.last_semantic_event_at ?? null,
-    },
     is_banned: this.is_banned,
     consecutive_bans: this.consecutive_bans,
     max_allowed_tier: this.max_allowed_tier,

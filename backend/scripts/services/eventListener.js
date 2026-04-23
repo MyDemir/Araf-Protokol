@@ -1531,6 +1531,10 @@ class EventWorker {
           semantic,
           eventAt: burnedAt,
           tradeId: tradeIdNum,
+          // [TR] BURNED için failure_score audit kaydı zaten { type: "burned" } olarak yazılıyor.
+          //      Aynı terminal outcome için ikinci bir history satırı üretmiyoruz.
+          // [EN] BURNED already writes { type: "burned" } via failure-score audit path.
+          //      Skip duplicate semantic-history row for the same terminal outcome.
           pushHistory: false,
         });
       }

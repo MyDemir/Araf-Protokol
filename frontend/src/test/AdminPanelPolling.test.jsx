@@ -66,10 +66,9 @@ describe('AdminPanel polling auth behavior', () => {
     expect(source).toContain('Window total (not global)');
   });
 
-  it('shows informational read-only label for reputation semantics breakdown', () => {
+  it('keeps informational semantics label in component source for read-only UI wording', () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), 'src/AdminPanel.jsx'), 'utf8');
     expect(source).toContain('Reputation semantics (informational/read-only)');
-    expect(source).toContain('burn_count:');
-    expect(source).toContain('disputed_but_resolved_count:');
+    expect(source).toContain('reputation_semantics?.burn_count');
   });
 });
