@@ -103,6 +103,16 @@ const userSchema = new mongoose.Schema(
       default: [],
     },
 
+    // [TR] Reputation semantiği read-model aynasıdır; protokol authority'si değildir.
+    // [EN] Reputation semantics are mirror/read-model only; never protocol authority.
+    reputation_breakdown: {
+      burn_count: { type: Number, default: 0, min: 0 },
+      auto_release_count: { type: Number, default: 0, min: 0 },
+      mutual_cancel_count: { type: Number, default: 0, min: 0 },
+      disputed_but_resolved_count: { type: Number, default: 0, min: 0 },
+      last_semantic_event_at: { type: Date, default: null },
+    },
+
     // ── Ban Aynası (authority değil, chain sync cache) ───────────────────────
     is_banned: { type: Boolean, default: false },
     banned_until: { type: Date, default: null },
@@ -152,6 +162,13 @@ userSchema.methods.toPublicProfile = function () {
       failed_disputes: this.reputation_cache.failed_disputes,
       effective_tier: this.reputation_cache.effective_tier,
       failure_score: this.reputation_cache.failure_score,
+    },
+    reputation_breakdown: {
+      burn_count: this.reputation_breakdown?.burn_count ?? 0,
+      auto_release_count: this.reputation_breakdown?.auto_release_count ?? 0,
+      mutual_cancel_count: this.reputation_breakdown?.mutual_cancel_count ?? 0,
+      disputed_but_resolved_count: this.reputation_breakdown?.disputed_but_resolved_count ?? 0,
+      last_semantic_event_at: this.reputation_breakdown?.last_semantic_event_at ?? null,
     },
     is_banned: this.is_banned,
     consecutive_bans: this.consecutive_bans,

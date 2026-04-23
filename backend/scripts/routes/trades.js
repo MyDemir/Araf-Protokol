@@ -148,6 +148,10 @@ const SAFE_TRADE_PROJECTION = [
   "payout_snapshot.maker.reputation_context_at_lock.consecutive_bans",
   "payout_snapshot.maker.reputation_context_at_lock.is_banned",
   "payout_snapshot.maker.reputation_context_at_lock.banned_until",
+  "payout_snapshot.maker.reputation_context_at_lock.burn_count",
+  "payout_snapshot.maker.reputation_context_at_lock.auto_release_count",
+  "payout_snapshot.maker.reputation_context_at_lock.mutual_cancel_count",
+  "payout_snapshot.maker.reputation_context_at_lock.disputed_but_resolved_count",
   "payout_snapshot.taker.rail",
   "payout_snapshot.taker.country",
   "payout_snapshot.taker.profile_version_at_lock",
@@ -159,6 +163,10 @@ const SAFE_TRADE_PROJECTION = [
   "payout_snapshot.taker.reputation_context_at_lock.consecutive_bans",
   "payout_snapshot.taker.reputation_context_at_lock.is_banned",
   "payout_snapshot.taker.reputation_context_at_lock.banned_until",
+  "payout_snapshot.taker.reputation_context_at_lock.burn_count",
+  "payout_snapshot.taker.reputation_context_at_lock.auto_release_count",
+  "payout_snapshot.taker.reputation_context_at_lock.mutual_cancel_count",
+  "payout_snapshot.taker.reputation_context_at_lock.disputed_but_resolved_count",
   "payout_snapshot.is_complete",
   "payout_snapshot.incomplete_reason",
   "payout_snapshot.captured_at",
@@ -214,7 +222,7 @@ async function _attachBankProfileRisk(trades) {
   const participantUsers = await User.find({ wallet_address: { $in: participantAddresses } })
     .select(
       "wallet_address profileVersion bankChangeCount7d bankChangeCount30d " +
-      "payout_profile reputation_cache is_banned banned_until consecutive_bans"
+      "payout_profile reputation_cache reputation_breakdown is_banned banned_until consecutive_bans"
     )
     .lean();
 

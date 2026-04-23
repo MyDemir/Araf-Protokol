@@ -30,6 +30,10 @@ describe("trades route offchain_health_score_input regression", () => {
               effective_tier: 2,
               failed_disputes: 1,
               is_banned: false,
+              burn_count: 9,
+              auto_release_count: 8,
+              mutual_cancel_count: 7,
+              disputed_but_resolved_count: 6,
             },
           },
           taker: {
@@ -112,6 +116,14 @@ describe("trades route offchain_health_score_input regression", () => {
       },
     });
     expect(res.body.trades[0].offchain_health_score_input.explainableReasons).not.toContain("partial_or_incomplete_snapshot");
+    expect(
+      res.body.trades[0].offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_semantics
+    ).toMatchObject({
+      burn_count: 9,
+      auto_release_count: 8,
+      mutual_cancel_count: 7,
+      disputed_but_resolved_count: 6,
+    });
     expect(res.body.trades[0].bank_profile_risk).toBeDefined();
   });
 });
