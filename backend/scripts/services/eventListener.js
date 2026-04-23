@@ -186,9 +186,15 @@ function _classifyTerminalSemanticOutcome({ terminalStatus, trade, tradeData }) 
   }
 
   if (terminalStatus === "CANCELED") {
+    // [TR] Öncelik zincirden çekilen cancel flag'lerdedir; Mongo mirror gecikmesine karşı drift'i önler.
+    // [EN] Prefer on-chain cancel flags first to avoid permanent drift on mirror lag/failure.
+    const makerSignedOnChain = tradeData?.cancelProposedByMaker;
+    const takerSignedOnChain = tradeData?.cancelProposedByTaker;
+    const makerSignedMirror = trade?.cancel_proposal?.maker_signed;
+    const takerSignedMirror = trade?.cancel_proposal?.taker_signed;
     const mutualCanceled = Boolean(
-      trade?.cancel_proposal?.maker_signed &&
-      trade?.cancel_proposal?.taker_signed
+      (makerSignedOnChain ?? makerSignedMirror) &&
+      (takerSignedOnChain ?? takerSignedMirror)
     );
     return mutualCanceled
       ? { historyType: "mutual_canceled", counterField: "mutual_cancel_count" }
@@ -1422,6 +1428,16 @@ class EventWorker {
     const { tradeId } = event.args;
     const canceledAt = await this._getEventDate(event);
     const tradeIdNum = _toIdentityString(tradeId);
+    let tradeData = null;
+    try {
+      // [TR] Cancel semantiğinde authoritative çift-imza sınıflandırması için zincir snapshot'ı kullanılır.
+      // [EN] Use chain snapshot for authoritative mutual-cancel classification.
+      tradeData = await this._fetchTradeFromChain(tradeId);
+    } catch (err) {
+      // [TR] Fail-closed: chain fetch yoksa mirror verisiyle neutral/unclassified kalınabilir.
+      // [EN] Fail-closed: if chain fetch is unavailable, fallback mirror may remain unclassified.
+      logger.warn(`[Worker] EscrowCanceled chain snapshot alınamadı: trade=${tradeIdNum} err=${err.message}`);
+    }
 
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -1449,6 +1465,7 @@ class EventWorker {
       const semantic = _classifyTerminalSemanticOutcome({
         terminalStatus: "CANCELED",
         trade,
+        tradeData,
       });
       await _applySemanticOutcomeToParticipants({
         session,

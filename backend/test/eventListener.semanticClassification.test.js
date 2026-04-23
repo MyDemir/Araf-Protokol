@@ -34,6 +34,15 @@ describe("eventListener semantic terminal outcome classification", () => {
     expect(outcome).toEqual({ historyType: "mutual_canceled", counterField: "mutual_cancel_count" });
   });
 
+  it("canceled mirror lag olsa da on-chain iki imza varsa mutual_cancel_count üretir", () => {
+    const outcome = worker._classifyTerminalSemanticOutcome({
+      terminalStatus: "CANCELED",
+      trade: { cancel_proposal: { maker_signed: false, taker_signed: false } },
+      tradeData: { cancelProposedByMaker: true, cancelProposedByTaker: true },
+    });
+    expect(outcome).toEqual({ historyType: "mutual_canceled", counterField: "mutual_cancel_count" });
+  });
+
   it("resolved + dispute evidence -> disputed_but_resolved_count", () => {
     const outcome = worker._classifyTerminalSemanticOutcome({
       terminalStatus: "RESOLVED",
