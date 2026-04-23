@@ -2,6 +2,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { time, loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
+const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 
 /**
  * ArafEscrow — Updated V3 Full Test Suite
@@ -2497,11 +2498,81 @@ describe("ArafEscrow V3", function () {
 
     it("getReputation returns new V3 authority shape", async () => {
       const rep = await escrow.getReputation(maker.address);
+      expect(rep.length).to.equal(15);
       expect(rep.successfulTrades).to.equal(BASELINE_SUCCESS);
+      expect(rep.failedDisputes).to.equal(0n);
       expect(rep.manualReleaseCount).to.be.gte(BASELINE_SUCCESS);
       expect(rep.autoReleaseCount).to.equal(0n);
+      expect(rep.mutualCancelCount).to.equal(0n);
+      expect(rep.disputedResolvedCount).to.equal(0n);
+      expect(rep.burnCount).to.equal(0n);
+      expect(rep.disputeWinCount).to.equal(0n);
+      expect(rep.disputeLossCount).to.equal(0n);
       expect(rep.riskPoints).to.be.gte(0n);
       expect(rep.effectiveTier).to.equal(4n);
+    });
+
+    it("setReputationPolicy rejects out-of-range bounds and oversized signal points", async () => {
+      await expect(
+        escrow.connect(owner).setReputationPolicy(
+          0,
+          3,
+          9,
+          7,
+          20,
+          35,
+          2,
+          45 * 24 * 3600
+        )
+      ).to.be.revertedWithCustomError(escrow, "InvalidReputationPolicyBounds");
+
+      await expect(
+        escrow.connect(owner).setReputationPolicy(
+          30 * 24 * 3600,
+          501,
+          9,
+          7,
+          20,
+          35,
+          2,
+          45 * 24 * 3600
+        )
+      ).to.be.revertedWithCustomError(escrow, "InvalidSignalPoints");
+    });
+
+    it("setCooldownConfig rejects excessive cooldown windows", async () => {
+      await expect(
+        escrow.connect(owner).setCooldownConfig(31 * 24 * 3600, 4 * 3600)
+      ).to.be.revertedWithCustomError(escrow, "InvalidCooldownWindow");
+    });
+
+    it("emits complete ReputationUpdated payload on reputation-impacting terminal action", async () => {
+      await usdt.connect(maker).approve(await escrow.getAddress(), ONE_USDT * 10000n);
+      await usdt.connect(taker).approve(await escrow.getAddress(), ONE_USDT * 10000n);
+      await escrow.connect(taker).registerWallet();
+      await time.increase(EIGHT_DAYS + 1);
+      await owner.sendTransaction({ to: taker.address, value: ethers.parseEther("1.0") });
+
+      const tradeId = await createAndLockTrade(100n * ONE_USDT, 1, "QmRepEvent");
+      await escrow.connect(taker).reportPayment(tradeId, "QmRepEvent");
+      await expect(escrow.connect(maker).releaseFunds(tradeId))
+        .to.emit(escrow, "ReputationUpdated")
+        .withArgs(
+          maker.address,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue
+        );
     });
   });
 });

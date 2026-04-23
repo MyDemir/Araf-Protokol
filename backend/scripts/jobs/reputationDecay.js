@@ -23,7 +23,7 @@ const logger = require("../utils/logger");
 
 const DECAY_ABI = [
   "function decayReputation(address _wallet)",
-  "function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier)",
+  "function getReputation(address _wallet) view returns (uint256 successfulTrades, uint256 failedDisputes, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier, uint256 manualReleaseCount, uint256 autoReleaseCount, uint256 mutualCancelCount, uint256 disputedResolvedCount, uint256 burnCount, uint256 disputeWinCount, uint256 disputeLossCount, uint256 riskPoints, uint256 lastPositiveEventAt, uint256 lastNegativeEventAt)",
 ];
 
 const CLEAN_SLATE_DAYS = 90;

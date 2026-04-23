@@ -602,6 +602,16 @@ export function useAppSessionData({
           bannedUntil: Number(repData.bannedUntil),
           consecutiveBans: Number(repData.consecutiveBans),
           effectiveTier: Number(repData.effectiveTier),
+          manualReleaseCount: Number(repData.manualReleaseCount ?? 0),
+          autoReleaseCount: Number(repData.autoReleaseCount ?? 0),
+          mutualCancelCount: Number(repData.mutualCancelCount ?? 0),
+          disputedResolvedCount: Number(repData.disputedResolvedCount ?? 0),
+          burnCount: Number(repData.burnCount ?? 0),
+          disputeWinCount: Number(repData.disputeWinCount ?? 0),
+          disputeLossCount: Number(repData.disputeLossCount ?? 0),
+          riskPoints: Number(repData.riskPoints ?? 0),
+          lastPositiveEventAt: Number(repData.lastPositiveEventAt ?? 0),
+          lastNegativeEventAt: Number(repData.lastNegativeEventAt ?? 0),
           firstSuccessfulTradeAt: Number(firstTradeAt),
         });
         setIsBanned(Number(repData.bannedUntil) > Date.now() / 1000);

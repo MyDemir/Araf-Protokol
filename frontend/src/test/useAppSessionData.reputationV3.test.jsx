@@ -71,6 +71,16 @@ describe('useAppSessionData reputation V3 mapping', () => {
       bannedUntil: 0n,
       consecutiveBans: 2n,
       effectiveTier: 4,
+      manualReleaseCount: 4n,
+      autoReleaseCount: 1n,
+      mutualCancelCount: 1n,
+      disputedResolvedCount: 2n,
+      burnCount: 0n,
+      disputeWinCount: 1n,
+      disputeLossCount: 1n,
+      riskPoints: 9n,
+      lastPositiveEventAt: 123n,
+      lastNegativeEventAt: 124n,
     });
     const getFirstSuccessfulTradeAt = vi.fn().mockResolvedValue(100n);
 

@@ -40,7 +40,7 @@ const ArafEscrowABI = parseAbi([
   'function decayReputation(address _wallet)',
 
   // View Fonksiyonları (App.jsx'te kullanılanlar) 
-  'function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier)',
+  'function getReputation(address _wallet) view returns (uint256 successfulTrades, uint256 failedDisputes, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier, uint256 manualReleaseCount, uint256 autoReleaseCount, uint256 mutualCancelCount, uint256 disputedResolvedCount, uint256 burnCount, uint256 disputeWinCount, uint256 disputeLossCount, uint256 riskPoints, uint256 lastPositiveEventAt, uint256 lastNegativeEventAt)',
   'function antiSybilCheck(address _wallet) view returns (bool aged, bool funded, bool cooldownOk)',
   'function getCooldownRemaining(address _wallet) view returns (uint256)',
   'function walletRegisteredAt(address _wallet) view returns (uint256)',
@@ -89,7 +89,13 @@ const normalizeReputationSnapshot = (rep) => {
     throw new Error('getReputation boş veya geçersiz veri döndürdü.');
   }
 
-  const required = ['successful', 'failed', 'bannedUntil', 'consecutiveBans', 'effectiveTier'];
+  const required = [
+    'successfulTrades',
+    'failedDisputes',
+    'bannedUntil',
+    'consecutiveBans',
+    'effectiveTier',
+  ];
   for (const key of required) {
     if (typeof rep[key] === 'undefined') {
       throw new Error(`getReputation V3 alanı eksik: ${key}`);
@@ -97,11 +103,23 @@ const normalizeReputationSnapshot = (rep) => {
   }
 
   return {
-    successful: BigInt(rep.successful),
-    failed: BigInt(rep.failed),
+    // [TR] App/UI backward field names korunur; authority kaynak isimleri V3 getter'dan eşlenir.
+    // [EN] Preserve app/UI field names; map from V3 authority getter field names.
+    successful: BigInt(rep.successfulTrades),
+    failed: BigInt(rep.failedDisputes),
     bannedUntil: BigInt(rep.bannedUntil),
     consecutiveBans: BigInt(rep.consecutiveBans),
     effectiveTier: Number(rep.effectiveTier),
+    manualReleaseCount: BigInt(rep.manualReleaseCount ?? 0n),
+    autoReleaseCount: BigInt(rep.autoReleaseCount ?? 0n),
+    mutualCancelCount: BigInt(rep.mutualCancelCount ?? 0n),
+    disputedResolvedCount: BigInt(rep.disputedResolvedCount ?? 0n),
+    burnCount: BigInt(rep.burnCount ?? 0n),
+    disputeWinCount: BigInt(rep.disputeWinCount ?? 0n),
+    disputeLossCount: BigInt(rep.disputeLossCount ?? 0n),
+    riskPoints: BigInt(rep.riskPoints ?? 0n),
+    lastPositiveEventAt: BigInt(rep.lastPositiveEventAt ?? 0n),
+    lastNegativeEventAt: BigInt(rep.lastNegativeEventAt ?? 0n),
   };
 };
 

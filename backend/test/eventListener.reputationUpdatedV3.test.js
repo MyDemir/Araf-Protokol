@@ -66,8 +66,16 @@ describe("eventListener ReputationUpdated V3 handling", () => {
       logIndex: 0,
       args: {
         wallet: "0x1111111111111111111111111111111111111111",
-        successful: 9n,
-        failed: 1n,
+        successfulTrades: 9n,
+        manualReleaseCount: 5n,
+        autoReleaseCount: 2n,
+        mutualCancelCount: 1n,
+        disputedResolvedCount: 3n,
+        burnCount: 1n,
+        disputeWinCount: 2n,
+        disputeLossCount: 1n,
+        failedDisputes: 1n,
+        riskPoints: 8n,
         bannedUntil: 0n,
         consecutiveBans: 3n,
         effectiveTier: 2n,
@@ -78,5 +86,7 @@ describe("eventListener ReputationUpdated V3 handling", () => {
     const [, update] = mockFindOneAndUpdateUser.mock.calls[0];
     expect(update.$set.consecutive_bans).toBe(3);
     expect(update.$set["reputation_cache.effective_tier"]).toBe(2);
+    expect(update.$set["reputation_breakdown.auto_release_count"]).toBe(2);
+    expect(update.$set["reputation_breakdown.burn_count"]).toBe(1);
   });
 });

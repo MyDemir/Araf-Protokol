@@ -57,6 +57,9 @@ error CleanPeriodNotElapsed();
 error NoBansToReset();
 error DeadlineTooFar();
 error ConflictingPingPath();
+error InvalidCooldownWindow();
+error InvalidReputationPolicyBounds();
+error InvalidSignalPoints();
 
 // [TR] V3 Order katmanı için yeni özel hatalar
 // [EN] New custom errors for the V3 Order layer
@@ -263,6 +266,12 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     uint16 private constant DEFAULT_MUTUAL_CANCEL_PENALTY_PTS = 2;
     uint32 private constant DEFAULT_REPUTATION_CLEAN_PERIOD = 90 days;
     uint32 private constant DEFAULT_BASE_BAN_DURATION = 30 days;
+    // [TR] Owner yanlış konfigürasyonlarını operasyonel olarak güvenli sınırda tut.
+    // [EN] Keep owner misconfiguration within an operationally safe envelope.
+    uint32 private constant MAX_CONFIGURABLE_COOLDOWN = 30 days;
+    uint32 private constant MAX_CONFIGURABLE_CLEAN_PERIOD = 3650 days;
+    uint32 private constant MAX_CONFIGURABLE_BAN_DURATION = 365 days;
+    uint16 private constant MAX_REPUTATION_SIGNAL_POINTS = 500;
 
     // ═══════════════════════════════════════════════════
     //  EIP-712 TYPEHASH
@@ -1214,30 +1223,30 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
     function _recordManualRelease(address _wallet) internal {
         Reputation storage rep = reputation[_wallet];
-        rep.manualReleaseCount++;
+        rep.manualReleaseCount = _saturatingInc32(rep.manualReleaseCount);
         _applyPositiveSignal(_wallet, manualReleaseRewardPts, true);
     }
 
     function _recordAutoRelease(address _wallet) internal {
         Reputation storage rep = reputation[_wallet];
-        rep.autoReleaseCount++;
+        rep.autoReleaseCount = _saturatingInc32(rep.autoReleaseCount);
         _applyNegativeSignal(_wallet, autoReleasePenaltyPts, true);
     }
 
     function _recordMutualCancel(address _wallet) internal {
         Reputation storage rep = reputation[_wallet];
-        rep.mutualCancelCount++;
+        rep.mutualCancelCount = _saturatingInc32(rep.mutualCancelCount);
         _applyNegativeSignal(_wallet, mutualCancelPenaltyPts, false);
     }
 
     function _recordDisputeResolution(address _winner, address _loser) internal {
         Reputation storage winnerRep = reputation[_winner];
         Reputation storage loserRep = reputation[_loser];
-        winnerRep.disputedResolvedCount++;
-        winnerRep.disputeWinCount++;
-        loserRep.disputedResolvedCount++;
-        loserRep.disputeLossCount++;
-        loserRep.failedDisputes++;
+        winnerRep.disputedResolvedCount = _saturatingInc32(winnerRep.disputedResolvedCount);
+        winnerRep.disputeWinCount = _saturatingInc32(winnerRep.disputeWinCount);
+        loserRep.disputedResolvedCount = _saturatingInc32(loserRep.disputedResolvedCount);
+        loserRep.disputeLossCount = _saturatingInc32(loserRep.disputeLossCount);
+        loserRep.failedDisputes = _saturatingInc32(loserRep.failedDisputes);
 
         _applyPositiveSignal(_winner, disputeWinRewardPts, true);
         _applyNegativeSignal(_loser, disputeLossPenaltyPts, true);
@@ -1245,8 +1254,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
     function _recordBurn(address _wallet) internal {
         Reputation storage rep = reputation[_wallet];
-        rep.burnCount++;
-        rep.failedDisputes++;
+        rep.burnCount = _saturatingInc32(rep.burnCount);
+        rep.failedDisputes = _saturatingInc32(rep.failedDisputes);
         _applyNegativeSignal(_wallet, burnPenaltyPts, true);
     }
 
@@ -1258,7 +1267,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         Reputation storage rep = reputation[_wallet];
 
         if (_countSuccess) {
-            rep.successfulTrades++;
+            rep.successfulTrades = _saturatingInc32(rep.successfulTrades);
             if (firstSuccessfulTradeAt[_wallet] == 0) {
                 firstSuccessfulTradeAt[_wallet] = block.timestamp;
             }
@@ -1280,12 +1289,22 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         bool _canBan
     ) internal {
         Reputation storage rep = reputation[_wallet];
-        rep.riskPoints += _points;
+        // [TR] riskPoints overflow ederek akışı kilitlemesin; authority sinyalini üst sınıra sabitle.
+        // [EN] Prevent riskPoints overflow from bricking flows; saturate at the max authority value.
+        rep.riskPoints = _saturatingAdd32(rep.riskPoints, _points);
         rep.lastNegativeEventAt = uint40(block.timestamp);
 
         if (_canBan && rep.failedDisputes >= 2) {
-            rep.consecutiveBans++;
-            uint256 banWindow = uint256(baseBanDuration) * (2 ** (rep.consecutiveBans - 1));
+            rep.consecutiveBans = _saturatingInc16(rep.consecutiveBans);
+            // [TR] Üstel büyümede overflow/shift taşmasını engelle, sonucu deterministic cap ile sınırla.
+            // [EN] Avoid overflow/shift traps in exponential growth; clamp deterministically.
+            uint256 exponent = uint256(rep.consecutiveBans > 0 ? rep.consecutiveBans - 1 : 0);
+            uint256 banWindow;
+            if (exponent >= 16) {
+                banWindow = 365 days;
+            } else {
+                banWindow = uint256(baseBanDuration) << exponent;
+            }
             if (banWindow > 365 days) banWindow = 365 days;
             rep.bannedUntil = uint40(block.timestamp + banWindow);
         }
@@ -1591,6 +1610,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      *         The change applies to new lock / fill entries.
      */
     function setCooldownConfig(uint256 _tier0TradeCooldown, uint256 _tier1TradeCooldown) external onlyOwner {
+        if (_tier0TradeCooldown > MAX_CONFIGURABLE_COOLDOWN) revert InvalidCooldownWindow();
+        if (_tier1TradeCooldown > MAX_CONFIGURABLE_COOLDOWN) revert InvalidCooldownWindow();
         tier0TradeCooldown = _tier0TradeCooldown;
         tier1TradeCooldown = _tier1TradeCooldown;
         emit CooldownConfigUpdated(_tier0TradeCooldown, _tier1TradeCooldown);
@@ -1612,8 +1633,20 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint16 _mutualCancelPenaltyPts,
         uint32 _baseBanDuration
     ) external onlyOwner {
-        if (_cleanPeriod < 1 days) revert CleanPeriodNotElapsed();
-        if (_baseBanDuration < 1 days) revert BurnPeriodNotReached();
+        if (_cleanPeriod < 1 days || _cleanPeriod > MAX_CONFIGURABLE_CLEAN_PERIOD) {
+            revert InvalidReputationPolicyBounds();
+        }
+        if (_baseBanDuration < 1 days || _baseBanDuration > MAX_CONFIGURABLE_BAN_DURATION) {
+            revert InvalidReputationPolicyBounds();
+        }
+        if (
+            _manualReleaseRewardPts > MAX_REPUTATION_SIGNAL_POINTS ||
+            _autoReleasePenaltyPts > MAX_REPUTATION_SIGNAL_POINTS ||
+            _disputeWinRewardPts > MAX_REPUTATION_SIGNAL_POINTS ||
+            _disputeLossPenaltyPts > MAX_REPUTATION_SIGNAL_POINTS ||
+            _burnPenaltyPts > MAX_REPUTATION_SIGNAL_POINTS ||
+            _mutualCancelPenaltyPts > MAX_REPUTATION_SIGNAL_POINTS
+        ) revert InvalidSignalPoints();
 
         cleanPeriod = _cleanPeriod;
         manualReleaseRewardPts = _manualReleaseRewardPts;
@@ -1804,5 +1837,20 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (_remainingReserve == 0 || _remainingAmount == 0) return 0;
         if (_fillAmount == _remainingAmount) return _remainingReserve;
         return (_remainingReserve * _fillAmount) / _remainingAmount;
+    }
+
+    function _saturatingInc32(uint32 _value) internal pure returns (uint32) {
+        return _value == type(uint32).max ? _value : _value + 1;
+    }
+
+    function _saturatingInc16(uint16 _value) internal pure returns (uint16) {
+        return _value == type(uint16).max ? _value : _value + 1;
+    }
+
+    function _saturatingAdd32(uint32 _base, uint16 _delta) internal pure returns (uint32) {
+        uint32 max = type(uint32).max;
+        if (_delta == 0) return _base;
+        if (_base > max - _delta) return max;
+        return _base + _delta;
     }
 }

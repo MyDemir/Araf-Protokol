@@ -88,7 +88,7 @@ const ARAF_ABI = [
   "event CancelProposed(uint256 indexed tradeId, address indexed proposer)",
   "event EscrowCanceled(uint256 indexed tradeId, uint256 makerRefund, uint256 takerRefund)",
   "event MakerPinged(uint256 indexed tradeId, address indexed pinger, uint256 timestamp)",
-  "event ReputationUpdated(address indexed wallet, uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier)",
+  "event ReputationUpdated(address indexed wallet, uint32 successfulTrades, uint32 manualReleaseCount, uint32 autoReleaseCount, uint32 mutualCancelCount, uint32 disputedResolvedCount, uint32 burnCount, uint32 disputeWinCount, uint32 disputeLossCount, uint32 failedDisputes, uint32 riskPoints, uint256 bannedUntil, uint16 consecutiveBans, uint8 effectiveTier)",
   "event BleedingDecayed(uint256 indexed tradeId, uint256 decayedAmount, uint256 timestamp)",
   "event EscrowBurned(uint256 indexed tradeId, uint256 burnedAmount)",
   "event OrderCreated(uint256 indexed orderId, address indexed owner, uint8 side, address token, uint256 totalAmount, uint256 minFillAmount, uint8 tier, bytes32 orderRef)",
@@ -99,7 +99,7 @@ const ARAF_ABI = [
   "event TokenConfigUpdated(address indexed token, bool supported, bool allowSellOrders, bool allowBuyOrders)",
   "function getTrade(uint256 _tradeId) view returns ((uint256 id,uint256 parentOrderId,address maker,address taker,address tokenAddress,uint256 cryptoAmount,uint256 makerBond,uint256 takerBond,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 state,uint256 lockedAt,uint256 paidAt,uint256 challengedAt,string ipfsReceiptHash,bool cancelProposedByMaker,bool cancelProposedByTaker,uint256 pingedAt,bool pingedByTaker,uint256 challengePingedAt,bool challengePingedByMaker))",
   "function getOrder(uint256 _orderId) view returns ((uint256 id,address owner,uint8 side,address tokenAddress,uint256 totalAmount,uint256 remainingAmount,uint256 minFillAmount,uint256 remainingMakerBondReserve,uint256 remainingTakerBondReserve,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 state,bytes32 orderRef))",
-  "function getReputation(address _wallet) view returns (uint256 successful,uint256 failed,uint256 bannedUntil,uint256 consecutiveBans,uint8 effectiveTier)",
+  "function getReputation(address _wallet) view returns (uint256 successfulTrades,uint256 failedDisputes,uint256 bannedUntil,uint256 consecutiveBans,uint8 effectiveTier,uint256 manualReleaseCount,uint256 autoReleaseCount,uint256 mutualCancelCount,uint256 disputedResolvedCount,uint256 burnCount,uint256 disputeWinCount,uint256 disputeLossCount,uint256 riskPoints,uint256 lastPositiveEventAt,uint256 lastNegativeEventAt)",
 ];
 
 const EVENT_ARG_KEYS = {
@@ -112,7 +112,7 @@ const EVENT_ARG_KEYS = {
   CancelProposed: ["tradeId", "proposer"],
   EscrowCanceled: ["tradeId", "makerRefund", "takerRefund"],
   MakerPinged: ["tradeId", "pinger", "timestamp"],
-  ReputationUpdated: ["wallet", "successful", "failed", "bannedUntil", "consecutiveBans", "effectiveTier"],
+  ReputationUpdated: ["wallet", "successfulTrades", "manualReleaseCount", "autoReleaseCount", "mutualCancelCount", "disputedResolvedCount", "burnCount", "disputeWinCount", "disputeLossCount", "failedDisputes", "riskPoints", "bannedUntil", "consecutiveBans", "effectiveTier"],
   BleedingDecayed: ["tradeId", "decayedAmount", "timestamp"],
   EscrowBurned: ["tradeId", "burnedAmount"],
   OrderCreated: ["orderId", "owner", "side", "token", "totalAmount", "minFillAmount", "tier", "orderRef"],
@@ -1665,12 +1665,23 @@ class EventWorker {
   }
 
   async _onReputationUpdated(event) {
-    const { wallet, successful, failed, bannedUntil, consecutiveBans, effectiveTier } = event.args;
+    const {
+      wallet,
+      successfulTrades,
+      failedDisputes,
+      bannedUntil,
+      consecutiveBans,
+      effectiveTier,
+      autoReleaseCount,
+      mutualCancelCount,
+      disputedResolvedCount,
+      burnCount,
+    } = event.args;
     const syncAt = await this._getEventDate(event);
 
-    const totalTrades = _toNum(successful) + _toNum(failed);
+    const totalTrades = _toNum(successfulTrades) + _toNum(failedDisputes);
     const successRate =
-      totalTrades > 0 ? Math.round((_toNum(successful) / totalTrades) * 100) : 100;
+      totalTrades > 0 ? Math.round((_toNum(successfulTrades) / totalTrades) * 100) : 100;
 
     const banTimestamp = _toNum(bannedUntil);
     const isBanned = banTimestamp > Math.floor(Date.now() / 1000);
@@ -1681,12 +1692,16 @@ class EventWorker {
         $set: {
           "reputation_cache.success_rate": successRate,
           "reputation_cache.total_trades": totalTrades,
-          "reputation_cache.successful_trades": _toNum(successful),
-          "reputation_cache.failed_disputes": _toNum(failed),
+          "reputation_cache.successful_trades": _toNum(successfulTrades),
+          "reputation_cache.failed_disputes": _toNum(failedDisputes),
           "reputation_cache.effective_tier": _toNum(effectiveTier),
           "is_banned": isBanned,
           "banned_until": isBanned ? new Date(banTimestamp * 1000) : null,
           "consecutive_bans": _toNum(consecutiveBans),
+          "reputation_breakdown.auto_release_count": _toNum(autoReleaseCount),
+          "reputation_breakdown.mutual_cancel_count": _toNum(mutualCancelCount),
+          "reputation_breakdown.disputed_but_resolved_count": _toNum(disputedResolvedCount),
+          "reputation_breakdown.burn_count": _toNum(burnCount),
           "last_onchain_sync_at": syncAt,
         },
       },

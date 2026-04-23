@@ -24,11 +24,21 @@ describe('useArafContract getReputation V3 mapping', () => {
 
   it('returns normalized V3 named reputation fields', async () => {
     mockReadContract.mockResolvedValue({
-      successful: 11n,
-      failed: 2n,
+      successfulTrades: 11n,
+      failedDisputes: 2n,
       bannedUntil: 0n,
       consecutiveBans: 1n,
       effectiveTier: 3n,
+      manualReleaseCount: 5n,
+      autoReleaseCount: 1n,
+      mutualCancelCount: 2n,
+      disputedResolvedCount: 3n,
+      burnCount: 0n,
+      disputeWinCount: 1n,
+      disputeLossCount: 1n,
+      riskPoints: 12n,
+      lastPositiveEventAt: 100n,
+      lastNegativeEventAt: 200n,
     });
 
     const { useArafContract } = await import('../hooks/useArafContract');
@@ -41,6 +51,16 @@ describe('useArafContract getReputation V3 mapping', () => {
       bannedUntil: 0n,
       consecutiveBans: 1n,
       effectiveTier: 3,
+      manualReleaseCount: 5n,
+      autoReleaseCount: 1n,
+      mutualCancelCount: 2n,
+      disputedResolvedCount: 3n,
+      burnCount: 0n,
+      disputeWinCount: 1n,
+      disputeLossCount: 1n,
+      riskPoints: 12n,
+      lastPositiveEventAt: 100n,
+      lastNegativeEventAt: 200n,
     });
   });
 
