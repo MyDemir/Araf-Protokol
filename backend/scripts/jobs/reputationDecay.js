@@ -33,6 +33,19 @@ const DEFAULT_TX_LIMIT = Number(process.env.REPUTATION_DECAY_TX_LIMIT || 50);
 let relayerWallet = null;
 let decayContract = null;
 
+function parseReputationSnapshot(rep) {
+  if (!rep || typeof rep !== "object") {
+    throw new Error("getReputation boş veya geçersiz yanıt döndürdü.");
+  }
+  if (rep.bannedUntil === undefined || rep.consecutiveBans === undefined) {
+    throw new Error("getReputation V3 alanları eksik (bannedUntil/consecutiveBans).");
+  }
+  return {
+    bannedUntil: Number(rep.bannedUntil || 0),
+    consecutiveBans: Number(rep.consecutiveBans || 0),
+  };
+}
+
 function getRelayer() {
   if (relayerWallet) return relayerWallet;
 
@@ -93,9 +106,9 @@ async function runReputationDecay() {
   const usersToClean = [];
   for (const user of candidates) {
     try {
-      const rep = await contract.getReputation(user.wallet_address);
-      const bannedUntil = Number(rep.bannedUntil || 0);
-      const consecutiveBans = Number(rep.consecutiveBans || 0);
+      const rep = parseReputationSnapshot(await contract.getReputation(user.wallet_address));
+      const bannedUntil = rep.bannedUntil;
+      const consecutiveBans = rep.consecutiveBans;
 
       if (!bannedUntil || consecutiveBans <= 0) continue;
       const bannedUntilMs = bannedUntil * 1000;

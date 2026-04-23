@@ -589,22 +589,22 @@ export function useAppSessionData({
     const fetchUserReputation = async () => {
       try {
         const repData = await getReputation(address);
-        const successful = typeof repData.successful !== 'undefined' ? repData.successful : repData[0];
-        const failed = typeof repData.failed !== 'undefined' ? repData.failed : repData[1];
-        const bannedUntil = typeof repData.bannedUntil !== 'undefined' ? repData.bannedUntil : repData[2];
-        const consecutiveBans = typeof repData.consecutiveBans !== 'undefined' ? repData.consecutiveBans : repData[3];
-        const effectiveTier = typeof repData.effectiveTier !== 'undefined' ? repData.effectiveTier : repData[4];
+        if (!repData) {
+          setUserReputation(null);
+          setIsBanned(false);
+          return;
+        }
         const firstTradeAt = getFirstSuccessfulTradeAt ? await getFirstSuccessfulTradeAt(address) : 0n;
 
         setUserReputation({
-          successful: Number(successful),
-          failed: Number(failed),
-          bannedUntil: Number(bannedUntil),
-          consecutiveBans: Number(consecutiveBans),
-          effectiveTier: Number(effectiveTier),
+          successful: Number(repData.successful),
+          failed: Number(repData.failed),
+          bannedUntil: Number(repData.bannedUntil),
+          consecutiveBans: Number(repData.consecutiveBans),
+          effectiveTier: Number(repData.effectiveTier),
           firstSuccessfulTradeAt: Number(firstTradeAt),
         });
-        setIsBanned(Number(bannedUntil) > Date.now() / 1000);
+        setIsBanned(Number(repData.bannedUntil) > Date.now() / 1000);
       } catch (err) {
         console.error('Kullanıcı itibar verisi çekilemedi:', err);
       }

@@ -84,6 +84,27 @@ const SUPPORTED_CHAINS = {
 //Kontrat adresi geçerlilik kontrolü — hem write hem read fonksiyonları için
 const _isValidAddress = ESCROW_ADDRESS && ESCROW_ADDRESS !== "0x0000000000000000000000000000000000000000";
 
+const normalizeReputationSnapshot = (rep) => {
+  if (!rep || typeof rep !== 'object') {
+    throw new Error('getReputation boş veya geçersiz veri döndürdü.');
+  }
+
+  const required = ['successful', 'failed', 'bannedUntil', 'consecutiveBans', 'effectiveTier'];
+  for (const key of required) {
+    if (typeof rep[key] === 'undefined') {
+      throw new Error(`getReputation V3 alanı eksik: ${key}`);
+    }
+  }
+
+  return {
+    successful: BigInt(rep.successful),
+    failed: BigInt(rep.failed),
+    bannedUntil: BigInt(rep.bannedUntil),
+    consecutiveBans: BigInt(rep.consecutiveBans),
+    effectiveTier: Number(rep.effectiveTier),
+  };
+};
+
 export function useArafContract() {
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
@@ -599,12 +620,13 @@ export function useArafContract() {
           return null;
         }
         try {
-          return await publicClient.readContract({
+          const rep = await publicClient.readContract({
             address: getAddress(ESCROW_ADDRESS),
             abi: ArafEscrowABI,
             functionName: 'getReputation',
             args: [getAddress(address)],
           });
+          return normalizeReputationSnapshot(rep);
         } catch (err) {
           console.error("[ArafContract] getReputation hatası:", err.message);
           return null;

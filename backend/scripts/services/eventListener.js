@@ -88,7 +88,7 @@ const ARAF_ABI = [
   "event CancelProposed(uint256 indexed tradeId, address indexed proposer)",
   "event EscrowCanceled(uint256 indexed tradeId, uint256 makerRefund, uint256 takerRefund)",
   "event MakerPinged(uint256 indexed tradeId, address indexed pinger, uint256 timestamp)",
-  "event ReputationUpdated(address indexed wallet, uint256 successful, uint256 failed, uint256 bannedUntil, uint8 effectiveTier)",
+  "event ReputationUpdated(address indexed wallet, uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier)",
   "event BleedingDecayed(uint256 indexed tradeId, uint256 decayedAmount, uint256 timestamp)",
   "event EscrowBurned(uint256 indexed tradeId, uint256 burnedAmount)",
   "event OrderCreated(uint256 indexed orderId, address indexed owner, uint8 side, address token, uint256 totalAmount, uint256 minFillAmount, uint8 tier, bytes32 orderRef)",
@@ -112,7 +112,7 @@ const EVENT_ARG_KEYS = {
   CancelProposed: ["tradeId", "proposer"],
   EscrowCanceled: ["tradeId", "makerRefund", "takerRefund"],
   MakerPinged: ["tradeId", "pinger", "timestamp"],
-  ReputationUpdated: ["wallet", "successful", "failed", "bannedUntil", "effectiveTier"],
+  ReputationUpdated: ["wallet", "successful", "failed", "bannedUntil", "consecutiveBans", "effectiveTier"],
   BleedingDecayed: ["tradeId", "decayedAmount", "timestamp"],
   EscrowBurned: ["tradeId", "burnedAmount"],
   OrderCreated: ["orderId", "owner", "side", "token", "totalAmount", "minFillAmount", "tier", "orderRef"],
@@ -1665,7 +1665,7 @@ class EventWorker {
   }
 
   async _onReputationUpdated(event) {
-    const { wallet, successful, failed, bannedUntil, effectiveTier } = event.args;
+    const { wallet, successful, failed, bannedUntil, consecutiveBans, effectiveTier } = event.args;
     const syncAt = await this._getEventDate(event);
 
     const totalTrades = _toNum(successful) + _toNum(failed);
@@ -1674,16 +1674,6 @@ class EventWorker {
 
     const banTimestamp = _toNum(bannedUntil);
     const isBanned = banTimestamp > Math.floor(Date.now() / 1000);
-
-    let consecutiveBans = 0;
-    try {
-      const rep = await this._fetchReputationFromChain(wallet);
-      if (rep && rep.consecutiveBans !== undefined) {
-        consecutiveBans = _toNum(rep.consecutiveBans);
-      }
-    } catch (err) {
-      logger.warn(`[Worker] getReputation backfill başarısız: wallet=${wallet} err=${err.message}`);
-    }
 
     await User.findOneAndUpdate(
       { wallet_address: wallet.toLowerCase() },
@@ -1696,7 +1686,7 @@ class EventWorker {
           "reputation_cache.effective_tier": _toNum(effectiveTier),
           "is_banned": isBanned,
           "banned_until": isBanned ? new Date(banTimestamp * 1000) : null,
-          "consecutive_bans": consecutiveBans,
+          "consecutive_bans": _toNum(consecutiveBans),
           "last_onchain_sync_at": syncAt,
         },
       },
