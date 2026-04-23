@@ -2,6 +2,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { time, loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
+const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 
 /**
  * ArafEscrow — Updated V3 Full Test Suite
@@ -128,6 +129,25 @@ describe("ArafEscrow V3", function () {
       bps += bn(await escrow.BAD_REP_PENALTY_BPS());
     }
     return (amount * bps) / BPS_DENOM;
+  }
+
+  async function getReputationData(wallet) {
+    const rep = await escrow.getReputation(wallet.address);
+    return {
+      successfulTrades: bn(rep.successfulTrades),
+      failedDisputes: bn(rep.failedDisputes),
+      bannedUntil: bn(rep.bannedUntil),
+      consecutiveBans: bn(rep.consecutiveBans),
+      effectiveTier: Number(rep.effectiveTier),
+      manualReleaseCount: bn(rep.manualReleaseCount),
+      autoReleaseCount: bn(rep.autoReleaseCount),
+      mutualCancelCount: bn(rep.mutualCancelCount),
+      disputedResolvedCount: bn(rep.disputedResolvedCount),
+      burnCount: bn(rep.burnCount),
+      disputeWinCount: bn(rep.disputeWinCount),
+      disputeLossCount: bn(rep.disputeLossCount),
+      riskPoints: bn(rep.riskPoints),
+    };
   }
 
   async function calcReleaseFees(amount, tier, makerBondCurrent) {
@@ -408,6 +428,21 @@ describe("ArafEscrow V3", function () {
       expect(takerSucc).to.equal(BASELINE_SUCCESS + 1n);
     });
 
+    it("manual release path increments manual_release factual counters", async () => {
+      const tradeId = await setupTrade(2, TRADE_AMOUNT, "legacy-manual-semantic");
+      const makerBefore = await getReputationData(maker);
+      const takerBefore = await getReputationData(taker);
+
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmManualSemantic");
+      await escrow.connect(maker).releaseFunds(tradeId);
+
+      const makerAfter = await getReputationData(maker);
+      const takerAfter = await getReputationData(taker);
+      expect(makerAfter.manualReleaseCount).to.equal(makerBefore.manualReleaseCount + 1n);
+      expect(takerAfter.manualReleaseCount).to.equal(takerBefore.manualReleaseCount + 1n);
+    });
+
     it("S1: autoRelease → maker +1 failed, taker +1 successful", async () => {
       const tradeId = await setupTrade(2, TRADE_AMOUNT, "legacy-s1");
       await escrow.connect(taker).lockEscrow(tradeId);
@@ -424,6 +459,22 @@ describe("ArafEscrow V3", function () {
       expect(makerFail).to.equal(1n);
       expect(takerSucc).to.equal(BASELINE_SUCCESS + 1n);
       expect(takerFail).to.equal(0n);
+    });
+
+    it("auto release path increments autoReleaseCount and riskPoints for maker", async () => {
+      const tradeId = await setupTrade(2, TRADE_AMOUNT, "legacy-auto-semantic");
+      const makerBefore = await getReputationData(maker);
+
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmAutoSemantic");
+      await time.increase(FORTY_EIGHT_H + 1);
+      await escrow.connect(taker).pingMaker(tradeId);
+      await time.increase(TWENTY_FOUR_H + 1);
+      await escrow.connect(taker).autoRelease(tradeId);
+
+      const makerAfter = await getReputationData(maker);
+      expect(makerAfter.autoReleaseCount).to.equal(makerBefore.autoReleaseCount + 1n);
+      expect(makerAfter.riskPoints).to.be.gte(makerBefore.riskPoints);
     });
 
     it("S2: releaseFunds from CHALLENGED → maker +1 failed", async () => {
@@ -445,6 +496,26 @@ describe("ArafEscrow V3", function () {
       expect(takerFail).to.equal(0n);
     });
 
+    it("dispute resolution records winner/loser counters deterministically", async () => {
+      const tradeId = await setupTrade(2, TRADE_AMOUNT, "legacy-dispute-semantic");
+      const makerBefore = await getReputationData(maker);
+      const takerBefore = await getReputationData(taker);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmDisputeSemantic");
+      await time.increase(TWENTY_FOUR_H + 1);
+      await escrow.connect(maker).pingTakerForChallenge(tradeId);
+      await time.increase(TWENTY_FOUR_H + 1);
+      await escrow.connect(maker).challengeTrade(tradeId);
+      await escrow.connect(maker).releaseFunds(tradeId);
+
+      const makerAfter = await getReputationData(maker);
+      const takerAfter = await getReputationData(taker);
+      expect(makerAfter.disputeLossCount).to.equal(makerBefore.disputeLossCount + 1n);
+      expect(takerAfter.disputeWinCount).to.equal(takerBefore.disputeWinCount + 1n);
+      expect(makerAfter.disputedResolvedCount).to.equal(makerBefore.disputedResolvedCount + 1n);
+      expect(takerAfter.disputedResolvedCount).to.equal(takerBefore.disputedResolvedCount + 1n);
+    });
+
     it("S3: collaborative cancel from CHALLENGED → no reputation penalty", async () => {
       const tradeId = await setupTrade(2, TRADE_AMOUNT, "legacy-s3");
       await escrow.connect(taker).lockEscrow(tradeId);
@@ -462,6 +533,19 @@ describe("ArafEscrow V3", function () {
       const [, takerFail] = await escrow.getReputation(taker.address);
       expect(makerFail).to.equal(0n);
       expect(takerFail).to.equal(0n);
+    });
+
+    it("mutual cancel increments mutualCancelCount for both parties", async () => {
+      const tradeId = await setupTrade(2, TRADE_AMOUNT, "legacy-mutual-semantic");
+      const makerBefore = await getReputationData(maker);
+      const takerBefore = await getReputationData(taker);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await collaborativeCancel(tradeId);
+
+      const makerAfter = await getReputationData(maker);
+      const takerAfter = await getReputationData(taker);
+      expect(makerAfter.mutualCancelCount).to.equal(makerBefore.mutualCancelCount + 1n);
+      expect(takerAfter.mutualCancelCount).to.equal(takerBefore.mutualCancelCount + 1n);
     });
 
     it("maker can cancel OPEN escrow and receive full refund", async () => {
@@ -799,6 +883,25 @@ describe("ArafEscrow V3", function () {
       const [, takerFail] = await escrow.getReputation(taker.address);
       expect(makerFail).to.equal(1n);
       expect(takerFail).to.equal(1n);
+    });
+
+    it("burn path increments burn_count factual counters", async () => {
+      const tradeId = await setupTrade(2, TRADE_AMOUNT, "legacy-burn-semantic");
+      const makerBefore = await getReputationData(maker);
+      const takerBefore = await getReputationData(taker);
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmBurnSemantic");
+      await time.increase(TWENTY_FOUR_H + 1);
+      await escrow.connect(maker).pingTakerForChallenge(tradeId);
+      await time.increase(TWENTY_FOUR_H + 1);
+      await escrow.connect(maker).challengeTrade(tradeId);
+      await time.increase(TEN_DAYS + 1);
+      await escrow.burnExpired(tradeId);
+
+      const makerAfter = await getReputationData(maker);
+      const takerAfter = await getReputationData(taker);
+      expect(makerAfter.burnCount).to.equal(makerBefore.burnCount + 1n);
+      expect(takerAfter.burnCount).to.equal(takerBefore.burnCount + 1n);
     });
 
     it("collaborative cancel requires both signatures", async () => {
@@ -2366,6 +2469,110 @@ describe("ArafEscrow V3", function () {
       await escrow.burnExpired(tradeId);
 
       expect((await escrow.getTrade(tradeId)).state).to.equal(6);
+    });
+  });
+
+  describe("V3 Reputation Policy + Getter", () => {
+    it("owner can update reputation policy with validation", async () => {
+      await expect(
+        escrow.connect(owner).setReputationPolicy(
+          30 * 24 * 3600,
+          3,
+          9,
+          7,
+          20,
+          35,
+          2,
+          45 * 24 * 3600
+        )
+      ).to.not.be.reverted;
+
+      expect(await escrow.cleanPeriod()).to.equal(30n * 24n * 3600n);
+      expect(await escrow.manualReleaseRewardPts()).to.equal(3n);
+      expect(await escrow.baseBanDuration()).to.equal(45n * 24n * 3600n);
+
+      await expect(
+        escrow.connect(owner).setReputationTierThresholds(30, 20, 100, 200)
+      ).to.be.revertedWithCustomError(escrow, "InvalidTier");
+    });
+
+    it("getReputation returns new V3 authority shape", async () => {
+      const rep = await escrow.getReputation(maker.address);
+      expect(rep.length).to.equal(15);
+      expect(rep.successfulTrades).to.equal(BASELINE_SUCCESS);
+      expect(rep.failedDisputes).to.equal(0n);
+      expect(rep.manualReleaseCount).to.be.gte(BASELINE_SUCCESS);
+      expect(rep.autoReleaseCount).to.equal(0n);
+      expect(rep.mutualCancelCount).to.equal(0n);
+      expect(rep.disputedResolvedCount).to.equal(0n);
+      expect(rep.burnCount).to.equal(0n);
+      expect(rep.disputeWinCount).to.equal(0n);
+      expect(rep.disputeLossCount).to.equal(0n);
+      expect(rep.riskPoints).to.be.gte(0n);
+      expect(rep.effectiveTier).to.equal(4n);
+    });
+
+    it("setReputationPolicy rejects out-of-range bounds and oversized signal points", async () => {
+      await expect(
+        escrow.connect(owner).setReputationPolicy(
+          0,
+          3,
+          9,
+          7,
+          20,
+          35,
+          2,
+          45 * 24 * 3600
+        )
+      ).to.be.revertedWithCustomError(escrow, "InvalidReputationPolicyBounds");
+
+      await expect(
+        escrow.connect(owner).setReputationPolicy(
+          30 * 24 * 3600,
+          501,
+          9,
+          7,
+          20,
+          35,
+          2,
+          45 * 24 * 3600
+        )
+      ).to.be.revertedWithCustomError(escrow, "InvalidSignalPoints");
+    });
+
+    it("setCooldownConfig rejects excessive cooldown windows", async () => {
+      await expect(
+        escrow.connect(owner).setCooldownConfig(31 * 24 * 3600, 4 * 3600)
+      ).to.be.revertedWithCustomError(escrow, "InvalidCooldownWindow");
+    });
+
+    it("emits complete ReputationUpdated payload on reputation-impacting terminal action", async () => {
+      await usdt.connect(maker).approve(await escrow.getAddress(), ONE_USDT * 10000n);
+      await usdt.connect(taker).approve(await escrow.getAddress(), ONE_USDT * 10000n);
+      await escrow.connect(taker).registerWallet();
+      await time.increase(EIGHT_DAYS + 1);
+      await owner.sendTransaction({ to: taker.address, value: ethers.parseEther("1.0") });
+
+      const tradeId = await createAndLockTrade(100n * ONE_USDT, 1, "QmRepEvent");
+      await escrow.connect(taker).reportPayment(tradeId, "QmRepEvent");
+      await expect(escrow.connect(maker).releaseFunds(tradeId))
+        .to.emit(escrow, "ReputationUpdated")
+        .withArgs(
+          maker.address,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue,
+          anyValue
+        );
     });
   });
 });

@@ -731,6 +731,19 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
                                 <div className="bg-[#111113] border border-[#222] rounded p-2"><span className="text-slate-500">snapshot.capturedAt:</span> <span className="text-white">{formatDate(row?.offchain_health_score_input?.snapshot?.capturedAt)}</span></div>
                                 <div className="bg-[#111113] border border-[#222] rounded p-2"><span className="text-slate-500">snapshot.isComplete:</span> <span className="text-white">{String(row?.offchain_health_score_input?.snapshot?.isComplete ?? false)}</span></div>
                                 <div className="bg-[#111113] border border-[#222] rounded p-2 md:col-span-3"><span className="text-slate-500">snapshot.incompleteReason:</span> <span className="text-white">{row?.offchain_health_score_input?.snapshot?.incompleteReason || '—'}</span></div>
+                                <div className="bg-[#111113] border border-[#2a2a2e] rounded p-2 md:col-span-3">
+                                  <div className="text-slate-400 mb-1">Contract-authoritative reputation mirrors (informational/read-only packaging)</div>
+                                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                                    <div><span className="text-slate-500">manual_release_count:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_semantics?.manual_release_count ?? '—'}</span></div>
+                                    <div><span className="text-slate-500">burn_count:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_semantics?.burn_count ?? '—'}</span></div>
+                                    <div><span className="text-slate-500">auto_release_count:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_semantics?.auto_release_count ?? '—'}</span></div>
+                                    <div><span className="text-slate-500">mutual_cancel_count:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_semantics?.mutual_cancel_count ?? '—'}</span></div>
+                                    <div><span className="text-slate-500">disputed_resolved_count:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_semantics?.disputed_resolved_count ?? '—'}</span></div>
+                                    <div><span className="text-slate-500">dispute_win_count:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_semantics?.dispute_win_count ?? '—'}</span></div>
+                                    <div><span className="text-slate-500">dispute_loss_count:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_semantics?.dispute_loss_count ?? '—'}</span></div>
+                                    <div><span className="text-slate-500">risk_points:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_semantics?.risk_points ?? '—'}</span></div>
+                                  </div>
+                                </div>
                               </div>
                             </td>
                           </tr>

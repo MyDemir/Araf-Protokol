@@ -154,4 +154,42 @@ describe("tradeRisk read-model regression", () => {
     expect(health.taker.makerFailedDisputesMirrorAtLock).toBe(6);
     expect(health.taker.makerWasBannedMirrorAtLock).toBe(true);
   });
+
+  it("lock-time reputation semantics breakdown alanlarını additive olarak taşır", () => {
+    const trade = makeBaseTrade({
+      payout_snapshot: {
+        is_complete: true,
+        maker: {
+          profile_version_at_lock: 2,
+          reputation_context_at_lock: {
+            burn_count: 5,
+            auto_release_count: 4,
+            mutual_cancel_count: 3,
+            disputed_resolved_count: 2,
+            dispute_win_count: 1,
+            dispute_loss_count: 6,
+            risk_points: 11,
+          },
+        },
+      },
+    });
+
+    const health = buildTradeHealthSignals(trade, { profileVersion: 2 }, null);
+    expect(health.maker.reputationBanMirrorContext.reputation_semantics).toEqual({
+      burn_count: 5,
+      auto_release_count: 4,
+      mutual_cancel_count: 3,
+      manual_release_count: null,
+      disputed_resolved_count: 2,
+      dispute_win_count: 1,
+      dispute_loss_count: 6,
+      risk_points: 11,
+      last_positive_event_at: null,
+      last_negative_event_at: null,
+      disputed_but_resolved_count: 2,
+    });
+    expect(health.informational_only).toBe(true);
+    expect(health.non_authoritative_semantics).toBe(false);
+    expect(health.authoritative_mirror_semantics).toBe(true);
+  });
 });

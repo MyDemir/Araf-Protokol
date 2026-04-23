@@ -103,6 +103,23 @@ const userSchema = new mongoose.Schema(
       default: [],
     },
 
+    // [TR] Kontrat-otoritatif reputation sayaçlarının Mongo aynasıdır.
+    //      Bu alanlar ENFORCEMENT authority değildir; on-chain authority'nin read/query mirror'ıdır.
+    // [EN] Mongo mirror for contract-authoritative reputation counters.
+    //      These fields are NOT enforcement authority; they mirror on-chain authority for reads/queries.
+    reputation_breakdown: {
+      manual_release_count: { type: Number, default: 0, min: 0 },
+      burn_count: { type: Number, default: 0, min: 0 },
+      auto_release_count: { type: Number, default: 0, min: 0 },
+      mutual_cancel_count: { type: Number, default: 0, min: 0 },
+      disputed_resolved_count: { type: Number, default: 0, min: 0 },
+      dispute_win_count: { type: Number, default: 0, min: 0 },
+      dispute_loss_count: { type: Number, default: 0, min: 0 },
+      risk_points: { type: Number, default: 0, min: 0 },
+      last_positive_event_at: { type: Date, default: null },
+      last_negative_event_at: { type: Date, default: null },
+    },
+
     // ── Ban Aynası (authority değil, chain sync cache) ───────────────────────
     is_banned: { type: Boolean, default: false },
     banned_until: { type: Date, default: null },

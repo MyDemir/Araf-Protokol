@@ -8,6 +8,19 @@ function _toSafeNumber(value, fallback = 0) {
 }
 
 function _buildMirrorContext(lockContext, fallbackUser) {
+  const breakdown = fallbackUser?.reputation_breakdown || {};
+  const semanticLock = {
+    manual_release_count: lockContext?.manual_release_count,
+    burn_count: lockContext?.burn_count,
+    auto_release_count: lockContext?.auto_release_count,
+    mutual_cancel_count: lockContext?.mutual_cancel_count,
+    disputed_resolved_count: lockContext?.disputed_resolved_count ?? lockContext?.disputed_but_resolved_count,
+    dispute_win_count: lockContext?.dispute_win_count,
+    dispute_loss_count: lockContext?.dispute_loss_count,
+    risk_points: lockContext?.risk_points,
+    last_positive_event_at: lockContext?.last_positive_event_at,
+    last_negative_event_at: lockContext?.last_negative_event_at,
+  };
   return {
     successRate: lockContext?.success_rate ?? fallbackUser?.reputation_cache?.success_rate ?? null,
     failedDisputes: lockContext?.failed_disputes ?? fallbackUser?.reputation_cache?.failed_disputes ?? null,
@@ -15,6 +28,37 @@ function _buildMirrorContext(lockContext, fallbackUser) {
     isBannedMirror: lockContext?.is_banned ?? fallbackUser?.is_banned ?? null,
     bannedUntilMirror: lockContext?.banned_until ?? fallbackUser?.banned_until ?? null,
     consecutiveBansMirror: lockContext?.consecutive_bans ?? fallbackUser?.consecutive_bans ?? null,
+    reputation_semantics: {
+      manual_release_count:
+        semanticLock.manual_release_count ?? breakdown.manual_release_count ?? null,
+      burn_count: semanticLock.burn_count ?? breakdown.burn_count ?? null,
+      auto_release_count:
+        semanticLock.auto_release_count ?? breakdown.auto_release_count ?? null,
+      mutual_cancel_count:
+        semanticLock.mutual_cancel_count ?? breakdown.mutual_cancel_count ?? null,
+      disputed_resolved_count:
+        semanticLock.disputed_resolved_count ??
+        breakdown.disputed_resolved_count ??
+        breakdown.disputed_but_resolved_count ??
+        null,
+      dispute_win_count:
+        semanticLock.dispute_win_count ?? breakdown.dispute_win_count ?? null,
+      dispute_loss_count:
+        semanticLock.dispute_loss_count ?? breakdown.dispute_loss_count ?? null,
+      risk_points:
+        semanticLock.risk_points ?? breakdown.risk_points ?? null,
+      last_positive_event_at:
+        semanticLock.last_positive_event_at ?? breakdown.last_positive_event_at ?? null,
+      last_negative_event_at:
+        semanticLock.last_negative_event_at ?? breakdown.last_negative_event_at ?? null,
+      // [TR] Backward-compatible response alias; canonical alan disputed_resolved_count'tur.
+      // [EN] Backward-compatible response alias; canonical field is disputed_resolved_count.
+      disputed_but_resolved_count:
+        semanticLock.disputed_resolved_count ??
+        breakdown.disputed_resolved_count ??
+        breakdown.disputed_but_resolved_count ??
+        null,
+    },
   };
 }
 
@@ -59,8 +103,10 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
     reasons.push("maker_ban_mirror_active");
   }
 
-  // [TR] Bu nesne yalnız explainability için üretilir; authority değildir.
-  // [EN] This object is explainability-only and non-authoritative.
+  // [TR] Bu nesne explainability paketidir (read-only/non-blocking).
+  //      İçindeki reputation sayaçları kontrat-otoritatif mirror kaynaklıdır.
+  // [EN] This object is an explainability package (read-only/non-blocking).
+  //      Reputation counters inside it come from contract-authoritative mirrors.
   const makerBreakdown = {
     railAtLock: makerSnapshot.rail || null,
     countryAtLock: makerSnapshot.country || null,
@@ -90,6 +136,7 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
     makerEffectiveTierMirrorAtLock: makerReputationContextAtLock?.effective_tier ?? null,
     makerFailedDisputesMirrorAtLock: makerReputationContextAtLock?.failed_disputes ?? null,
     makerWasBannedMirrorAtLock: makerReputationContextAtLock?.is_banned ?? null,
+    reputation_semantics: _buildMirrorContext(makerReputationContextAtLock, makerUser).reputation_semantics,
   };
 
   return {
@@ -101,6 +148,11 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
     explainableReasons: reasons,
     maker: makerBreakdown,
     taker: takerFacingCounterpartySummary,
+    informational_only: true,
+    // [TR] Deprecated flag: compatibility için korunur; yeni consumer'lar authoritative_mirror_semantics'i kullanmalı.
+    // [EN] Deprecated compatibility flag; new consumers should use authoritative_mirror_semantics.
+    non_authoritative_semantics: false,
+    authoritative_mirror_semantics: true,
     snapshot: {
       capturedAt: payoutSnapshot?.captured_at || null,
       isComplete: isSnapshotComplete,

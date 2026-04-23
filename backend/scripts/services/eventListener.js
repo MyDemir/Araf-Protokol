@@ -88,7 +88,7 @@ const ARAF_ABI = [
   "event CancelProposed(uint256 indexed tradeId, address indexed proposer)",
   "event EscrowCanceled(uint256 indexed tradeId, uint256 makerRefund, uint256 takerRefund)",
   "event MakerPinged(uint256 indexed tradeId, address indexed pinger, uint256 timestamp)",
-  "event ReputationUpdated(address indexed wallet, uint256 successful, uint256 failed, uint256 bannedUntil, uint8 effectiveTier)",
+  "event ReputationUpdated(address indexed wallet, uint32 successfulTrades, uint32 manualReleaseCount, uint32 autoReleaseCount, uint32 mutualCancelCount, uint32 disputedResolvedCount, uint32 burnCount, uint32 disputeWinCount, uint32 disputeLossCount, uint32 failedDisputes, uint32 riskPoints, uint256 bannedUntil, uint16 consecutiveBans, uint8 effectiveTier)",
   "event BleedingDecayed(uint256 indexed tradeId, uint256 decayedAmount, uint256 timestamp)",
   "event EscrowBurned(uint256 indexed tradeId, uint256 burnedAmount)",
   "event OrderCreated(uint256 indexed orderId, address indexed owner, uint8 side, address token, uint256 totalAmount, uint256 minFillAmount, uint8 tier, bytes32 orderRef)",
@@ -99,7 +99,7 @@ const ARAF_ABI = [
   "event TokenConfigUpdated(address indexed token, bool supported, bool allowSellOrders, bool allowBuyOrders)",
   "function getTrade(uint256 _tradeId) view returns ((uint256 id,uint256 parentOrderId,address maker,address taker,address tokenAddress,uint256 cryptoAmount,uint256 makerBond,uint256 takerBond,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 state,uint256 lockedAt,uint256 paidAt,uint256 challengedAt,string ipfsReceiptHash,bool cancelProposedByMaker,bool cancelProposedByTaker,uint256 pingedAt,bool pingedByTaker,uint256 challengePingedAt,bool challengePingedByMaker))",
   "function getOrder(uint256 _orderId) view returns ((uint256 id,address owner,uint8 side,address tokenAddress,uint256 totalAmount,uint256 remainingAmount,uint256 minFillAmount,uint256 remainingMakerBondReserve,uint256 remainingTakerBondReserve,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 state,bytes32 orderRef))",
-  "function getReputation(address _wallet) view returns (uint256 successful,uint256 failed,uint256 bannedUntil,uint256 consecutiveBans,uint8 effectiveTier)",
+  "function getReputation(address _wallet) view returns (uint256 successfulTrades,uint256 failedDisputes,uint256 bannedUntil,uint256 consecutiveBans,uint8 effectiveTier,uint256 manualReleaseCount,uint256 autoReleaseCount,uint256 mutualCancelCount,uint256 disputedResolvedCount,uint256 burnCount,uint256 disputeWinCount,uint256 disputeLossCount,uint256 riskPoints,uint256 lastPositiveEventAt,uint256 lastNegativeEventAt)",
 ];
 
 const EVENT_ARG_KEYS = {
@@ -112,7 +112,7 @@ const EVENT_ARG_KEYS = {
   CancelProposed: ["tradeId", "proposer"],
   EscrowCanceled: ["tradeId", "makerRefund", "takerRefund"],
   MakerPinged: ["tradeId", "pinger", "timestamp"],
-  ReputationUpdated: ["wallet", "successful", "failed", "bannedUntil", "effectiveTier"],
+  ReputationUpdated: ["wallet", "successfulTrades", "manualReleaseCount", "autoReleaseCount", "mutualCancelCount", "disputedResolvedCount", "burnCount", "disputeWinCount", "disputeLossCount", "failedDisputes", "riskPoints", "bannedUntil", "consecutiveBans", "effectiveTier"],
   BleedingDecayed: ["tradeId", "decayedAmount", "timestamp"],
   EscrowBurned: ["tradeId", "burnedAmount"],
   OrderCreated: ["orderId", "owner", "side", "token", "totalAmount", "minFillAmount", "tier", "orderRef"],
@@ -143,10 +143,13 @@ function _buildIdentityLookup(field, rawId) {
 }
 
 /**
- * [TR] Lock anındaki reputation/ban aynası (read-model only, non-authoritative).
- * [EN] Lock-time reputation/ban mirror (read-model only, non-authoritative).
+ * [TR] Lock anındaki contract-authoritative reputation mirror snapshot'ı.
+ *      Backend burada semantik TÜRETMEZ; yalnız User mirror alanlarını trade snapshot'ına taşır.
+ * [EN] Lock-time snapshot of contract-authoritative reputation mirror.
+ *      Backend does not derive semantics here; it only copies mirrored User fields.
  */
 function _buildReputationContextAtLock(user) {
+  const rep = user?.reputation_breakdown || {};
   return {
     success_rate: user?.reputation_cache?.success_rate ?? null,
     failed_disputes: user?.reputation_cache?.failed_disputes ?? null,
@@ -154,6 +157,16 @@ function _buildReputationContextAtLock(user) {
     consecutive_bans: user?.consecutive_bans ?? null,
     is_banned: user?.is_banned ?? null,
     banned_until: user?.banned_until ?? null,
+    manual_release_count: rep.manual_release_count ?? null,
+    burn_count: rep.burn_count ?? null,
+    auto_release_count: rep.auto_release_count ?? null,
+    mutual_cancel_count: rep.mutual_cancel_count ?? null,
+    disputed_resolved_count: rep.disputed_resolved_count ?? rep.disputed_but_resolved_count ?? null,
+    dispute_win_count: rep.dispute_win_count ?? null,
+    dispute_loss_count: rep.dispute_loss_count ?? null,
+    risk_points: rep.risk_points ?? null,
+    last_positive_event_at: rep.last_positive_event_at ?? null,
+    last_negative_event_at: rep.last_negative_event_at ?? null,
   };
 }
 
@@ -1125,7 +1138,7 @@ class EventWorker {
         ? User.findOne({ wallet_address: normalizedMaker })
             .select(
               "payout_profile bankChangeCount7d bankChangeCount30d lastBankChangeAt " +
-              "reputation_cache is_banned banned_until consecutive_bans"
+              "reputation_cache reputation_breakdown is_banned banned_until consecutive_bans"
             )
             .lean()
         : null,
@@ -1133,7 +1146,7 @@ class EventWorker {
         ? User.findOne({ wallet_address: normalizedTaker })
             .select(
               "payout_profile bankChangeCount7d bankChangeCount30d lastBankChangeAt " +
-              "reputation_cache is_banned banned_until consecutive_bans"
+              "reputation_cache reputation_breakdown is_banned banned_until consecutive_bans"
             )
             .lean()
         : null,
@@ -1318,27 +1331,44 @@ class EventWorker {
   async _onEscrowCanceled(event) {
     const { tradeId } = event.args;
     const canceledAt = await this._getEventDate(event);
-
-    const trade = await Trade.findOneAndUpdate(
-      {
-        ..._buildIdentityLookup("onchain_escrow_id", tradeId),
-        status: { $in: ["OPEN", "LOCKED", "PAID", "CHALLENGED"] },
-      },
-      {
-        $set: {
-          status: "CANCELED",
-          "timers.resolved_at": canceledAt,
-          "evidence.receipt_delete_at": new Date(canceledAt.getTime() + 24 * 3600 * 1000),
+    const tradeIdNum = _toIdentityString(tradeId);
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    try {
+      const trade = await Trade.findOneAndUpdate(
+        {
+          ..._buildIdentityLookup("onchain_escrow_id", tradeIdNum),
+          status: { $in: ["OPEN", "LOCKED", "PAID", "CHALLENGED"] },
         },
-      },
-      { new: true }
-    ).lean();
-
-    if (trade?.parent_order_id) {
-      await Order.findOneAndUpdate(
-        _buildIdentityLookup("onchain_order_id", trade.parent_order_id),
-        { $inc: { "stats.active_child_trade_count": -1, "stats.canceled_child_trade_count": 1 } }
+        {
+          $set: {
+            status: "CANCELED",
+            "timers.resolved_at": canceledAt,
+            "evidence.receipt_delete_at": new Date(canceledAt.getTime() + 24 * 3600 * 1000),
+          },
+        },
+        { new: true, session }
       );
+
+      if (!trade) {
+        await session.abortTransaction();
+        return;
+      }
+
+      if (trade.parent_order_id) {
+        await Order.findOneAndUpdate(
+          _buildIdentityLookup("onchain_order_id", trade.parent_order_id),
+          { $inc: { "stats.active_child_trade_count": -1, "stats.canceled_child_trade_count": 1 } },
+          { session }
+        );
+      }
+
+      await session.commitTransaction();
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      await session.endSession();
     }
   }
 
@@ -1387,6 +1417,7 @@ class EventWorker {
             { session }
           );
         }
+
       }
 
       if (trade?.parent_order_id) {
@@ -1498,25 +1529,55 @@ class EventWorker {
   }
 
   async _onReputationUpdated(event) {
-    const { wallet, successful, failed, bannedUntil, effectiveTier } = event.args;
+    const {
+      wallet,
+      successfulTrades,
+      failedDisputes,
+      bannedUntil,
+      consecutiveBans,
+      effectiveTier,
+      manualReleaseCount,
+      autoReleaseCount,
+      mutualCancelCount,
+      disputedResolvedCount,
+      burnCount,
+      disputeWinCount,
+      disputeLossCount,
+      riskPoints,
+    } = event.args;
     const syncAt = await this._getEventDate(event);
 
-    const totalTrades = _toNum(successful) + _toNum(failed);
-    const successRate =
-      totalTrades > 0 ? Math.round((_toNum(successful) / totalTrades) * 100) : 100;
-
-    const banTimestamp = _toNum(bannedUntil);
-    const isBanned = banTimestamp > Math.floor(Date.now() / 1000);
-
-    let consecutiveBans = 0;
+    let repSnapshot = null;
     try {
-      const rep = await this._fetchReputationFromChain(wallet);
-      if (rep && rep.consecutiveBans !== undefined) {
-        consecutiveBans = _toNum(rep.consecutiveBans);
-      }
+      // [TR] Event + getter birlikte kullanılır: event tetikleyici, getter tam authority snapshot kaynağıdır.
+      // [EN] Event + getter are used together: event is trigger, getter is full authority snapshot source.
+      repSnapshot = await this._fetchReputationFromChain(wallet);
     } catch (err) {
-      logger.warn(`[Worker] getReputation backfill başarısız: wallet=${wallet} err=${err.message}`);
+      logger.warn(`[Worker] getReputation snapshot okunamadı: wallet=${wallet} err=${err.message}`);
     }
+
+    const resolvedSuccessfulTrades = repSnapshot?.successfulTrades ?? successfulTrades;
+    const resolvedFailedDisputes = repSnapshot?.failedDisputes ?? failedDisputes;
+    const resolvedConsecutiveBans = repSnapshot?.consecutiveBans ?? consecutiveBans;
+    const resolvedBannedUntil = repSnapshot?.bannedUntil ?? bannedUntil;
+    const resolvedEffectiveTier = repSnapshot?.effectiveTier ?? effectiveTier;
+    const resolvedManualReleaseCount = repSnapshot?.manualReleaseCount ?? manualReleaseCount;
+    const resolvedAutoReleaseCount = repSnapshot?.autoReleaseCount ?? autoReleaseCount;
+    const resolvedMutualCancelCount = repSnapshot?.mutualCancelCount ?? mutualCancelCount;
+    const resolvedDisputedResolvedCount = repSnapshot?.disputedResolvedCount ?? disputedResolvedCount;
+    const resolvedBurnCount = repSnapshot?.burnCount ?? burnCount;
+    const resolvedDisputeWinCount = repSnapshot?.disputeWinCount ?? disputeWinCount;
+    const resolvedDisputeLossCount = repSnapshot?.disputeLossCount ?? disputeLossCount;
+    const resolvedRiskPoints = repSnapshot?.riskPoints ?? riskPoints;
+    const resolvedLastPositiveEventAt = repSnapshot?.lastPositiveEventAt ?? 0;
+    const resolvedLastNegativeEventAt = repSnapshot?.lastNegativeEventAt ?? 0;
+
+    const totalTrades = _toNum(resolvedSuccessfulTrades) + _toNum(resolvedFailedDisputes);
+    const successRate =
+      totalTrades > 0 ? Math.round((_toNum(resolvedSuccessfulTrades) / totalTrades) * 100) : 100;
+
+    const banTimestamp = _toNum(resolvedBannedUntil);
+    const isBanned = banTimestamp > Math.floor(Date.now() / 1000);
 
     await User.findOneAndUpdate(
       { wallet_address: wallet.toLowerCase() },
@@ -1524,12 +1585,22 @@ class EventWorker {
         $set: {
           "reputation_cache.success_rate": successRate,
           "reputation_cache.total_trades": totalTrades,
-          "reputation_cache.successful_trades": _toNum(successful),
-          "reputation_cache.failed_disputes": _toNum(failed),
-          "reputation_cache.effective_tier": _toNum(effectiveTier),
+          "reputation_cache.successful_trades": _toNum(resolvedSuccessfulTrades),
+          "reputation_cache.failed_disputes": _toNum(resolvedFailedDisputes),
+          "reputation_cache.effective_tier": _toNum(resolvedEffectiveTier),
           "is_banned": isBanned,
           "banned_until": isBanned ? new Date(banTimestamp * 1000) : null,
-          "consecutive_bans": consecutiveBans,
+          "consecutive_bans": _toNum(resolvedConsecutiveBans),
+          "reputation_breakdown.manual_release_count": _toNum(resolvedManualReleaseCount),
+          "reputation_breakdown.auto_release_count": _toNum(resolvedAutoReleaseCount),
+          "reputation_breakdown.mutual_cancel_count": _toNum(resolvedMutualCancelCount),
+          "reputation_breakdown.disputed_resolved_count": _toNum(resolvedDisputedResolvedCount),
+          "reputation_breakdown.burn_count": _toNum(resolvedBurnCount),
+          "reputation_breakdown.dispute_win_count": _toNum(resolvedDisputeWinCount),
+          "reputation_breakdown.dispute_loss_count": _toNum(resolvedDisputeLossCount),
+          "reputation_breakdown.risk_points": _toNum(resolvedRiskPoints),
+          "reputation_breakdown.last_positive_event_at": _toDateOrNull(resolvedLastPositiveEventAt),
+          "reputation_breakdown.last_negative_event_at": _toDateOrNull(resolvedLastNegativeEventAt),
           "last_onchain_sync_at": syncAt,
         },
       },

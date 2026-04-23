@@ -30,6 +30,14 @@ describe("trades route offchain_health_score_input regression", () => {
               effective_tier: 2,
               failed_disputes: 1,
               is_banned: false,
+              burn_count: 9,
+              manual_release_count: 5,
+              auto_release_count: 8,
+              mutual_cancel_count: 7,
+              disputed_resolved_count: 6,
+              dispute_win_count: 2,
+              dispute_loss_count: 4,
+              risk_points: 12,
             },
           },
           taker: {
@@ -106,12 +114,30 @@ describe("trades route offchain_health_score_input regression", () => {
       readOnly: true,
       nonBlocking: true,
       canBlockProtocolActions: false,
+      informational_only: true,
+      non_authoritative_semantics: false,
+      authoritative_mirror_semantics: true,
       taker: {
         counterparty: "maker",
         frequentRecentChanges: true,
       },
+      snapshot: {
+        isComplete: true,
+      },
     });
     expect(res.body.trades[0].offchain_health_score_input.explainableReasons).not.toContain("partial_or_incomplete_snapshot");
+    expect(
+      res.body.trades[0].offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_semantics
+    ).toMatchObject({
+      burn_count: 9,
+      manual_release_count: 5,
+      auto_release_count: 8,
+      mutual_cancel_count: 7,
+      disputed_resolved_count: 6,
+      dispute_win_count: 2,
+      dispute_loss_count: 4,
+      risk_points: 12,
+    });
     expect(res.body.trades[0].bank_profile_risk).toBeDefined();
   });
 });

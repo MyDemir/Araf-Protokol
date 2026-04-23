@@ -85,4 +85,20 @@ describe("reputationDecay job", () => {
     expect(mockDecay).toHaveBeenCalledTimes(1);
     expect(mockDecay).toHaveBeenCalledWith(eligible);
   });
+
+  it("skips decay when getReputation response is not V3 named shape", async () => {
+    mockCandidates = [
+      {
+        wallet_address: "0x1111111111111111111111111111111111111111",
+        consecutive_bans: 1,
+        banned_until: new Date("2025-01-01T00:00:00Z"),
+      },
+    ];
+    mockGetReputation.mockResolvedValue([1n, 0n, 0n, 0n, 0n]);
+
+    const result = await runReputationDecay();
+    expect(mockDecay).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.processed).toBe(0);
+  });
 });
