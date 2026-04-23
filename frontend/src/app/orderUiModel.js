@@ -110,6 +110,106 @@ export const removeOrderByOnchainId = (orders = [], onchainId) => {
   return orders.filter((o) => o?.onchainId !== onchainId);
 };
 
+const HEALTH_REASON_COPY = {
+  maker_profile_changed_after_lock: {
+    TR: 'Maker profil sürümü lock sonrası değişmiş.',
+    EN: 'Maker profile version changed after lock.',
+  },
+  maker_frequent_recent_bank_changes_at_lock: {
+    TR: 'Lock anında maker banka değişimi sıklığı eşik üstünde.',
+    EN: 'At lock time, maker bank-change frequency exceeded threshold.',
+  },
+  partial_or_incomplete_snapshot: {
+    TR: 'Snapshot eksik/kısmi olabilir; yorum dikkatle okunmalı.',
+    EN: 'Snapshot may be partial/incomplete; interpret carefully.',
+  },
+  maker_ban_mirror_active: {
+    TR: 'Maker ban mirror sinyali lock bağlamında aktif görünüyor.',
+    EN: 'Maker ban mirror signal appears active in lock context.',
+  },
+};
+
+export const mapOffchainHealthToUi = ({ signal, lang = 'TR' }) => {
+  if (!signal || typeof signal !== 'object') return null;
+
+  const reasons = Array.isArray(signal.explainableReasons) ? signal.explainableReasons : [];
+
+  // [TR] Deterministik, UI-only şiddet eşlemesi. Bu puan authority üretmez.
+  // [EN] Deterministic UI-only severity mapping. This score never creates authority.
+  const severityScore = reasons.reduce((acc, reason) => {
+    if (reason === 'maker_ban_mirror_active') return acc + 2;
+    if (reason === 'maker_profile_changed_after_lock') return acc + 1;
+    if (reason === 'maker_frequent_recent_bank_changes_at_lock') return acc + 1;
+    if (reason === 'partial_or_incomplete_snapshot') return acc + 1;
+    return acc;
+  }, 0);
+
+  const severityBand = severityScore >= 3 ? 'RED' : severityScore >= 1 ? 'YELLOW' : 'GREEN';
+  const severityMeta = {
+    GREEN: { TR: 'Düşük Sinyal', EN: 'Low Signal', chipClass: 'text-emerald-400 border-emerald-700/60 bg-emerald-900/20' },
+    YELLOW: { TR: 'Orta Sinyal', EN: 'Medium Signal', chipClass: 'text-amber-400 border-amber-700/60 bg-amber-900/20' },
+    RED: { TR: 'Yüksek Sinyal', EN: 'High Signal', chipClass: 'text-red-400 border-red-700/60 bg-red-900/20' },
+  }[severityBand];
+
+  return {
+    severityBand,
+    severityLabel: severityMeta[lang] || severityMeta.EN,
+    severityChipClass: severityMeta.chipClass,
+    reasons,
+    reasonLabels: reasons.map((reason) => HEALTH_REASON_COPY?.[reason]?.[lang] || reason),
+    readOnly: signal.readOnly === true,
+    nonBlocking: signal.nonBlocking === true,
+    canBlockProtocolActions: signal.canBlockProtocolActions === true,
+    maker: signal.maker || null,
+    snapshot: signal.snapshot || null,
+  };
+};
+
+export const mapCompactTrustSummary = ({ compactSummary, signal, lang = 'TR' }) => {
+  // [TR] Öncelik backend'in market-safe compact özet alanındadır.
+  // [EN] Prefer backend-provided market-safe compact summary field.
+  if (compactSummary && typeof compactSummary === 'object' && compactSummary.available === true) {
+    const band = compactSummary.band || null;
+    const fallbackChip = 'text-slate-400 border-slate-700/60 bg-slate-900/20';
+    const chipByBand = {
+      GREEN: 'text-emerald-400 border-emerald-700/60 bg-emerald-900/20',
+      YELLOW: 'text-amber-400 border-amber-700/60 bg-amber-900/20',
+      RED: 'text-red-400 border-red-700/60 bg-red-900/20',
+    };
+    return {
+      available: true,
+      band,
+      label: compactSummary.label || (lang === 'TR' ? 'Sinyal' : 'Signal'),
+      chipClass: chipByBand[band] || fallbackChip,
+      readOnly: compactSummary.readOnly === true,
+      nonBlocking: compactSummary.nonBlocking === true,
+      canBlockProtocolActions: compactSummary.canBlockProtocolActions === true,
+    };
+  }
+
+  const mapped = mapOffchainHealthToUi({ signal, lang });
+  if (!mapped) {
+    return {
+      available: false,
+      band: null,
+      label: lang === 'TR' ? 'Sinyal yok' : 'Signal unavailable',
+      chipClass: 'text-slate-400 border-slate-700/60 bg-slate-900/20',
+    };
+  }
+
+  // [TR] Hover'da gizlilik için nedenleri göstermiyoruz; yalnız band + kısa etiket döneriz.
+  // [EN] For hover privacy we do not expose reasons; only band + short label are returned.
+  return {
+    available: true,
+    band: mapped.severityBand,
+    label: mapped.severityLabel,
+    chipClass: mapped.severityChipClass,
+    readOnly: mapped.readOnly,
+    nonBlocking: mapped.nonBlocking,
+    canBlockProtocolActions: mapped.canBlockProtocolActions,
+  };
+};
+
 export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {}, formatAddress = (v) => v }) => {
   const side = normalizeOrderSide(order?.side);
   const sideMeta = SIDE_META[side] || null;
@@ -141,7 +241,17 @@ export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {
   const ownerAddress = order?.owner_address || '';
   const tokenAddress = order?.token_address || '';
   const tokenPolicy = tokenAddress ? (tokenMap?.[tokenAddress.toLowerCase()] || null) : null;
-
+  const ownerSideHint = side === 'SELL_CRYPTO'
+    ? (lang === 'TR' ? 'Order sahibi kripto satıyor' : 'Order owner is selling crypto')
+    : side === 'BUY_CRYPTO'
+      ? (lang === 'TR' ? 'Order sahibi kripto alıyor' : 'Order owner is buying crypto')
+      : (lang === 'TR' ? 'Order sahibi rolü doğrulanamadı' : 'Order owner side could not be verified');
+  const fillsCount = Number(order?.stats?.fills_count ?? 0);
+  const trustSummary = mapCompactTrustSummary({
+    compactSummary: order?.trust_visibility_summary || null,
+    signal: order?.offchain_health_score_input || null,
+    lang,
+  });
   return {
     id: order?._id,
     onchainId: order?.onchain_order_id ?? null,
@@ -165,8 +275,13 @@ export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {
     bondLabel: sideBondPct != null && sideBondPct > 0 ? `${sideBondPct}%` : '—',
     tokenAddress,
     tokenPolicy,
+    // [TR] V3 market hover kartı için taraf-bağımlı kısa açıklama (seller-only dilinden kaçınır).
+    // [EN] Side-aware summary hint for V3 hover card (avoids seller-only terminology).
+    ownerSideHint,
+    trustSummary,
     // legacy ui analytics fields
     successRate: Number(order?.stats?.fill_rate_pct ?? 100),
-    txCount: Number(order?.stats?.fills_count ?? 0),
+    txCount: fillsCount,
+    totalTrades: fillsCount,
   };
 };

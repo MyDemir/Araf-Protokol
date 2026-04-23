@@ -135,6 +135,13 @@ describe('AppViews market side-aware rendering', () => {
           minFillAmount: 10,
           limitLabel: 'Min Fill 10 USDT • Remaining 50 USDT',
           tier: 1,
+          ownerSideHint: 'Order owner is selling crypto',
+          trustSummary: {
+            available: true,
+            band: 'YELLOW',
+            label: 'Medium Signal',
+            chipClass: 'text-amber-400 border-amber-700/60 bg-amber-900/20',
+          },
           tokenPolicy: { supported: true, allowSellOrders: true, allowBuyOrders: true },
         },
         {
@@ -152,6 +159,13 @@ describe('AppViews market side-aware rendering', () => {
           minFillAmount: 5,
           limitLabel: 'Min Fill 5 USDT • Remaining 20 USDT',
           tier: 1,
+          ownerSideHint: 'Order owner is buying crypto',
+          trustSummary: {
+            available: false,
+            band: null,
+            label: 'Signal unavailable',
+            chipClass: 'text-slate-400 border-slate-700/60 bg-slate-900/20',
+          },
           tokenPolicy: { supported: true, allowSellOrders: true, allowBuyOrders: true },
         },
       ],
@@ -160,10 +174,17 @@ describe('AppViews market side-aware rendering', () => {
 
     render(<div>{views.renderMarket()}</div>);
 
-    expect(screen.getByText('Sell Order')).toBeInTheDocument();
-    expect(screen.getByText('Buy Order')).toBeInTheDocument();
+    expect(screen.getAllByText('Sell Order').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Buy Order').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /Buy/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Sell/i })).toBeInTheDocument();
+    expect(screen.getAllByText('ORDER OWNER SUMMARY').length).toBeGreaterThan(0);
+    expect(screen.getByText('Order owner is selling crypto')).toBeInTheDocument();
+    expect(screen.getByText('Order owner is buying crypto')).toBeInTheDocument();
+    expect(screen.getAllByText(/Trust Visibility|Güven Görünürlüğü/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/YELLOW · Medium Signal/i)).toBeInTheDocument();
+    expect(screen.getByText(/Signal unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByText(/maker_profile_changed_after_lock/i)).not.toBeInTheDocument();
     expect(screen.queryByText('SELLER PROFILE')).not.toBeInTheDocument();
     expect(screen.getAllByText('Open').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Bond/i).length).toBeGreaterThan(0);

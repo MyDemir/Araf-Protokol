@@ -314,6 +314,10 @@ export function useAppSessionData({
               challengedAt: t.timers?.challenged_at,
               cancelProposedBy: t.cancel_proposal?.proposed_by,
               chargebackAcked: t.chargeback_ack?.acknowledged === true,
+              // [TR] Trust Visibility Layer payload'ı backend'den read-only gelir; UI explainability için taşınır.
+              // [EN] Trust Visibility payload arrives read-only from backend; carried for UI explainability only.
+              offchainHealthScoreInput: t.offchain_health_score_input || null,
+              bankProfileRisk: t.bank_profile_risk || null,
             },
           };
         }));
@@ -343,6 +347,8 @@ export function useAppSessionData({
             challengedAt: updated.timers?.challenged_at ?? prev.challengedAt,
             cancelProposedBy: updated.cancel_proposal?.proposed_by ?? prev.cancelProposedBy,
             chargebackAcked: updated.chargeback_ack?.acknowledged === true,
+            offchainHealthScoreInput: updated.offchain_health_score_input ?? prev.offchainHealthScoreInput ?? null,
+            bankProfileRisk: updated.bank_profile_risk ?? prev.bankProfileRisk ?? null,
           };
         });
       }

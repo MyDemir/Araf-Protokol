@@ -1,5 +1,5 @@
 import React from 'react';
-import { buildMakerPreview, getMakerModalCopy } from './orderUiModel';
+import { buildMakerPreview, getMakerModalCopy, mapOffchainHealthToUi } from './orderUiModel';
 import { TERMS_ACCEPTED_STORAGE_KEY } from './bootstrapState';
 
 // [TR] Eksik env değişkenleri için kapatılabilir uyarı şeridi.
@@ -561,6 +561,84 @@ export const buildAppModals = (ctx) => {
                                 </span>
                               </p>
                             )}
+                          </div>
+                        );
+                      })()}
+
+                      {(() => {
+                        // [TR] Trust Visibility Layer yalnız mevcut trade payload'ındaki offchain_health_score_input verisini okur.
+                        //      Bu bölüm enforcement üretmez; read-only/non-blocking semantiği UI'da açıkça korunur.
+                        // [EN] Trust Visibility Layer reads only offchain_health_score_input from current trade payload.
+                        //      It never enforces actions; read-only/non-blocking semantics are explicit in UI.
+                        const trustRows = (activeEscrows || [])
+                          .filter((escrow) => escrow?.role === 'maker')
+                          .map((escrow) => ({
+                            escrowId: escrow.onchainId,
+                            ui: mapOffchainHealthToUi({
+                              signal: escrow?.rawTrade?.offchainHealthScoreInput,
+                              lang,
+                            }),
+                          }))
+                          .filter((row) => row.ui);
+
+                        if (trustRows.length === 0) {
+                          return (
+                            <div className="bg-[#151518] p-4 rounded-xl border border-[#2a2a2e]">
+                              <p className="text-sm font-semibold text-slate-200 mb-1">
+                                {lang === 'TR' ? 'Trust Visibility' : 'Trust Visibility'}
+                              </p>
+                              <p className="text-[11px] text-slate-500">
+                                {lang === 'TR'
+                                  ? 'Aktif maker-bağlantılı işlemler için görüntülenecek sinyal yok. Veri yoksa alan soft-fail ile sade kalır.'
+                                  : 'No signal is available for active maker-linked trades. If payload is missing, this area soft-fails gracefully.'}
+                              </p>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div className="bg-[#151518] p-4 rounded-xl border border-[#2a2a2e] space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-sm font-semibold text-slate-200">
+                                {lang === 'TR' ? 'Trust Visibility' : 'Trust Visibility'}
+                              </p>
+                              <span className="text-[10px] px-2 py-1 rounded border text-slate-400 border-slate-700 bg-[#0c0c0e]">
+                                {lang === 'TR' ? 'Aktif maker-bağlantılı işlemler' : 'Active maker-linked trades'}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500">
+                              {lang === 'TR'
+                                ? 'Bilgilendirme amaçlıdır: read-only, non-blocking ve protokol hükmü değildir.'
+                                : 'Informational only: read-only, non-blocking, and not a protocol verdict.'}
+                            </p>
+                            <div className="grid gap-2">
+                              {trustRows.map(({ escrowId, ui }) => (
+                                <div key={escrowId} className="rounded-lg border border-[#2a2a2e] bg-[#0c0c0e] p-3 space-y-2">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <p className="text-[11px] text-slate-400 font-mono">#{escrowId}</p>
+                                    <span className={`text-[10px] px-2 py-0.5 rounded border ${ui.severityChipClass}`}>
+                                      {ui.severityBand} · {ui.severityLabel}
+                                    </span>
+                                  </div>
+                                  <div className="flex flex-wrap gap-1">
+                                    <span className={`text-[10px] px-2 py-0.5 rounded border ${ui.readOnly ? 'text-emerald-400 border-emerald-700/50' : 'text-red-400 border-red-700/50'}`}>readOnly: {String(ui.readOnly)}</span>
+                                    <span className={`text-[10px] px-2 py-0.5 rounded border ${ui.nonBlocking ? 'text-emerald-400 border-emerald-700/50' : 'text-red-400 border-red-700/50'}`}>nonBlocking: {String(ui.nonBlocking)}</span>
+                                    <span className={`text-[10px] px-2 py-0.5 rounded border ${!ui.canBlockProtocolActions ? 'text-emerald-400 border-emerald-700/50' : 'text-red-400 border-red-700/50'}`}>canBlockProtocolActions: {String(ui.canBlockProtocolActions)}</span>
+                                  </div>
+                                  {ui.reasonLabels.length > 0 ? (
+                                    <ul className="text-[11px] text-slate-400 list-disc pl-4 space-y-1">
+                                      {ui.reasonLabels.map((reasonLabel, idx) => (
+                                        <li key={`${escrowId}-reason-${idx}`}>{reasonLabel}</li>
+                                      ))}
+                                    </ul>
+                                  ) : (
+                                    <p className="text-[11px] text-slate-500">
+                                      {lang === 'TR' ? 'Ek risk nedeni raporlanmadı.' : 'No additional risk reason reported.'}
+                                    </p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         );
                       })()}
