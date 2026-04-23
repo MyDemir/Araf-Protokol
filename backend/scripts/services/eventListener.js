@@ -223,6 +223,7 @@ async function _applySemanticOutcomeToParticipants({
   eventAt,
   tradeId,
   pushHistory = true,
+  applyCounter = false,
 }) {
   for (const addr of addresses.filter(Boolean)) {
     const update = {
@@ -241,7 +242,7 @@ async function _applySemanticOutcomeToParticipants({
       };
     }
 
-    if (semantic.counterField) {
+    if (applyCounter && semantic.counterField) {
       update.$inc = { [`reputation_breakdown.${semantic.counterField}`]: 1 };
     }
 
@@ -1382,6 +1383,8 @@ class EventWorker {
         semantic,
         eventAt: resolvedAt,
         tradeId: tradeIdNum,
+        // Semantic counters are chain-authoritative via ReputationUpdated.
+        applyCounter: false,
       });
 
       if (trade.parent_order_id) {
@@ -1473,6 +1476,8 @@ class EventWorker {
         semantic,
         eventAt: canceledAt,
         tradeId: tradeIdNum,
+        // Semantic counters are chain-authoritative via ReputationUpdated.
+        applyCounter: false,
       });
 
       if (trade.parent_order_id) {
@@ -1548,6 +1553,8 @@ class EventWorker {
           semantic,
           eventAt: burnedAt,
           tradeId: tradeIdNum,
+          // Semantic counters are chain-authoritative via ReputationUpdated.
+          applyCounter: false,
           // [TR] BURNED için failure_score audit kaydı zaten { type: "burned" } olarak yazılıyor.
           //      Aynı terminal outcome için ikinci bir history satırı üretmiyoruz.
           // [EN] BURNED already writes { type: "burned" } via failure-score audit path.
@@ -1766,3 +1773,4 @@ worker.reprocessDLQEntry = async function reprocessDLQEntry(entry) {
 
 module.exports = worker;
 module.exports._classifyTerminalSemanticOutcome = _classifyTerminalSemanticOutcome;
+module.exports._applySemanticOutcomeToParticipants = _applySemanticOutcomeToParticipants;
