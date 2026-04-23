@@ -35,7 +35,12 @@ describe("orders/listings sort semantics on string onchain ids", () => {
         ordersWriteLimiter: (_req, _res, next) => next(),
       }));
       jest.doMock("../scripts/models/Order", () => Order);
-      jest.doMock("../scripts/models/Trade", () => ({ find: jest.fn() }));
+      jest.doMock("../scripts/models/Trade", () => ({ find: jest.fn(), aggregate: jest.fn().mockResolvedValue([]) }));
+      jest.doMock("../scripts/models/User", () => ({
+        find: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+        }),
+      }));
       jest.doMock("../scripts/services/protocolConfig", () => ({ getConfig: jest.fn(() => ({ bondMap: {}, feeConfig: {}, cooldownConfig: {}, tokenMap: {} })) }));
       router = require("../scripts/routes/orders");
     });

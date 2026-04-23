@@ -17,7 +17,9 @@ const { requireAuth, requireSessionWalletMatch } = require("../middleware/auth")
 const { marketReadLimiter, ordersReadLimiter, ordersWriteLimiter } = require("../middleware/rateLimiter");
 const Order = require("../models/Order");
 const Trade = require("../models/Trade");
+const User = require("../models/User");
 const { getConfig } = require("../services/protocolConfig");
+const { buildTradeHealthSignals } = require("./tradeRisk");
 
 const SAFE_ORDER_PROJECTION = [
   "_id",
@@ -68,6 +70,77 @@ const SAFE_ORDER_TRADES_PROJECTION = [
 const POSITIVE_NUMERIC_ID_RE = /^[1-9]\d*$/;
 const DEFAULT_MY_ORDERS_LIMIT = 20;
 const MAX_MY_ORDERS_LIMIT = 50;
+
+function _deriveTrustBandFromReasons(reasons = []) {
+  const severityScore = (Array.isArray(reasons) ? reasons : []).reduce((acc, reason) => {
+    if (reason === "maker_ban_mirror_active") return acc + 2;
+    if (reason === "maker_profile_changed_after_lock") return acc + 1;
+    if (reason === "maker_frequent_recent_bank_changes_at_lock") return acc + 1;
+    if (reason === "partial_or_incomplete_snapshot") return acc + 1;
+    return acc;
+  }, 0);
+  if (severityScore >= 3) return "RED";
+  if (severityScore >= 1) return "YELLOW";
+  return "GREEN";
+}
+
+function _toCompactTrustSummary(signal) {
+  if (!signal || typeof signal !== "object") {
+    return { available: false, band: null, label: "Signal unavailable" };
+  }
+  const band = _deriveTrustBandFromReasons(signal.explainableReasons || []);
+  const labelByBand = {
+    GREEN: "Low Signal",
+    YELLOW: "Medium Signal",
+    RED: "High Signal",
+  };
+  // [TR] Market order feed için yalnız taker-facing, privacy-conscious kısa özet döneriz.
+  // [EN] For market order feed we only return a taker-facing, privacy-conscious compact summary.
+  return {
+    available: true,
+    band,
+    label: labelByBand[band],
+    readOnly: signal.readOnly === true,
+    nonBlocking: signal.nonBlocking === true,
+    canBlockProtocolActions: signal.canBlockProtocolActions === true,
+  };
+}
+
+async function _attachMarketTrustVisibilitySummary(orders = []) {
+  if (!Array.isArray(orders) || orders.length === 0) return [];
+
+  const makerAddresses = [...new Set(orders.map((o) => o?.owner_address).filter(Boolean))];
+  if (makerAddresses.length === 0) return orders;
+
+  const [makerUsers, latestTradesByMaker] = await Promise.all([
+    User.find({ wallet_address: { $in: makerAddresses } })
+      .select("wallet_address profileVersion payout_profile reputation_cache is_banned banned_until consecutive_bans")
+      .lean(),
+    Trade.aggregate([
+      { $match: { maker_address: { $in: makerAddresses } } },
+      { $sort: { created_at: -1, _id: -1 } },
+      { $group: { _id: "$maker_address", trade: { $first: "$$ROOT" } } },
+    ]),
+  ]);
+
+  const userMap = new Map(makerUsers.map((u) => [u.wallet_address, u]));
+  const tradeMap = new Map(
+    latestTradesByMaker
+      .filter((row) => row?._id && row?.trade)
+      .map((row) => [row._id, row.trade])
+  );
+
+  return orders.map((order) => {
+    const maker = order?.owner_address;
+    const makerUser = userMap.get(maker) || null;
+    const latestTrade = tradeMap.get(maker) || null;
+    const signal = latestTrade ? buildTradeHealthSignals(latestTrade, makerUser, null) : null;
+    return {
+      ...order,
+      trust_visibility_summary: _toCompactTrustSummary(signal),
+    };
+  });
+}
 
 function _parsePositiveOnchainId(rawId) {
   const normalized = String(rawId ?? "").trim();
@@ -129,7 +202,8 @@ router.get("/", marketReadLimiter, async (req, res, next) => {
       Order.countDocuments(filter),
     ]);
 
-    return res.json({ orders, total, page: value.page, limit: value.limit });
+    const ordersWithTrustSummary = await _attachMarketTrustVisibilitySummary(orders);
+    return res.json({ orders: ordersWithTrustSummary, total, page: value.page, limit: value.limit });
   } catch (err) { next(err); }
 });
 

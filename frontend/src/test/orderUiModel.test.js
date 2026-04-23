@@ -135,4 +135,45 @@ describe('orderUiModel mapping', () => {
     expect(ui.reasonLabels.length).toBe(2);
   });
 
+  it('maps compact trust summary for market hover without detailed reasons', () => {
+    const ui = mapApiOrderToUi({
+      order: {
+        ...baseOrder,
+        side: 'SELL_CRYPTO',
+        trust_visibility_summary: {
+          available: true,
+          band: 'GREEN',
+          label: 'Low Signal',
+          readOnly: true,
+          nonBlocking: true,
+          canBlockProtocolActions: false,
+        },
+      },
+      lang: 'EN',
+      bondMap,
+      tokenMap: {},
+      formatAddress: (a) => a,
+    });
+
+    expect(ui.trustSummary.available).toBe(true);
+    expect(ui.trustSummary.band).toBe('GREEN');
+    expect(ui.trustSummary.label).toBe('Low Signal');
+    expect(ui.trustSummary.readOnly).toBe(true);
+    expect(ui.trustSummary.nonBlocking).toBe(true);
+    expect(ui.trustSummary.canBlockProtocolActions).toBe(false);
+    expect(ui.trustSummary.reasonLabels).toBeUndefined();
+  });
+
+  it('falls back to neutral compact summary when trust signal is unavailable', () => {
+    const ui = mapApiOrderToUi({
+      order: { ...baseOrder, side: 'BUY_CRYPTO' },
+      lang: 'EN',
+      bondMap,
+      tokenMap: {},
+      formatAddress: (a) => a,
+    });
+    expect(ui.trustSummary.available).toBe(false);
+    expect(ui.trustSummary.label).toBe('Signal unavailable');
+  });
+
 });

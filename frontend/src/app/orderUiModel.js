@@ -165,6 +165,51 @@ export const mapOffchainHealthToUi = ({ signal, lang = 'TR' }) => {
   };
 };
 
+export const mapCompactTrustSummary = ({ compactSummary, signal, lang = 'TR' }) => {
+  // [TR] Öncelik backend'in market-safe compact özet alanındadır.
+  // [EN] Prefer backend-provided market-safe compact summary field.
+  if (compactSummary && typeof compactSummary === 'object' && compactSummary.available === true) {
+    const band = compactSummary.band || null;
+    const fallbackChip = 'text-slate-400 border-slate-700/60 bg-slate-900/20';
+    const chipByBand = {
+      GREEN: 'text-emerald-400 border-emerald-700/60 bg-emerald-900/20',
+      YELLOW: 'text-amber-400 border-amber-700/60 bg-amber-900/20',
+      RED: 'text-red-400 border-red-700/60 bg-red-900/20',
+    };
+    return {
+      available: true,
+      band,
+      label: compactSummary.label || (lang === 'TR' ? 'Sinyal' : 'Signal'),
+      chipClass: chipByBand[band] || fallbackChip,
+      readOnly: compactSummary.readOnly === true,
+      nonBlocking: compactSummary.nonBlocking === true,
+      canBlockProtocolActions: compactSummary.canBlockProtocolActions === true,
+    };
+  }
+
+  const mapped = mapOffchainHealthToUi({ signal, lang });
+  if (!mapped) {
+    return {
+      available: false,
+      band: null,
+      label: lang === 'TR' ? 'Sinyal yok' : 'Signal unavailable',
+      chipClass: 'text-slate-400 border-slate-700/60 bg-slate-900/20',
+    };
+  }
+
+  // [TR] Hover'da gizlilik için nedenleri göstermiyoruz; yalnız band + kısa etiket döneriz.
+  // [EN] For hover privacy we do not expose reasons; only band + short label are returned.
+  return {
+    available: true,
+    band: mapped.severityBand,
+    label: mapped.severityLabel,
+    chipClass: mapped.severityChipClass,
+    readOnly: mapped.readOnly,
+    nonBlocking: mapped.nonBlocking,
+    canBlockProtocolActions: mapped.canBlockProtocolActions,
+  };
+};
+
 export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {}, formatAddress = (v) => v }) => {
   const side = normalizeOrderSide(order?.side);
   const sideMeta = SIDE_META[side] || null;
@@ -202,6 +247,11 @@ export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {
       ? (lang === 'TR' ? 'Order sahibi kripto alıyor' : 'Order owner is buying crypto')
       : (lang === 'TR' ? 'Order sahibi rolü doğrulanamadı' : 'Order owner side could not be verified');
   const fillsCount = Number(order?.stats?.fills_count ?? 0);
+  const trustSummary = mapCompactTrustSummary({
+    compactSummary: order?.trust_visibility_summary || null,
+    signal: order?.offchain_health_score_input || null,
+    lang,
+  });
   return {
     id: order?._id,
     onchainId: order?.onchain_order_id ?? null,
@@ -228,6 +278,7 @@ export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {
     // [TR] V3 market hover kartı için taraf-bağımlı kısa açıklama (seller-only dilinden kaçınır).
     // [EN] Side-aware summary hint for V3 hover card (avoids seller-only terminology).
     ownerSideHint,
+    trustSummary,
     // legacy ui analytics fields
     successRate: Number(order?.stats?.fill_rate_pct ?? 100),
     txCount: fillsCount,
