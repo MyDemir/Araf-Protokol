@@ -70,6 +70,12 @@ const SAFE_ORDER_TRADES_PROJECTION = [
 const POSITIVE_NUMERIC_ID_RE = /^[1-9]\d*$/;
 const DEFAULT_MY_ORDERS_LIMIT = 20;
 const MAX_MY_ORDERS_LIMIT = 50;
+const LOCK_OR_SNAPSHOT_CAPTURED_MATCH = {
+  $or: [
+    { "timers.locked_at": { $ne: null } },
+    { "payout_snapshot.captured_at": { $ne: null } },
+  ],
+};
 
 function _deriveTrustBandFromReasons(reasons = []) {
   const severityScore = (Array.isArray(reasons) ? reasons : []).reduce((acc, reason) => {
@@ -117,7 +123,12 @@ async function _attachMarketTrustVisibilitySummary(orders = []) {
       .select("wallet_address profileVersion payout_profile reputation_cache is_banned banned_until consecutive_bans")
       .lean(),
     Trade.aggregate([
-      { $match: { maker_address: { $in: makerAddresses } } },
+      {
+        $match: {
+          maker_address: { $in: makerAddresses },
+          ...LOCK_OR_SNAPSHOT_CAPTURED_MATCH,
+        },
+      },
       { $sort: { created_at: -1, _id: -1 } },
       { $group: { _id: "$maker_address", trade: { $first: "$$ROOT" } } },
     ]),

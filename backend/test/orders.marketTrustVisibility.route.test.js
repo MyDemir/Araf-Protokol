@@ -88,6 +88,19 @@ describe("orders route market trust visibility summary", () => {
 
     const res = await request(app).get("/api/orders");
     expect(res.status).toBe(200);
+    expect(Trade.aggregate).toHaveBeenCalledWith([
+      {
+        $match: {
+          maker_address: { $in: ["0x1111111111111111111111111111111111111111"] },
+          $or: [
+            { "timers.locked_at": { $ne: null } },
+            { "payout_snapshot.captured_at": { $ne: null } },
+          ],
+        },
+      },
+      { $sort: { created_at: -1, _id: -1 } },
+      { $group: { _id: "$maker_address", trade: { $first: "$$ROOT" } } },
+    ]);
     expect(res.body.orders).toHaveLength(1);
     expect(res.body.orders[0].trust_visibility_summary).toMatchObject({
       available: true,
@@ -99,4 +112,3 @@ describe("orders route market trust visibility summary", () => {
     expect(res.body.orders[0].trust_visibility_summary.explainableReasons).toBeUndefined();
   });
 });
-
