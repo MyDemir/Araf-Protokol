@@ -13,7 +13,8 @@ jest.mock('../scripts/middleware/auth', () => ({
 }));
 
 jest.mock('../scripts/middleware/rateLimiter', () => ({
-  tradesLimiter: (_req, _res, next) => next(),
+  roomReadLimiter: (_req, _res, next) => next(),
+  coordinationWriteLimiter: (_req, _res, next) => next(),
 }));
 
 jest.mock('../scripts/models/User', () => ({

@@ -145,7 +145,8 @@ describe("orders/trades pagination + big on-chain id", () => {
         requireSessionWalletMatch: (_req, _res, next) => next(),
       }));
       jest.doMock("../scripts/middleware/rateLimiter", () => ({
-        tradesLimiter: (_req, _res, next) => next(),
+        roomReadLimiter: (_req, _res, next) => next(),
+        coordinationWriteLimiter: (_req, _res, next) => next(),
       }));
       jest.doMock("../scripts/models/Trade", () => Trade);
       jest.doMock("../scripts/models/User", () => ({
@@ -190,7 +191,8 @@ describe("orders/trades pagination + big on-chain id", () => {
         requireSessionWalletMatch: (_req, _res, next) => next(),
       }));
       jest.doMock("../scripts/middleware/rateLimiter", () => ({
-        tradesLimiter: (_req, _res, next) => next(),
+        roomReadLimiter: (_req, _res, next) => next(),
+        coordinationWriteLimiter: (_req, _res, next) => next(),
       }));
       jest.doMock("../scripts/models/Trade", () => Trade);
       jest.doMock("../scripts/models/User", () => ({
@@ -230,7 +232,7 @@ describe("orders/trades pagination + big on-chain id", () => {
       findOne: jest.fn(),
     };
 
-    const tradesLimiter = jest.fn((_req, _res, next) => next());
+    const roomReadLimiter = jest.fn((_req, _res, next) => next());
     const receiptUploadLimiter = jest.fn((_req, _res, next) => next());
 
     let router;
@@ -249,11 +251,19 @@ describe("orders/trades pagination + big on-chain id", () => {
         requireSessionWalletMatch: (_req, _res, next) => next(),
       }));
       jest.doMock("../scripts/middleware/rateLimiter", () => ({
-        tradesLimiter,
+        roomReadLimiter,
+        coordinationWriteLimiter: (_req, _res, next) => next(),
         receiptUploadLimiter,
       }));
       jest.doMock("../scripts/services/encryption", () => ({ encryptField: jest.fn().mockResolvedValue("enc") }));
       jest.doMock("../scripts/models/Trade", () => Trade);
+      jest.doMock("../scripts/models/User", () => ({
+        findOne: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({
+            lean: jest.fn().mockResolvedValue(null),
+          }),
+        }),
+      }));
       jest.doMock("../scripts/utils/logger", () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }));
       router = require("../scripts/routes/receipts");
     });
@@ -271,7 +281,7 @@ describe("orders/trades pagination + big on-chain id", () => {
     expect(okRes.status).toBe(201);
     expect(Trade.findOneAndUpdate.mock.calls[0][0].onchain_escrow_id).toBe(huge);
     expect(receiptUploadLimiter).toHaveBeenCalled();
-    expect(tradesLimiter).not.toHaveBeenCalled();
+    expect(roomReadLimiter).not.toHaveBeenCalled();
 
     if (fs.existsSync(tempPdfPath)) fs.unlinkSync(tempPdfPath);
   });

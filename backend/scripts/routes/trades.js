@@ -7,7 +7,7 @@ const { ethers } = require("ethers");
 const router = express.Router();
 
 const { requireAuth, requireSessionWalletMatch } = require("../middleware/auth");
-const { tradesLimiter } = require("../middleware/rateLimiter");
+const { roomReadLimiter, coordinationWriteLimiter } = require("../middleware/rateLimiter");
 const Trade = require("../models/Trade");
 const User = require("../models/User");
 const logger = require("../utils/logger");
@@ -244,7 +244,7 @@ async function _attachBankProfileRisk(trades) {
 }
 
 // ─── GET /api/trades/my ───────────────────────────────────────────────────────
-router.get("/my", requireAuth, requireSessionWalletMatch, tradesLimiter, async (req, res, next) => {
+router.get("/my", requireAuth, requireSessionWalletMatch, roomReadLimiter, async (req, res, next) => {
   try {
     const schema = Joi.object({
       page: Joi.number().integer().min(1).default(1),
@@ -277,7 +277,7 @@ router.get("/my", requireAuth, requireSessionWalletMatch, tradesLimiter, async (
 });
 
 // ─── GET /api/trades/history ──────────────────────────────────────────────────
-router.get("/history", requireAuth, requireSessionWalletMatch, tradesLimiter, async (req, res, next) => {
+router.get("/history", requireAuth, requireSessionWalletMatch, roomReadLimiter, async (req, res, next) => {
   try {
     const schema = Joi.object({
       page: Joi.number().integer().min(1).default(1),
@@ -320,7 +320,7 @@ router.get("/history", requireAuth, requireSessionWalletMatch, tradesLimiter, as
 // ─── GET /api/trades/by-escrow/:onchainId ────────────────────────────────────
 // [TR] GET /:id'den önce tanımlanmalı — yoksa Express yanlış route'a girebilir.
 // [TR] Buradaki kimlik parent order id değil, child trade / escrow id'dir.
-router.get("/by-escrow/:onchainId", requireAuth, requireSessionWalletMatch, tradesLimiter, async (req, res, next) => {
+router.get("/by-escrow/:onchainId", requireAuth, requireSessionWalletMatch, roomReadLimiter, async (req, res, next) => {
   try {
     const onchainId = _parsePositiveOnchainId(req.params.onchainId);
     if (!onchainId) {
@@ -347,7 +347,7 @@ router.get("/by-escrow/:onchainId", requireAuth, requireSessionWalletMatch, trad
 });
 
 // ─── GET /api/trades/:id ──────────────────────────────────────────────────────
-router.get("/:id", requireAuth, requireSessionWalletMatch, tradesLimiter, async (req, res, next) => {
+router.get("/:id", requireAuth, requireSessionWalletMatch, roomReadLimiter, async (req, res, next) => {
   try {
     if (!/^[a-fA-F0-9]{24}$/.test(req.params.id)) {
       return res.status(400).json({ error: "Geçersiz trade ID formatı." });
@@ -379,7 +379,7 @@ router.get("/:id", requireAuth, requireSessionWalletMatch, tradesLimiter, async 
  *
  * Kontrat authoritative kalır; backend burada yalnız off-chain coordination sağlar.
  */
-router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, tradesLimiter, async (req, res, next) => {
+router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, coordinationWriteLimiter, async (req, res, next) => {
   try {
     const schema = Joi.object({
       tradeId: Joi.string().length(24).hex().required(),
@@ -491,7 +491,7 @@ function _getRealIP(req) {
   return req.ip || req.socket?.remoteAddress || "unknown";
 }
 
-router.post("/:id/chargeback-ack", requireAuth, requireSessionWalletMatch, tradesLimiter, async (req, res, next) => {
+router.post("/:id/chargeback-ack", requireAuth, requireSessionWalletMatch, coordinationWriteLimiter, async (req, res, next) => {
   try {
     if (!/^[a-fA-F0-9]{24}$/.test(req.params.id)) {
       return res.status(400).json({ error: "Geçersiz trade ID formatı." });

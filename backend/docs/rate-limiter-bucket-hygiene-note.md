@@ -1,6 +1,6 @@
-# Rate Limiter Bucket Hygiene (Backend)
+# Rate Limiter Bucket Hygiene + Tier-aware Overlay (Backend)
 
-Bu not, route semantiği ile limiter semantiğini hizalamak için yapılan bucket hijyenini özetler.
+Bu not, route semantiği ile limiter semantiğini hizalamak için yapılan bucket hijyenini ve tier-aware overlay ekini özetler.
 
 ## Route -> Bucket taşıma özeti
 
@@ -30,7 +30,40 @@ Bu not, route semantiği ile limiter semantiğini hizalamak için yapılan bucke
 ## Fallback semantiği
 
 - Public/read availability-first yüzeyler (`marketReadLimiter`, `statsReadLimiter`, `clientLogLimiter`) Redis down olduğunda fail-open yaklaşımını koruyabilir.
-- Sensitive / write-adjacent yüzeyler (`ordersWriteLimiter`, `ordersReadLimiter`, `roomReadLimiter`, `receiptUploadLimiter`, `feedbackLimiter`, `adminReadLimiter`, auth/nonce/pii) Redis down durumunda in-memory fallback ile korunur.
+- Sensitive / write-adjacent yüzeyler (`ordersWriteLimiter`, `ordersReadLimiter`, `roomReadLimiter`, `receiptUploadLimiter`, `coordinationWriteLimiter`, `feedbackLimiter`, `adminReadLimiter`, auth/nonce/pii) Redis down durumunda in-memory fallback ile korunur.
+
+## Tier-aware kapsamı
+
+- Tier-aware yapılan canonical wallet-bound bucket’lar:
+  - `ordersReadLimiter`
+  - `roomReadLimiter`
+  - `receiptUploadLimiter`
+  - `coordinationWriteLimiter`
+  - `feedbackLimiter`
+
+- Fixed kalan bucket’lar:
+  - `authLimiter`, `nonceLimiter`, `piiLimiter`
+  - `marketReadLimiter`, `statsReadLimiter`, `clientLogLimiter`
+  - `adminReadLimiter`, `ordersWriteLimiter`
+
+## Tier source + cache çözümü
+
+- Tier kaynağı yalnız backend mirror + cache:
+  - `reputation_cache.effective_tier`
+  - `max_allowed_tier`
+- Cache key: `ratelimit:tier:<wallet>`
+- Çözümleme:
+  - wallet yoksa anonymous tier `0`
+  - Redis cache hit varsa direkt kullan
+  - cache miss’te Mongo dar projection ile oku
+  - `effective_tier || 0`, ardından `max_allowed_tier` üst sınırı uygula
+  - final tier `0..4` clamp edilir
+  - kısa TTL ile tekrar cache’e yazılır
+
+## Alias cleanup
+
+- `tradesLimiter` alias export kaldırıldı; trades route canonical `roomReadLimiter` kullanır.
+- `coordinationWriteLimiter` artık ölü export değil; trade coordination write endpoint’lerinde (`propose-cancel`, `chargeback-ack`) aktif kullanılır.
 
 ## Authority sınırı
 
