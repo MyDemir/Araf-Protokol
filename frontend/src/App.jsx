@@ -35,6 +35,48 @@ const StatChange = ({ value }) => {
 };
 
 const DEFAULT_TOKEN_DECIMALS = 6;
+const SEPA_COUNTRIES = ['DE', 'FR', 'NL', 'BE', 'ES', 'IT', 'AT', 'PT', 'IE', 'LU', 'FI', 'GR'];
+const RAIL_DEFAULT_COUNTRY = { TR_IBAN: 'TR', US_ACH: 'US', SEPA_IBAN: 'DE' };
+
+// [TR] Frontend payload canonicalizer — backend authority korunur, kirli veri minimize edilir.
+// [EN] Frontend payload canonicalizer — backend stays authoritative, payload quality is improved.
+const canonicalizePayoutProfileDraft = (draft = {}) => {
+  const rail = String(draft.rail || 'TR_IBAN').toUpperCase();
+  const allowedCountries = rail === 'SEPA_IBAN'
+    ? SEPA_COUNTRIES
+    : [RAIL_DEFAULT_COUNTRY[rail] || 'TR'];
+  const requestedCountry = String(draft.country || '').toUpperCase();
+  const country = allowedCountries.includes(requestedCountry)
+    ? requestedCountry
+    : (RAIL_DEFAULT_COUNTRY[rail] || allowedCountries[0]);
+  const rawChannel = draft?.contact?.channel || null;
+  const channel = rawChannel ? String(rawChannel).toLowerCase() : null;
+  let value = draft?.contact?.value == null ? null : String(draft.contact.value).trim();
+  if (channel === 'telegram' && value) value = value.replace(/^@+/, '');
+  if (channel === 'phone' && value) value = value.replace(/\s+/g, '');
+  if (!channel) value = null;
+  const fields = draft?.fields || {};
+  const base = {
+    account_holder_name: String(fields.account_holder_name || '').trim().replace(/\s+/g, ' '),
+    iban: null,
+    routing_number: null,
+    account_number: null,
+    account_type: null,
+    bic: null,
+    bank_name: fields.bank_name ? String(fields.bank_name).trim() : null,
+  };
+  if (rail === 'TR_IBAN') base.iban = fields.iban ? String(fields.iban).replace(/\s+/g, '').toUpperCase() : null;
+  if (rail === 'SEPA_IBAN') {
+    base.iban = fields.iban ? String(fields.iban).replace(/\s+/g, '').toUpperCase() : null;
+    base.bic = fields.bic ? String(fields.bic).trim().toUpperCase() : null;
+  }
+  if (rail === 'US_ACH') {
+    base.routing_number = fields.routing_number ? String(fields.routing_number).replace(/\s+/g, '') : null;
+    base.account_number = fields.account_number ? String(fields.account_number).replace(/\s+/g, '') : null;
+    base.account_type = fields.account_type || null;
+  }
+  return { rail, country, contact: { channel, value }, fields: base };
+};
 
 // [TR] Otoritatif raw base-unit değerini UI için normalize eder (display-only).
 // [EN] Normalizes authoritative raw base-unit values for UI display only.
@@ -1007,7 +1049,7 @@ function App() {
       const res = await authenticatedFetch(buildApiUrl('auth/profile'), {
         method: 'PUT',
         body: JSON.stringify({
-          payoutProfile: payoutProfileDraft,
+          payoutProfile: canonicalizePayoutProfileDraft(payoutProfileDraft),
         }),
       });
       const data = await res.json();
@@ -1020,7 +1062,7 @@ function App() {
       showToast(lang === 'TR' ? 'Ödeme profili güncellendi.' : 'Payout profile updated.', 'success');
     } catch (err) {
       console.error('PII update error:', err);
-    showToast(err.message || (lang === 'TR' ? 'Profil güncelleme başarısız.' : 'Profile update failed.'), 'error');
+      showToast(err.message || (lang === 'TR' ? 'Profil güncelleme başarısız.' : 'Profile update failed.'), 'error');
     } finally {
       setIsContractLoading(false);
     }
@@ -1491,6 +1533,8 @@ const handleCreateOrder = async () => {
     handleUpdatePII,
     payoutProfileDraft,
     setPayoutProfileDraft,
+    canonicalizePayoutProfileDraft,
+    SEPA_COUNTRIES,
     getSafeTelegramUrl,
     handleLogoutAndDisconnect,
     isConnected,

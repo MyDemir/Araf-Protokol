@@ -7,7 +7,7 @@
  *   - Cookie wallet authoritative olmaya devam eder.
  *
  * Bu sürümde:
- *   - eski V2 profil validation / normalization katmanı geri alındı
+ *   - V3 nested payout profile validation / normalization katmanı eklendi
  *   - payout profile değişimi tespiti eklendi
  *   - aktif child trade varken payout profile değişimi engellendi
  *   - User.js içindeki profileVersion / bankChangeCount sayaçları entegre edildi
@@ -52,6 +52,7 @@ const COOKIE_OPTIONS_BASE = {
 };
 
 const ACTIVE_TRADE_STATUSES_FOR_BANK_PROFILE_LOCK = ["LOCKED", "PAID", "CHALLENGED"];
+const SEPA_COUNTRY_ALLOWLIST = new Set(["DE", "FR", "NL", "BE", "ES", "IT", "AT", "PT", "IE", "LU", "FI", "GR"]);
 
 function _getJwtCookieOptions() {
   return {
@@ -74,23 +75,31 @@ function _normalizePayoutProfileBody(rawBody = {}) {
   const profile = rawBody?.payoutProfile || {};
   const fields = profile?.fields || {};
   const contact = profile?.contact || {};
+  const rawChannel =
+    contact.channel == null
+      ? null
+      : typeof contact.channel === "string"
+        ? contact.channel.trim().toLowerCase()
+        : "";
+  const rawContactValue =
+    contact.value == null
+      ? null
+      : typeof contact.value === "string"
+        ? contact.value.trim()
+        : "";
+  const normalizedContactValue =
+    rawChannel === "telegram" && typeof rawContactValue === "string"
+      ? rawContactValue.replace(/^@+/, "")
+      : rawChannel === "phone" && typeof rawContactValue === "string"
+        ? rawContactValue.replace(/\s+/g, "")
+        : rawContactValue;
   return {
     payoutProfile: {
       rail: typeof profile.rail === "string" ? profile.rail.trim().toUpperCase() : "",
       country: typeof profile.country === "string" ? profile.country.trim().toUpperCase() : "",
       contact: {
-        channel:
-          contact.channel == null
-            ? null
-            : typeof contact.channel === "string"
-              ? contact.channel.trim().toLowerCase()
-              : "",
-        value:
-          contact.value == null
-            ? null
-            : typeof contact.value === "string"
-              ? contact.value.trim()
-              : "",
+        channel: rawChannel,
+        value: normalizedContactValue,
       },
       fields: {
         account_holder_name:
@@ -138,6 +147,31 @@ function _normalizePayoutProfileBody(rawBody = {}) {
   };
 }
 
+function _buildCanonicalDetailsByRail(rail, fields = {}) {
+  const base = {
+    account_holder_name: fields.account_holder_name || "",
+    iban: null,
+    routing_number: null,
+    account_number: null,
+    account_type: null,
+    bic: null,
+    bank_name: fields.bank_name || null,
+  };
+
+  if (rail === "TR_IBAN") {
+    return { ...base, iban: fields.iban || null };
+  }
+  if (rail === "SEPA_IBAN") {
+    return { ...base, iban: fields.iban || null, bic: fields.bic || null };
+  }
+  return {
+    ...base,
+    routing_number: fields.routing_number || null,
+    account_number: fields.account_number || null,
+    account_type: fields.account_type || null,
+  };
+}
+
 const PROFILE_SCHEMA = Joi.object({
   payoutProfile: Joi.object({
     rail: Joi.string().valid("TR_IBAN", "US_ACH", "SEPA_IBAN").required(),
@@ -150,10 +184,10 @@ const PROFILE_SCHEMA = Joi.object({
       account_holder_name: Joi.string()
         .min(2)
         .max(100)
-        .pattern(/^[a-zA-ZğüşöçİĞÜŞÖÇ\s]+$/, "geçerli isim karakterleri")
+        .pattern(/^[A-Za-zÀ-ÖØ-öø-ÿĀ-žĞğİıŞşÇçÑñŒœȘșȚțŽž\s.'’\-]+$/, "geçerli isim karakterleri")
         .required()
         .messages({
-          "string.pattern.name": "Hesap sahibi adı sadece harf içerebilir.",
+          "string.pattern.name": "Hesap sahibi adı harf, boşluk, apostrof, nokta ve tire içerebilir.",
         }),
       iban: Joi.string().allow(null).required(),
       routing_number: Joi.string().allow(null).required(),
@@ -171,6 +205,26 @@ const PROFILE_SCHEMA = Joi.object({
 
   if ((channel && !cValue) || (!channel && cValue)) {
     return helpers.error("any.invalid", { message: "Contact channel/value birlikte verilmelidir." });
+  }
+
+  if (rail === "TR_IBAN" && payoutProfile.country !== "TR") {
+    return helpers.error("any.invalid", { message: "TR_IBAN yalnız TR country ile kullanılabilir." });
+  }
+  if (rail === "US_ACH" && payoutProfile.country !== "US") {
+    return helpers.error("any.invalid", { message: "US_ACH yalnız US country ile kullanılabilir." });
+  }
+  if (rail === "SEPA_IBAN" && !SEPA_COUNTRY_ALLOWLIST.has(payoutProfile.country)) {
+    return helpers.error("any.invalid", { message: "SEPA_IBAN için country allowlist dışı." });
+  }
+
+  if (channel === "telegram" && !/^[a-zA-Z0-9_]{5,32}$/.test(cValue || "")) {
+    return helpers.error("any.invalid", { message: "Telegram kullanıcı adı geçersiz." });
+  }
+  if (channel === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cValue || "")) {
+    return helpers.error("any.invalid", { message: "Email formatı geçersiz." });
+  }
+  if (channel === "phone" && !/^\+?[0-9]{7,15}$/.test(cValue || "")) {
+    return helpers.error("any.invalid", { message: "Telefon formatı geçersiz." });
   }
 
   if (rail === "TR_IBAN") {
@@ -403,27 +457,7 @@ router.put("/profile", requireAuth, requireSessionWalletMatch, authLimiter, asyn
     const incoming = value.payoutProfile;
     const railChanged = existingProfile.rail !== incoming.rail;
     const countryChanged = (existingProfile.country || "") !== (incoming.country || "");
-    const nextGenericDetails =
-      incoming.rail === "US_ACH"
-        ? {
-            account_holder_name: incoming.fields.account_holder_name,
-            routing_number: incoming.fields.routing_number,
-            account_number: incoming.fields.account_number,
-            account_type: incoming.fields.account_type,
-            bank_name: incoming.fields.bank_name || null,
-          }
-        : incoming.rail === "SEPA_IBAN"
-          ? {
-              account_holder_name: incoming.fields.account_holder_name,
-              iban: incoming.fields.iban,
-              bic: incoming.fields.bic || null,
-              bank_name: incoming.fields.bank_name || null,
-            }
-          : {
-              account_holder_name: incoming.fields.account_holder_name,
-              iban: incoming.fields.iban,
-              bank_name: incoming.fields.bank_name || null,
-            };
+    const nextGenericDetails = _buildCanonicalDetailsByRail(incoming.rail, incoming.fields);
 
     const detailsChanged =
       buildPayoutFingerprint(existingProfile.details || {}) !==
@@ -431,7 +465,7 @@ router.put("/profile", requireAuth, requireSessionWalletMatch, authLimiter, asyn
 
     const bankProfileChanged = railChanged || countryChanged || detailsChanged;
 
-    // [TR] Telegram değişimi serbest; banka bilgisi değişimi aktif trade sırasında kilitli.
+    // [TR] Contact değişimi serbest; payout details değişimi aktif trade sırasında kilitli.
     if (bankProfileChanged) {
       const activeTradeExists = await Trade.exists({
         status: { $in: ACTIVE_TRADE_STATUSES_FOR_BANK_PROFILE_LOCK },

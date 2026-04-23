@@ -13,7 +13,7 @@
  * YÜKS-06 Fix: Refresh Token Desenkronizasyonu düzeltildi.
  *   ÖNCEKİ: Düz `fetch` kullanılıyordu. JWT süresi dolarsa 401 alınıyor ama
  *   hook kendi başına token yenileyemiyordu → "PII erişimi reddedildi" hatası
- *   → yetkili kullanıcı IBAN'a erişemez → gereksiz uyuşmazlık tetiklenebilir.
+ *   → yetkili kullanıcı payout bilgisine erişemez → gereksiz uyuşmazlık tetiklenebilir.
  *   ŞİMDİ: App.jsx'teki `authenticatedFetch` referansı prop olarak alınıyor.
  *   Bu sayede JWT süresi dolduğunda otomatik yenileme yapılıyor.
  *
@@ -25,7 +25,7 @@
  *
  * Kullanım (App.jsx'te):
  *   const { pii, loading, error, fetchPII, clearPII } = usePII(tradeId, authenticatedFetch);
- *   <button onClick={fetchPII}>IBAN'ı Göster</button>
+ *   <button onClick={fetchPII}>Payout bilgilerini göster</button>
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';

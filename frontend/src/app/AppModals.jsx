@@ -100,6 +100,8 @@ export const buildAppModals = (ctx) => {
     handleUpdatePII,
     payoutProfileDraft,
     setPayoutProfileDraft,
+    canonicalizePayoutProfileDraft,
+    SEPA_COUNTRIES,
     getSafeTelegramUrl,
     handleLogoutAndDisconnect,
     isConnected,
@@ -402,7 +404,14 @@ export const buildAppModals = (ctx) => {
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="block text-xs text-slate-400 mb-1">Rail</label>
-                      <select value={payoutProfileDraft.rail} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, rail: e.target.value }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm">
+                      <select
+                        value={payoutProfileDraft.rail}
+                        onChange={(e) => {
+                          const nextRail = e.target.value;
+                          setPayoutProfileDraft((prev) => canonicalizePayoutProfileDraft({ ...prev, rail: nextRail }));
+                        }}
+                        className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm"
+                      >
                         <option value="TR_IBAN">TR_IBAN</option>
                         <option value="SEPA_IBAN">SEPA_IBAN</option>
                         <option value="US_ACH">US_ACH</option>
@@ -410,13 +419,26 @@ export const buildAppModals = (ctx) => {
                     </div>
                     <div>
                       <label className="block text-xs text-slate-400 mb-1">Country</label>
-                      <input type="text" value={payoutProfileDraft.country || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, country: e.target.value.toUpperCase() }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
+                      <select
+                        value={payoutProfileDraft.country || ''}
+                        onChange={(e) => setPayoutProfileDraft((prev) => canonicalizePayoutProfileDraft({ ...prev, country: e.target.value }))}
+                        className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm"
+                      >
+                        {(payoutProfileDraft.rail === 'TR_IBAN'
+                          ? ['TR']
+                          : payoutProfileDraft.rail === 'US_ACH'
+                            ? ['US']
+                            : SEPA_COUNTRIES
+                        ).map((countryCode) => (
+                          <option key={countryCode} value={countryCode}>{countryCode}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'İletişim Kanalı' : 'Contact Channel'}</label>
-                      <select value={payoutProfileDraft.contact?.channel || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, contact: { ...prev.contact, channel: e.target.value || null } }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm">
+                      <select value={payoutProfileDraft.contact?.channel || ''} onChange={(e) => setPayoutProfileDraft((prev) => canonicalizePayoutProfileDraft({ ...prev, contact: { ...prev.contact, channel: e.target.value || null } }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm">
                         <option value="">{lang === 'TR' ? 'Yok' : 'None'}</option>
                         <option value="telegram">telegram</option>
                         <option value="email">email</option>
@@ -425,12 +447,18 @@ export const buildAppModals = (ctx) => {
                     </div>
                     <div>
                       <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'İletişim Değeri' : 'Contact Value'}</label>
-                      <input type="text" value={payoutProfileDraft.contact?.value || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, contact: { ...prev.contact, value: e.target.value || null } }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
+                      <input
+                        type="text"
+                        value={payoutProfileDraft.contact?.value || ''}
+                        placeholder={payoutProfileDraft.contact?.channel === 'telegram' ? 'username' : payoutProfileDraft.contact?.channel === 'email' ? 'name@example.com' : payoutProfileDraft.contact?.channel === 'phone' ? '+905...' : ''}
+                        onChange={(e) => setPayoutProfileDraft((prev) => canonicalizePayoutProfileDraft({ ...prev, contact: { ...prev.contact, value: e.target.value || null } }))}
+                        className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm"
+                      />
                     </div>
                   </div>
                   <div>
                     <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Hesap Sahibi' : 'Account Holder'}</label>
-                    <input type="text" value={payoutProfileDraft.fields?.account_holder_name || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, account_holder_name: e.target.value } }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
+                    <input type="text" value={payoutProfileDraft.fields?.account_holder_name || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, account_holder_name: e.target.value } }))} placeholder={lang === 'TR' ? 'Örn: Jean-Luc Picard' : 'e.g. Jean-Luc Picard'} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
                   </div>
                   {(payoutProfileDraft.rail === 'TR_IBAN' || payoutProfileDraft.rail === 'SEPA_IBAN') && (
                     <div>
@@ -445,14 +473,23 @@ export const buildAppModals = (ctx) => {
                     </div>
                   )}
                   {payoutProfileDraft.rail === 'US_ACH' && (
-                    <div className="grid grid-cols-3 gap-2">
-                      <input type="text" placeholder="routing_number" value={payoutProfileDraft.fields?.routing_number || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, routing_number: e.target.value } }))} className="bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
-                      <input type="text" placeholder="account_number" value={payoutProfileDraft.fields?.account_number || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, account_number: e.target.value } }))} className="bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
-                      <select value={payoutProfileDraft.fields?.account_type || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, account_type: e.target.value || null } }))} className="bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm">
+                    <div className="space-y-2">
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Routing Number</label>
+                        <input type="text" value={payoutProfileDraft.fields?.routing_number || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, routing_number: e.target.value } }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Account Number</label>
+                        <input type="text" value={payoutProfileDraft.fields?.account_number || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, account_number: e.target.value } }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Account Type</label>
+                        <select value={payoutProfileDraft.fields?.account_type || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, account_type: e.target.value || null } }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm">
                         <option value="">account_type</option>
                         <option value="checking">checking</option>
                         <option value="savings">savings</option>
-                      </select>
+                        </select>
+                      </div>
                     </div>
                   )}
                   <div>

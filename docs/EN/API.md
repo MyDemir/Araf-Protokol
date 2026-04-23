@@ -92,6 +92,29 @@ Accepted request body:
 }
 ```
 
+Rail-country rules (enforced):
+- `TR_IBAN` -> `TR`
+- `US_ACH` -> `US`
+- `SEPA_IBAN` -> one of `DE, FR, NL, BE, ES, IT, AT, PT, IE, LU, FI, GR`
+
+Contact canonicalization:
+- `telegram`: leading `@` is removed before storage
+- `email`: validated with basic e-mail pattern
+- `phone`: spaces are removed, then validated with `+`-optional numeric pattern
+- `channel/value` must be both present or both null
+
+Rail-specific fields:
+- `TR_IBAN`: `account_holder_name`, `iban`, optional `bank_name`
+- `SEPA_IBAN`: `account_holder_name`, `iban`, optional `bic`, optional `bank_name`
+- `US_ACH`: `account_holder_name`, `routing_number`, `account_number`, `account_type`, optional `bank_name`
+
+Invalid example (rejected with 400):
+```json
+{ "payoutProfile": { "rail": "US_ACH", "country": "TR", "contact": { "channel": null, "value": null }, "fields": { "account_holder_name": "John Doe", "iban": null, "routing_number": "021000021", "account_number": "1234567890", "account_type": "checking", "bic": null, "bank_name": null } } }
+```
+
+Legacy flat fields are no longer accepted: `bankOwner`, `iban`, `telegram`, `contactChannel`, `contactValue`.
+
 ---
 
 ## 4) Orders routes (`/api/orders`)
