@@ -98,12 +98,10 @@ export const buildAppModals = (ctx) => {
     setChargebackAccepted,
     setCurrentView,
     handleUpdatePII,
-    piiBankOwner,
-    setPiiBankOwner,
-    piiIban,
-    setPiiIban,
-    piiTelegram,
-    setPiiTelegram,
+    payoutProfileDraft,
+    setPayoutProfileDraft,
+    canonicalizePayoutProfileDraft,
+    SEPA_COUNTRIES,
     getSafeTelegramUrl,
     handleLogoutAndDisconnect,
     isConnected,
@@ -402,27 +400,107 @@ export const buildAppModals = (ctx) => {
                   <p className="font-mono text-white text-xs break-all">{address ? address : (lang === 'TR' ? 'Bağlı Değil' : 'Not Connected')}</p>
                 </div>
                 <form onSubmit={handleUpdatePII} className="bg-[#151518] p-4 rounded-xl border border-[#2a2a2e] space-y-3">
-                  <p className="text-slate-300 text-sm font-bold">{lang === 'TR' ? 'Banka & İletişim Bilgileri' : 'Bank & Contact Info'}</p>
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Banka Hesabı Sahibi (Ad Soyad)' : 'Bank Account Owner (Full Name)'}</label>
-                    <input type="text" value={piiBankOwner} onChange={e => setPiiBankOwner(e.target.value)} placeholder={lang === 'TR' ? 'Adınız Soyadınız' : 'Your Full Name'} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1">IBAN</label>
-                    <input type="text" value={piiIban} onChange={e => setPiiIban(e.target.value)} placeholder="TRXX XXXX XXXX XXXX XXXX XXXX XX" className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none font-mono text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Telegram (Opsiyonel)' : 'Telegram (Optional)'}</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">@</span>
-                      <input type="text" value={piiTelegram} onChange={e => setPiiTelegram(e.target.value)} placeholder="kullanici_adiniz" className="w-full bg-[#0c0c0e] text-white pl-7 pr-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
+                  <p className="text-slate-300 text-sm font-bold">{lang === 'TR' ? 'Ödeme Profili ve İletişim' : 'Payout Profile & Contact'}</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Rail</label>
+                      <select
+                        value={payoutProfileDraft.rail}
+                        onChange={(e) => {
+                          const nextRail = e.target.value;
+                          setPayoutProfileDraft((prev) => canonicalizePayoutProfileDraft({ ...prev, rail: nextRail }));
+                        }}
+                        className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm"
+                      >
+                        <option value="TR_IBAN">TR_IBAN</option>
+                        <option value="SEPA_IBAN">SEPA_IBAN</option>
+                        <option value="US_ACH">US_ACH</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Country</label>
+                      <select
+                        value={payoutProfileDraft.country || ''}
+                        onChange={(e) => setPayoutProfileDraft((prev) => canonicalizePayoutProfileDraft({ ...prev, country: e.target.value }))}
+                        className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm"
+                      >
+                        {(payoutProfileDraft.rail === 'TR_IBAN'
+                          ? ['TR']
+                          : payoutProfileDraft.rail === 'US_ACH'
+                            ? ['US']
+                            : SEPA_COUNTRIES
+                        ).map((countryCode) => (
+                          <option key={countryCode} value={countryCode}>{countryCode}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'İletişim Kanalı' : 'Contact Channel'}</label>
+                      <select value={payoutProfileDraft.contact?.channel || ''} onChange={(e) => setPayoutProfileDraft((prev) => canonicalizePayoutProfileDraft({ ...prev, contact: { ...prev.contact, channel: e.target.value || null } }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm">
+                        <option value="">{lang === 'TR' ? 'Yok' : 'None'}</option>
+                        <option value="telegram">telegram</option>
+                        <option value="email">email</option>
+                        <option value="phone">phone</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'İletişim Değeri' : 'Contact Value'}</label>
+                      <input
+                        type="text"
+                        value={payoutProfileDraft.contact?.value || ''}
+                        placeholder={payoutProfileDraft.contact?.channel === 'telegram' ? 'username' : payoutProfileDraft.contact?.channel === 'email' ? 'name@example.com' : payoutProfileDraft.contact?.channel === 'phone' ? '+905...' : ''}
+                        onChange={(e) => setPayoutProfileDraft((prev) => canonicalizePayoutProfileDraft({ ...prev, contact: { ...prev.contact, value: e.target.value || null } }))}
+                        className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Hesap Sahibi' : 'Account Holder'}</label>
+                    <input type="text" value={payoutProfileDraft.fields?.account_holder_name || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, account_holder_name: e.target.value } }))} placeholder={lang === 'TR' ? 'Örn: Jean-Luc Picard' : 'e.g. Jean-Luc Picard'} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
+                  </div>
+                  {(payoutProfileDraft.rail === 'TR_IBAN' || payoutProfileDraft.rail === 'SEPA_IBAN') && (
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">IBAN</label>
+                      <input type="text" value={payoutProfileDraft.fields?.iban || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, iban: e.target.value } }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none font-mono text-sm" />
+                    </div>
+                  )}
+                  {payoutProfileDraft.rail === 'SEPA_IBAN' && (
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">BIC</label>
+                      <input type="text" value={payoutProfileDraft.fields?.bic || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, bic: e.target.value || null } }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
+                    </div>
+                  )}
+                  {payoutProfileDraft.rail === 'US_ACH' && (
+                    <div className="space-y-2">
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Routing Number</label>
+                        <input type="text" value={payoutProfileDraft.fields?.routing_number || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, routing_number: e.target.value } }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Account Number</label>
+                        <input type="text" value={payoutProfileDraft.fields?.account_number || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, account_number: e.target.value } }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Account Type</label>
+                        <select value={payoutProfileDraft.fields?.account_type || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, account_type: e.target.value || null } }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm">
+                        <option value="">account_type</option>
+                        <option value="checking">checking</option>
+                        <option value="savings">savings</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Banka Adı (Opsiyonel)' : 'Bank Name (Optional)'}</label>
+                    <input type="text" value={payoutProfileDraft.fields?.bank_name || ''} onChange={(e) => setPayoutProfileDraft((prev) => ({ ...prev, fields: { ...prev.fields, bank_name: e.target.value || null } }))} className="w-full bg-[#0c0c0e] text-white px-3 py-2 rounded-lg border border-[#222] outline-none text-sm" />
+                  </div>
                   <button type="submit" disabled={isContractLoading} className={`w-full py-2.5 rounded-xl font-bold text-sm transition ${isContractLoading ? 'bg-[#222] text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}>
-                    {isContractLoading ? (lang === 'TR' ? 'Kaydediliyor...' : 'Saving...') : (lang === 'TR' ? 'Bilgileri Kaydet' : 'Save Information')}
+                    {isContractLoading ? (lang === 'TR' ? 'Kaydediliyor...' : 'Saving...') : (lang === 'TR' ? 'Profili Kaydet' : 'Save Profile')}
                   </button>
                   <p className="text-[10px] text-slate-500 text-center pt-3 border-t border-[#2a2a2e]">
-                    🔒 {lang === 'TR' ? 'IBAN ve Telegram bilgileriniz AES-256 ile şifrelenir ve asla on-chain kaydedilmez.' : 'Your IBAN and Telegram are AES-256 encrypted and never saved on-chain.'}
+                    🔒 {lang === 'TR' ? 'Payout profile bilgileriniz AES-256 ile şifrelenir ve asla on-chain kaydedilmez.' : 'Your payout profile is AES-256 encrypted and never saved on-chain.'}
                   </p>
                 </form>
                 <button

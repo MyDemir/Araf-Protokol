@@ -1,5 +1,5 @@
 /**
- * PIIDisplay — Şifreli IBAN + Telegram Görüntüleme Bileşeni
+ * PIIDisplay — Şifreli payout profile + contact görüntüleme bileşeni
  *
  * IBAN varsayılan olarak GİZLİ gelir; kullanıcı onay verince fetch edilir.
  * usePII(tradeId, authenticatedFetch) — tüm auth httpOnly cookie üzerinden.
@@ -24,38 +24,46 @@ import { usePII } from '../hooks/usePII';
 
 const LABELS = {
   tr: {
-    sectionTitle:     'Satıcı Banka & İletişim Bilgileri',
-    lockedTitle:      'IBAN şifrelenmiş & korunuyor',
+    sectionTitle:     'Satıcı Ödeme Profili ve İletişim',
+    lockedTitle:      'Ödeme profili şifrelenmiş & korunuyor',
     lockedSub:        'Güvenli görmek için kimliğini doğrula',
-    revealBtn:        '🔓 IBAN & Telegram\'ı Güvenli Göster',
+    revealBtn:        '🔓 Payout Profile\'ı Güvenli Göster',
     revealBtnLoading: 'Doğrulanıyor...',
     copyIban:         '📋 IBAN Kopyala',
+    copyRouting:      '📋 Routing Kopyala',
+    copyAccount:      '📋 Hesap No Kopyala',
     copied:           '✓ Kopyalandı',
     copyError:        '⚠ Kopyalanamadı — manuel seçin',
     noSecureContext:  '⚠ HTTP bağlantısı — IBAN\'ı manuel kopyalayın',
     hideBtn:          '🙈 Gizle',
-    telegramBtn:      'Telegram\'dan Mesaj At',
+    telegramBtn:      'Telegram Aç',
+    emailBtn:         'E-posta Gönder',
+    phoneBtn:         'Ara / Dialer Aç',
     disclaimer:       '🔒 Şifreli kanal — ekran görüntüsüne dikkat et',
     notice:           'Bu bilgiler blockchain\'e kaydedilmez. Sadece bu işleme özel şifreli olarak iletildi.',
     loading:          'Yükleniyor...',
-    noTelegram:       'Telegram bilgisi eklenmemiş',
+    noContact:        'İletişim bilgisi eklenmemiş',
   },
   en: {
-    sectionTitle:     'Seller Bank & Contact Details',
-    lockedTitle:      'IBAN is encrypted & protected',
+    sectionTitle:     'Seller Payout Profile & Contact',
+    lockedTitle:      'Payout profile is encrypted & protected',
     lockedSub:        'Verify your identity to view securely',
-    revealBtn:        '🔓 Securely Reveal IBAN & Telegram',
+    revealBtn:        '🔓 Securely Reveal Payout Profile',
     revealBtnLoading: 'Verifying...',
     copyIban:         '📋 Copy IBAN',
+    copyRouting:      '📋 Copy Routing',
+    copyAccount:      '📋 Copy Account',
     copied:           '✓ Copied',
     copyError:        '⚠ Copy failed — please select manually',
     noSecureContext:  '⚠ HTTP connection — copy IBAN manually',
     hideBtn:          '🙈 Hide',
-    telegramBtn:      'Message on Telegram',
+    telegramBtn:      'Open Telegram',
+    emailBtn:         'Send Email',
+    phoneBtn:         'Call / Open Dialer',
     disclaimer:       '🔒 Encrypted channel — beware of screenshots',
     notice:           'Not stored on-chain. Transmitted encrypted for this trade only.',
     loading:          'Loading...',
-    noTelegram:       'No Telegram info provided',
+    noContact:       'No contact info provided',
   },
 };
 
@@ -72,7 +80,7 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
   const { pii, loading, error, fetchPII, clearPII } = usePII(tradeId, authenticatedFetch);
   const [revealed, setRevealed] = useState(false);
   // [TR] copied: 'idle' | 'success' | 'error'
-  const [copyState, setCopyState] = useState('idle');
+  const [copyState, setCopyState] = useState({ status: 'idle', field: null });
 
   const handleReveal = async () => {
     if (pii?.payoutProfile) {
@@ -88,32 +96,31 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
   const handleHide = () => {
     setRevealed(false);
     clearPII();
-    setCopyState('idle');
+    setCopyState({ status: 'idle', field: null });
   };
 
   // ORTA-15 Fix: Clipboard kopyalama güvenli ve hata toleranslı
-  const handleCopyIban = async () => {
-    const iban = pii?.payoutProfile?.fields?.iban;
-    if (!iban) return;
-    const cleanIban = String(iban).replace(/\s/g, '');
+  const handleCopyField = async (fieldKey, rawValue) => {
+    if (!rawValue) return;
+    const cleanValue = String(rawValue).replace(/\s/g, '');
 
     // [TR] Güvenli bağlam kontrolü (HTTPS veya localhost)
     if (!window.isSecureContext) {
       // [TR] HTTP ortamı — otomatik kopyalama API'si çalışmaz, kullanıcıyı uyar
-      setCopyState('error');
-      setTimeout(() => setCopyState('idle'), 3000);
+      setCopyState({ status: 'error', field: fieldKey });
+      setTimeout(() => setCopyState({ status: 'idle', field: null }), 3000);
       return;
     }
 
     try {
-      await navigator.clipboard.writeText(cleanIban);
-      setCopyState('success');
-      setTimeout(() => setCopyState('idle'), 2000);
+      await navigator.clipboard.writeText(cleanValue);
+      setCopyState({ status: 'success', field: fieldKey });
+      setTimeout(() => setCopyState({ status: 'idle', field: null }), 2000);
     } catch (err) {
       // [TR] İzin reddedildi veya başka clipboard hatası — fallback: seçim yöntemi
       try {
         const textArea = document.createElement('textarea');
-        textArea.value = cleanIban;
+        textArea.value = cleanValue;
         textArea.style.position = 'fixed';
         textArea.style.opacity = '0';
         document.body.appendChild(textArea);
@@ -121,11 +128,11 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
         textArea.select();
         const success = document.execCommand('copy');
         document.body.removeChild(textArea);
-        setCopyState(success ? 'success' : 'error');
+        setCopyState({ status: success ? 'success' : 'error', field: fieldKey });
       } catch {
-        setCopyState('error');
+        setCopyState({ status: 'error', field: fieldKey });
       }
-      setTimeout(() => setCopyState('idle'), 3000);
+      setTimeout(() => setCopyState({ status: 'idle', field: null }), 3000);
     }
   };
 
@@ -134,6 +141,31 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
     return getSafeTelegramUrl
       ? getSafeTelegramUrl(handle)
       : `https://t.me/${handle.replace(/[^a-zA-Z0-9_]/g, '')}`;
+  };
+  const buildContactHref = (channel, value) => {
+    if (!channel || !value) return null;
+    if (channel === 'telegram') return buildTelegramUrl(value);
+    if (channel === 'email') return `mailto:${value}`;
+    if (channel === 'phone') return `tel:${value}`;
+    return null;
+  };
+  const getContactCtaLabel = (channel) => {
+    if (channel === 'telegram') return t.telegramBtn;
+    if (channel === 'email') return t.emailBtn;
+    if (channel === 'phone') return t.phoneBtn;
+    return null;
+  };
+  const getFieldLabel = (key) => {
+    const map = {
+      account_holder_name: lang === 'TR' ? 'Hesap Sahibi' : 'Account Holder',
+      iban: 'IBAN',
+      routing_number: lang === 'TR' ? 'Routing Number' : 'Routing Number',
+      account_number: lang === 'TR' ? 'Hesap Numarası' : 'Account Number',
+      account_type: lang === 'TR' ? 'Hesap Türü' : 'Account Type',
+      bic: 'BIC',
+      bank_name: lang === 'TR' ? 'Banka Adı' : 'Bank Name',
+    };
+    return map[key] || key;
   };
 
   // ── Kilitli görünüm ──────────────────────────────────────────────────────
@@ -199,13 +231,17 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
 
       {pii ? (
         <>
-          <p className="text-slate-400 text-[10px] mb-0.5 uppercase tracking-widest">Ad Soyad</p>
+          <p className="text-slate-400 text-[10px] mb-0.5 uppercase tracking-widest">{getFieldLabel('account_holder_name')}</p>
           <p className="font-bold text-white text-base mb-3">{pii?.payoutProfile?.fields?.account_holder_name || '—'}</p>
 
-          <p className="text-slate-400 text-[10px] mb-0.5 uppercase tracking-widest">IBAN</p>
-          <p className="font-mono text-emerald-400 mb-3 break-all text-sm tracking-wider">
-            {pii?.payoutProfile?.fields?.iban || '—'}
-          </p>
+          {['TR_IBAN', 'SEPA_IBAN'].includes(pii?.payoutProfile?.rail) && (
+            <>
+              <p className="text-slate-400 text-[10px] mb-0.5 uppercase tracking-widest">IBAN</p>
+              <p className="font-mono text-emerald-400 mb-3 break-all text-sm tracking-wider">
+                {pii?.payoutProfile?.fields?.iban || '—'}
+              </p>
+            </>
+          )}
 
           {pii.payoutProfile?.rail && (
             <p className="text-[11px] text-blue-300 mb-3">
@@ -219,7 +255,7 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
                 if (value == null || value === '' || key === 'iban' || key === 'account_holder_name') return null;
                 return (
                   <p key={key} className="text-xs text-slate-300 break-all">
-                    <span className="text-slate-500">{key}:</span> {String(value)}
+                    <span className="text-slate-500">{getFieldLabel(key)}:</span> {String(value)}
                   </p>
                 );
               })}
@@ -227,22 +263,40 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
           )}
 
           <div className="flex space-x-2 mb-3">
-            <button
-              onClick={handleCopyIban}
-              className={`flex-1 text-xs font-medium py-2 rounded-lg transition border ${
-                copyState === 'success'
-                  ? 'bg-emerald-900/30 text-emerald-400 border-emerald-700'
-                  : copyState === 'error'
-                  ? 'bg-red-900/30 text-red-400 border-red-700'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'
-              }`}
-            >
-              {copyState === 'success'
-                ? t.copied
-                : copyState === 'error'
-                ? t.copyError
-                : t.copyIban}
-            </button>
+            {['TR_IBAN', 'SEPA_IBAN'].includes(pii?.payoutProfile?.rail) && (
+              <button
+                onClick={() => handleCopyField('iban', pii?.payoutProfile?.fields?.iban)}
+                className={`flex-1 text-xs font-medium py-2 rounded-lg transition border ${
+                  copyState.status === 'success' && copyState.field === 'iban'
+                    ? 'bg-emerald-900/30 text-emerald-400 border-emerald-700'
+                    : copyState.status === 'error' && copyState.field === 'iban'
+                    ? 'bg-red-900/30 text-red-400 border-red-700'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'
+                }`}
+              >
+                {copyState.status === 'success' && copyState.field === 'iban'
+                  ? t.copied
+                  : copyState.status === 'error' && copyState.field === 'iban'
+                  ? t.copyError
+                  : t.copyIban}
+              </button>
+            )}
+            {pii?.payoutProfile?.rail === 'US_ACH' && (
+              <>
+                <button
+                  onClick={() => handleCopyField('routing_number', pii?.payoutProfile?.fields?.routing_number)}
+                  className="flex-1 text-xs font-medium py-2 rounded-lg transition border bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600"
+                >
+                  {copyState.status === 'success' && copyState.field === 'routing_number' ? t.copied : t.copyRouting}
+                </button>
+                <button
+                  onClick={() => handleCopyField('account_number', pii?.payoutProfile?.fields?.account_number)}
+                  className="flex-1 text-xs font-medium py-2 rounded-lg transition border bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600"
+                >
+                  {copyState.status === 'success' && copyState.field === 'account_number' ? t.copied : t.copyAccount}
+                </button>
+              </>
+            )}
             <button
               onClick={handleHide}
               className="px-4 bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs py-2 rounded-lg transition border border-slate-600"
@@ -251,20 +305,20 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
             </button>
           </div>
 
-          {(pii?.payoutProfile?.contact?.channel === 'telegram' && pii?.payoutProfile?.contact?.value) ? (
+          {buildContactHref(pii?.payoutProfile?.contact?.channel, pii?.payoutProfile?.contact?.value) ? (
             <a
-              href={buildTelegramUrl(pii.payoutProfile.contact.value)}
-              target="_blank"
-              rel="noopener noreferrer"
+              href={buildContactHref(pii?.payoutProfile?.contact?.channel, pii?.payoutProfile?.contact?.value)}
+              target={pii?.payoutProfile?.contact?.channel === 'telegram' ? "_blank" : undefined}
+              rel={pii?.payoutProfile?.contact?.channel === 'telegram' ? "noopener noreferrer" : undefined}
               className="flex items-center justify-center space-x-2 w-full py-2.5 rounded-xl bg-[#24A1DE]/10 border border-[#24A1DE]/30 text-[#24A1DE] hover:bg-[#24A1DE]/20 text-sm font-bold transition-all mb-3"
             >
               <span>💬</span>
-              <span>{t.telegramBtn} (@{pii.payoutProfile.contact.value})</span>
+              <span>{getContactCtaLabel(pii?.payoutProfile?.contact?.channel)}</span>
             </a>
           ) : (
             <div className="flex items-center justify-center space-x-2 w-full py-2 rounded-xl bg-slate-800/50 border border-slate-700 text-slate-500 text-xs mb-3">
               <span>💬</span>
-              <span>{t.noTelegram}</span>
+              <span>{t.noContact}</span>
             </div>
           )}
 

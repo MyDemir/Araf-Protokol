@@ -69,23 +69,51 @@ Kilit davranışlar:
 - Aktif trade (`LOCKED/PAID/CHALLENGED`) varken banka profil değişimi engellenir.
 - Bank profile version/sayaçları risk sinyali için güncellenir.
 
-Kabul edilen alanlar:
+Kabul edilen request body:
 ```json
 {
-  "rail": "TR_IBAN | US_ACH | SEPA_IBAN",
-  "country": "TR | US | EU | ...",
-  "contactChannel": "telegram | email | phone",
-  "contactValue": "string",
-  "bankOwner": "string",
-  "iban": "string",
-  "routingNumber": "string",
-  "accountNumber": "string",
-  "accountType": "checking | savings",
-  "bic": "string",
-  "bankName": "string",
-  "telegram": "legacy optional"
+  "payoutProfile": {
+    "rail": "TR_IBAN | US_ACH | SEPA_IBAN",
+    "country": "TR | US | DE | ...",
+    "contact": {
+      "channel": "telegram | email | phone | null",
+      "value": "string | null"
+    },
+    "fields": {
+      "account_holder_name": "string",
+      "iban": "string | null",
+      "routing_number": "string | null",
+      "account_number": "string | null",
+      "account_type": "checking | savings | null",
+      "bic": "string | null",
+      "bank_name": "string | null"
+    }
+  }
 }
 ```
+
+Rail-country kuralları (zorunlu):
+- `TR_IBAN` -> `TR`
+- `US_ACH` -> `US`
+- `SEPA_IBAN` -> `DE, FR, NL, BE, ES, IT, AT, PT, IE, LU, FI, GR`
+
+Contact canonicalization:
+- `telegram`: baştaki `@` storage öncesi temizlenir
+- `email`: temel e-mail pattern doğrulaması yapılır
+- `phone`: boşluklar temizlenir, ardından `+` opsiyonlu numerik pattern doğrulanır
+- `channel/value` birlikte gelir veya birlikte `null` olur
+
+Rail-specific field set:
+- `TR_IBAN`: `account_holder_name`, `iban`, opsiyonel `bank_name`
+- `SEPA_IBAN`: `account_holder_name`, `iban`, opsiyonel `bic`, opsiyonel `bank_name`
+- `US_ACH`: `account_holder_name`, `routing_number`, `account_number`, `account_type`, opsiyonel `bank_name`
+
+Geçersiz kombinasyon örneği (400):
+```json
+{ "payoutProfile": { "rail": "US_ACH", "country": "TR", "contact": { "channel": null, "value": null }, "fields": { "account_holder_name": "John Doe", "iban": null, "routing_number": "021000021", "account_number": "1234567890", "account_type": "checking", "bic": null, "bank_name": null } } }
+```
+
+Legacy flat alanlar artık kabul edilmez: `bankOwner`, `iban`, `telegram`, `contactChannel`, `contactValue`.
 
 ---
 

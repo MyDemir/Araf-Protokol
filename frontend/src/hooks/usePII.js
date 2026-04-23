@@ -1,11 +1,11 @@
 "use strict";
 
 /**
- * usePII — Güvenli IBAN + Telegram Fetch Hook
+ * usePII — Güvenli payout profile + contact fetch hook
  *
  * Güvenlik Özellikleri:
- *   - IBAN asla React state'te kalıcı olarak saklanmaz
- *   - Trade room unmount olduğunda IBAN + Telegram otomatik temizlenir
+ *   - Payout profile verisi React state'te kalıcı olarak saklanmaz
+ *   - Trade room unmount olduğunda payout/contact state temizlenir
  *   - Her gösterimde yeniden fetch yapılır (cache yok)
  *   - Kısa ömürlü PII token ile 2 adımlı erişim
  *   - tüm authentication httpOnly cookie üzerinden (credentials: include)
@@ -13,7 +13,7 @@
  * YÜKS-06 Fix: Refresh Token Desenkronizasyonu düzeltildi.
  *   ÖNCEKİ: Düz `fetch` kullanılıyordu. JWT süresi dolarsa 401 alınıyor ama
  *   hook kendi başına token yenileyemiyordu → "PII erişimi reddedildi" hatası
- *   → yetkili kullanıcı IBAN'a erişemez → gereksiz uyuşmazlık tetiklenebilir.
+ *   → yetkili kullanıcı payout bilgisine erişemez → gereksiz uyuşmazlık tetiklenebilir.
  *   ŞİMDİ: App.jsx'teki `authenticatedFetch` referansı prop olarak alınıyor.
  *   Bu sayede JWT süresi dolduğunda otomatik yenileme yapılıyor.
  *
@@ -25,7 +25,7 @@
  *
  * Kullanım (App.jsx'te):
  *   const { pii, loading, error, fetchPII, clearPII } = usePII(tradeId, authenticatedFetch);
- *   <button onClick={fetchPII}>IBAN'ı Göster</button>
+ *   <button onClick={fetchPII}>Payout bilgilerini göster</button>
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -50,7 +50,7 @@ export function usePII(tradeId, authenticatedFetch) {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      setPii(null); // unmount → IBAN + Telegram bellekten sil
+      setPii(null); // unmount → payout profile bellekten sil
       if (abortCtrlRef.current) {
         abortCtrlRef.current.abort();
       }

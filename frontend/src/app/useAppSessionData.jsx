@@ -70,9 +70,20 @@ export function useAppSessionData({
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   const [userReputation, setUserReputation] = useState(null);
-  const [piiBankOwner, setPiiBankOwner] = useState('');
-  const [piiIban, setPiiIban] = useState('');
-  const [piiTelegram, setPiiTelegram] = useState('');
+  const [payoutProfileDraft, setPayoutProfileDraft] = useState({
+    rail: 'TR_IBAN',
+    country: 'TR',
+    contact: { channel: null, value: null },
+    fields: {
+      account_holder_name: '',
+      iban: null,
+      routing_number: null,
+      account_number: null,
+      account_type: null,
+      bic: null,
+      bank_name: null,
+    },
+  });
 
   const [tradeHistory, setTradeHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -686,10 +697,24 @@ export function useAppSessionData({
         const res = await authenticatedFetch(buildApiUrl('pii/my'));
         if (!res.ok) return;
         const data = await res.json();
-        if (data.pii?.fields) {
-          setPiiBankOwner(data.pii.fields.account_holder_name || '');
-          setPiiIban(data.pii.fields.iban || '');
-          setPiiTelegram(data.pii?.contact?.channel === 'telegram' ? (data.pii?.contact?.value || '') : '');
+        if (data.pii) {
+          setPayoutProfileDraft({
+            rail: data.pii.rail || 'TR_IBAN',
+            country: data.pii.country || 'TR',
+            contact: {
+              channel: data.pii?.contact?.channel || null,
+              value: data.pii?.contact?.value || null,
+            },
+            fields: {
+              account_holder_name: data.pii?.fields?.account_holder_name || '',
+              iban: data.pii?.fields?.iban || null,
+              routing_number: data.pii?.fields?.routing_number || null,
+              account_number: data.pii?.fields?.account_number || null,
+              account_type: data.pii?.fields?.account_type || null,
+              bic: data.pii?.fields?.bic || null,
+              bank_name: data.pii?.fields?.bank_name || null,
+            },
+          });
         }
       } catch (err) {
         console.error('Mevcut PII verisi çekilemedi:', err);
@@ -882,12 +907,8 @@ export function useAppSessionData({
     isLoggingIn,
     setIsLoggingIn,
     userReputation,
-    piiBankOwner,
-    setPiiBankOwner,
-    piiIban,
-    setPiiIban,
-    piiTelegram,
-    setPiiTelegram,
+    payoutProfileDraft,
+    setPayoutProfileDraft,
     tradeHistory,
     historyLoading,
     tradeHistoryPage,
