@@ -3,6 +3,7 @@ import {
   assertOrderSide,
   buildMakerPreview,
   mapApiOrderToUi,
+  mapOffchainHealthToUi,
   resolveOrderActionFns,
 } from '../app/orderUiModel';
 
@@ -110,5 +111,27 @@ describe('orderUiModel mapping', () => {
     expect(resolveOrderActionFns('BUY_CRYPTO', fns).cancelFn).toBe(fns.cancelBuyOrder);
     expect(resolveOrderActionFns('BUY_CRYPTO', fns).fillFn).toBe(fns.fillBuyOrder);
     expect(() => resolveOrderActionFns('UNKNOWN', fns)).toThrow(/Invalid order side/);
+  });
+
+  it('maps offchain health signal to deterministic UI-only severity', () => {
+    const ui = mapOffchainHealthToUi({
+      lang: 'EN',
+      signal: {
+        readOnly: true,
+        nonBlocking: true,
+        canBlockProtocolActions: false,
+        explainableReasons: [
+          'maker_profile_changed_after_lock',
+          'partial_or_incomplete_snapshot',
+        ],
+      },
+    });
+
+    expect(ui.severityBand).toBe('YELLOW');
+    expect(ui.severityLabel).toBe('Medium Signal');
+    expect(ui.readOnly).toBe(true);
+    expect(ui.nonBlocking).toBe(true);
+    expect(ui.canBlockProtocolActions).toBe(false);
+    expect(ui.reasonLabels.length).toBe(2);
   });
 });

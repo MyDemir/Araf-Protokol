@@ -401,22 +401,38 @@ export const buildAppViews = (ctx) => {
                     <p className="text-xs text-slate-500">{order.rate} {order.fiat} / 1 {order.crypto}</p>
                     <span className={`inline-flex mt-1 text-[10px] px-2 py-0.5 rounded border ${sideBadgeClass}`}>{order.sideLabel || order.side}</span>
                     <div className="absolute left-0 sm:-left-4 md:left-1/2 md:-translate-x-1/2 bottom-full mb-2 hidden group-hover/tooltip:block z-50">
-                      <div className="bg-[#111] border border-[#333] p-5 rounded-2xl shadow-2xl w-64 backdrop-blur-xl">
-                        <p className="text-[10px] text-slate-400 mb-3 tracking-widest">{lang === 'TR' ? 'ORDER OWNER PROFİLİ' : 'ORDER OWNER PROFILE'}</p>
-                        <div className="flex items-center gap-4 mb-4">
-                          <div className="w-16 h-16 rounded-full border-[3px] border-emerald-500/30 flex items-center justify-center relative">
-                            <span className="text-emerald-400 font-bold text-xl">{order.successRate}%</span>
-                            <svg className="absolute inset-0 w-full h-full -rotate-90"><circle cx="50%" cy="50%" r="46%" fill="none" stroke="#10b981" strokeWidth="6" strokeDasharray="100 100" strokeDashoffset={`${100 - order.successRate}`}/></svg>
+                      {/* [TR] V3 compact hover özeti: taraf-bağımlı ama seller-only terminoloji içermez.
+                          [EN] V3 compact hover summary: side-aware, without seller-only terminology. */}
+                      <div className="bg-[#111] border border-[#333] p-4 rounded-2xl shadow-2xl w-72 backdrop-blur-xl">
+                        <p className="text-[10px] text-slate-400 mb-2 tracking-widest uppercase">
+                          {lang === 'TR' ? 'İŞLEM SAHİBİ ÖZETİ' : 'ORDER OWNER SUMMARY'}
+                        </p>
+                        <p className="text-[10px] text-slate-500 mb-3">
+                          {order.ownerSideHint || (lang === 'TR' ? 'Order sahibi taraf bilgisi' : 'Order owner side context')}
+                        </p>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="rounded-lg border border-[#2e2e2e] bg-[#151518] px-2.5 py-2">
+                            <p className="text-[10px] text-slate-500 uppercase">{lang === 'TR' ? 'Başarı' : 'Success'}</p>
+                            <p className="text-emerald-400 font-bold">{order.successRate}%</p>
                           </div>
-                          <div>
-                            <p className="text-[10px] text-slate-400 font-bold">{lang === 'TR' ? 'BAŞARI ORANI' : 'SUCCESS RATE'}</p>
-                            <p className="text-xl font-bold text-emerald-400">{order.successRate}%</p>
+                          <div className="rounded-lg border border-[#2e2e2e] bg-[#151518] px-2.5 py-2">
+                            <p className="text-[10px] text-slate-500 uppercase">{lang === 'TR' ? 'Toplam İşlem' : 'Total Trades'}</p>
+                            <p className="text-white font-mono">{order.totalTrades ?? order.txCount} Tx</p>
+                          </div>
+                          <div className="rounded-lg border border-[#2e2e2e] bg-[#151518] px-2.5 py-2">
+                            <p className="text-[10px] text-slate-500 uppercase">{lang === 'TR' ? 'Taraf' : 'Side'}</p>
+                            <p className="text-slate-200">{order.sideLabel || order.side}</p>
+                          </div>
+                          <div className="rounded-lg border border-[#2e2e2e] bg-[#151518] px-2.5 py-2">
+                            <p className="text-[10px] text-slate-500 uppercase">Tier</p>
+                            <p className="text-yellow-500 font-bold">T{order.tier} 🛡️</p>
                           </div>
                         </div>
-                        <div className="space-y-2 text-xs border-t border-[#333] pt-3">
-                          <div className="flex justify-between"><span className="text-slate-500">{lang === 'TR' ? 'İŞLEM HACMİ' : 'TRADE VOL'}</span><span className="text-white font-mono">{order.txCount} Tx</span></div>
-                          <div className="flex justify-between"><span className="text-slate-500">{lang === 'TR' ? 'TIER DÜZEYİ' : 'TIER LEVEL'}</span><span className="text-yellow-500 font-bold">T{order.tier} 🛡️</span></div>
-                        </div>
+                        <p className="text-[10px] text-slate-500 mt-3 leading-relaxed">
+                          {lang === 'TR'
+                            ? 'Not: Bu kart hızlı bir özet gösterir; nihai güven/hüküm değerlendirmesi değildir.'
+                            : 'Note: This card is a quick summary, not a final trust verdict.'}
+                        </p>
                       </div>
                     </div>
                   </div>

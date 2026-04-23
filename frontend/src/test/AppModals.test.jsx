@@ -165,4 +165,43 @@ describe('AppModals side-aware behaviors', () => {
     expect(source).toContain('90 days have passed');
     expect(source).toContain('decayReputation,');
   });
+
+  it('renders Trust Visibility Layer in profile reputation tab with non-authoritative semantics', () => {
+    const modals = buildAppModals(makeCtx({
+      showMakerModal: false,
+      profileTab: 'itibar',
+      activeEscrows: [
+        {
+          onchainId: '321',
+          role: 'maker',
+          rawTrade: {
+            offchainHealthScoreInput: {
+              readOnly: true,
+              nonBlocking: true,
+              canBlockProtocolActions: false,
+              explainableReasons: ['maker_frequent_recent_bank_changes_at_lock'],
+            },
+          },
+        },
+      ],
+    }));
+
+    render(<div>{modals.renderProfileModal()}</div>);
+    expect(screen.getByText('TRUST VISIBILITY LAYER')).toBeInTheDocument();
+    expect(screen.getByText(/Informational layer/i)).toBeInTheDocument();
+    expect(screen.getByText(/readOnly: true/i)).toBeInTheDocument();
+    expect(screen.getByText(/nonBlocking: true/i)).toBeInTheDocument();
+    expect(screen.getByText(/canBlockProtocolActions: false/i)).toBeInTheDocument();
+  });
+
+  it('fails soft when trust payload is missing', () => {
+    const modals = buildAppModals(makeCtx({
+      showMakerModal: false,
+      profileTab: 'itibar',
+      activeEscrows: [{ onchainId: '111', role: 'maker', rawTrade: {} }],
+    }));
+
+    render(<div>{modals.renderProfileModal()}</div>);
+    expect(screen.getByText(/No offchain health signal is available yet/i)).toBeInTheDocument();
+  });
 });

@@ -135,6 +135,7 @@ describe('AppViews market side-aware rendering', () => {
           minFillAmount: 10,
           limitLabel: 'Min Fill 10 USDT • Remaining 50 USDT',
           tier: 1,
+          ownerSideHint: 'Order owner is selling crypto',
           tokenPolicy: { supported: true, allowSellOrders: true, allowBuyOrders: true },
         },
         {
@@ -152,6 +153,7 @@ describe('AppViews market side-aware rendering', () => {
           minFillAmount: 5,
           limitLabel: 'Min Fill 5 USDT • Remaining 20 USDT',
           tier: 1,
+          ownerSideHint: 'Order owner is buying crypto',
           tokenPolicy: { supported: true, allowSellOrders: true, allowBuyOrders: true },
         },
       ],
@@ -160,10 +162,13 @@ describe('AppViews market side-aware rendering', () => {
 
     render(<div>{views.renderMarket()}</div>);
 
-    expect(screen.getByText('Sell Order')).toBeInTheDocument();
-    expect(screen.getByText('Buy Order')).toBeInTheDocument();
+    expect(screen.getAllByText('Sell Order').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Buy Order').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /Buy/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Sell/i })).toBeInTheDocument();
+    expect(screen.getAllByText('ORDER OWNER SUMMARY').length).toBeGreaterThan(0);
+    expect(screen.getByText('Order owner is selling crypto')).toBeInTheDocument();
+    expect(screen.getByText('Order owner is buying crypto')).toBeInTheDocument();
     expect(screen.queryByText('SELLER PROFILE')).not.toBeInTheDocument();
     expect(screen.getAllByText('Open').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Bond/i).length).toBeGreaterThan(0);
