@@ -457,10 +457,14 @@ router.put("/profile", requireAuth, requireSessionWalletMatch, authLimiter, asyn
     const incoming = value.payoutProfile;
     const railChanged = existingProfile.rail !== incoming.rail;
     const countryChanged = (existingProfile.country || "") !== (incoming.country || "");
+    const existingGenericDetails = _buildCanonicalDetailsByRail(
+      existingProfile.rail,
+      existingProfile.details || {}
+    );
     const nextGenericDetails = _buildCanonicalDetailsByRail(incoming.rail, incoming.fields);
 
     const detailsChanged =
-      buildPayoutFingerprint(existingProfile.details || {}) !==
+      buildPayoutFingerprint(existingGenericDetails) !==
       buildPayoutFingerprint(nextGenericDetails);
 
     const bankProfileChanged = railChanged || countryChanged || detailsChanged;

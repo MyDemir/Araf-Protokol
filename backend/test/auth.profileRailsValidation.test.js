@@ -19,7 +19,7 @@ describe("auth profile payout rail validation", () => {
         lastBankChangeAt: null,
         bankChangeCount7d: 0,
         bankChangeCount30d: 0,
-        payout_profile: { fingerprint: { version: 0 } },
+        payout_profile: { payout_details_enc: "enc", fingerprint: { version: 0 } },
         markBankProfileChanged: jest.fn(),
         recomputeBankChangeCounters: jest.fn(),
         save: jest.fn().mockResolvedValue(),
@@ -65,7 +65,7 @@ describe("auth profile payout rail validation", () => {
           contact: { channel: "telegram", value: "tester1" },
           fields: { account_holder_name: "Test User", iban: "TR123456789012345678901234", bank_name: "Bank" },
         }),
-        buildPayoutFingerprint: jest.fn().mockReturnValue("fp"),
+        buildPayoutFingerprint: jest.fn().mockImplementation((details) => JSON.stringify(details)),
       }));
       jest.doMock("../scripts/models/User", () => UserMock);
       TradeMock = { exists: jest.fn().mockResolvedValue(false) };
@@ -204,5 +204,25 @@ describe("auth profile payout rail validation", () => {
       },
     });
     expect(res.status).toBe(409);
+  });
+
+  it("allows contact-only updates for legacy profiles during active trades", async () => {
+    TradeMock.exists.mockResolvedValue(true);
+
+    const res = await request(app).put("/api/auth/profile").send({
+      payoutProfile: {
+        rail: "TR_IBAN",
+        country: "TR",
+        contact: { channel: "telegram", value: "tester2" },
+        fields: {
+          account_holder_name: "Test User",
+          iban: "TR123456789012345678901234",
+          routing_number: null, account_number: null, account_type: null, bic: null, bank_name: "Bank",
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(TradeMock.exists).not.toHaveBeenCalled();
   });
 });
