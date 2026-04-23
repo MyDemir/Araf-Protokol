@@ -5,7 +5,9 @@ describe('rateLimiter write-surface fallback', () => {
   it('uses in-memory fallback wrappers for write surfaces', () => {
     const source = fs.readFileSync(path.join(__dirname, '../scripts/middleware/rateLimiter.js'), 'utf8');
     expect(source).toContain('ordersWriteLimiterWithFallback');
-    expect(source).toContain('tradesLimiterWithFallback');
+    expect(source).toContain('roomReadLimiterWithFallback');
+    expect(source).toContain('receiptUploadLimiterWithFallback');
     expect(source).toContain('feedbackLimiterWithFallback');
+    expect(source).toContain('adminReadLimiterWithFallback');
   });
 });

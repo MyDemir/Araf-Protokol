@@ -75,6 +75,55 @@ describe("orders/trades pagination + big on-chain id", () => {
     expect(ordersWriteLimiter).not.toHaveBeenCalled();
   });
 
+  it("uses read limiter (not write limiter) on GET /api/orders/:id/trades", async () => {
+    const Order = {
+      find: jest.fn(),
+      countDocuments: jest.fn(),
+      findOne: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            owner_address: "0x1111111111111111111111111111111111111111",
+          }),
+        }),
+      }),
+    };
+    const Trade = {
+      find: jest.fn(() => ({
+        select: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      })),
+    };
+
+    const ordersReadLimiter = jest.fn((_req, _res, next) => next());
+    const ordersWriteLimiter = jest.fn((_req, _res, next) => next());
+
+    let router;
+    jest.isolateModules(() => {
+      jest.doMock("../scripts/middleware/auth", () => ({
+        requireAuth: (_req, _res, next) => next(),
+        requireSessionWalletMatch: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../scripts/middleware/rateLimiter", () => ({
+        marketReadLimiter: (_req, _res, next) => next(),
+        ordersReadLimiter,
+        ordersWriteLimiter,
+      }));
+      jest.doMock("../scripts/models/Order", () => Order);
+      jest.doMock("../scripts/models/Trade", () => Trade);
+      jest.doMock("../scripts/services/protocolConfig", () => ({ getConfig: jest.fn(() => ({ bondMap: {}, feeConfig: {}, cooldownConfig: {}, tokenMap: {} })) }));
+      router = require("../scripts/routes/orders");
+    });
+
+    const app = buildApp(router);
+    app.use("/api/orders", router);
+
+    const res = await request(app).get("/api/orders/1/trades");
+    expect(res.status).toBe(200);
+    expect(ordersReadLimiter).toHaveBeenCalled();
+    expect(ordersWriteLimiter).not.toHaveBeenCalled();
+  });
+
   it("supports huge string onchain escrow id in /api/trades/by-escrow/:onchainId lookup", async () => {
     const Trade = {
       find: jest.fn(),
@@ -181,6 +230,9 @@ describe("orders/trades pagination + big on-chain id", () => {
       findOne: jest.fn(),
     };
 
+    const tradesLimiter = jest.fn((_req, _res, next) => next());
+    const receiptUploadLimiter = jest.fn((_req, _res, next) => next());
+
     let router;
     jest.isolateModules(() => {
       jest.doMock("multer", () => {
@@ -197,7 +249,8 @@ describe("orders/trades pagination + big on-chain id", () => {
         requireSessionWalletMatch: (_req, _res, next) => next(),
       }));
       jest.doMock("../scripts/middleware/rateLimiter", () => ({
-        tradesLimiter: (_req, _res, next) => next(),
+        tradesLimiter,
+        receiptUploadLimiter,
       }));
       jest.doMock("../scripts/services/encryption", () => ({ encryptField: jest.fn().mockResolvedValue("enc") }));
       jest.doMock("../scripts/models/Trade", () => Trade);
@@ -217,6 +270,8 @@ describe("orders/trades pagination + big on-chain id", () => {
     const okRes = await request(app).post("/api/receipts/upload").send({ onchainEscrowId: huge });
     expect(okRes.status).toBe(201);
     expect(Trade.findOneAndUpdate.mock.calls[0][0].onchain_escrow_id).toBe(huge);
+    expect(receiptUploadLimiter).toHaveBeenCalled();
+    expect(tradesLimiter).not.toHaveBeenCalled();
 
     if (fs.existsSync(tempPdfPath)) fs.unlinkSync(tempPdfPath);
   });

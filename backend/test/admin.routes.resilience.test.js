@@ -29,11 +29,15 @@ describe("admin routes resilience + pagination semantics", () => {
   });
 
   it("returns degraded summary payload instead of 500 when secondary deps fail", async () => {
+    const adminReadLimiter = jest.fn((_req, _res, next) => next());
     let router;
     jest.isolateModules(() => {
       jest.doMock("../scripts/middleware/auth", () => ({
         requireAuth: (_req, _res, next) => next(),
         requireSessionWalletMatch: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../scripts/middleware/rateLimiter", () => ({
+        adminReadLimiter,
       }));
       jest.doMock("../scripts/services/health", () => ({
         getReadiness: jest.fn().mockResolvedValue({ ok: true, checks: { db: true } }),
@@ -72,9 +76,11 @@ describe("admin routes resilience + pagination semantics", () => {
     expect(res.body.degraded.sources.tradeCountsFallbackUsed).toBe(true);
     expect(res.body.degraded.sources.dlqDepthFallbackUsed).toBe(true);
     expect(Array.isArray(res.body.degraded.errors)).toBe(true);
+    expect(adminReadLimiter).toHaveBeenCalled();
   });
 
   it("uses stable global totals for normal mode and explicit windowed scope for riskOnly", async () => {
+    const adminReadLimiter = jest.fn((_req, _res, next) => next());
     const tradeRows = [
       {
         _id: "1",
@@ -92,6 +98,9 @@ describe("admin routes resilience + pagination semantics", () => {
       jest.doMock("../scripts/middleware/auth", () => ({
         requireAuth: (_req, _res, next) => next(),
         requireSessionWalletMatch: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../scripts/middleware/rateLimiter", () => ({
+        adminReadLimiter,
       }));
       jest.doMock("../scripts/services/health", () => ({
         getReadiness: jest.fn().mockResolvedValue({ ok: true }),

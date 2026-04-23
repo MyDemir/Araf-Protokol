@@ -11,6 +11,7 @@
 
 const express = require("express");
 const router = express.Router();
+const { statsReadLimiter } = require("../middleware/rateLimiter");
 const { getRedisClient } = require("../config/redis");
 const HistoricalStat = require("../models/HistoricalStat");
 
@@ -23,7 +24,9 @@ function calculateChange(current, previous) {
   return parseFloat((((current - previous) / Math.abs(previous)) * 100).toFixed(1));
 }
 
-router.get("/", async (_req, res, next) => {
+// [TR] Stats endpoint'i public read yüzeyidir; dedicated lightweight bucket ile ayrıştırılır.
+// [EN] Stats endpoint is public read surface with dedicated lightweight bucket.
+router.get("/", statsReadLimiter, async (_req, res, next) => {
   try {
     const redis = getRedisClient();
     const cachedStats = await redis.get(STATS_CACHE_KEY);

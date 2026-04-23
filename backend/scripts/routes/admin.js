@@ -4,6 +4,7 @@ const express = require("express");
 const Joi = require("joi");
 
 const { requireAuth, requireSessionWalletMatch } = require("../middleware/auth");
+const { adminReadLimiter } = require("../middleware/rateLimiter");
 const { getRedisClient } = require("../config/redis");
 const { getReadiness } = require("../services/health");
 const { getDlqMetrics } = require("../services/dlqProcessor");
@@ -136,6 +137,7 @@ function _sortAdminTradesDeterministic(trades) {
 // [TR] Tüm admin yüzeyi read-only gözlem amaçlıdır; auth zinciri zorunludur.
 // [EN] Entire admin surface is read-only observability and always gated by auth chain.
 router.use(requireAuth, requireSessionWalletMatch, requireAdminWallet);
+router.use(adminReadLimiter);
 
 router.get("/summary", async (req, res, next) => {
   try {

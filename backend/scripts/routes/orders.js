@@ -14,7 +14,7 @@ const Joi = require("joi");
 const router = express.Router();
 
 const { requireAuth, requireSessionWalletMatch } = require("../middleware/auth");
-const { marketReadLimiter, ordersReadLimiter, ordersWriteLimiter } = require("../middleware/rateLimiter");
+const { marketReadLimiter, ordersReadLimiter } = require("../middleware/rateLimiter");
 const Order = require("../models/Order");
 const Trade = require("../models/Trade");
 const User = require("../models/User");
@@ -247,7 +247,9 @@ router.get("/my", requireAuth, requireSessionWalletMatch, ordersReadLimiter, asy
   } catch (err) { next(err); }
 });
 
-router.get("/:id/trades", requireAuth, requireSessionWalletMatch, ordersWriteLimiter, async (req, res, next) => {
+// [TR] Parent order'a bağlı child trade listesi state-changing değildir; read surface'tür.
+// [EN] Child trade listing under a parent order is non-authoritative read surface.
+router.get("/:id/trades", requireAuth, requireSessionWalletMatch, ordersReadLimiter, async (req, res, next) => {
   try {
     const onchainOrderId = _parsePositiveOnchainId(req.params.id);
     if (!onchainOrderId) {

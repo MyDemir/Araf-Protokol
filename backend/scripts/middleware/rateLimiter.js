@@ -280,6 +280,23 @@ const marketReadLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// ─── Stats Read Surface — Public/Lightweight Telemetry ─────────────────────
+// [TR] Public stats yüzeyi availability odaklıdır; Redis down olduğunda fail-open kalabilir.
+// [EN] Public stats surface is availability-first and may remain fail-open on Redis degradation.
+const statsReadLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.ip,
+  store: makeStore("stats-read"),
+  skip: makeSkipFn(),
+  handler: (req, res) => {
+    onLimitReached(req);
+    res.status(429).json({ error: "Stats isteği limiti aşıldı. Lütfen kısa bir süre sonra tekrar deneyin." });
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // ─── Orders Write Surface — Parent Order Oluşturma / Güncelleme ─────────────
 // Saatte 5 istek — wallet bazlı
 const ordersWriteLimiter = rateLimit({
@@ -347,13 +364,13 @@ const ordersReadLimiterWithFallback = makeSensitiveLimiter({
   inMemoryLimiter: ordersReadInMemoryLimiter,
 });
 
-// ─── Trades / Child Trade Room Surface ──────────────────────────────────────
+// ─── Room / Child Trade Read Surface ────────────────────────────────────────
 // 1 dakikada 30 istek — wallet bazlı
-const tradesLimiter = rateLimit({
+const roomReadLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
   keyGenerator: (req) => req.wallet || req.ip,
-  store: makeStore("trades"),
+  store: makeStore("room-read"),
   skip: makeSkipFn(),
   handler: (req, res) => {
     onLimitReached(req);
@@ -363,8 +380,8 @@ const tradesLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-const tradesInMemoryLimiter = makeInMemoryLimiter({
-  label: "TRADES",
+const roomReadInMemoryLimiter = makeInMemoryLimiter({
+  label: "ROOM-READ",
   windowMs: 60 * 1000,
   max: 30,
   keyGenerator: (req) => req.wallet || req.ip,
@@ -373,10 +390,96 @@ const tradesInMemoryLimiter = makeInMemoryLimiter({
   }),
 });
 
-const tradesLimiterWithFallback = makeSensitiveLimiter({
-  label: "TRADES",
-  redisLimiter: tradesLimiter,
-  inMemoryLimiter: tradesInMemoryLimiter,
+const roomReadLimiterWithFallback = makeSensitiveLimiter({
+  label: "ROOM-READ",
+  redisLimiter: roomReadLimiter,
+  inMemoryLimiter: roomReadInMemoryLimiter,
+});
+
+// ─── Receipt Upload — Write-adjacent Coordination Surface ──────────────────
+// [TR] Dekont yükleme trade-room read yüzeyinden ayrıdır; write-adjacent kabul edilir.
+//      Redis down olduğunda fail-open yapılmaz, in-memory fallback ile korunur.
+// [EN] Receipt upload is separate from room reads; it is write-adjacent and protected with
+//      in-memory fallback when Redis is unavailable.
+const receiptUploadLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.wallet || req.ip,
+  store: makeStore("receipt-upload"),
+  skip: makeSkipFn(),
+  handler: (req, res) => {
+    onLimitReached(req);
+    res.status(429).json({ error: "Dekont yükleme limiti aşıldı. Lütfen daha sonra tekrar deneyin." });
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const receiptUploadInMemoryLimiter = makeInMemoryLimiter({
+  label: "RECEIPT-UPLOAD",
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.wallet || req.ip,
+  errorMessage: () => ({
+    error: "Dekont yükleme limiti aşıldı. Lütfen daha sonra tekrar deneyin.",
+  }),
+});
+
+const receiptUploadLimiterWithFallback = makeSensitiveLimiter({
+  label: "RECEIPT-UPLOAD",
+  redisLimiter: receiptUploadLimiter,
+  inMemoryLimiter: receiptUploadInMemoryLimiter,
+});
+
+// ─── Admin Read-only Observability Surface ──────────────────────────────────
+// [TR] Admin endpoint'leri public değildir; read-only olsa da hassas operasyonel metrik taşır.
+//      Redis down durumunda fail-open yerine in-memory fallback uygulanır.
+// [EN] Admin endpoints are not public; even read-only observability is protected via in-memory fallback.
+const adminReadLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.wallet || req.ip,
+  store: makeStore("admin-read"),
+  skip: makeSkipFn(),
+  handler: (req, res) => {
+    onLimitReached(req);
+    res.status(429).json({ error: "Admin gözlem limiti aşıldı. Kısa süre sonra tekrar deneyin." });
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const adminReadInMemoryLimiter = makeInMemoryLimiter({
+  label: "ADMIN-READ",
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.wallet || req.ip,
+  errorMessage: () => ({
+    error: "Admin gözlem limiti aşıldı. Kısa süre sonra tekrar deneyin.",
+  }),
+});
+
+const adminReadLimiterWithFallback = makeSensitiveLimiter({
+  label: "ADMIN-READ",
+  redisLimiter: adminReadLimiter,
+  inMemoryLimiter: adminReadInMemoryLimiter,
+});
+
+// ─── Client Error Log Surface — Public Write (Telemetry) ───────────────────
+// [TR] Client crash log endpoint'i public telemetry yüzeyidir; erişilebilirlik önceliklidir.
+// [EN] Client crash logging is a public telemetry surface and remains availability-first.
+const clientLogLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.ip,
+  store: makeStore("client-log"),
+  skip: makeSkipFn(),
+  handler: (req, res) => {
+    onLimitReached(req);
+    res.status(429).json({ error: "Client log limiti aşıldı. Lütfen daha sonra tekrar deneyin." });
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // ─── Feedback — Spam Engeli ───────────────────────────────────────────────────
@@ -416,16 +519,24 @@ const feedbackLimiterWithFallback = makeSensitiveLimiter({
 // [EN] Aliases keep existing imports working while routes migrate toward V3 naming.
 const listingsReadLimiter = marketReadLimiter;
 const listingsWriteLimiter = ordersWriteLimiterWithFallback;
+const tradesLimiter = roomReadLimiterWithFallback;
+const coordinationWriteLimiter = receiptUploadLimiterWithFallback;
 
 module.exports = {
   piiLimiter,
   authLimiter,
   nonceLimiter,
   marketReadLimiter,
+  statsReadLimiter,
   ordersReadLimiter: ordersReadLimiterWithFallback,
   ordersWriteLimiter: ordersWriteLimiterWithFallback,
+  roomReadLimiter: roomReadLimiterWithFallback,
+  receiptUploadLimiter: receiptUploadLimiterWithFallback,
+  coordinationWriteLimiter,
+  adminReadLimiter: adminReadLimiterWithFallback,
+  clientLogLimiter,
   listingsReadLimiter,
   listingsWriteLimiter,
-  tradesLimiter: tradesLimiterWithFallback,
+  tradesLimiter,
   feedbackLimiter: feedbackLimiterWithFallback,
 };
