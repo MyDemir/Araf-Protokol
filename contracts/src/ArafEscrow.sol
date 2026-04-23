@@ -1230,6 +1230,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     function _recordAutoRelease(address _wallet) internal {
         Reputation storage rep = reputation[_wallet];
         rep.autoReleaseCount = _saturatingInc32(rep.autoReleaseCount);
+        rep.failedDisputes = _saturatingInc32(rep.failedDisputes);
         _applyNegativeSignal(_wallet, autoReleasePenaltyPts, true);
     }
 
@@ -1279,7 +1280,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         }
         rep.lastPositiveEventAt = uint40(block.timestamp);
 
-        _refreshTierAndBanState(_wallet);
+        _refreshTierAndBanState(_wallet, false);
         _emitReputationUpdated(_wallet);
     }
 
@@ -1309,18 +1310,18 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             rep.bannedUntil = uint40(block.timestamp + banWindow);
         }
 
-        _refreshTierAndBanState(_wallet);
+        _refreshTierAndBanState(_wallet, true);
         _emitReputationUpdated(_wallet);
     }
 
-    function _refreshTierAndBanState(address _wallet) internal {
+    function _refreshTierAndBanState(address _wallet, bool _applyTierPenalty) internal {
         Reputation storage rep = reputation[_wallet];
         if (rep.consecutiveBans >= 2) {
             if (!hasTierPenalty[_wallet]) {
                 hasTierPenalty[_wallet] = true;
                 maxAllowedTier[_wallet] = 4;
             }
-            if (maxAllowedTier[_wallet] > 0) {
+            if (_applyTierPenalty && maxAllowedTier[_wallet] > 0) {
                 maxAllowedTier[_wallet] = maxAllowedTier[_wallet] - 1;
             }
         }

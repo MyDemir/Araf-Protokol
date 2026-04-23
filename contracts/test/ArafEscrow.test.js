@@ -461,7 +461,7 @@ describe("ArafEscrow V3", function () {
       expect(takerFail).to.equal(0n);
     });
 
-    it("auto release path increments autoReleaseCount and riskPoints for maker", async () => {
+    it("auto release path increments autoReleaseCount, failedDisputes, and riskPoints for maker", async () => {
       const tradeId = await setupTrade(2, TRADE_AMOUNT, "legacy-auto-semantic");
       const makerBefore = await getReputationData(maker);
 
@@ -474,6 +474,7 @@ describe("ArafEscrow V3", function () {
 
       const makerAfter = await getReputationData(maker);
       expect(makerAfter.autoReleaseCount).to.equal(makerBefore.autoReleaseCount + 1n);
+      expect(makerAfter.failedDisputes).to.equal(makerBefore.failedDisputes + 1n);
       expect(makerAfter.riskPoints).to.be.gte(makerBefore.riskPoints);
     });
 
@@ -1104,6 +1105,29 @@ describe("ArafEscrow V3", function () {
           await mockUSDT.getAddress(), TRADE_AMOUNT, 3, makeRef("legacy-tier3-ok")
         )
       ).to.not.be.reverted;
+    });
+
+    it("positive signals do not continue reducing maxAllowedTier after tier penalty is active", async () => {
+      for (let i = 0; i < 3; i++) {
+        const tradeId = await setupTrade(0, TIER0_AMOUNT, `legacy-tier-penalty-positive-${i}`);
+        await escrow.connect(taker).lockEscrow(tradeId);
+        await escrow.connect(taker).reportPayment(tradeId, `QmHash${i}`);
+        await time.increase(FORTY_EIGHT_H + 1);
+        await escrow.connect(taker).pingMaker(tradeId);
+        await time.increase(TWENTY_FOUR_H + 1);
+        await escrow.connect(taker).autoRelease(tradeId);
+      }
+
+      const tierBefore = (await escrow.getReputation(maker.address)).effectiveTier;
+      expect(tierBefore).to.equal(3);
+
+      const successTradeId = await setupTrade(3, TRADE_AMOUNT, "legacy-tier-penalty-positive-signal");
+      await escrow.connect(taker).lockEscrow(successTradeId);
+      await escrow.connect(taker).reportPayment(successTradeId, "QmPositiveSignal");
+      await escrow.connect(maker).releaseFunds(successTradeId);
+
+      const tierAfter = (await escrow.getReputation(maker.address)).effectiveTier;
+      expect(tierAfter).to.equal(3);
     });
 
     it("reputation decay resets consecutive bans after 90 clean days", async () => {
