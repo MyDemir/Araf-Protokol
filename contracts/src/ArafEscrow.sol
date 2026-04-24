@@ -239,6 +239,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     uint256 public constant CRYPTO_DECAY_BPS_H     = 34;
 
     uint256 public constant DUST_LIMIT = 0.001 ether;
+    uint256 private constant MAX_REPUTATION_CLEAN_PERIOD = 365 days;
+    uint256 private constant MAX_BAN_DURATION = 365 days;
 
     uint256 private constant BPS_DENOMINATOR  = 10_000;
     // [TR] Fee modeli (taker/maker ayrı + snapshot) korunur.
@@ -1325,9 +1327,12 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (rep.riskPoints >= banRiskPointsThreshold) {
             if (block.timestamp > rep.bannedUntil) {
                 rep.consecutiveBans++;
-                uint256 multiplier = 2 ** (rep.consecutiveBans > 0 ? (rep.consecutiveBans - 1) : 0);
-                uint256 banWindow = uint256(baseBanDuration) * multiplier;
-                if (banWindow > 365 days) banWindow = 365 days;
+                // [TR] Overflow güvenliği için üstel katsayı saturating shift ile sınırlandırılır.
+                // [EN] Exponential factor uses saturating shift bounds for overflow-safe escalation.
+                uint256 escalationSteps = rep.consecutiveBans > 1 ? uint256(rep.consecutiveBans - 1) : 0;
+                if (escalationSteps > 31) escalationSteps = 31;
+                uint256 banWindow = uint256(baseBanDuration) * (uint256(1) << escalationSteps);
+                if (banWindow > MAX_BAN_DURATION) banWindow = MAX_BAN_DURATION;
                 rep.bannedUntil = uint64(block.timestamp + banWindow);
             }
             if (!hasTierPenalty[_wallet]) {
@@ -1670,8 +1675,21 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint32 _banRiskPointsThreshold
     ) external onlyOwner {
         if (_cleanPeriod < 7 days) revert InvalidState();
+        if (_cleanPeriod > MAX_REPUTATION_CLEAN_PERIOD) revert InvalidState();
         if (_baseBanDuration == 0) revert ZeroAmount();
+        if (_baseBanDuration > MAX_BAN_DURATION) revert InvalidState();
         if (_banRiskPointsThreshold == 0) revert ZeroAmount();
+        if (_banRiskPointsThreshold > tierMaxRiskPoints[0]) revert InvalidTier();
+        // [TR] Ödül/ceza delta'ları ban eşiğini aşmamalı.
+        // [EN] Reward/penalty deltas must stay within ban threshold.
+        if (
+            _manualReleaseRewardPts > _banRiskPointsThreshold ||
+            _autoReleasePenaltyPts > _banRiskPointsThreshold ||
+            _disputeWinRewardPts > _banRiskPointsThreshold ||
+            _disputeLossPenaltyPts > _banRiskPointsThreshold ||
+            _burnPenaltyPts > _banRiskPointsThreshold ||
+            _mutualCancelPenaltyPts > _banRiskPointsThreshold
+        ) revert InvalidState();
 
         cleanPeriod = _cleanPeriod;
         manualReleaseRewardPts = _manualReleaseRewardPts;

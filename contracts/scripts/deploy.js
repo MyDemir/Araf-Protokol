@@ -91,6 +91,19 @@ function getDeployMode(chainId, networkName) {
   return "custom";
 }
 
+function resolveProductionTokenConfig() {
+  const isProduction = process.env.NODE_ENV === "production";
+  if (!isProduction) {
+    return { isProduction, usdtAddress: null, usdcAddress: null };
+  }
+
+  return {
+    isProduction,
+    usdtAddress: getRequiredEnvAddress("MAINNET_USDT_ADDRESS"),
+    usdcAddress: getRequiredEnvAddress("MAINNET_USDC_ADDRESS"),
+  };
+}
+
 async function deployMockToken(name, symbol, decimals) {
   const hasMock = await artifactExists("MockERC20");
   if (!hasMock) {
@@ -378,6 +391,7 @@ if (require.main === module) {
 module.exports = {
   main,
   getDeployMode,
+  resolveProductionTokenConfig,
   getTokenConfigSnapshot,
   setAndVerifyTokenConfig,
 };

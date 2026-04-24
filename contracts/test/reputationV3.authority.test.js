@@ -199,7 +199,7 @@ describe("ArafEscrow V3 reputation authority", () => {
 
     await expect(
       escrow.connect(owner).setReputationPolicy(
-        90 * 24 * 3600,
+        500 * 24 * 3600,
         9,
         55,
         11,
@@ -209,9 +209,72 @@ describe("ArafEscrow V3 reputation authority", () => {
         35 * 24 * 3600,
         101
       )
+    ).to.be.reverted;
+
+    await expect(
+      escrow.connect(owner).setReputationPolicy(
+        90 * 24 * 3600,
+        9,
+        55,
+        11,
+        61,
+        95,
+        22,
+        35 * 24 * 3600,
+        100
+      )
     ).to.emit(escrow, "ReputationPolicyUpdated");
 
     const rep = await escrow.getReputation(maker.address);
     expect(rep.length).to.equal(15);
+  });
+
+  it("resists repeated terminal actions and prevents double counting", async () => {
+    const { escrow, maker, taker, mockUSDT } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+
+    const order = await escrow.connect(maker).createSellOrder(token, TRADE_AMOUNT, MIN_FILL, 0, makeRef("double-count"));
+    const orderArgs = await firstEventArgs(await order.wait(), escrow.interface, "OrderCreated");
+    const fill = await escrow.connect(taker).fillSellOrder(orderArgs.orderId, TRADE_AMOUNT, makeRef("double-count-child"));
+    const fillArgs = await firstEventArgs(await fill.wait(), escrow.interface, "OrderFilled");
+    await escrow.connect(taker).reportPayment(fillArgs.tradeId, "QmOnce");
+    await escrow.connect(maker).releaseFunds(fillArgs.tradeId);
+
+    const repAfterRelease = await escrow.getReputation(maker.address);
+    await expect(escrow.connect(maker).releaseFunds(fillArgs.tradeId)).to.be.reverted;
+    await expect(escrow.connect(taker).autoRelease(fillArgs.tradeId)).to.be.reverted;
+
+    const repAfterRepeats = await escrow.getReputation(maker.address);
+    expect(repAfterRepeats.successful).to.equal(repAfterRelease.successful);
+    expect(repAfterRepeats.manualReleaseCount).to.equal(repAfterRelease.manualReleaseCount);
+    expect(repAfterRepeats.autoReleaseCount).to.equal(repAfterRelease.autoReleaseCount);
+  });
+
+  it("emits complete V3 ReputationUpdated payload for authority mirrors", async () => {
+    const { escrow, maker, taker, mockUSDT } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const order = await escrow.connect(maker).createSellOrder(token, TRADE_AMOUNT, MIN_FILL, 0, makeRef("event-shape"));
+    const orderArgs = await firstEventArgs(await order.wait(), escrow.interface, "OrderCreated");
+    const fill = await escrow.connect(taker).fillSellOrder(orderArgs.orderId, TRADE_AMOUNT, makeRef("event-shape-child"));
+    const fillArgs = await firstEventArgs(await fill.wait(), escrow.interface, "OrderFilled");
+    await escrow.connect(taker).reportPayment(fillArgs.tradeId, "QmEvent");
+
+    const releaseTx = await escrow.connect(maker).releaseFunds(fillArgs.tradeId);
+    const releaseRc = await releaseTx.wait();
+    const repEvents = releaseRc.logs
+      .map((log) => {
+        try { return escrow.interface.parseLog(log); } catch { return null; }
+      })
+      .filter(Boolean)
+      .filter((event) => event.name === "ReputationUpdated");
+
+    expect(repEvents.length).to.equal(2);
+    const makerEvent = repEvents.find((event) => event.args.wallet.toLowerCase() === maker.address.toLowerCase());
+    const makerRep = await escrow.getReputation(maker.address);
+
+    expect(makerEvent.args.manualReleaseCount).to.equal(makerRep.manualReleaseCount);
+    expect(makerEvent.args.riskPoints).to.equal(makerRep.riskPoints);
+    expect(makerEvent.args.lastPositiveEventAt).to.equal(makerRep.lastPositiveEventAt);
+    expect(makerEvent.args.lastNegativeEventAt).to.equal(makerRep.lastNegativeEventAt);
   });
 });
