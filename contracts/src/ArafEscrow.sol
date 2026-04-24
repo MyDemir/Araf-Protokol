@@ -72,6 +72,9 @@ error FeeBpsExceedsUint16(uint256 value);
 error FeeBpsExceedsEconomicLimit(uint256 value);
 error InvalidTransferAmount();
 error InvalidDecimals();
+error CooldownTooHigh();
+error DecayTooHigh();
+error BanTooHigh();
 
 contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     using SafeERC20 for IERC20;
@@ -238,7 +241,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     uint256 public constant CRYPTO_DECAY_BPS_H     = 34;
 
     uint256 public constant DUST_LIMIT = 0.001 ether;
-    uint256 private constant MAX_REPUTATION_CLEAN_PERIOD = 365 days;
+    // [TR] Governance yanlış konfigürasyon riskine karşı süre üst sınırları.
+    // [EN] Duration upper bounds against governance misconfiguration risk.
+    uint256 public constant MAX_TRADE_COOLDOWN = 30 days;
+    uint256 public constant MAX_REPUTATION_DECAY_PERIOD = 365 days;
     uint256 private constant MAX_BAN_DURATION = 365 days;
 
     uint256 private constant BPS_DENOMINATOR  = 10_000;
@@ -1663,6 +1669,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      *         The change applies to new lock / fill entries.
      */
     function setCooldownConfig(uint256 _tier0TradeCooldown, uint256 _tier1TradeCooldown) external onlyOwner {
+        if (_tier0TradeCooldown > MAX_TRADE_COOLDOWN) revert CooldownTooHigh();
+        if (_tier1TradeCooldown > MAX_TRADE_COOLDOWN) revert CooldownTooHigh();
+
         tier0TradeCooldown = _tier0TradeCooldown;
         tier1TradeCooldown = _tier1TradeCooldown;
         emit CooldownConfigUpdated(_tier0TradeCooldown, _tier1TradeCooldown);
@@ -1716,9 +1725,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint32 _banRiskPointsThreshold
     ) external onlyOwner {
         if (_cleanPeriod < 7 days) revert InvalidState();
-        if (_cleanPeriod > MAX_REPUTATION_CLEAN_PERIOD) revert InvalidState();
+        if (_cleanPeriod > MAX_REPUTATION_DECAY_PERIOD) revert DecayTooHigh();
         if (_baseBanDuration == 0) revert ZeroAmount();
-        if (_baseBanDuration > MAX_BAN_DURATION) revert InvalidState();
+        if (_baseBanDuration > MAX_BAN_DURATION) revert BanTooHigh();
         if (_banRiskPointsThreshold == 0) revert ZeroAmount();
         if (_banRiskPointsThreshold > tierMaxRiskPoints[0]) revert InvalidTier();
         // [TR] Ödül/ceza delta'ları ban eşiğini aşmamalı.

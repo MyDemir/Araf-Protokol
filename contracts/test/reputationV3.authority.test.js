@@ -270,6 +270,92 @@ describe("ArafEscrow V3 reputation authority", () => {
     expect(rep.length).to.equal(15);
   });
 
+  it("test_setCooldownConfig_accepts_maximum_cooldown", async () => {
+    const { escrow, owner } = await loadFixture(deployFixture);
+    const maxCooldown = await escrow.MAX_TRADE_COOLDOWN();
+
+    await expect(
+      escrow.connect(owner).setCooldownConfig(maxCooldown, maxCooldown)
+    ).to.emit(escrow, "CooldownConfigUpdated");
+  });
+
+  it("test_setCooldownConfig_reverts_when_tier0_cooldown_too_high", async () => {
+    const { escrow, owner } = await loadFixture(deployFixture);
+    const maxCooldown = await escrow.MAX_TRADE_COOLDOWN();
+
+    await expect(
+      escrow.connect(owner).setCooldownConfig(maxCooldown + 1n, maxCooldown)
+    ).to.be.revertedWithCustomError(escrow, "CooldownTooHigh");
+  });
+
+  it("test_setCooldownConfig_reverts_when_tier1_cooldown_too_high", async () => {
+    const { escrow, owner } = await loadFixture(deployFixture);
+    const maxCooldown = await escrow.MAX_TRADE_COOLDOWN();
+
+    await expect(
+      escrow.connect(owner).setCooldownConfig(maxCooldown, maxCooldown + 1n)
+    ).to.be.revertedWithCustomError(escrow, "CooldownTooHigh");
+  });
+
+  it("test_setReputationPolicy_reverts_when_decay_period_too_high", async () => {
+    const { escrow, owner } = await loadFixture(deployFixture);
+    const maxDecay = await escrow.MAX_REPUTATION_DECAY_PERIOD();
+
+    await expect(
+      escrow.connect(owner).setReputationPolicy(
+        maxDecay + 1n,
+        9,
+        55,
+        11,
+        61,
+        95,
+        22,
+        35 * 24 * 3600,
+        100
+      )
+    ).to.be.revertedWithCustomError(escrow, "DecayTooHigh");
+  });
+
+  it("test_setReputationPolicy_reverts_when_ban_duration_too_high", async () => {
+    const { escrow, owner } = await loadFixture(deployFixture);
+
+    await expect(
+      escrow.connect(owner).setReputationPolicy(
+        90 * 24 * 3600,
+        9,
+        55,
+        11,
+        61,
+        95,
+        22,
+        366 * 24 * 3600,
+        100
+      )
+    ).to.be.revertedWithCustomError(escrow, "BanTooHigh");
+  });
+
+  it("cooldown and policy setters still enforce onlyOwner", async () => {
+    const { escrow, taker } = await loadFixture(deployFixture);
+
+    await expect(
+      escrow.connect(taker).setCooldownConfig(4 * 3600, 4 * 3600)
+    ).to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount");
+
+    await expect(
+      escrow.connect(taker).setReputationPolicy(
+        90 * 24 * 3600,
+        9,
+        55,
+        11,
+        61,
+        95,
+        22,
+        35 * 24 * 3600,
+        100
+      )
+    ).to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount");
+  });
+
   it("resists repeated terminal actions and prevents double counting", async () => {
     const { escrow, maker, taker, mockUSDT } = await loadFixture(deployFixture);
     const token = await mockUSDT.getAddress();
