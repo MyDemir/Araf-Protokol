@@ -32,6 +32,7 @@ const {
   updateCachedFeeConfig,
   updateCachedCooldownConfig,
   updateCachedTokenConfig,
+  refreshProtocolConfig,
 } = require("./protocolConfig");
 
 const CHECKPOINT_KEY = "worker:last_block";
@@ -1583,7 +1584,14 @@ class EventWorker {
 
   async _onTokenConfigUpdated(event) {
     const { token, supported, allowSellOrders, allowBuyOrders } = event.args;
-    await updateCachedTokenConfig(token, { supported, allowSellOrders, allowBuyOrders });
+    // TokenConfigUpdated payload'ında decimals/tier limit alanları yok.
+    // Bu nedenle authoritative read-model'i kontrattan tazeleyerek cache drift'i önlüyoruz.
+    try {
+      await refreshProtocolConfig();
+    } catch (err) {
+      logger.warn(`[Worker] refreshProtocolConfig başarısız, event payload ile partial patch uygulanıyor: ${err.message}`);
+      await updateCachedTokenConfig(token, { supported, allowSellOrders, allowBuyOrders });
+    }
   }
 }
 

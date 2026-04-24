@@ -8,7 +8,15 @@ jest.mock("../scripts/services/protocolConfig", () => ({
     bondMap: { 1: { maker: 800, taker: 1000 } },
     feeConfig: { currentTakerFeeBps: 10, currentMakerFeeBps: 5 },
     cooldownConfig: { currentTier0TradeCooldown: 3600, currentTier1TradeCooldown: 600 },
-    tokenMap: { usdt: { symbol: "USDT" } },
+    tokenMap: {
+      usdt: {
+        supported: true,
+        allowSellOrders: true,
+        allowBuyOrders: true,
+        decimals: 6,
+        tierMaxAmountsBaseUnit: ["150000000", "1500000000", "7500000000", "30000000000"],
+      },
+    },
   })),
 }));
 
@@ -24,7 +32,7 @@ jest.mock("../scripts/middleware/rateLimiter", () => ({
 }));
 
 describe("GET /api/orders/config", () => {
-  it("returns canonical response shape from protocolConfig mirror", async () => {
+  it("orders_config_exposes_token_decimals_and_tier_limits", async () => {
     const router = require("../scripts/routes/orders");
     const app = express();
     app.use("/api/orders", router);
@@ -35,5 +43,12 @@ describe("GET /api/orders/config", () => {
     expect(res.body).toHaveProperty("cooldownConfig");
     expect(res.body).toHaveProperty("tokenMap");
     expect(res.body.feeConfig.currentTakerFeeBps).toBe(10);
+    expect(res.body.tokenMap.usdt.decimals).toBe(6);
+    expect(res.body.tokenMap.usdt.tierMaxAmountsBaseUnit).toEqual([
+      "150000000",
+      "1500000000",
+      "7500000000",
+      "30000000000",
+    ]);
   });
 });

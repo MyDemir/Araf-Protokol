@@ -1,5 +1,9 @@
 const { expect } = require("chai");
-const { resolveProductionTokenConfig } = require("../scripts/deploy");
+const {
+  resolveProductionTokenConfig,
+  getTokenConfigSnapshot,
+  setAndVerifyTokenConfig,
+} = require("../scripts/deploy");
 
 describe("deploy script config guards", function () {
   const OLD_NODE_ENV = process.env.NODE_ENV;
@@ -53,5 +57,66 @@ describe("deploy script config guards", function () {
     expect(cfg.isProduction).to.equal(false);
     expect(cfg.usdtAddress).to.equal(null);
     expect(cfg.usdcAddress).to.equal(null);
+  });
+
+  it("getTokenConfigSnapshot_reads_explicit_getTokenConfig_tier_limits", async function () {
+    const fakeEscrow = {
+      getTokenConfig: async () => ({
+        supported: true,
+        allowSellOrders: true,
+        allowBuyOrders: false,
+        decimals: 6,
+        tierMaxAmountsBaseUnit: [150n, 1500n, 7500n, 30000n],
+      }),
+    };
+
+    const snapshot = await getTokenConfigSnapshot(fakeEscrow, "0x1111111111111111111111111111111111111111");
+    expect(snapshot).to.deep.equal({
+      supported: true,
+      allowSellOrders: true,
+      allowBuyOrders: false,
+      decimals: 6,
+      tierMaxAmountsBaseUnit: ["150", "1500", "7500", "30000"],
+    });
+  });
+
+  it("getTokenConfigSnapshot_rejects_missing_tier_limits", async function () {
+    const fakeEscrow = {
+      getTokenConfig: async () => ({
+        supported: true,
+        allowSellOrders: true,
+        allowBuyOrders: true,
+        decimals: 6,
+        tierMaxAmountsBaseUnit: [150n, 1500n],
+      }),
+    };
+
+    await expect(
+      getTokenConfigSnapshot(fakeEscrow, "0x1111111111111111111111111111111111111111")
+    ).to.be.rejectedWith(/tier limit snapshot invalid/);
+  });
+
+  it("setAndVerifyTokenConfig_fails_on_mismatched_tier_limits", async function () {
+    const config = {
+      supported: true,
+      allowSellOrders: true,
+      allowBuyOrders: true,
+      decimals: 6,
+      tierMaxAmountsBaseUnit: [150n, 1500n, 7500n, 30000n],
+    };
+    const fakeEscrow = {
+      setTokenConfig: async () => ({ wait: async () => ({ hash: "0xabc" }) }),
+      getTokenConfig: async () => ({
+        supported: true,
+        allowSellOrders: true,
+        allowBuyOrders: true,
+        decimals: 6,
+        tierMaxAmountsBaseUnit: [150n, 1500n, 7500n, 99999n],
+      }),
+    };
+
+    await expect(
+      setAndVerifyTokenConfig(fakeEscrow, "0x1111111111111111111111111111111111111111", "USDT", config)
+    ).to.be.rejectedWith(/doğrulaması başarısız/);
   });
 });
