@@ -1512,9 +1512,26 @@ class EventWorker {
 
     const banTimestamp = _toNum(bannedUntil);
     const isBanned = banTimestamp > Math.floor(Date.now() / 1000);
+    // [TR] Fail-soft mirroring: zincir backfill hatasında yalnızca consecutive_bans alanı degrade olur.
+    // [EN] Fail-soft mirroring: on chain-backfill failure only consecutive_bans is allowed to degrade.
+    const existingUser = await User.findOne({ wallet_address: wallet.toLowerCase() })
+      .select("consecutive_bans")
+      .lean();
+    const storedConsecutiveBans =
+      existingUser?.consecutive_bans !== undefined ? _toNum(existingUser.consecutive_bans) : undefined;
 
-    const rep = await this._fetchReputationFromChain(wallet);
-    const consecutiveBans = rep?.consecutiveBans !== undefined ? _toNum(rep.consecutiveBans) : 0;
+    let consecutiveBans = storedConsecutiveBans ?? 0;
+    try {
+      const rep = await this._fetchReputationFromChain(wallet);
+      if (rep?.consecutiveBans !== undefined) {
+        consecutiveBans = _toNum(rep.consecutiveBans);
+      }
+    } catch (error) {
+      logger.warn(
+        `[eventListener] ReputationUpdated chain backfill failed for ${wallet}; preserving stored consecutive_bans fallback`,
+        { wallet, error: error?.message }
+      );
+    }
 
     await User.findOneAndUpdate(
       { wallet_address: wallet.toLowerCase() },
