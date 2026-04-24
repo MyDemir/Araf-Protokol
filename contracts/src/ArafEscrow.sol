@@ -296,7 +296,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
     mapping(address => uint256) public firstSuccessfulTradeAt;
     mapping(address => TokenConfig) public tokenConfigs;
-    mapping(address => uint256) public sigNonces;
+    mapping(address => mapping(uint256 => uint256)) public sigNonces;
 
     // [TR] Owner kontrollü mutable fee / cooldown alanları
     // [EN] Owner-controlled mutable fee / cooldown state
@@ -947,11 +947,13 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (msg.sender != t.maker && msg.sender != t.taker) revert NotTradeParty();
         if (_deadline > block.timestamp + MAX_CANCEL_DEADLINE) revert DeadlineTooFar();
 
+        uint256 currentNonce = sigNonces[msg.sender][_tradeId];
+
         bytes32 structHash = keccak256(abi.encode(
             CANCEL_TYPEHASH,
             _tradeId,
             msg.sender,
-            sigNonces[msg.sender],
+            currentNonce,
             _deadline
         ));
 
@@ -959,7 +961,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         address recovered = ECDSA.recover(digest, _sig);
         if (recovered != msg.sender) revert InvalidSignature();
 
-        sigNonces[msg.sender]++;
+        // [TR] Replay koruması trade-scoped nonce ile uygulanır; başka trade'leri etkilemez.
+        // [EN] Replay protection uses trade-scoped nonce and does not affect other trades.
+        sigNonces[msg.sender][_tradeId]++;
 
         if (msg.sender == t.maker) t.cancelProposedByMaker = true;
         else                       t.cancelProposedByTaker = true;

@@ -51,7 +51,7 @@ const ArafEscrowABI = parseAbi([
   'function getOrder(uint256 _orderId) view returns ((uint256 id, address owner, uint8 side, address tokenAddress, uint256 totalAmount, uint256 remainingAmount, uint256 minFillAmount, uint256 remainingMakerBondReserve, uint256 remainingTakerBondReserve, uint16 takerFeeBpsSnapshot, uint16 makerFeeBpsSnapshot, uint8 tier, uint8 state, bytes32 orderRef))',
 
   // --- EIP-712 için Gerekli View Fonksiyonları ---
-  'function sigNonces(address) view returns (uint256)',
+  'function sigNonces(address, uint256) view returns (uint256)',
   'function domainSeparator() view returns (bytes32)',
   'function getCurrentAmounts(uint256 _tradeId) view returns (uint256 cryptoRemaining, uint256 makerBondRemaining, uint256 takerBondRemaining, uint256 totalDecayed)',
   'function paused() view returns (bool)',
@@ -456,11 +456,10 @@ export function useArafContract() {
    * Kontrat tarafında da bu kontrolün yapılması önerilir.
    *
    * @param {number} tradeId   - On-chain trade ID
-   * @param {number} nonce     - Signer's current sigNonces value
    * @param {number} [deadlineOverride] - Opsiyonel: custom deadline (saniye)
    * @returns {Promise<{signature: string, deadline: number}>}
    */
-  const signCancelProposal = useCallback(async (tradeId, nonce, deadlineOverride) => {
+  const signCancelProposal = useCallback(async (tradeId, deadlineOverride) => {
     if (!walletClient) throw new Error("Cüzdan bağlı değil");
     _validateChain();
 
@@ -480,6 +479,14 @@ export function useArafContract() {
     }
 
     const deadline = requestedDeadline;
+    const tradeIdBigInt = BigInt(tradeId);
+
+    const nonce = await publicClient.readContract({
+      address: getAddress(ESCROW_ADDRESS),
+      abi: ArafEscrowABI,
+      functionName: 'sigNonces',
+      args: [walletClient.account.address, tradeIdBigInt],
+    });
 
     const domain = {
       name: "ArafEscrow",
@@ -499,7 +506,7 @@ export function useArafContract() {
     };
 
     const message = {
-      tradeId:  BigInt(tradeId),
+      tradeId:  tradeIdBigInt,
       proposer: walletClient.account.address,
       nonce:    BigInt(nonce),
       deadline: BigInt(deadline),
@@ -513,7 +520,7 @@ export function useArafContract() {
     });
 
     return { signature, deadline };
-  }, [walletClient, chainId, _validateChain]);
+  }, [walletClient, chainId, _validateChain, publicClient]);
 
   /**
    * Kontrat'a cancel proposal gönderir veya onaylar.

@@ -250,14 +250,14 @@ describe.skip("ArafEscrow V3", function () {
 
   async function collaborativeCancel(tradeId) {
     const deadline = (await time.latest()) + 3600;
-    const makerSig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address), deadline);
+    const makerSig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address, tradeId), deadline);
     await escrow.connect(maker).proposeOrApproveCancel(tradeId, deadline, makerSig);
     const trade = await escrow.getTrade(tradeId);
     const takerSigner = trade.taker.toLowerCase() === taker.address.toLowerCase() ? taker : attacker;
     const takerSig = await eip712CancelSig(
       takerSigner,
       tradeId,
-      await escrow.sigNonces(takerSigner.address),
+      await escrow.sigNonces(takerSigner.address, tradeId),
       deadline
     );
     await escrow.connect(takerSigner).proposeOrApproveCancel(tradeId, deadline, takerSig);
@@ -826,11 +826,11 @@ describe.skip("ArafEscrow V3", function () {
       await escrow.connect(taker).lockEscrow(tradeId);
 
       const deadline = (await time.latest()) + 3600;
-      const makerSig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address), deadline);
+      const makerSig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address, tradeId), deadline);
       await escrow.connect(maker).proposeOrApproveCancel(tradeId, deadline, makerSig);
       expect((await escrow.getTrade(tradeId)).state).to.equal(1);
 
-      const takerSig = await eip712CancelSig(taker, tradeId, await escrow.sigNonces(taker.address), deadline);
+      const takerSig = await eip712CancelSig(taker, tradeId, await escrow.sigNonces(taker.address, tradeId), deadline);
       await escrow.connect(taker).proposeOrApproveCancel(tradeId, deadline, takerSig);
       expect((await escrow.getTrade(tradeId)).state).to.equal(5);
     });
@@ -883,7 +883,7 @@ describe.skip("ArafEscrow V3", function () {
       await escrow.connect(taker).lockEscrow(tradeId);
 
       const deadline = (await time.latest()) - 1;
-      const sig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address), deadline);
+      const sig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address, tradeId), deadline);
       await expect(
         escrow.connect(maker).proposeOrApproveCancel(tradeId, deadline, sig)
       ).to.be.revertedWithCustomError(escrow, "SignatureExpired");
@@ -894,7 +894,7 @@ describe.skip("ArafEscrow V3", function () {
       await escrow.connect(taker).lockEscrow(tradeId);
 
       const deadline = (await time.latest()) + 3600;
-      const nonce = await escrow.sigNonces(maker.address);
+      const nonce = await escrow.sigNonces(maker.address, tradeId);
       const sig = await eip712CancelSig(maker, tradeId, nonce, deadline);
 
       await escrow.connect(maker).proposeOrApproveCancel(tradeId, deadline, sig);
@@ -908,7 +908,7 @@ describe.skip("ArafEscrow V3", function () {
       await escrow.connect(taker).lockEscrow(tradeId);
 
       const deadline = (await time.latest()) + 8 * 24 * 3600;
-      const sig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address), deadline);
+      const sig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address, tradeId), deadline);
       await expect(
         escrow.connect(maker).proposeOrApproveCancel(tradeId, deadline, sig)
       ).to.be.revertedWithCustomError(escrow, "DeadlineTooFar");

@@ -766,17 +766,7 @@ function App() {
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'İptal imzası oluşturuluyor...' : 'Creating cancel signature...', 'info');
 
-      const ESCROW_ADDR = import.meta.env.VITE_ESCROW_ADDRESS;
-      const { getAddress, parseAbi: _parseAbi } = await import('viem');
-      const nonceAbi = _parseAbi(['function sigNonces(address) view returns (uint256)']);
-      const nonce = await publicClient.readContract({
-        address: getAddress(ESCROW_ADDR),
-        abi: nonceAbi,
-        functionName: 'sigNonces',
-        args: [getAddress(address)],
-      });
-
-      const { signature, deadline } = await signCancelProposal(activeTrade.onchainId, nonce);
+      const { signature, deadline } = await signCancelProposal(activeTrade.onchainId);
 
       try {
         const relayRes = await authenticatedFetch(buildApiUrl('trades/propose-cancel'), {

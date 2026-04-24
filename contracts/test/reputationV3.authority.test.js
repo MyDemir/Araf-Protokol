@@ -33,7 +33,7 @@ describe("ArafEscrow V3 reputation authority", () => {
     throw new Error(`event ${eventName} not found`);
   }
 
-  async function cancelSig({ escrow, signer, tradeId, deadline }) {
+  async function cancelSig({ escrow, signer, tradeId, deadline, nonceOverride }) {
     const domain = {
       name: "ArafEscrow",
       version: "1",
@@ -48,7 +48,7 @@ describe("ArafEscrow V3 reputation authority", () => {
         { name: "deadline", type: "uint256" },
       ],
     };
-    const nonce = await escrow.sigNonces(signer.address);
+    const nonce = nonceOverride ?? await escrow.sigNonces(signer.address, tradeId);
     return signer.signTypedData(domain, types, {
       tradeId,
       proposer: signer.address,
@@ -75,6 +75,14 @@ describe("ArafEscrow V3 reputation authority", () => {
     await time.increase(7 * 24 * 3600 + 1);
 
     return { escrow, mockUSDT, owner, maker, taker };
+  }
+
+  async function openLockedTrade({ escrow, maker, taker, token, refLabel }) {
+    const orderTx = await escrow.connect(maker).createSellOrder(token, TRADE_AMOUNT, MIN_FILL, 0, makeRef(`${refLabel}-order`));
+    const orderArgs = await firstEventArgs(await orderTx.wait(), escrow.interface, "OrderCreated");
+    const fillTx = await escrow.connect(taker).fillSellOrder(orderArgs.orderId, TRADE_AMOUNT, makeRef(`${refLabel}-child`));
+    const fillArgs = await firstEventArgs(await fillTx.wait(), escrow.interface, "OrderFilled");
+    return fillArgs.tradeId;
   }
 
   it("manual release and auto release are classified onchain with V3 counters", async () => {
@@ -354,6 +362,87 @@ describe("ArafEscrow V3 reputation authority", () => {
         100
       )
     ).to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount");
+  });
+
+  it("test_cancelNonce_is_scoped_per_trade", async () => {
+    const { escrow, maker, taker, mockUSDT } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeA = await openLockedTrade({ escrow, maker, taker, token, refLabel: "nonce-scope-a" });
+    await time.increase(4 * 3600 + 1);
+    const tradeB = await openLockedTrade({ escrow, maker, taker, token, refLabel: "nonce-scope-b" });
+    const deadline = (await time.latest()) + 3600;
+
+    expect(await escrow.sigNonces(maker.address, tradeA)).to.equal(0n);
+    expect(await escrow.sigNonces(maker.address, tradeB)).to.equal(0n);
+
+    const makerSigA = await cancelSig({ escrow, signer: maker, tradeId: tradeA, deadline });
+    await escrow.connect(maker).proposeOrApproveCancel(tradeA, deadline, makerSigA);
+
+    expect(await escrow.sigNonces(maker.address, tradeA)).to.equal(1n);
+    expect(await escrow.sigNonces(maker.address, tradeB)).to.equal(0n);
+  });
+
+  it("test_cancelNonce_increment_on_trade_A_does_not_invalidate_trade_B", async () => {
+    const { escrow, maker, taker, mockUSDT } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeA = await openLockedTrade({ escrow, maker, taker, token, refLabel: "nonce-a" });
+    await time.increase(4 * 3600 + 1);
+    const tradeB = await openLockedTrade({ escrow, maker, taker, token, refLabel: "nonce-b" });
+    const deadline = (await time.latest()) + 3600;
+
+    const makerSigB = await cancelSig({ escrow, signer: maker, tradeId: tradeB, deadline });
+    const makerSigA = await cancelSig({ escrow, signer: maker, tradeId: tradeA, deadline });
+
+    await escrow.connect(maker).proposeOrApproveCancel(tradeA, deadline, makerSigA);
+    await expect(escrow.connect(maker).proposeOrApproveCancel(tradeB, deadline, makerSigB)).to.not.be.reverted;
+  });
+
+  it("test_cancelSignature_for_trade_A_cannot_be_used_for_trade_B", async () => {
+    const { escrow, maker, taker, mockUSDT } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeA = await openLockedTrade({ escrow, maker, taker, token, refLabel: "sig-a" });
+    await time.increase(4 * 3600 + 1);
+    const tradeB = await openLockedTrade({ escrow, maker, taker, token, refLabel: "sig-b" });
+    const deadline = (await time.latest()) + 3600;
+
+    const makerSigA = await cancelSig({ escrow, signer: maker, tradeId: tradeA, deadline });
+    await expect(
+      escrow.connect(maker).proposeOrApproveCancel(tradeB, deadline, makerSigA)
+    ).to.be.revertedWithCustomError(escrow, "InvalidSignature");
+  });
+
+  it("test_cancelSignature_cannot_be_replayed_on_same_trade", async () => {
+    const { escrow, maker, taker, mockUSDT } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeA = await openLockedTrade({ escrow, maker, taker, token, refLabel: "replay-a" });
+    const deadline = (await time.latest()) + 3600;
+
+    const makerSigA = await cancelSig({ escrow, signer: maker, tradeId: tradeA, deadline });
+    await escrow.connect(maker).proposeOrApproveCancel(tradeA, deadline, makerSigA);
+
+    await expect(
+      escrow.connect(maker).proposeOrApproveCancel(tradeA, deadline, makerSigA)
+    ).to.be.revertedWithCustomError(escrow, "InvalidSignature");
+  });
+
+  it("test_cancelProposal_reverts_with_invalid_trade_scoped_nonce", async () => {
+    const { escrow, maker, taker, mockUSDT } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeA = await openLockedTrade({ escrow, maker, taker, token, refLabel: "invalid-nonce-a" });
+    const deadline = (await time.latest()) + 3600;
+    const currentNonce = await escrow.sigNonces(maker.address, tradeA);
+
+    const makerSigWrongNonce = await cancelSig({
+      escrow,
+      signer: maker,
+      tradeId: tradeA,
+      deadline,
+      nonceOverride: currentNonce + 1n,
+    });
+
+    await expect(
+      escrow.connect(maker).proposeOrApproveCancel(tradeA, deadline, makerSigWrongNonce)
+    ).to.be.revertedWithCustomError(escrow, "InvalidSignature");
   });
 
   it("resists repeated terminal actions and prevents double counting", async () => {
