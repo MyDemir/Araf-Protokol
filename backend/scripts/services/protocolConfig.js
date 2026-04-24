@@ -230,17 +230,28 @@ async function updateCachedCooldownConfig(tier0TradeCooldown, tier1TradeCooldown
 async function updateCachedTokenConfig(tokenAddress, tokenConfig) {
   return _patchAndPersist((cfg) => {
     if (!cfg.tokenMap) cfg.tokenMap = {};
+    const normalizedToken = tokenAddress.toLowerCase();
+    const currentTokenConfig = cfg.tokenMap[normalizedToken] || {};
+    const hasSupported = Object.prototype.hasOwnProperty.call(tokenConfig ?? {}, "supported");
+    const hasAllowSellOrders = Object.prototype.hasOwnProperty.call(tokenConfig ?? {}, "allowSellOrders");
+    const hasAllowBuyOrders = Object.prototype.hasOwnProperty.call(tokenConfig ?? {}, "allowBuyOrders");
     const hasDecimals = tokenConfig?.decimals !== undefined && tokenConfig?.decimals !== null;
     const hasTierLimits = Array.isArray(tokenConfig?.tierMaxAmountsBaseUnit);
 
-    cfg.tokenMap[tokenAddress.toLowerCase()] = {
-      supported: Boolean(tokenConfig?.supported),
-      allowSellOrders: Boolean(tokenConfig?.allowSellOrders),
-      allowBuyOrders: Boolean(tokenConfig?.allowBuyOrders),
-      decimals: hasDecimals ? Number(tokenConfig.decimals) : null,
+    // TokenConfigUpdated event'i decimals/tier limit taşımadığı için, partial patch sırasında
+    // mevcut read-model metadata'sını koruyarak transient RPC arızalarında precision drift'i önlüyoruz.
+    cfg.tokenMap[normalizedToken] = {
+      supported: hasSupported ? Boolean(tokenConfig?.supported) : Boolean(currentTokenConfig.supported),
+      allowSellOrders: hasAllowSellOrders
+        ? Boolean(tokenConfig?.allowSellOrders)
+        : Boolean(currentTokenConfig.allowSellOrders),
+      allowBuyOrders: hasAllowBuyOrders ? Boolean(tokenConfig?.allowBuyOrders) : Boolean(currentTokenConfig.allowBuyOrders),
+      decimals: hasDecimals
+        ? Number(tokenConfig.decimals)
+        : (currentTokenConfig.decimals ?? null),
       tierMaxAmountsBaseUnit: hasTierLimits
         ? tokenConfig.tierMaxAmountsBaseUnit.map((v) => v.toString())
-        : [],
+        : (Array.isArray(currentTokenConfig.tierMaxAmountsBaseUnit) ? currentTokenConfig.tierMaxAmountsBaseUnit : []),
     };
   });
 }
