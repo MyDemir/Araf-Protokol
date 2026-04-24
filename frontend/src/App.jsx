@@ -37,6 +37,10 @@ const StatChange = ({ value }) => {
 const DEFAULT_TOKEN_DECIMALS = null;
 const SEPA_COUNTRIES = ['DE', 'FR', 'NL', 'BE', 'ES', 'IT', 'AT', 'PT', 'IE', 'LU', 'FI', 'GR'];
 const RAIL_DEFAULT_COUNTRY = { TR_IBAN: 'TR', US_ACH: 'US', SEPA_IBAN: 'DE' };
+const FEE_ON_TRANSFER_WARNING = {
+  TR: 'Not: Fee-on-transfer / deflasyonist tokenlar desteklenmez.',
+  EN: 'Note: Fee-on-transfer / deflationary tokens are not supported.',
+};
 
 // [TR] Frontend payload canonicalizer — backend authority korunur, kirli veri minimize edilir.
 // [EN] Frontend payload canonicalizer — backend stays authoritative, payload quality is improved.
@@ -132,10 +136,13 @@ function App() {
 
   // [TR] Desteklenen token adresleri — .env üzerinden yönetilir
   // [EN] Supported token addresses — managed via .env
-  const SUPPORTED_TOKEN_ADDRESSES = {
-    USDT: import.meta.env.VITE_USDT_ADDRESS || '',
-    USDC: import.meta.env.VITE_USDC_ADDRESS || '',
+  const SUPPORTED_TOKENS = {
+    USDT: { address: import.meta.env.VITE_USDT_ADDRESS || '', decimalsRequired: true },
+    USDC: { address: import.meta.env.VITE_USDC_ADDRESS || '', decimalsRequired: true },
   };
+  const SUPPORTED_TOKEN_ADDRESSES = Object.fromEntries(
+    Object.entries(SUPPORTED_TOKENS).map(([symbol, meta]) => [symbol, meta.address])
+  );
   const [makerToken, setMakerToken] = useState('USDT');
   const [makerSide, setMakerSide] = useState('SELL_CRYPTO');
   const [profileTab, setProfileTab] = useState('ayarlar');
@@ -1106,6 +1113,7 @@ function App() {
     }
     if (!requireSignedSessionForActiveWallet()) return;
     setShowMakerModal(true);
+    showToast(lang === 'TR' ? FEE_ON_TRANSFER_WARNING.TR : FEE_ON_TRANSFER_WARNING.EN, 'info');
   };
 
   // [TR] Maker order oluşturma (V3): approve() → createSellOrder().
@@ -1117,7 +1125,17 @@ function App() {
 const handleCreateOrder = async () => {
   if (!requireSignedSessionForActiveWallet()) return;
 
-  let tokenAddress = SUPPORTED_TOKEN_ADDRESSES[makerToken];
+  const tokenMeta = SUPPORTED_TOKENS[makerToken];
+  let tokenAddress = tokenMeta?.address;
+  if (!tokenMeta?.decimalsRequired) {
+    showToast(
+      lang === 'TR'
+        ? 'Token metadata eksik: decimals bilgisi zorunludur.'
+        : 'Token metadata missing: decimals is required.',
+      'error'
+    );
+    return;
+  }
   if (!tokenAddress) {
     showToast(
       lang === 'TR'
@@ -1130,7 +1148,7 @@ const handleCreateOrder = async () => {
 
   const cryptoAmt = parseFloat(makerAmount);
   if (!cryptoAmt || cryptoAmt <= 0) {
-    showToast(lang === 'TR' ? 'Geçerli bir miktar girin.' : 'Enter a valid amount.', 'error');
+      showToast(lang === 'TR' ? 'Geçerli bir miktar girin.' : 'Enter a valid amount.', 'error');
     return;
   }
 

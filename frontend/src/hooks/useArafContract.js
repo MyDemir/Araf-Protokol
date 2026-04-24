@@ -124,6 +124,14 @@ export function normalizeV3Reputation(rawReputation) {
   return normalized;
 }
 
+export function normalizeTokenDecimalsOrThrow(rawDecimals) {
+  const normalized = Number(rawDecimals);
+  if (!Number.isInteger(normalized) || normalized <= 0 || normalized > 18) {
+    throw new Error("Invalid token decimals");
+  }
+  return normalized;
+}
+
 
 // Desteklenen chain ID'ler — Base Mainnet ve Base Sepolia
 const SUPPORTED_CHAINS = {
@@ -439,11 +447,7 @@ export function useArafContract() {
         functionName: 'decimals',
       });
 
-      const normalized = Number(decimals);
-      if (!Number.isInteger(normalized) || normalized <= 0 || normalized > 18) {
-        throw new Error("Invalid token decimals");
-      }
-      return normalized;
+      return normalizeTokenDecimalsOrThrow(decimals);
     } catch (error) {
       throw new Error(error?.message || "Token decimals could not be read safely.");
     }
