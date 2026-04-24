@@ -112,6 +112,41 @@ describe("ArafEscrow V3 reputation authority", () => {
     expect(takerAuto).to.equal(1n);
   });
 
+  it("test_autoRelease_emits_takerPenalty_before_makerPenalty", async () => {
+    const { escrow, owner, maker, taker, mockUSDT } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+
+    await escrow
+      .connect(owner)
+      .setReputationTierThresholds([0, 1, 1, 1, 1], [100, 100, 100, 100, 100]);
+
+    const warmupOrder = await escrow.connect(maker).createSellOrder(token, TRADE_AMOUNT, MIN_FILL, 0, makeRef("event-order-warmup"));
+    const warmupOrderArgs = await firstEventArgs(await warmupOrder.wait(), escrow.interface, "OrderCreated");
+    const warmupFill = await escrow.connect(taker).fillSellOrder(warmupOrderArgs.orderId, TRADE_AMOUNT, makeRef("event-order-warmup-child"));
+    const warmupFillArgs = await firstEventArgs(await warmupFill.wait(), escrow.interface, "OrderFilled");
+    await escrow.connect(taker).reportPayment(warmupFillArgs.tradeId, "QmPenaltyWarmup");
+    await escrow.connect(maker).releaseFunds(warmupFillArgs.tradeId);
+    await time.increase(15 * 24 * 3600 + 1);
+
+    const order = await escrow.connect(maker).createSellOrder(token, TRADE_AMOUNT, MIN_FILL, 1, makeRef("event-order"));
+    const orderArgs = await firstEventArgs(await order.wait(), escrow.interface, "OrderCreated");
+    const fill = await escrow.connect(taker).fillSellOrder(orderArgs.orderId, TRADE_AMOUNT, makeRef("event-order-child"));
+    const fillArgs = await firstEventArgs(await fill.wait(), escrow.interface, "OrderFilled");
+
+    await escrow.connect(taker).reportPayment(fillArgs.tradeId, "QmPenaltyOrder");
+    await time.increase(REF_2D + 1);
+    await escrow.connect(taker).pingMaker(fillArgs.tradeId);
+    await time.increase(REF_1D + 1);
+
+    const tradeBeforeRelease = await escrow.getTrade(fillArgs.tradeId);
+    const makerPenalty = (tradeBeforeRelease.makerBond * 200n) / 10_000n;
+    const takerPenalty = (tradeBeforeRelease.takerBond * 200n) / 10_000n;
+
+    await expect(escrow.connect(taker).autoRelease(fillArgs.tradeId))
+      .to.emit(escrow, "EscrowReleased")
+      .withArgs(fillArgs.tradeId, maker.address, taker.address, takerPenalty, makerPenalty);
+  });
+
   it("mutual cancel, dispute resolution and burn are authority-classified onchain", async () => {
     const { escrow, maker, taker, mockUSDT } = await loadFixture(deployFixture);
     const token = await mockUSDT.getAddress();

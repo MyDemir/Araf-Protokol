@@ -961,6 +961,25 @@ describe.skip("ArafEscrow V3", function () {
         .to.equal(makerPenalty + takerPenalty);
     });
 
+    it("test_autoRelease_emits_takerPenalty_before_makerPenalty", async () => {
+      const tradeId = await setupTrade(2, TRADE_AMOUNT, "legacy-auto-release-event-order");
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmHashEventOrder");
+
+      await time.increase(FORTY_EIGHT_H + 1);
+      await escrow.connect(taker).pingMaker(tradeId);
+      await time.increase(TWENTY_FOUR_H + 1);
+
+      const makerBond = await makerBondFor(maker, TRADE_AMOUNT, 2);
+      const takerBond = await takerBondFor(taker, TRADE_AMOUNT, 2);
+      const makerPenalty = (makerBond * 200n) / BPS_DENOM;
+      const takerPenalty = (takerBond * 200n) / BPS_DENOM;
+
+      await expect(escrow.connect(taker).autoRelease(tradeId))
+        .to.emit(escrow, "EscrowReleased")
+        .withArgs(tradeId, maker.address, taker.address, takerPenalty, makerPenalty);
+    });
+
     it("1st ban: 30 days, consecutiveBans = 1, no tier restriction yet", async () => {
       await giveBanToMaker();
       const [, failed, bannedUntil, consecutive, effectiveTier] = await escrow.getReputation(maker.address);

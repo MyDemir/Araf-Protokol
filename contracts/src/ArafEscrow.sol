@@ -70,6 +70,7 @@ error OrderSideMismatch();
 error TokenDirectionNotAllowed();
 error FeeBpsExceedsUint16(uint256 value);
 error FeeBpsExceedsEconomicLimit(uint256 value);
+error InvalidTransferAmount();
 
 contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     using SafeERC20 for IERC20;
@@ -497,7 +498,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             orderRef:                   _orderRef
         });
 
-        IERC20(_token).safeTransferFrom(msg.sender, address(this), _totalAmount + makerBondTotal);
+        _safeTransferExactIn(IERC20(_token), msg.sender, _totalAmount + makerBondTotal);
 
         emit OrderCreated(
             orderId,
@@ -550,7 +551,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         o.state = o.remainingAmount == 0 ? OrderState.FILLED : OrderState.PARTIALLY_FILLED;
 
         if (takerBond > 0) {
-            IERC20(o.tokenAddress).safeTransferFrom(msg.sender, address(this), takerBond);
+            _safeTransferExactIn(IERC20(o.tokenAddress), msg.sender, takerBond);
         }
 
         tradeId = ++tradeCounter;
@@ -671,7 +672,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         });
 
         if (takerBondTotal > 0) {
-            IERC20(_token).safeTransferFrom(msg.sender, address(this), takerBondTotal);
+            _safeTransferExactIn(IERC20(_token), msg.sender, takerBondTotal);
         }
 
         emit OrderCreated(
@@ -732,7 +733,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         o.remainingTakerBondReserve -= takerBondSlice;
         o.state = o.remainingAmount == 0 ? OrderState.FILLED : OrderState.PARTIALLY_FILLED;
 
-        IERC20(o.tokenAddress).safeTransferFrom(msg.sender, address(this), totalLock);
+        _safeTransferExactIn(IERC20(o.tokenAddress), msg.sender, totalLock);
 
         tradeId = ++tradeCounter;
         trades[tradeId] = Trade({
@@ -1057,7 +1058,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         _recordAutoRelease(t.maker, t.taker);
 
-        emit EscrowReleased(_tradeId, t.maker, t.taker, makerPenalty, takerPenalty);
+        // Event payload order must stay aligned with EscrowReleased(takerFee, makerFee)
+        // so off-chain listeners book penalties to the correct party.
+        emit EscrowReleased(_tradeId, t.maker, t.taker, takerPenalty, makerPenalty);
     }
 
     /**
@@ -1842,6 +1845,23 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         TokenConfig memory cfg = tokenConfigs[_token];
         if (!cfg.supported) return false;
         return cfg.allowBuyOrders;
+    }
+
+    /**
+     * @notice Kontrata gelen token girişini exact miktar olarak zorlar.
+     *         Fee-on-transfer / deflasyonist tokenlar eksik giriş üretirse revert eder.
+     * @notice Enforces exact token inflow into the contract.
+     *         Reverts when fee-on-transfer / deflationary tokens deliver less than expected.
+     */
+    function _safeTransferExactIn(IERC20 _token, address _from, uint256 _amount) internal {
+        if (_amount == 0) return;
+
+        uint256 beforeBalance = _token.balanceOf(address(this));
+        _token.safeTransferFrom(_from, address(this), _amount);
+        uint256 afterBalance = _token.balanceOf(address(this));
+
+        if (afterBalance < beforeBalance) revert InvalidTransferAmount();
+        if (afterBalance - beforeBalance != _amount) revert InvalidTransferAmount();
     }
 
     /**
