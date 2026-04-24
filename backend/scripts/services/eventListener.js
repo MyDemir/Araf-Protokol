@@ -99,6 +99,10 @@ const EVENT_ARG_KEYS = {
   EscrowCreated: ["tradeId", "maker", "token", "amount", "tier", "listingRef"],
   EscrowLocked: ["tradeId", "taker", "takerBond"],
   PaymentReported: ["tradeId", "ipfsHash", "timestamp"],
+  // [TR] EscrowReleased payload sırası kontrat ABI ile birebir eşleşmelidir:
+  //      4. argüman takerFee/takerPenalty, 5. argüman makerFee/makerPenalty.
+  // [EN] EscrowReleased payload order must stay ABI-aligned:
+  //      4th arg is takerFee/takerPenalty, 5th arg is makerFee/makerPenalty.
   EscrowReleased: ["tradeId", "maker", "taker", "takerFee", "makerFee"],
   DisputeOpened: ["tradeId", "challenger", "timestamp"],
   CancelProposed: ["tradeId", "proposer"],
