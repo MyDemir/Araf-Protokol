@@ -73,7 +73,7 @@ describe("ArafEscrow token decimals and token-specific tier limits", function ()
     expect(cfg18.decimals).to.equal(DECIMALS_18);
   });
 
-  it("test_setTokenConfig_reverts_when_decimals_above_18", async () => {
+  it("test_setTokenConfig_reverts_for_decimals_above_18", async () => {
     const { escrow, owner, token6 } = await loadFixture(deployFixture);
 
     await expect(

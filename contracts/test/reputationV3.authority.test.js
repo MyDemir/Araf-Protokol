@@ -278,7 +278,7 @@ describe("ArafEscrow V3 reputation authority", () => {
     expect(rep.length).to.equal(15);
   });
 
-  it("test_setCooldownConfig_accepts_maximum_cooldown", async () => {
+  it("test_setCooldownConfig_accepts_maximum", async () => {
     const { escrow, owner } = await loadFixture(deployFixture);
     const maxCooldown = await escrow.MAX_TRADE_COOLDOWN();
 
@@ -287,19 +287,13 @@ describe("ArafEscrow V3 reputation authority", () => {
     ).to.emit(escrow, "CooldownConfigUpdated");
   });
 
-  it("test_setCooldownConfig_reverts_when_tier0_cooldown_too_high", async () => {
+  it("test_setCooldownConfig_reverts_above_maximum", async () => {
     const { escrow, owner } = await loadFixture(deployFixture);
     const maxCooldown = await escrow.MAX_TRADE_COOLDOWN();
 
     await expect(
       escrow.connect(owner).setCooldownConfig(maxCooldown + 1n, maxCooldown)
     ).to.be.revertedWithCustomError(escrow, "CooldownTooHigh");
-  });
-
-  it("test_setCooldownConfig_reverts_when_tier1_cooldown_too_high", async () => {
-    const { escrow, owner } = await loadFixture(deployFixture);
-    const maxCooldown = await escrow.MAX_TRADE_COOLDOWN();
-
     await expect(
       escrow.connect(owner).setCooldownConfig(maxCooldown, maxCooldown + 1n)
     ).to.be.revertedWithCustomError(escrow, "CooldownTooHigh");
@@ -382,7 +376,7 @@ describe("ArafEscrow V3 reputation authority", () => {
     expect(await escrow.sigNonces(maker.address, tradeB)).to.equal(0n);
   });
 
-  it("test_cancelNonce_increment_on_trade_A_does_not_invalidate_trade_B", async () => {
+  it("test_cancelNonce_increment_on_trade_A_does_not_affect_trade_B", async () => {
     const { escrow, maker, taker, mockUSDT } = await loadFixture(deployFixture);
     const token = await mockUSDT.getAddress();
     const tradeA = await openLockedTrade({ escrow, maker, taker, token, refLabel: "nonce-a" });

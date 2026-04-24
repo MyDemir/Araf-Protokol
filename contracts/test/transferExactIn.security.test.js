@@ -68,7 +68,7 @@ describe("ArafEscrow exact in-transfer security", function () {
     return { escrow, exactToken, feeToken, owner, maker, taker };
   }
 
-  it("test_createSellOrder_reverts_when_token_receives_less_than_expected", async () => {
+  it("test_createSellOrder_reverts_when_fee_on_transfer_token_used", async () => {
     const { escrow, feeToken, maker } = await loadFixture(deployFixture);
 
     await expect(
@@ -82,7 +82,7 @@ describe("ArafEscrow exact in-transfer security", function () {
     ).to.be.revertedWithCustomError(escrow, "InvalidTransferAmount");
   });
 
-  it("test_fillBuyOrder_reverts_when_token_receives_less_than_expected", async () => {
+  it("test_fillBuyOrder_reverts_when_fee_on_transfer_token_used", async () => {
     const { escrow, feeToken, maker, taker } = await loadFixture(deployFixture);
 
     const createBuyTx = await escrow.connect(taker).createBuyOrder(
