@@ -277,4 +277,43 @@ describe("ArafEscrow V3 reputation authority", () => {
     expect(makerEvent.args.lastPositiveEventAt).to.equal(makerRep.lastPositiveEventAt);
     expect(makerEvent.args.lastNegativeEventAt).to.equal(makerRep.lastNegativeEventAt);
   });
+
+  it("keeps tier progression eligible with zero manual reward by initializing firstSuccessfulTradeAt", async () => {
+    const { escrow, owner, maker, taker, mockUSDT } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+
+    await escrow.connect(owner).setReputationPolicy(
+      90 * 24 * 3600,
+      0, // manual release reward = 0
+      60,
+      10,
+      60,
+      90,
+      20,
+      30 * 24 * 3600,
+      100
+    );
+    await escrow.connect(owner).setReputationTierThresholds(
+      [0, 1, 50, 100, 200],
+      [100, 80, 50, 30, 15]
+    );
+
+    const order = await escrow.connect(maker).createSellOrder(token, TRADE_AMOUNT, MIN_FILL, 0, makeRef("zero-reward-tier"));
+    const orderArgs = await firstEventArgs(await order.wait(), escrow.interface, "OrderCreated");
+    const fill = await escrow.connect(taker).fillSellOrder(orderArgs.orderId, TRADE_AMOUNT, makeRef("zero-reward-tier-child"));
+    const fillArgs = await firstEventArgs(await fill.wait(), escrow.interface, "OrderFilled");
+    await escrow.connect(taker).reportPayment(fillArgs.tradeId, "QmZeroReward");
+    await escrow.connect(maker).releaseFunds(fillArgs.tradeId);
+
+    const firstSuccessAt = await escrow.getFirstSuccessfulTradeAt(maker.address);
+    expect(firstSuccessAt).to.be.gt(0n);
+
+    const repBeforeActivePeriod = await escrow.getReputation(maker.address);
+    expect(repBeforeActivePeriod.effectiveTier).to.equal(0n);
+
+    await time.increase(15 * 24 * 3600 + 1);
+    const repAfterActivePeriod = await escrow.getReputation(maker.address);
+    expect(repAfterActivePeriod.successful).to.equal(1n);
+    expect(repAfterActivePeriod.effectiveTier).to.equal(1n);
+  });
 });

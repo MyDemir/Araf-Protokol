@@ -1298,16 +1298,15 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint64 nowTs = uint64(block.timestamp);
         rep.lastPositiveEventAt = nowTs;
 
-        if (rewardPts == 0) {
-            _refreshTierAndBanState(_wallet, rep);
-            return;
-        }
-
-        if (rep.riskPoints <= rewardPts) rep.riskPoints = 0;
-        else rep.riskPoints -= rewardPts;
-
+        // [TR] Başarı geçmişi oluştuğunda firstSuccessfulTradeAt, ödül puanı sıfır olsa bile bir kez initialize edilir.
+        // [EN] Initialize firstSuccessfulTradeAt once when success history exists, even if reward points are zero.
         if (firstSuccessfulTradeAt[_wallet] == 0 && rep.successfulTrades > 0) {
             firstSuccessfulTradeAt[_wallet] = block.timestamp;
+        }
+
+        if (rewardPts > 0) {
+            if (rep.riskPoints <= rewardPts) rep.riskPoints = 0;
+            else rep.riskPoints -= rewardPts;
         }
         _refreshTierAndBanState(_wallet, rep);
     }
