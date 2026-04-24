@@ -34,7 +34,7 @@ const StatChange = ({ value }) => {
   return <span className={`text-[10px] ml-2 font-bold ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>{isPositive ? '▲' : '▼'}{Math.abs(value).toFixed(1)}%</span>;
 };
 
-const DEFAULT_TOKEN_DECIMALS = 6;
+const DEFAULT_TOKEN_DECIMALS = null;
 const SEPA_COUNTRIES = ['DE', 'FR', 'NL', 'BE', 'ES', 'IT', 'AT', 'PT', 'IE', 'LU', 'FI', 'GR'];
 const RAIL_DEFAULT_COUNTRY = { TR_IBAN: 'TR', US_ACH: 'US', SEPA_IBAN: 'DE' };
 
@@ -81,6 +81,7 @@ const canonicalizePayoutProfileDraft = (draft = {}) => {
 // [TR] Otoritatif raw base-unit değerini UI için normalize eder (display-only).
 // [EN] Normalizes authoritative raw base-unit values for UI display only.
 const formatTokenAmountFromRaw = (rawAmount, decimals = DEFAULT_TOKEN_DECIMALS, maxFractionDigits = 4) => {
+  if (!Number.isInteger(decimals) || decimals <= 0 || decimals > 18) return '—';
   try {
     const normalized = formatUnits(BigInt(rawAmount ?? 0), decimals);
     return Number(normalized).toLocaleString('en-US', {
@@ -95,6 +96,7 @@ const formatTokenAmountFromRaw = (rawAmount, decimals = DEFAULT_TOKEN_DECIMALS, 
 // [TR] UI/analytics hesapları için Number cache; enforcement için kullanılmaz.
 // [EN] Number cache for UI/analytics math; never used for enforcement.
 const rawTokenToDisplayNumber = (rawAmount, decimals = DEFAULT_TOKEN_DECIMALS) => {
+  if (!Number.isInteger(decimals) || decimals <= 0 || decimals > 18) return 0;
   try {
     return Number(formatUnits(BigInt(rawAmount ?? 0), decimals));
   } catch {
@@ -1154,7 +1156,7 @@ const handleCreateOrder = async () => {
   try {
     setIsContractLoading(true);
 
-    const tokenDecimals = getTokenDecimals ? await getTokenDecimals(tokenAddress) : 6;
+    const tokenDecimals = await getTokenDecimals(tokenAddress);
     const { parseUnits, keccak256, stringToHex } = await import('viem');
     const cryptoAmountRaw = parseUnits(String(cryptoAmt), tokenDecimals);
 

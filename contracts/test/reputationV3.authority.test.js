@@ -7,6 +7,12 @@ describe("ArafEscrow V3 reputation authority", () => {
   const TRADE_AMOUNT = ethers.parseUnits("100", USDT_DECIMALS);
   const MIN_FILL = ethers.parseUnits("50", USDT_DECIMALS);
   const INITIAL_BAL = ethers.parseUnits("100000", USDT_DECIMALS);
+  const TIER_MAX_AMOUNTS_BASE_UNIT = [
+    ethers.parseUnits("150", USDT_DECIMALS),
+    ethers.parseUnits("1500", USDT_DECIMALS),
+    ethers.parseUnits("7500", USDT_DECIMALS),
+    ethers.parseUnits("30000", USDT_DECIMALS),
+  ];
   const REF_1D = 24 * 3600;
   const REF_2D = 48 * 3600;
   const REF_10D = 10 * 24 * 3600;
@@ -59,7 +65,7 @@ describe("ArafEscrow V3 reputation authority", () => {
     const escrow = await Escrow.deploy(treasury.address);
 
     const token = await mockUSDT.getAddress();
-    await escrow.connect(owner).setTokenConfig(token, true, true, true);
+    await escrow.connect(owner).setTokenConfig(token, true, true, true, USDT_DECIMALS, TIER_MAX_AMOUNTS_BASE_UNIT);
 
     for (const wallet of [maker, taker]) {
       await mockUSDT.mint(wallet.address, INITIAL_BAL);

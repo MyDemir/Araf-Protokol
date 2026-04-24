@@ -422,22 +422,30 @@ export function useArafContract() {
 
   /**
    * Token decimals değerini on-chain okur.
-   * Okunamazsa güvenli varsayılan olarak 6 döner (USDT/USDC uyumu).
+   * Decimals okunamazsa veya güvenli aralık dışındaysa işlem bloklanır.
    *
    * @param {string} tokenAddress
    * @returns {Promise<number>}
    */
   const getTokenDecimals = useCallback(async (tokenAddress) => {
-    if (!_isValidAddress) return 6;
+    if (!_isValidAddress) {
+      throw new Error("Escrow contract address is not configured.");
+    }
+
     try {
       const decimals = await publicClient.readContract({
         address: getAddress(tokenAddress),
         abi: ERC20_ABI,
         functionName: 'decimals',
       });
-      return Number(decimals);
-    } catch {
-      return 6;
+
+      const normalized = Number(decimals);
+      if (!Number.isInteger(normalized) || normalized <= 0 || normalized > 18) {
+        throw new Error("Invalid token decimals");
+      }
+      return normalized;
+    } catch (error) {
+      throw new Error(error?.message || "Token decimals could not be read safely.");
     }
   }, [publicClient]);
 

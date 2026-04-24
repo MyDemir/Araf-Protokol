@@ -3,7 +3,7 @@
  *
  * Bu sürüm, V3 kontrat yüzeyine göre hazırlanmıştır:
  *   - constructor(address treasury)
- *   - setTokenConfig(address,bool,bool,bool)
+ *   - setTokenConfig(address,bool,bool,bool,uint8,uint256[4])
  *   - getFeeConfig()
  *   - getCooldownConfig()
  *   - tokenConfigs(address)
@@ -76,6 +76,16 @@ function writeJson(filePath, value) {
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2));
 }
 
+function defaultTierLimitsByDecimals(decimals) {
+  const scale = 10n ** BigInt(decimals);
+  return [
+    150n * scale,
+    1500n * scale,
+    7500n * scale,
+    30000n * scale,
+  ];
+}
+
 async function artifactExists(contractName) {
   try {
     await artifacts.readArtifact(contractName);
@@ -126,6 +136,8 @@ async function getTokenConfigSnapshot(escrow, tokenAddress) {
     supported: cfg.supported,
     allowSellOrders: cfg.allowSellOrders,
     allowBuyOrders: cfg.allowBuyOrders,
+    decimals: Number(cfg.decimals),
+    tierMaxAmountsBaseUnit: Array.from(cfg.tierMaxAmountsBaseUnit || []).map((x) => x.toString()),
   };
 }
 
@@ -134,7 +146,9 @@ async function setAndVerifyTokenConfig(escrow, tokenAddress, symbol, config) {
     tokenAddress,
     config.supported,
     config.allowSellOrders,
-    config.allowBuyOrders
+    config.allowBuyOrders,
+    config.decimals,
+    config.tierMaxAmountsBaseUnit
   );
   const receipt = await tx.wait();
 
@@ -143,7 +157,9 @@ async function setAndVerifyTokenConfig(escrow, tokenAddress, symbol, config) {
   if (
     snapshot.supported !== config.supported ||
     snapshot.allowSellOrders !== config.allowSellOrders ||
-    snapshot.allowBuyOrders !== config.allowBuyOrders
+    snapshot.allowBuyOrders !== config.allowBuyOrders ||
+    snapshot.decimals !== Number(config.decimals) ||
+    snapshot.tierMaxAmountsBaseUnit.some((v, i) => v !== config.tierMaxAmountsBaseUnit[i].toString())
   ) {
     throw new Error(
       `❌ ${symbol} tokenConfig doğrulaması başarısız. ` +
@@ -153,7 +169,7 @@ async function setAndVerifyTokenConfig(escrow, tokenAddress, symbol, config) {
 
   console.log(
     `✅ ${symbol} token config doğrulandı ` +
-    `(supported=${snapshot.supported}, sell=${snapshot.allowSellOrders}, buy=${snapshot.allowBuyOrders})`
+    `(supported=${snapshot.supported}, sell=${snapshot.allowSellOrders}, buy=${snapshot.allowBuyOrders}, decimals=${snapshot.decimals})`
   );
 
   return {
@@ -292,6 +308,8 @@ async function main() {
       supported: true,
       allowSellOrders: true,
       allowBuyOrders: true,
+      decimals: 6,
+      tierMaxAmountsBaseUnit: defaultTierLimitsByDecimals(6),
     })
   );
   tokenResults.push(
@@ -299,6 +317,8 @@ async function main() {
       supported: true,
       allowSellOrders: true,
       allowBuyOrders: true,
+      decimals: 6,
+      tierMaxAmountsBaseUnit: defaultTierLimitsByDecimals(6),
     })
   );
 

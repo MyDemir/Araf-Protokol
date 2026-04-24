@@ -71,6 +71,7 @@ error TokenDirectionNotAllowed();
 error FeeBpsExceedsUint16(uint256 value);
 error FeeBpsExceedsEconomicLimit(uint256 value);
 error InvalidTransferAmount();
+error InvalidDecimals();
 
 contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     using SafeERC20 for IERC20;
@@ -190,6 +191,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         bool supported;
         bool allowSellOrders;
         bool allowBuyOrders;
+        uint8 decimals;
+        uint256[4] tierMaxAmountsBaseUnit;
     }
 
     // ═══════════════════════════════════════════════════
@@ -208,11 +211,6 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     uint256 public constant TAKER_BOND_TIER2_BPS =  800;
     uint256 public constant TAKER_BOND_TIER3_BPS =  500;
     uint256 public constant TAKER_BOND_TIER4_BPS =  200;
-
-    uint256 public constant TIER_MAX_AMOUNT_TIER0 =    150 * 10**6;
-    uint256 public constant TIER_MAX_AMOUNT_TIER1 =   1500 * 10**6;
-    uint256 public constant TIER_MAX_AMOUNT_TIER2 =   7500 * 10**6;
-    uint256 public constant TIER_MAX_AMOUNT_TIER3 =  30000 * 10**6;
 
     uint256 public constant GOOD_REP_DISCOUNT_BPS = 100;
     uint256 public constant BAD_REP_PENALTY_BPS   = 300;
@@ -474,7 +472,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint8 effectiveTier = _getEffectiveTier(msg.sender);
         if (_tier > effectiveTier) revert TierNotAllowed();
 
-        uint256 tierMax = _getTierMaxAmount(_tier);
+        uint256 tierMax = _getTierMaxAmount(_token, _tier);
         if (tierMax > 0 && _totalAmount > tierMax) revert AmountExceedsTierLimit();
 
         uint256 makerBondBps   = _getMakerBondBps(msg.sender, _tier);
@@ -647,7 +645,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         //      enforce taker entry gate at create time as well.
         _enforceTakerEntry(msg.sender, _tier);
 
-        uint256 tierMax = _getTierMaxAmount(_tier);
+        uint256 tierMax = _getTierMaxAmount(_token, _tier);
         if (tierMax > 0 && _totalAmount > tierMax) revert AmountExceedsTierLimit();
 
         uint256 takerBondBps   = _getTakerBondBps(msg.sender, _tier);
@@ -1419,12 +1417,46 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      * @notice Returns the maximum escrow amount allowed for each tier.
      *         Tier 4 is intentionally unlimited.
      */
-    function _getTierMaxAmount(uint8 _tier) internal pure returns (uint256) {
-        if (_tier == 0) return TIER_MAX_AMOUNT_TIER0;
-        if (_tier == 1) return TIER_MAX_AMOUNT_TIER1;
-        if (_tier == 2) return TIER_MAX_AMOUNT_TIER2;
-        if (_tier == 3) return TIER_MAX_AMOUNT_TIER3;
-        return 0;
+    function _getTierMaxAmount(address _token, uint8 _tier) internal view returns (uint256) {
+        if (_tier > 3) return 0;
+        return tokenConfigs[_token].tierMaxAmountsBaseUnit[_tier];
+    }
+
+    /**
+     * @notice Token config'i UI/backend read-model katmanları için döndürür.
+     *         tierMaxAmountsBaseUnit değerleri token'ın base-unit cinsindendir.
+     * @notice Returns token config for UI/backend read-model layers.
+     *         tierMaxAmountsBaseUnit values are in token base units.
+     */
+    function getTokenConfig(address _token)
+        external
+        view
+        returns (
+            bool supported,
+            bool allowSellOrders,
+            bool allowBuyOrders,
+            uint8 decimals,
+            uint256[4] memory tierMaxAmountsBaseUnit
+        )
+    {
+        TokenConfig storage cfg = tokenConfigs[_token];
+        supported = cfg.supported;
+        allowSellOrders = cfg.allowSellOrders;
+        allowBuyOrders = cfg.allowBuyOrders;
+        decimals = cfg.decimals;
+        tierMaxAmountsBaseUnit = cfg.tierMaxAmountsBaseUnit;
+    }
+
+    /**
+     * @notice Tier başına token-spesifik maksimum escrow miktarını döndürür.
+     *         Dönüş değeri token base-unit cinsindendir. Tier 4 sınırsızdır.
+     * @notice Returns token-specific max escrow amount by tier.
+     *         Return value is in token base units. Tier 4 is unlimited.
+     */
+    function getTierMaxAmount(address _token, uint8 _tier) external view returns (uint256) {
+        if (_tier > 4) revert InvalidTier();
+        if (_tier == 4) return 0;
+        return tokenConfigs[_token].tierMaxAmountsBaseUnit[_tier];
     }
 
     /**
@@ -1646,15 +1678,22 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         address _token,
         bool _supported,
         bool _allowSellOrders,
-        bool _allowBuyOrders
+        bool _allowBuyOrders,
+        uint8 _decimals,
+        uint256[4] calldata _tierMaxAmountsBaseUnit
     ) external onlyOwner {
         if (_token == address(0)) revert OwnableInvalidOwner(address(0));
+        if (_decimals == 0 || _decimals > 18) revert InvalidDecimals();
+        for (uint256 i = 0; i < 4; i++) {
+            if (_tierMaxAmountsBaseUnit[i] == 0) revert ZeroAmount();
+        }
 
-        tokenConfigs[_token] = TokenConfig({
-            supported: _supported,
-            allowSellOrders: _allowSellOrders,
-            allowBuyOrders: _allowBuyOrders
-        });
+        TokenConfig storage cfg = tokenConfigs[_token];
+        cfg.supported = _supported;
+        cfg.allowSellOrders = _allowSellOrders;
+        cfg.allowBuyOrders = _allowBuyOrders;
+        cfg.decimals = _decimals;
+        cfg.tierMaxAmountsBaseUnit = _tierMaxAmountsBaseUnit;
 
         emit TokenConfigUpdated(_token, _supported, _allowSellOrders, _allowBuyOrders);
     }

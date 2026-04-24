@@ -7,6 +7,12 @@ describe("ArafEscrow exact in-transfer security", function () {
   const TRADE_AMOUNT = ethers.parseUnits("100", USDT_DECIMALS);
   const MIN_FILL = ethers.parseUnits("50", USDT_DECIMALS);
   const INITIAL_BAL = ethers.parseUnits("100000", USDT_DECIMALS);
+  const TIER_MAX_AMOUNTS_BASE_UNIT_6 = [
+    ethers.parseUnits("150", USDT_DECIMALS),
+    ethers.parseUnits("1500", USDT_DECIMALS),
+    ethers.parseUnits("7500", USDT_DECIMALS),
+    ethers.parseUnits("30000", USDT_DECIMALS),
+  ];
 
   function makeRef(label) {
     return ethers.keccak256(ethers.toUtf8Bytes(label));
@@ -45,8 +51,8 @@ describe("ArafEscrow exact in-transfer security", function () {
     const exactTokenAddress = await exactToken.getAddress();
     const feeTokenAddress = await feeToken.getAddress();
 
-    await escrow.connect(owner).setTokenConfig(exactTokenAddress, true, true, true);
-    await escrow.connect(owner).setTokenConfig(feeTokenAddress, true, true, true);
+    await escrow.connect(owner).setTokenConfig(exactTokenAddress, true, true, true, USDT_DECIMALS, TIER_MAX_AMOUNTS_BASE_UNIT_6);
+    await escrow.connect(owner).setTokenConfig(feeTokenAddress, true, true, true, USDT_DECIMALS, TIER_MAX_AMOUNTS_BASE_UNIT_6);
 
     for (const wallet of [maker, taker]) {
       await exactToken.mint(wallet.address, INITIAL_BAL);
