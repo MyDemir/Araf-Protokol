@@ -1,5 +1,6 @@
 import React from 'react';
 import PIIDisplay from '../components/PIIDisplay';
+import ReferenceRateTicker from '../components/ReferenceRateTicker';
 
 // [TR] App ana görünüm/render katmanı burada tutulur.
 // [EN] Main application view/render layer lives here.
@@ -366,6 +367,8 @@ export const buildAppViews = (ctx) => {
         </div>
       </div>
 
+      <ReferenceRateTicker lang={lang} />
+
       <div className="mb-4 p-3 rounded-xl border border-orange-700/40 bg-orange-900/20">
         <p className="text-[11px] text-orange-200 leading-relaxed">
           {lang === 'TR'
@@ -582,6 +585,10 @@ export const buildAppViews = (ctx) => {
     return (
       <div className="p-4 md:p-8 max-w-[900px] w-full mx-auto relative mt-6 md:mt-0">
         <button onClick={() => setCurrentView('market')} className="absolute -top-2 md:-top-4 left-4 md:left-8 text-slate-500 hover:text-white text-sm transition">← {lang === 'TR' ? 'Pazar Yerine Dön' : 'Go Back'}</button>
+
+        {/* [TR] Aktif işlem odasında da yalnız bilgilendirme amaçlı referans kur görünürlüğü sağlanır.
+            [EN] Active trade room also shows the same informational-only reference widget. */}
+        <ReferenceRateTicker lang={lang} />
 
         <div className={`border rounded-2xl p-5 md:p-8 shadow-2xl transition-colors duration-700 ${isChallenged ? 'bg-[#1a0f0f] border-red-900/40' : 'bg-[#111113] border-[#222]'}`}>
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 border-b border-[#222] pb-6 gap-4 md:gap-0">

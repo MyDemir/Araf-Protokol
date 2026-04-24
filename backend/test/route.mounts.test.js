@@ -15,6 +15,7 @@ describe("backend route mount consistency", () => {
       'app.use("/api/pii", piiRoutes);',
       'app.use("/api/stats", statsRoutes);',
       'app.use("/api/receipts", receiptRoutes);',
+      'app.use("/api/reference-rates", referenceRatesRoutes);',
     ].forEach((line) => {
       expect(appSource).toContain(line);
     });
