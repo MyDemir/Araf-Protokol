@@ -89,6 +89,12 @@ const normalizeReputationSnapshot = (rep) => {
     throw new Error('getReputation boş veya geçersiz veri döndürdü.');
   }
 
+  const getField = (key, index) => {
+    if (typeof rep[key] !== 'undefined') return rep[key];
+    if (typeof rep[index] !== 'undefined') return rep[index];
+    return undefined;
+  };
+
   const required = [
     'successfulTrades',
     'failedDisputes',
@@ -96,8 +102,8 @@ const normalizeReputationSnapshot = (rep) => {
     'consecutiveBans',
     'effectiveTier',
   ];
-  for (const key of required) {
-    if (typeof rep[key] === 'undefined') {
+  for (const [index, key] of required.entries()) {
+    if (typeof getField(key, index) === 'undefined') {
       throw new Error(`getReputation V3 alanı eksik: ${key}`);
     }
   }
@@ -105,21 +111,21 @@ const normalizeReputationSnapshot = (rep) => {
   return {
     // [TR] App/UI backward field names korunur; authority kaynak isimleri V3 getter'dan eşlenir.
     // [EN] Preserve app/UI field names; map from V3 authority getter field names.
-    successful: BigInt(rep.successfulTrades),
-    failed: BigInt(rep.failedDisputes),
-    bannedUntil: BigInt(rep.bannedUntil),
-    consecutiveBans: BigInt(rep.consecutiveBans),
-    effectiveTier: Number(rep.effectiveTier),
-    manualReleaseCount: BigInt(rep.manualReleaseCount ?? 0n),
-    autoReleaseCount: BigInt(rep.autoReleaseCount ?? 0n),
-    mutualCancelCount: BigInt(rep.mutualCancelCount ?? 0n),
-    disputedResolvedCount: BigInt(rep.disputedResolvedCount ?? 0n),
-    burnCount: BigInt(rep.burnCount ?? 0n),
-    disputeWinCount: BigInt(rep.disputeWinCount ?? 0n),
-    disputeLossCount: BigInt(rep.disputeLossCount ?? 0n),
-    riskPoints: BigInt(rep.riskPoints ?? 0n),
-    lastPositiveEventAt: BigInt(rep.lastPositiveEventAt ?? 0n),
-    lastNegativeEventAt: BigInt(rep.lastNegativeEventAt ?? 0n),
+    successful: BigInt(getField('successfulTrades', 0)),
+    failed: BigInt(getField('failedDisputes', 1)),
+    bannedUntil: BigInt(getField('bannedUntil', 2)),
+    consecutiveBans: BigInt(getField('consecutiveBans', 3)),
+    effectiveTier: Number(getField('effectiveTier', 4)),
+    manualReleaseCount: BigInt(getField('manualReleaseCount', 5) ?? 0n),
+    autoReleaseCount: BigInt(getField('autoReleaseCount', 6) ?? 0n),
+    mutualCancelCount: BigInt(getField('mutualCancelCount', 7) ?? 0n),
+    disputedResolvedCount: BigInt(getField('disputedResolvedCount', 8) ?? 0n),
+    burnCount: BigInt(getField('burnCount', 9) ?? 0n),
+    disputeWinCount: BigInt(getField('disputeWinCount', 10) ?? 0n),
+    disputeLossCount: BigInt(getField('disputeLossCount', 11) ?? 0n),
+    riskPoints: BigInt(getField('riskPoints', 12) ?? 0n),
+    lastPositiveEventAt: BigInt(getField('lastPositiveEventAt', 13) ?? 0n),
+    lastNegativeEventAt: BigInt(getField('lastNegativeEventAt', 14) ?? 0n),
   };
 };
 

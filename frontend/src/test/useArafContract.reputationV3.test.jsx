@@ -64,15 +64,33 @@ describe('useArafContract getReputation V3 mapping', () => {
     });
   });
 
-  it('returns null when old tuple-style payload is returned', async () => {
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    mockReadContract.mockResolvedValue([11n, 2n, 0n, 1n, 3n]);
+  it('normalizes tuple-style payloads returned by some clients', async () => {
+    mockReadContract.mockResolvedValue([
+      11n, 2n, 0n, 1n, 3n,
+      5n, 1n, 2n, 3n, 0n,
+      1n, 1n, 12n, 100n, 200n,
+    ]);
 
     const { useArafContract } = await import('../hooks/useArafContract');
     const { result } = renderHook(() => useArafContract());
     const rep = await result.current.getReputation('0xabc');
 
-    expect(rep).toBeNull();
-    consoleSpy.mockRestore();
+    expect(rep).toEqual({
+      successful: 11n,
+      failed: 2n,
+      bannedUntil: 0n,
+      consecutiveBans: 1n,
+      effectiveTier: 3,
+      manualReleaseCount: 5n,
+      autoReleaseCount: 1n,
+      mutualCancelCount: 2n,
+      disputedResolvedCount: 3n,
+      burnCount: 0n,
+      disputeWinCount: 1n,
+      disputeLossCount: 1n,
+      riskPoints: 12n,
+      lastPositiveEventAt: 100n,
+      lastNegativeEventAt: 200n,
+    });
   });
 });
