@@ -13,7 +13,7 @@ pragma solidity ^0.8.24;
  *         Zamanla eriyen (Bleeding Escrow) anlaşmazlık çözüm mekanizması içerir.
  * @notice Oracle-free P2P fiat ↔ crypto escrow with Bleeding Escrow (time-decay) dispute resolution.
  * @dev    Security: ReentrancyGuard + CEI pattern + EIP-712 cancel. Network: Base (L2)
- * @author Araf Protocol — v2.1
+ * @author Araf Protocol — v3.0
  */
 
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
