@@ -42,6 +42,12 @@ describe('frontend ↔ backend API path alignment', () => {
     const contract = readFront('src/hooks/useArafContract.js');
     expect(contract).toContain('resolveClientErrorLogUrl');
     expect(contract).toContain('fetch(logUrl, {');
+    expect(contract).toContain('manualReleaseCount');
+    expect(contract).not.toContain('view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier)');
+
+    const sessionSource = readFront('src/app/useAppSessionData.jsx');
+    expect(sessionSource).not.toContain('repData[0]');
+    expect(sessionSource).toContain('authorityCounters');
 
     const boundary = readFront('src/components/ErrorBoundary.jsx');
     expect(boundary).toContain('resolveClientErrorLogUrl');

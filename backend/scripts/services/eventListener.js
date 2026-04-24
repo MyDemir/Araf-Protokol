@@ -57,15 +57,7 @@ function _getPositiveIntEnv(name, fallback) {
 
 const BLOCK_BATCH_SIZE = _getPositiveIntEnv("WORKER_BLOCK_BATCH_SIZE", 1_000);
 const CHECKPOINT_INTERVAL_BLOCKS = _getPositiveIntEnv("WORKER_CHECKPOINT_INTERVAL_BLOCKS", 50);
-const MAX_REPUTATION_HISTORY = 100;
 const BLOCK_TIMESTAMP_CACHE_LIMIT = 2_048;
-
-const FAILURE_SCORE_WEIGHTS = {
-  burned: 50,
-  unjust_challenge: 20,
-  passive_maker: 20,
-  failed_dispute: 20,
-};
 
 const EVENT_NAMES = [
   "WalletRegistered",
@@ -88,7 +80,7 @@ const ARAF_ABI = [
   "event CancelProposed(uint256 indexed tradeId, address indexed proposer)",
   "event EscrowCanceled(uint256 indexed tradeId, uint256 makerRefund, uint256 takerRefund)",
   "event MakerPinged(uint256 indexed tradeId, address indexed pinger, uint256 timestamp)",
-  "event ReputationUpdated(address indexed wallet, uint256 successful, uint256 failed, uint256 bannedUntil, uint8 effectiveTier)",
+  "event ReputationUpdated(address indexed wallet, uint256 successful, uint256 failed, uint256 bannedUntil, uint8 effectiveTier, uint256 manualReleaseCount, uint256 autoReleaseCount, uint256 mutualCancelCount, uint256 disputedResolvedCount, uint256 burnCount, uint256 disputeWinCount, uint256 disputeLossCount, uint256 riskPoints, uint256 lastPositiveEventAt, uint256 lastNegativeEventAt)",
   "event BleedingDecayed(uint256 indexed tradeId, uint256 decayedAmount, uint256 timestamp)",
   "event EscrowBurned(uint256 indexed tradeId, uint256 burnedAmount)",
   "event OrderCreated(uint256 indexed orderId, address indexed owner, uint8 side, address token, uint256 totalAmount, uint256 minFillAmount, uint8 tier, bytes32 orderRef)",
@@ -99,7 +91,7 @@ const ARAF_ABI = [
   "event TokenConfigUpdated(address indexed token, bool supported, bool allowSellOrders, bool allowBuyOrders)",
   "function getTrade(uint256 _tradeId) view returns ((uint256 id,uint256 parentOrderId,address maker,address taker,address tokenAddress,uint256 cryptoAmount,uint256 makerBond,uint256 takerBond,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 state,uint256 lockedAt,uint256 paidAt,uint256 challengedAt,string ipfsReceiptHash,bool cancelProposedByMaker,bool cancelProposedByTaker,uint256 pingedAt,bool pingedByTaker,uint256 challengePingedAt,bool challengePingedByMaker))",
   "function getOrder(uint256 _orderId) view returns ((uint256 id,address owner,uint8 side,address tokenAddress,uint256 totalAmount,uint256 remainingAmount,uint256 minFillAmount,uint256 remainingMakerBondReserve,uint256 remainingTakerBondReserve,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 state,bytes32 orderRef))",
-  "function getReputation(address _wallet) view returns (uint256 successful,uint256 failed,uint256 bannedUntil,uint256 consecutiveBans,uint8 effectiveTier)",
+  "function getReputation(address _wallet) view returns (uint256 successful,uint256 failed,uint256 bannedUntil,uint256 consecutiveBans,uint8 effectiveTier,uint256 manualReleaseCount,uint256 autoReleaseCount,uint256 mutualCancelCount,uint256 disputedResolvedCount,uint256 burnCount,uint256 disputeWinCount,uint256 disputeLossCount,uint256 riskPoints,uint256 lastPositiveEventAt,uint256 lastNegativeEventAt)",
 ];
 
 const EVENT_ARG_KEYS = {
@@ -112,7 +104,23 @@ const EVENT_ARG_KEYS = {
   CancelProposed: ["tradeId", "proposer"],
   EscrowCanceled: ["tradeId", "makerRefund", "takerRefund"],
   MakerPinged: ["tradeId", "pinger", "timestamp"],
-  ReputationUpdated: ["wallet", "successful", "failed", "bannedUntil", "effectiveTier"],
+  ReputationUpdated: [
+    "wallet",
+    "successful",
+    "failed",
+    "bannedUntil",
+    "effectiveTier",
+    "manualReleaseCount",
+    "autoReleaseCount",
+    "mutualCancelCount",
+    "disputedResolvedCount",
+    "burnCount",
+    "disputeWinCount",
+    "disputeLossCount",
+    "riskPoints",
+    "lastPositiveEventAt",
+    "lastNegativeEventAt",
+  ],
   BleedingDecayed: ["tradeId", "decayedAmount", "timestamp"],
   EscrowBurned: ["tradeId", "burnedAmount"],
   OrderCreated: ["orderId", "owner", "side", "token", "totalAmount", "minFillAmount", "tier", "orderRef"],
@@ -154,103 +162,15 @@ function _buildReputationContextAtLock(user) {
     consecutive_bans: user?.consecutive_bans ?? null,
     is_banned: user?.is_banned ?? null,
     banned_until: user?.banned_until ?? null,
+    manual_release_count: user?.reputation_breakdown?.manual_release_count ?? null,
     burn_count: user?.reputation_breakdown?.burn_count ?? null,
     auto_release_count: user?.reputation_breakdown?.auto_release_count ?? null,
     mutual_cancel_count: user?.reputation_breakdown?.mutual_cancel_count ?? null,
-    disputed_but_resolved_count: user?.reputation_breakdown?.disputed_but_resolved_count ?? null,
+    disputed_resolved_count: user?.reputation_breakdown?.disputed_resolved_count ?? null,
+    dispute_win_count: user?.reputation_breakdown?.dispute_win_count ?? null,
+    dispute_loss_count: user?.reputation_breakdown?.dispute_loss_count ?? null,
+    risk_points: user?.reputation_breakdown?.risk_points ?? null,
   };
-}
-
-function _hasDisputeEvidence(trade, tradeData) {
-  return Boolean(
-    trade?.timers?.challenged_at ||
-    _toNum(tradeData?.challengedAt) > 0
-  );
-}
-
-function _hasDeterministicAutoReleaseEvidence(trade, tradeData) {
-  return Boolean(
-    trade?.timers?.pinged_at ||
-    trade?.pinged_by_taker === true ||
-    Boolean(tradeData?.pingedByTaker)
-  );
-}
-
-/**
- * [TR] Semantik sınıflandırma sadece mirror/event verisine dayanır, authority üretmez.
- * [EN] Semantic classification is mirror/event-only and non-authoritative.
- */
-function _classifyTerminalSemanticOutcome({ terminalStatus, trade, tradeData }) {
-  if (terminalStatus === "BURNED") {
-    return { historyType: "burned", counterField: "burn_count" };
-  }
-
-  if (terminalStatus === "CANCELED") {
-    // [TR] Öncelik zincirden çekilen cancel flag'lerdedir; Mongo mirror gecikmesine karşı drift'i önler.
-    // [EN] Prefer on-chain cancel flags first to avoid permanent drift on mirror lag/failure.
-    const makerSignedOnChain = tradeData?.cancelProposedByMaker;
-    const takerSignedOnChain = tradeData?.cancelProposedByTaker;
-    const makerSignedMirror = trade?.cancel_proposal?.maker_signed;
-    const takerSignedMirror = trade?.cancel_proposal?.taker_signed;
-    const mutualCanceled = Boolean(
-      (makerSignedOnChain ?? makerSignedMirror) &&
-      (takerSignedOnChain ?? takerSignedMirror)
-    );
-    return mutualCanceled
-      ? { historyType: "mutual_canceled", counterField: "mutual_cancel_count" }
-      : { historyType: "canceled_unclassified", counterField: null };
-  }
-
-  if (terminalStatus === "RESOLVED") {
-    if (_hasDisputeEvidence(trade, tradeData)) {
-      return { historyType: "disputed_resolved", counterField: "disputed_but_resolved_count" };
-    }
-
-    if (_hasDeterministicAutoReleaseEvidence(trade, tradeData)) {
-      return { historyType: "auto_released", counterField: "auto_release_count" };
-    }
-
-    return { historyType: "resolved_unclassified", counterField: null };
-  }
-
-  return { historyType: "terminal_unclassified", counterField: null };
-}
-
-async function _applySemanticOutcomeToParticipants({
-  session,
-  addresses,
-  semantic,
-  eventAt,
-  tradeId,
-  pushHistory = true,
-}) {
-  for (const addr of addresses.filter(Boolean)) {
-    const update = {
-      $set: {
-        last_onchain_sync_at: eventAt,
-        "reputation_breakdown.last_semantic_event_at": eventAt,
-      },
-    };
-
-    if (pushHistory) {
-      update.$push = {
-        reputation_history: {
-          $each: [{ type: semantic.historyType, score: 0, date: eventAt, tradeId }],
-          $slice: -MAX_REPUTATION_HISTORY,
-        },
-      };
-    }
-
-    if (semantic.counterField) {
-      update.$inc = { [`reputation_breakdown.${semantic.counterField}`]: 1 };
-    }
-
-    await User.findOneAndUpdate(
-      { wallet_address: addr },
-      update,
-      { session }
-    );
-  }
 }
 
 /**
@@ -1324,8 +1244,6 @@ class EventWorker {
     const { tradeId } = event.args;
     const resolvedAt = await this._getEventDate(event);
     const tradeIdNum = _toIdentityString(tradeId);
-    const tradeData = await this._fetchTradeFromChain(tradeId);
-    const wasDisputed = _toNum(tradeData.challengedAt) > 0;
 
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -1350,39 +1268,6 @@ class EventWorker {
         await session.abortTransaction();
         return;
       }
-
-      if (wasDisputed && trade.maker_address) {
-        const scoreType = "unjust_challenge";
-        const score = FAILURE_SCORE_WEIGHTS[scoreType];
-
-        await User.findOneAndUpdate(
-          { wallet_address: trade.maker_address },
-          {
-            $inc: { "reputation_cache.failure_score": score },
-            $push: {
-              reputation_history: {
-                $each: [{ type: scoreType, score, date: resolvedAt, tradeId: tradeIdNum }],
-                $slice: -MAX_REPUTATION_HISTORY,
-              },
-            },
-            $set: { last_onchain_sync_at: resolvedAt },
-          },
-          { session }
-        );
-      }
-
-      const semantic = _classifyTerminalSemanticOutcome({
-        terminalStatus: "RESOLVED",
-        trade,
-        tradeData,
-      });
-      await _applySemanticOutcomeToParticipants({
-        session,
-        addresses: [trade.maker_address, trade.taker_address],
-        semantic,
-        eventAt: resolvedAt,
-        tradeId: tradeIdNum,
-      });
 
       if (trade.parent_order_id) {
         await Order.findOneAndUpdate(
@@ -1428,16 +1313,6 @@ class EventWorker {
     const { tradeId } = event.args;
     const canceledAt = await this._getEventDate(event);
     const tradeIdNum = _toIdentityString(tradeId);
-    let tradeData = null;
-    try {
-      // [TR] Cancel semantiğinde authoritative çift-imza sınıflandırması için zincir snapshot'ı kullanılır.
-      // [EN] Use chain snapshot for authoritative mutual-cancel classification.
-      tradeData = await this._fetchTradeFromChain(tradeId);
-    } catch (err) {
-      // [TR] Fail-closed: chain fetch yoksa mirror verisiyle neutral/unclassified kalınabilir.
-      // [EN] Fail-closed: if chain fetch is unavailable, fallback mirror may remain unclassified.
-      logger.warn(`[Worker] EscrowCanceled chain snapshot alınamadı: trade=${tradeIdNum} err=${err.message}`);
-    }
 
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -1461,19 +1336,6 @@ class EventWorker {
         await session.abortTransaction();
         return;
       }
-
-      const semantic = _classifyTerminalSemanticOutcome({
-        terminalStatus: "CANCELED",
-        trade,
-        tradeData,
-      });
-      await _applySemanticOutcomeToParticipants({
-        session,
-        addresses: [trade.maker_address, trade.taker_address],
-        semantic,
-        eventAt: canceledAt,
-        tradeId: tradeIdNum,
-      });
 
       if (trade.parent_order_id) {
         await Order.findOneAndUpdate(
@@ -1515,46 +1377,6 @@ class EventWorker {
         },
         { new: true, session }
       );
-
-      if (trade) {
-        const scoreType = "burned";
-        const score = FAILURE_SCORE_WEIGHTS[scoreType];
-        const addresses = [trade.maker_address, trade.taker_address].filter(Boolean);
-
-        for (const addr of addresses) {
-          await User.findOneAndUpdate(
-            { wallet_address: addr },
-            {
-              $inc: { "reputation_cache.failure_score": score },
-              $push: {
-                reputation_history: {
-                  $each: [{ type: scoreType, score, date: burnedAt, tradeId: tradeIdNum }],
-                  $slice: -MAX_REPUTATION_HISTORY,
-                },
-              },
-              $set: { last_onchain_sync_at: burnedAt },
-            },
-            { session }
-          );
-        }
-
-        const semantic = _classifyTerminalSemanticOutcome({
-          terminalStatus: "BURNED",
-          trade,
-        });
-        await _applySemanticOutcomeToParticipants({
-          session,
-          addresses,
-          semantic,
-          eventAt: burnedAt,
-          tradeId: tradeIdNum,
-          // [TR] BURNED için failure_score audit kaydı zaten { type: "burned" } olarak yazılıyor.
-          //      Aynı terminal outcome için ikinci bir history satırı üretmiyoruz.
-          // [EN] BURNED already writes { type: "burned" } via failure-score audit path.
-          //      Skip duplicate semantic-history row for the same terminal outcome.
-          pushHistory: false,
-        });
-      }
 
       if (trade?.parent_order_id) {
         await Order.findOneAndUpdate(
@@ -1665,7 +1487,23 @@ class EventWorker {
   }
 
   async _onReputationUpdated(event) {
-    const { wallet, successful, failed, bannedUntil, effectiveTier } = event.args;
+    const {
+      wallet,
+      successful,
+      failed,
+      bannedUntil,
+      effectiveTier,
+      manualReleaseCount,
+      autoReleaseCount,
+      mutualCancelCount,
+      disputedResolvedCount,
+      burnCount,
+      disputeWinCount,
+      disputeLossCount,
+      riskPoints,
+      lastPositiveEventAt,
+      lastNegativeEventAt,
+    } = event.args;
     const syncAt = await this._getEventDate(event);
 
     const totalTrades = _toNum(successful) + _toNum(failed);
@@ -1675,15 +1513,8 @@ class EventWorker {
     const banTimestamp = _toNum(bannedUntil);
     const isBanned = banTimestamp > Math.floor(Date.now() / 1000);
 
-    let consecutiveBans = 0;
-    try {
-      const rep = await this._fetchReputationFromChain(wallet);
-      if (rep && rep.consecutiveBans !== undefined) {
-        consecutiveBans = _toNum(rep.consecutiveBans);
-      }
-    } catch (err) {
-      logger.warn(`[Worker] getReputation backfill başarısız: wallet=${wallet} err=${err.message}`);
-    }
+    const rep = await this._fetchReputationFromChain(wallet);
+    const consecutiveBans = rep?.consecutiveBans !== undefined ? _toNum(rep.consecutiveBans) : 0;
 
     await User.findOneAndUpdate(
       { wallet_address: wallet.toLowerCase() },
@@ -1694,6 +1525,21 @@ class EventWorker {
           "reputation_cache.successful_trades": _toNum(successful),
           "reputation_cache.failed_disputes": _toNum(failed),
           "reputation_cache.effective_tier": _toNum(effectiveTier),
+          // [TR] failure_score artık backend sınıflandırmasından değil, kontrat risk_points aynasından türetilir.
+          // [EN] failure_score is now mirrored from contract risk_points, not backend-side classification.
+          "reputation_cache.failure_score": _toNum(riskPoints),
+          "reputation_breakdown.manual_release_count": _toNum(manualReleaseCount),
+          "reputation_breakdown.auto_release_count": _toNum(autoReleaseCount),
+          "reputation_breakdown.mutual_cancel_count": _toNum(mutualCancelCount),
+          "reputation_breakdown.disputed_resolved_count": _toNum(disputedResolvedCount),
+          "reputation_breakdown.burn_count": _toNum(burnCount),
+          "reputation_breakdown.dispute_win_count": _toNum(disputeWinCount),
+          "reputation_breakdown.dispute_loss_count": _toNum(disputeLossCount),
+          "reputation_breakdown.risk_points": _toNum(riskPoints),
+          "reputation_breakdown.last_positive_event_at":
+            _toNum(lastPositiveEventAt) > 0 ? new Date(_toNum(lastPositiveEventAt) * 1000) : null,
+          "reputation_breakdown.last_negative_event_at":
+            _toNum(lastNegativeEventAt) > 0 ? new Date(_toNum(lastNegativeEventAt) * 1000) : null,
           "is_banned": isBanned,
           "banned_until": isBanned ? new Date(banTimestamp * 1000) : null,
           "consecutive_bans": consecutiveBans,
@@ -1760,4 +1606,3 @@ worker.reprocessDLQEntry = async function reprocessDLQEntry(entry) {
 };
 
 module.exports = worker;
-module.exports._classifyTerminalSemanticOutcome = _classifyTerminalSemanticOutcome;

@@ -103,14 +103,19 @@ const userSchema = new mongoose.Schema(
       default: [],
     },
 
-    // [TR] Reputation semantiği read-model aynasıdır; protokol authority'si değildir.
-    // [EN] Reputation semantics are mirror/read-model only; never protocol authority.
+    // [TR] Contract V3 reputation sayaçlarının backend aynasıdır (source-of-truth kontrattır).
+    // [EN] Mirror of contract V3 reputation counters (contract remains source-of-truth).
     reputation_breakdown: {
+      manual_release_count: { type: Number, default: 0, min: 0 },
       burn_count: { type: Number, default: 0, min: 0 },
       auto_release_count: { type: Number, default: 0, min: 0 },
       mutual_cancel_count: { type: Number, default: 0, min: 0 },
-      disputed_but_resolved_count: { type: Number, default: 0, min: 0 },
-      last_semantic_event_at: { type: Date, default: null },
+      disputed_resolved_count: { type: Number, default: 0, min: 0 },
+      dispute_win_count: { type: Number, default: 0, min: 0 },
+      dispute_loss_count: { type: Number, default: 0, min: 0 },
+      risk_points: { type: Number, default: 0, min: 0 },
+      last_positive_event_at: { type: Date, default: null },
+      last_negative_event_at: { type: Date, default: null },
     },
 
     // ── Ban Aynası (authority değil, chain sync cache) ───────────────────────
@@ -163,6 +168,10 @@ userSchema.methods.toPublicProfile = function () {
       effective_tier: this.reputation_cache.effective_tier,
       failure_score: this.reputation_cache.failure_score,
     },
+    // [TR] reputation_breakdown bilinçli olarak public profile'a açılmaz.
+    //      Bu semantik sayaçlar yalnız trade-scoped explainability/admin yüzeyinde kalır.
+    // [EN] reputation_breakdown is intentionally excluded from public profile.
+    //      These semantic counters stay only on trade-scoped explainability/admin surfaces.
     is_banned: this.is_banned,
     consecutive_bans: this.consecutive_bans,
     max_allowed_tier: this.max_allowed_tier,

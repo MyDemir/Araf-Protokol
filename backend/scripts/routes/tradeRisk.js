@@ -8,11 +8,16 @@ function _toSafeNumber(value, fallback = 0) {
 }
 
 function _buildMirrorContext(lockContext, fallbackUser) {
-  const semanticLock = {
+  const authorityLock = {
+    manual_release_count: lockContext?.manual_release_count,
     burn_count: lockContext?.burn_count,
     auto_release_count: lockContext?.auto_release_count,
     mutual_cancel_count: lockContext?.mutual_cancel_count,
-    disputed_but_resolved_count: lockContext?.disputed_but_resolved_count,
+    disputed_resolved_count:
+      lockContext?.disputed_resolved_count ?? lockContext?.disputed_but_resolved_count,
+    dispute_win_count: lockContext?.dispute_win_count,
+    dispute_loss_count: lockContext?.dispute_loss_count,
+    risk_points: lockContext?.risk_points,
   };
   return {
     successRate: lockContext?.success_rate ?? fallbackUser?.reputation_cache?.success_rate ?? null,
@@ -21,15 +26,56 @@ function _buildMirrorContext(lockContext, fallbackUser) {
     isBannedMirror: lockContext?.is_banned ?? fallbackUser?.is_banned ?? null,
     bannedUntilMirror: lockContext?.banned_until ?? fallbackUser?.banned_until ?? null,
     consecutiveBansMirror: lockContext?.consecutive_bans ?? fallbackUser?.consecutive_bans ?? null,
-    reputation_semantics: {
-      burn_count: semanticLock.burn_count ?? fallbackUser?.reputation_breakdown?.burn_count ?? null,
+    // [TR] Aşağıdaki sayaçlar kontrat authority'sinin backend aynasıdır; payload paketlemesi bilgilendirme amaçlıdır.
+    // [EN] Counters below mirror contract authority; payload packaging is informational-only.
+    reputation_authority_counters: {
+      manual_release_count:
+        authorityLock.manual_release_count ?? fallbackUser?.reputation_breakdown?.manual_release_count ?? null,
+      burn_count: authorityLock.burn_count ?? fallbackUser?.reputation_breakdown?.burn_count ?? null,
       auto_release_count:
-        semanticLock.auto_release_count ?? fallbackUser?.reputation_breakdown?.auto_release_count ?? null,
+        authorityLock.auto_release_count ?? fallbackUser?.reputation_breakdown?.auto_release_count ?? null,
       mutual_cancel_count:
-        semanticLock.mutual_cancel_count ?? fallbackUser?.reputation_breakdown?.mutual_cancel_count ?? null,
+        authorityLock.mutual_cancel_count ?? fallbackUser?.reputation_breakdown?.mutual_cancel_count ?? null,
+      disputed_resolved_count:
+        authorityLock.disputed_resolved_count ??
+        fallbackUser?.reputation_breakdown?.disputed_resolved_count ??
+        null,
+      dispute_win_count:
+        authorityLock.dispute_win_count ?? fallbackUser?.reputation_breakdown?.dispute_win_count ?? null,
+      dispute_loss_count:
+        authorityLock.dispute_loss_count ?? fallbackUser?.reputation_breakdown?.dispute_loss_count ?? null,
+      risk_points:
+        authorityLock.risk_points ?? fallbackUser?.reputation_breakdown?.risk_points ?? null,
+      // [TR] Geriye-uyum: eski isim route seviyesinde maplenir, DB truth çoğaltılmaz.
+      // [EN] Backward-compat: legacy alias mapped at route layer only, no duplicated DB truth.
       disputed_but_resolved_count:
-        semanticLock.disputed_but_resolved_count ??
-        fallbackUser?.reputation_breakdown?.disputed_but_resolved_count ??
+        authorityLock.disputed_resolved_count ??
+        fallbackUser?.reputation_breakdown?.disputed_resolved_count ??
+        null,
+    },
+    // [TR] Geriye-uyum için eski anahtar korunur (alias).
+    // [EN] Preserve legacy key as alias for backward compatibility.
+    reputation_semantics: {
+      manual_release_count:
+        authorityLock.manual_release_count ?? fallbackUser?.reputation_breakdown?.manual_release_count ?? null,
+      burn_count: authorityLock.burn_count ?? fallbackUser?.reputation_breakdown?.burn_count ?? null,
+      auto_release_count:
+        authorityLock.auto_release_count ?? fallbackUser?.reputation_breakdown?.auto_release_count ?? null,
+      mutual_cancel_count:
+        authorityLock.mutual_cancel_count ?? fallbackUser?.reputation_breakdown?.mutual_cancel_count ?? null,
+      disputed_resolved_count:
+        authorityLock.disputed_resolved_count ??
+        fallbackUser?.reputation_breakdown?.disputed_resolved_count ??
+        null,
+      dispute_win_count:
+        authorityLock.dispute_win_count ?? fallbackUser?.reputation_breakdown?.dispute_win_count ?? null,
+      dispute_loss_count:
+        authorityLock.dispute_loss_count ?? fallbackUser?.reputation_breakdown?.dispute_loss_count ?? null,
+      risk_points:
+        authorityLock.risk_points ?? fallbackUser?.reputation_breakdown?.risk_points ?? null,
+      disputed_but_resolved_count:
+        authorityLock.disputed_resolved_count ??
+        fallbackUser?.reputation_breakdown?.disputed_resolved_count ??
         null,
     },
   };
@@ -107,7 +153,8 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
     makerEffectiveTierMirrorAtLock: makerReputationContextAtLock?.effective_tier ?? null,
     makerFailedDisputesMirrorAtLock: makerReputationContextAtLock?.failed_disputes ?? null,
     makerWasBannedMirrorAtLock: makerReputationContextAtLock?.is_banned ?? null,
-    reputation_semantics: _buildMirrorContext(makerReputationContextAtLock, makerUser).reputation_semantics,
+    reputation_authority_counters:
+      _buildMirrorContext(makerReputationContextAtLock, makerUser).reputation_authority_counters,
   };
 
   return {
@@ -121,6 +168,7 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
     taker: takerFacingCounterpartySummary,
     informational_only: true,
     non_authoritative_semantics: true,
+    authoritative_counter_mirror: true,
     snapshot: {
       capturedAt: payoutSnapshot?.captured_at || null,
       isComplete: isSnapshotComplete,

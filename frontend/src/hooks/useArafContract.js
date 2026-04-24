@@ -40,7 +40,7 @@ const ArafEscrowABI = parseAbi([
   'function decayReputation(address _wallet)',
 
   // View Fonksiyonları (App.jsx'te kullanılanlar) 
-  'function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier)',
+  'function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier, uint256 manualReleaseCount, uint256 autoReleaseCount, uint256 mutualCancelCount, uint256 disputedResolvedCount, uint256 burnCount, uint256 disputeWinCount, uint256 disputeLossCount, uint256 riskPoints, uint256 lastPositiveEventAt, uint256 lastNegativeEventAt)',
   'function antiSybilCheck(address _wallet) view returns (bool aged, bool funded, bool cooldownOk)',
   'function getCooldownRemaining(address _wallet) view returns (uint256)',
   'function walletRegisteredAt(address _wallet) view returns (uint256)',
@@ -72,6 +72,57 @@ const ERC20_ABI = parseAbi([
 ]);
 
 const ESCROW_ADDRESS = import.meta.env.VITE_ESCROW_ADDRESS;
+
+// [TR] V3 kontrat authority tuple sırası — frontend bu sırayı açıkça doğrular.
+// [EN] V3 contract-authority tuple order — frontend validates this explicitly.
+const REPUTATION_V3_KEYS = [
+  'successful',
+  'failed',
+  'bannedUntil',
+  'consecutiveBans',
+  'effectiveTier',
+  'manualReleaseCount',
+  'autoReleaseCount',
+  'mutualCancelCount',
+  'disputedResolvedCount',
+  'burnCount',
+  'disputeWinCount',
+  'disputeLossCount',
+  'riskPoints',
+  'lastPositiveEventAt',
+  'lastNegativeEventAt',
+];
+
+const toBigIntSafe = (value, fallback = 0n) => {
+  try {
+    return BigInt(value ?? fallback);
+  } catch {
+    return fallback;
+  }
+};
+
+export function normalizeV3Reputation(rawReputation) {
+  if (!rawReputation || (typeof rawReputation !== 'object' && !Array.isArray(rawReputation))) {
+    return null;
+  }
+
+  const normalized = {};
+  for (let i = 0; i < REPUTATION_V3_KEYS.length; i += 1) {
+    const key = REPUTATION_V3_KEYS[i];
+    const namedValue = rawReputation?.[key];
+    const tupleValue = Array.isArray(rawReputation) ? rawReputation[i] : undefined;
+    const resolved = typeof namedValue !== 'undefined' ? namedValue : tupleValue;
+
+    // [TR] Varsayım yok: alanlardan biri bile eksikse stale/malformed response kabul ederiz.
+    // [EN] No assumptions: any missing field means stale/malformed response.
+    if (typeof resolved === 'undefined') {
+      return null;
+    }
+    normalized[key] = toBigIntSafe(resolved, 0n);
+  }
+
+  return normalized;
+}
 
 
 // Desteklenen chain ID'ler — Base Mainnet ve Base Sepolia
@@ -599,12 +650,18 @@ export function useArafContract() {
           return null;
         }
         try {
-          return await publicClient.readContract({
+          const rawReputation = await publicClient.readContract({
             address: getAddress(ESCROW_ADDRESS),
             abi: ArafEscrowABI,
             functionName: 'getReputation',
             args: [getAddress(address)],
           });
+          const normalized = normalizeV3Reputation(rawReputation);
+          if (!normalized) {
+            console.error('[ArafContract] getReputation V3 response malformed or stale shape detected.');
+            return null;
+          }
+          return normalized;
         } catch (err) {
           console.error("[ArafContract] getReputation hatası:", err.message);
           return null;

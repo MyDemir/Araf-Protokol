@@ -26,6 +26,33 @@ const rawTokenToDisplayNumber = (rawAmount, decimals = DEFAULT_TOKEN_DECIMALS) =
   }
 };
 
+export function mapReputationToSessionView(repData, firstTradeAt = 0n) {
+  if (!repData) return null;
+
+  // [TR] Frontend sadece kontrattan mirror edilen V3 authority alanlarını paketler.
+  // [EN] Frontend only packages V3 authority fields mirrored from contract data.
+  return {
+    successful: Number(repData.successful ?? 0n),
+    failed: Number(repData.failed ?? 0n),
+    bannedUntil: Number(repData.bannedUntil ?? 0n),
+    consecutiveBans: Number(repData.consecutiveBans ?? 0n),
+    effectiveTier: Number(repData.effectiveTier ?? 0n),
+    firstSuccessfulTradeAt: Number(firstTradeAt ?? 0n),
+    authorityCounters: {
+      manualReleaseCount: Number(repData.manualReleaseCount ?? 0n),
+      autoReleaseCount: Number(repData.autoReleaseCount ?? 0n),
+      mutualCancelCount: Number(repData.mutualCancelCount ?? 0n),
+      disputedResolvedCount: Number(repData.disputedResolvedCount ?? 0n),
+      burnCount: Number(repData.burnCount ?? 0n),
+      disputeWinCount: Number(repData.disputeWinCount ?? 0n),
+      disputeLossCount: Number(repData.disputeLossCount ?? 0n),
+      riskPoints: Number(repData.riskPoints ?? 0n),
+      lastPositiveEventAt: Number(repData.lastPositiveEventAt ?? 0n),
+      lastNegativeEventAt: Number(repData.lastNegativeEventAt ?? 0n),
+    },
+  };
+}
+
 export function useAppSessionData({
   address,
   isConnected,
@@ -589,22 +616,15 @@ export function useAppSessionData({
     const fetchUserReputation = async () => {
       try {
         const repData = await getReputation(address);
-        const successful = typeof repData.successful !== 'undefined' ? repData.successful : repData[0];
-        const failed = typeof repData.failed !== 'undefined' ? repData.failed : repData[1];
-        const bannedUntil = typeof repData.bannedUntil !== 'undefined' ? repData.bannedUntil : repData[2];
-        const consecutiveBans = typeof repData.consecutiveBans !== 'undefined' ? repData.consecutiveBans : repData[3];
-        const effectiveTier = typeof repData.effectiveTier !== 'undefined' ? repData.effectiveTier : repData[4];
+        if (!repData) {
+          setUserReputation(null);
+          setIsBanned(false);
+          return;
+        }
         const firstTradeAt = getFirstSuccessfulTradeAt ? await getFirstSuccessfulTradeAt(address) : 0n;
-
-        setUserReputation({
-          successful: Number(successful),
-          failed: Number(failed),
-          bannedUntil: Number(bannedUntil),
-          consecutiveBans: Number(consecutiveBans),
-          effectiveTier: Number(effectiveTier),
-          firstSuccessfulTradeAt: Number(firstTradeAt),
-        });
-        setIsBanned(Number(bannedUntil) > Date.now() / 1000);
+        const mappedReputation = mapReputationToSessionView(repData, firstTradeAt);
+        setUserReputation(mappedReputation);
+        setIsBanned((mappedReputation?.bannedUntil ?? 0) > Date.now() / 1000);
       } catch (err) {
         console.error('Kullanıcı itibar verisi çekilemedi:', err);
       }

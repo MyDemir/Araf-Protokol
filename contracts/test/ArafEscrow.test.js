@@ -278,7 +278,7 @@ describe("ArafEscrow V3", function () {
     const tokenAddr = await mockUSDT.getAddress();
     const escrowAddr = await escrow.getAddress();
 
-    await escrow.connect(owner).setSupportedToken(tokenAddr, true);
+    await escrow.connect(owner).setTokenConfig(tokenAddr, true, true, true);
 
     await mockUSDT.mint(maker.address, INITIAL_BAL);
     await mockUSDT.mint(taker.address, INITIAL_BAL);
@@ -2368,4 +2368,5 @@ describe("ArafEscrow V3", function () {
       expect((await escrow.getTrade(tradeId)).state).to.equal(6);
     });
   });
+
 });
