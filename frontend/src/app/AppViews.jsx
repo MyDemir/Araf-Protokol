@@ -1,5 +1,6 @@
 import React from 'react';
 import PIIDisplay from '../components/PIIDisplay';
+import ReferenceRateTicker from '../components/ReferenceRateTicker';
 
 // [TR] App ana görünüm/render katmanı burada tutulur.
 // [EN] Main application view/render layer lives here.
@@ -365,6 +366,8 @@ export const buildAppViews = (ctx) => {
           </button>
         </div>
       </div>
+
+      <ReferenceRateTicker lang={lang} />
 
       <div className="mb-4 p-3 rounded-xl border border-orange-700/40 bg-orange-900/20">
         <p className="text-[11px] text-orange-200 leading-relaxed">

@@ -49,6 +49,7 @@ const {
   runUserBankRiskMetadataCleanup,
 } = require("./jobs/cleanupUserBankRiskMetadata");
 
+const { refreshReferenceTicker } = require("./services/referenceTicker");
 const { getReadiness, getLiveness } = require("./services/health");
 const { verifyIdentityNormalization } = require("./services/identityNormalizationGuard");
 const { parsePositiveTimerMs } = require("./utils/timeEnv");
@@ -70,6 +71,7 @@ app.locals.schedulerState = {
   statsSnapshotLastRunAt: null,
   sensitiveCleanupLastRunAt: null,
   userBankRiskCleanupLastRunAt: null,
+  referenceTickerLastRunAt: null,
 };
 let server = null;
 let isShuttingDown = false;
@@ -175,6 +177,7 @@ async function bootstrap() {
   let sensitiveCleanupInterval = null;
   let userBankRiskCleanupDelay = null;
   let userBankRiskCleanupInterval = null;
+  let referenceTickerInterval = null;
 
   // [TR] Aynı job'ın üst üste binmesini engelleyen hafif scheduler lock'ları.
   // [EN] Lightweight scheduler locks to prevent overlapping runs.
@@ -184,6 +187,7 @@ async function bootstrap() {
     statsSnapshot: false,
     sensitiveCleanup: false,
     userBankRiskCleanup: false,
+    referenceTicker: false,
   };
 
   const clearRuntimeSchedulers = () => {
@@ -196,6 +200,7 @@ async function bootstrap() {
     if (sensitiveCleanupInterval) clearInterval(sensitiveCleanupInterval);
     if (userBankRiskCleanupDelay) clearTimeout(userBankRiskCleanupDelay);
     if (userBankRiskCleanupInterval) clearInterval(userBankRiskCleanupInterval);
+    if (referenceTickerInterval) clearInterval(referenceTickerInterval);
   };
 
   /**
@@ -430,6 +435,20 @@ async function bootstrap() {
       });
     }, USER_BANK_RISK_CLEANUP_INTERVAL_MS);
 
+    const REFERENCE_TICKER_REFRESH_INTERVAL_MS = _envMs("REFERENCE_TICKER_REFRESH_INTERVAL_MS", 120_000);
+
+    // [TR] Referans kur şeridi scheduler'ı bilgilendirme amaçlıdır; settlement akışını etkilemez.
+    // [EN] Reference ticker scheduler is informational-only and isolated from settlement flows.
+    runScheduledJob("referenceTicker", refreshReferenceTicker, () => {
+      app.locals.schedulerState.referenceTickerLastRunAt = new Date().toISOString();
+    }).catch((err) => logger.warn(`[Scheduler] referenceTicker startup refresh failed: ${err.message}`));
+
+    referenceTickerInterval = setInterval(() => {
+      runScheduledJob("referenceTicker", refreshReferenceTicker, () => {
+        app.locals.schedulerState.referenceTickerLastRunAt = new Date().toISOString();
+      });
+    }, REFERENCE_TICKER_REFRESH_INTERVAL_MS);
+
     // [TR] Rotalar DB ve Redis hazır olduktan sonra yüklenir
     // [EN] Routes loaded after DB and Redis are ready
 
@@ -444,6 +463,7 @@ async function bootstrap() {
     const statsRoutes = require("./routes/stats");
     const receiptRoutes = require("./routes/receipts");
     const adminRoutes = require("./routes/admin");
+    const referenceRatesRoutes = require("./routes/referenceRates");
 
     // [TR] Log rotası en üstte tanımlanır
     app.use("/api/logs", logRoutes);
@@ -456,6 +476,7 @@ async function bootstrap() {
     app.use("/api/stats", statsRoutes);
     app.use("/api/receipts", receiptRoutes);
     app.use("/api/admin", adminRoutes);
+    app.use("/api/reference-rates", referenceRatesRoutes);
 
     app.get("/health", (_req, res) => res.json(getLiveness()));
 

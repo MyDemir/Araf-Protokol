@@ -31,3 +31,30 @@
 .animate-pulse-slow {
     animation: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+
+@keyframes referenceTickerScroll {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+}
+
+.reference-ticker-track-wrap {
+    overflow: hidden;
+    width: 100%;
+}
+
+.reference-ticker-track {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: max-content;
+    min-width: 200%;
+    animation: referenceTickerScroll 28s linear infinite;
+    will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .reference-ticker-track {
+        animation-duration: 120s;
+        animation-timing-function: linear;
+    }
+}
