@@ -96,6 +96,41 @@ describe("referenceTicker service", () => {
     expect(gbpTry.rate).toBeCloseTo(46.666666, 5);
   });
 
+
+  it("computes fiat rates from Frankfurter v2 row-array response", async () => {
+    let service;
+    jest.isolateModules(() => {
+      jest.doMock("../scripts/config/redis", () => ({
+        isReady: () => false,
+        getRedisClient: jest.fn(),
+      }));
+      service = require("../scripts/services/referenceTicker");
+    });
+
+    global.fetch.mockImplementation(async (url) => {
+      if (String(url).includes("frankfurter")) {
+        return {
+          ok: true,
+          json: async () => ([
+            { base: "USD", quote: "TRY", rate: 39.2 },
+            { base: "USD", quote: "EUR", rate: 0.92 },
+            { base: "USD", quote: "GBP", rate: 0.79 },
+          ]),
+        };
+      }
+      return { ok: true, json: async () => ({ trades: [{ price: "1" }] }) };
+    });
+
+    const payload = await service.refreshReferenceTicker();
+    const usdTry = payload.items.find((v) => v.symbol === "USD/TRY");
+    const eurTry = payload.items.find((v) => v.symbol === "EUR/TRY");
+    const gbpTry = payload.items.find((v) => v.symbol === "GBP/TRY");
+
+    expect(usdTry.rate).toBeCloseTo(39.2, 6);
+    expect(eurTry.rate).toBeCloseTo(42.608695, 5);
+    expect(gbpTry.rate).toBeCloseTo(49.620253, 5);
+  });
+
   it("returns stale last-good payload when providers fail", async () => {
     const mockRedis = {
       get: jest.fn(async (key) => {

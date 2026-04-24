@@ -143,9 +143,31 @@ async function fetchCoinbaseRates() {
   return rates;
 }
 
+
+function extractFrankfurterUsdRates(payload) {
+  if (Array.isArray(payload)) {
+    return payload.reduce((acc, row) => {
+      const quote = String(row?.quote || "").toUpperCase();
+      const rate = parsePositiveRate(row?.rate);
+      if (quote && rate) acc[quote] = rate;
+      return acc;
+    }, {});
+  }
+
+  if (Array.isArray(payload?.data)) {
+    return payload.data.reduce((acc, row) => {
+      const quote = String(row?.quote || "").toUpperCase();
+      const rate = parsePositiveRate(row?.rate);
+      if (quote && rate) acc[quote] = rate;
+      return acc;
+    }, {});
+  }
+
+  return payload?.rates || null;
+}
 async function fetchFiatRates() {
   const payload = await fetchJsonWithTimeout(FRANKFURTER_URL, 5000);
-  const rates = Array.isArray(payload) ? payload?.[0]?.rates : payload?.rates;
+  const rates = extractFrankfurterUsdRates(payload);
 
   const usdTry = parsePositiveRate(rates?.TRY);
   const usdEur = parsePositiveRate(rates?.EUR);
