@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, waitFor, screen, act } from '@testing-library/react';
+import { render, waitFor, screen, act, fireEvent } from '@testing-library/react';
 import fs from 'node:fs';
 import path from 'node:path';
 import AdminPanel from '../AdminPanel';
@@ -66,9 +66,33 @@ describe('AdminPanel polling auth behavior', () => {
     expect(source).toContain('Window total (not global)');
   });
 
-  it('keeps informational semantics label in component source for read-only UI wording', () => {
+  it('shows trades tab as read-only observability surface (behavioral regression)', async () => {
+    const authenticatedFetch = vi.fn(async () => ({
+      status: 200,
+      ok: true,
+      json: async () => ({ readiness: {}, stats: {}, tradeCounts: {}, dlq: {} }),
+    }));
+
+    render(
+      <AdminPanel
+        lang="EN"
+        authenticatedFetch={authenticatedFetch}
+        isAuthenticated={true}
+        authChecked={true}
+        showToast={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Trades' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Admin trades surface is observability-only; no actions/authority are exposed.')).toBeInTheDocument();
+      expect(screen.getAllByText('Status').length).toBeGreaterThan(0);
+      expect(screen.getByText('Risk Only')).toBeInTheDocument();
+    });
+
     const source = fs.readFileSync(path.resolve(process.cwd(), 'src/AdminPanel.jsx'), 'utf8');
-    expect(source).toContain('Reputation semantics (informational/read-only)');
-    expect(source).toContain('reputation_semantics?.burn_count');
+    expect(source).toContain('Contract-authority mirror counters (informational/read-only)');
+    expect(source).toContain('reputation_authority_counters?.burn_count');
   });
 });

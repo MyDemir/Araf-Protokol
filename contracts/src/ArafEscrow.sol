@@ -152,10 +152,31 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     }
 
     struct Reputation {
-        uint256 successfulTrades;
-        uint256 failedDisputes;
-        uint256 bannedUntil;
-        uint256 consecutiveBans;
+        uint64 successfulTrades;
+        uint32 failedDisputes;
+        uint64 bannedUntil;
+        uint16 consecutiveBans;
+        uint32 manualReleaseCount;
+        uint32 autoReleaseCount;
+        uint32 mutualCancelCount;
+        uint32 disputedResolvedCount;
+        uint32 burnCount;
+        uint32 disputeWinCount;
+        uint32 disputeLossCount;
+        uint32 riskPoints;
+        uint64 lastPositiveEventAt;
+        uint64 lastNegativeEventAt;
+    }
+
+    // [TR] Kontratın tek otorite olduğu terminal semantik sınıfları.
+    // [EN] Contract-owned terminal semantic outcomes (sole authority).
+    enum ReputationOutcome {
+        MANUAL_RELEASE,
+        AUTO_RELEASE,
+        MUTUAL_CANCEL,
+        DISPUTED_RESOLUTION_WIN,
+        DISPUTED_RESOLUTION_LOSS,
+        BURNED
     }
 
     // [TR] Token bazlı yön kontrolü — owner tarafından yönetilir.
@@ -218,6 +239,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     uint256 public constant CRYPTO_DECAY_BPS_H     = 34;
 
     uint256 public constant DUST_LIMIT = 0.001 ether;
+    uint256 private constant MAX_REPUTATION_CLEAN_PERIOD = 365 days;
+    uint256 private constant MAX_BAN_DURATION = 365 days;
 
     uint256 private constant BPS_DENOMINATOR  = 10_000;
     // [TR] Fee modeli (taker/maker ayrı + snapshot) korunur.
@@ -228,7 +251,17 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     //      the owner-adjustable economic ceiling (admin authority restriction).
     uint256 private constant MAX_FEE_CONFIG_BPS = 2_000;
     uint256 private constant SECONDS_PER_HOUR = 3_600;
-    uint256 private constant REPUTATION_DECAY_CLEAN_PERIOD = 90 days;
+    uint256 public cleanPeriod;
+    uint32 public manualReleaseRewardPts;
+    uint32 public autoReleasePenaltyPts;
+    uint32 public disputeWinRewardPts;
+    uint32 public disputeLossPenaltyPts;
+    uint32 public burnPenaltyPts;
+    uint32 public mutualCancelPenaltyPts;
+    uint32 public baseBanDuration;
+    uint32 public banRiskPointsThreshold;
+    uint32[5] public tierMinSuccessfulTrades;
+    uint32[5] public tierMaxRiskPoints;
 
     // ═══════════════════════════════════════════════════
     //  EIP-712 TYPEHASH
@@ -280,7 +313,38 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     event MakerPinged(uint256 indexed tradeId, address indexed pinger, uint256 timestamp);
     event BleedingDecayed(uint256 indexed tradeId, uint256 decayedAmount, uint256 timestamp);
     event EscrowBurned(uint256 indexed tradeId, uint256 burnedAmount);
-    event ReputationUpdated(address indexed wallet, uint256 successful, uint256 failed, uint256 bannedUntil, uint8 effectiveTier);
+    event ReputationUpdated(
+        address indexed wallet,
+        uint256 successful,
+        uint256 failed,
+        uint256 bannedUntil,
+        uint8 effectiveTier,
+        uint256 manualReleaseCount,
+        uint256 autoReleaseCount,
+        uint256 mutualCancelCount,
+        uint256 disputedResolvedCount,
+        uint256 burnCount,
+        uint256 disputeWinCount,
+        uint256 disputeLossCount,
+        uint256 riskPoints,
+        uint256 lastPositiveEventAt,
+        uint256 lastNegativeEventAt
+    );
+    event ReputationPolicyUpdated(
+        uint256 cleanPeriod,
+        uint256 manualReleaseRewardPts,
+        uint256 autoReleasePenaltyPts,
+        uint256 disputeWinRewardPts,
+        uint256 disputeLossPenaltyPts,
+        uint256 burnPenaltyPts,
+        uint256 mutualCancelPenaltyPts,
+        uint256 baseBanDuration,
+        uint256 banRiskPointsThreshold
+    );
+    event ReputationTierThresholdsUpdated(
+        uint32[5] minSuccessfulTrades,
+        uint32[5] maxRiskPoints
+    );
     event TreasuryUpdated(address indexed newTreasury);
     // [TR] V3 Order / Config event'leri
     // [EN] V3 Order / Config events
@@ -348,6 +412,21 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         makerFeeBps = DEFAULT_MAKER_FEE_BPS;
         tier0TradeCooldown = DEFAULT_TIER0_TRADE_COOLDOWN;
         tier1TradeCooldown = DEFAULT_TIER1_TRADE_COOLDOWN;
+
+        // [TR] Reputation policy defaults (yalnız ileriye dönük etkiler).
+        // [EN] Reputation policy defaults (future effect only).
+        cleanPeriod = 90 days;
+        manualReleaseRewardPts = 8;
+        autoReleasePenaltyPts = 60;
+        disputeWinRewardPts = 10;
+        disputeLossPenaltyPts = 60;
+        burnPenaltyPts = 90;
+        mutualCancelPenaltyPts = 20;
+        baseBanDuration = uint32(30 days);
+        banRiskPointsThreshold = 100;
+
+        tierMinSuccessfulTrades = [uint32(0), uint32(15), uint32(50), uint32(100), uint32(200)];
+        tierMaxRiskPoints = [uint32(100), uint32(80), uint32(50), uint32(30), uint32(15)];
     }
 
     // ═══════════════════════════════════════════════════
@@ -789,8 +868,13 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             IERC20(t.tokenAddress).safeTransfer(t.taker, currentTakerBond);
         }
 
-        _updateReputation(t.maker, makerOpenedDispute);
-        _updateReputation(t.taker, false);
+        if (makerOpenedDispute) {
+            // [TR] CHALLENGED→RESOLVED yolu maker'ın challenge iddiasının başarısızlığı olarak sınıflanır.
+            // [EN] CHALLENGED→RESOLVED path is classified as maker challenge-loss semantics.
+            _recordDisputeResolution(t.maker, t.taker, false);
+        } else {
+            _recordManualRelease(t.maker, t.taker);
+        }
 
         emit EscrowReleased(_tradeId, t.maker, t.taker, takerFee, actualMakerFee);
     }
@@ -907,8 +991,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             IERC20(t.tokenAddress).safeTransfer(treasury, totalBurn);
         }
 
-        _updateReputation(t.maker, true);
-        _updateReputation(t.taker, true);
+        _recordBurn(t.maker, t.taker);
 
         emit EscrowBurned(_tradeId, totalBurn);
     }
@@ -972,8 +1055,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (takerReceivesBond > 0) IERC20(t.tokenAddress).safeTransfer(t.taker, takerReceivesBond);
         if (totalPenalty > 0) IERC20(t.tokenAddress).safeTransfer(treasury, totalPenalty);
 
-        _updateReputation(t.maker, true);
-        _updateReputation(t.taker, false);
+        _recordAutoRelease(t.maker, t.taker);
 
         emit EscrowReleased(_tradeId, t.maker, t.taker, makerPenalty, takerPenalty);
     }
@@ -1029,6 +1111,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (totalFeeToTreasury > 0) IERC20(t.tokenAddress).safeTransfer(treasury, totalFeeToTreasury);
         if (makerRefund > 0) IERC20(t.tokenAddress).safeTransfer(t.maker, makerRefund);
         if (takerRefund > 0) IERC20(t.tokenAddress).safeTransfer(t.taker, takerRefund);
+
+        _recordMutualCancel(t.maker, t.taker);
 
         emit EscrowCanceled(_tradeId, makerRefund, takerRefund);
     }
@@ -1098,9 +1182,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         else                 bondBps = MAKER_BOND_TIER4_BPS;
 
         Reputation storage rep = reputation[_maker];
-        if (rep.failedDisputes == 0 && rep.successfulTrades > 0) {
+        if (rep.riskPoints == 0 && rep.successfulTrades > 0) {
             bondBps = bondBps > GOOD_REP_DISCOUNT_BPS ? bondBps - GOOD_REP_DISCOUNT_BPS : 0;
-        } else if (rep.failedDisputes >= 1) {
+        } else if (rep.riskPoints > 0) {
             bondBps += BAD_REP_PENALTY_BPS;
         }
     }
@@ -1123,55 +1207,161 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         else                 bondBps = TAKER_BOND_TIER4_BPS;
 
         Reputation storage rep = reputation[_taker];
-        if (rep.failedDisputes == 0 && rep.successfulTrades > 0) {
+        if (rep.riskPoints == 0 && rep.successfulTrades > 0) {
             bondBps = bondBps > GOOD_REP_DISCOUNT_BPS ? bondBps - GOOD_REP_DISCOUNT_BPS : 0;
-        } else if (rep.failedDisputes >= 1) {
+        } else if (rep.riskPoints > 0) {
             bondBps += BAD_REP_PENALTY_BPS;
         }
     }
 
-    /**
-     * @notice Reputation state'ini günceller ve gerekirse ban/tier cezası uygular.
-     *         Contract burada da yorum yapmaz; yalnız tanımlı sonuç makinesini yürütür.
-     * @notice Updates reputation state and applies bans/tier penalties when needed.
-     *         The contract still does not interpret intent here; it only executes the defined outcome machine.
-     */
-    function _updateReputation(address _wallet, bool _failed) internal {
-        Reputation storage rep = reputation[_wallet];
+    function _recordManualRelease(address _maker, address _taker) internal {
+        Reputation storage makerRep = reputation[_maker];
+        Reputation storage takerRep = reputation[_taker];
+        makerRep.successfulTrades++;
+        takerRep.successfulTrades++;
+        makerRep.manualReleaseCount++;
+        takerRep.manualReleaseCount++;
 
-        if (_failed) {
-            rep.failedDisputes++;
+        _applyPositiveSignal(_maker, makerRep, manualReleaseRewardPts);
+        _applyPositiveSignal(_taker, takerRep, manualReleaseRewardPts);
+        _emitReputationUpdated(_maker, makerRep);
+        _emitReputationUpdated(_taker, takerRep);
+    }
 
-            if (rep.failedDisputes >= 2) {
-                rep.consecutiveBans++;
+    function _recordAutoRelease(address _maker, address _taker) internal {
+        Reputation storage makerRep = reputation[_maker];
+        Reputation storage takerRep = reputation[_taker];
+        takerRep.successfulTrades++;
+        makerRep.autoReleaseCount++;
+        takerRep.autoReleaseCount++;
+        makerRep.failedDisputes++;
 
-                uint256 banDays = 30 days * (2 ** (rep.consecutiveBans - 1));
-                if (banDays > 365 days) banDays = 365 days;
-                rep.bannedUntil = block.timestamp + banDays;
+        _applyNegativeSignal(_maker, makerRep, autoReleasePenaltyPts);
+        _applyPositiveSignal(_taker, takerRep, manualReleaseRewardPts);
+        _emitReputationUpdated(_maker, makerRep);
+        _emitReputationUpdated(_taker, takerRep);
+    }
 
-                if (rep.consecutiveBans >= 2) {
-                    if (!hasTierPenalty[_wallet]) {
-                        hasTierPenalty[_wallet] = true;
-                        maxAllowedTier[_wallet] = 4;
-                    }
-                    if (maxAllowedTier[_wallet] > 0) {
-                        maxAllowedTier[_wallet] = maxAllowedTier[_wallet] - 1;
-                    }
-                }
-            }
+    function _recordMutualCancel(address _maker, address _taker) internal {
+        Reputation storage makerRep = reputation[_maker];
+        Reputation storage takerRep = reputation[_taker];
+        makerRep.mutualCancelCount++;
+        takerRep.mutualCancelCount++;
+
+        _applyNegativeSignal(_maker, makerRep, mutualCancelPenaltyPts);
+        _applyNegativeSignal(_taker, takerRep, mutualCancelPenaltyPts);
+        _emitReputationUpdated(_maker, makerRep);
+        _emitReputationUpdated(_taker, takerRep);
+    }
+
+    function _recordDisputeResolution(address _maker, address _taker, bool makerWon) internal {
+        Reputation storage makerRep = reputation[_maker];
+        Reputation storage takerRep = reputation[_taker];
+        makerRep.disputedResolvedCount++;
+        takerRep.disputedResolvedCount++;
+
+        if (makerWon) {
+            makerRep.successfulTrades++;
+            makerRep.disputeWinCount++;
+            takerRep.disputeLossCount++;
+            takerRep.failedDisputes++;
+            _applyPositiveSignal(_maker, makerRep, disputeWinRewardPts);
+            _applyNegativeSignal(_taker, takerRep, disputeLossPenaltyPts);
         } else {
-            rep.successfulTrades++;
-            if (firstSuccessfulTradeAt[_wallet] == 0) {
-                firstSuccessfulTradeAt[_wallet] = block.timestamp;
-            }
+            takerRep.successfulTrades++;
+            takerRep.disputeWinCount++;
+            makerRep.disputeLossCount++;
+            makerRep.failedDisputes++;
+            _applyPositiveSignal(_taker, takerRep, disputeWinRewardPts);
+            _applyNegativeSignal(_maker, makerRep, disputeLossPenaltyPts);
         }
 
+        _emitReputationUpdated(_maker, makerRep);
+        _emitReputationUpdated(_taker, takerRep);
+    }
+
+    function _recordBurn(address _maker, address _taker) internal {
+        Reputation storage makerRep = reputation[_maker];
+        Reputation storage takerRep = reputation[_taker];
+        makerRep.burnCount++;
+        takerRep.burnCount++;
+        makerRep.failedDisputes++;
+        takerRep.failedDisputes++;
+
+        _applyNegativeSignal(_maker, makerRep, burnPenaltyPts);
+        _applyNegativeSignal(_taker, takerRep, burnPenaltyPts);
+        _emitReputationUpdated(_maker, makerRep);
+        _emitReputationUpdated(_taker, takerRep);
+    }
+
+    function _applyPositiveSignal(address _wallet, Reputation storage rep, uint32 rewardPts) internal {
+        uint64 nowTs = uint64(block.timestamp);
+        rep.lastPositiveEventAt = nowTs;
+
+        if (rewardPts == 0) {
+            _refreshTierAndBanState(_wallet, rep);
+            return;
+        }
+
+        if (rep.riskPoints <= rewardPts) rep.riskPoints = 0;
+        else rep.riskPoints -= rewardPts;
+
+        if (firstSuccessfulTradeAt[_wallet] == 0 && rep.successfulTrades > 0) {
+            firstSuccessfulTradeAt[_wallet] = block.timestamp;
+        }
+        _refreshTierAndBanState(_wallet, rep);
+    }
+
+    function _applyNegativeSignal(address _wallet, Reputation storage rep, uint32 penaltyPts) internal {
+        uint64 nowTs = uint64(block.timestamp);
+        rep.lastNegativeEventAt = nowTs;
+
+        if (penaltyPts > 0) {
+            uint256 nextRisk = uint256(rep.riskPoints) + penaltyPts;
+            rep.riskPoints = nextRisk > type(uint32).max ? type(uint32).max : uint32(nextRisk);
+        }
+        _refreshTierAndBanState(_wallet, rep);
+    }
+
+    function _refreshTierAndBanState(address _wallet, Reputation storage rep) internal {
+        if (rep.riskPoints >= banRiskPointsThreshold) {
+            if (block.timestamp > rep.bannedUntil) {
+                rep.consecutiveBans++;
+                // [TR] Overflow güvenliği için üstel katsayı saturating shift ile sınırlandırılır.
+                // [EN] Exponential factor uses saturating shift bounds for overflow-safe escalation.
+                uint256 escalationSteps = rep.consecutiveBans > 1 ? uint256(rep.consecutiveBans - 1) : 0;
+                if (escalationSteps > 31) escalationSteps = 31;
+                uint256 banWindow = uint256(baseBanDuration) * (uint256(1) << escalationSteps);
+                if (banWindow > MAX_BAN_DURATION) banWindow = MAX_BAN_DURATION;
+                rep.bannedUntil = uint64(block.timestamp + banWindow);
+            }
+            if (!hasTierPenalty[_wallet]) {
+                hasTierPenalty[_wallet] = true;
+                maxAllowedTier[_wallet] = 4;
+            }
+            if (maxAllowedTier[_wallet] > 0) {
+                maxAllowedTier[_wallet] = maxAllowedTier[_wallet] - 1;
+            }
+        }
+    }
+
+    function _emitReputationUpdated(address _wallet, Reputation storage rep) internal {
         emit ReputationUpdated(
             _wallet,
             rep.successfulTrades,
             rep.failedDisputes,
             rep.bannedUntil,
-            _getEffectiveTier(_wallet)
+            _getEffectiveTier(_wallet),
+            rep.manualReleaseCount,
+            rep.autoReleaseCount,
+            rep.mutualCancelCount,
+            rep.disputedResolvedCount,
+            rep.burnCount,
+            rep.disputeWinCount,
+            rep.disputeLossCount,
+            rep.riskPoints,
+            rep.lastPositiveEventAt,
+            rep.lastNegativeEventAt
         );
     }
 
@@ -1184,20 +1374,14 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     function decayReputation(address _wallet) external nonReentrant {
         Reputation storage rep = reputation[_wallet];
         if (rep.bannedUntil == 0) revert NoPriorBanHistory();
-        if (block.timestamp <= rep.bannedUntil + REPUTATION_DECAY_CLEAN_PERIOD) revert CleanPeriodNotElapsed();
+        if (block.timestamp <= rep.bannedUntil + cleanPeriod) revert CleanPeriodNotElapsed();
         if (rep.consecutiveBans == 0) revert NoBansToReset();
 
         rep.consecutiveBans = 0;
+        rep.riskPoints = 0;
         hasTierPenalty[_wallet] = false;
         maxAllowedTier[_wallet] = 4;
-
-        emit ReputationUpdated(
-            _wallet,
-            rep.successfulTrades,
-            rep.failedDisputes,
-            rep.bannedUntil,
-            _getEffectiveTier(_wallet)
-        );
+        _emitReputationUpdated(_wallet, rep);
     }
 
     /**
@@ -1210,11 +1394,11 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         Reputation storage rep = reputation[_wallet];
         uint8 calculatedTier;
 
-        if      (rep.successfulTrades >= 200 && rep.failedDisputes <= 15) calculatedTier = 4;
-        else if (rep.successfulTrades >= 100 && rep.failedDisputes <= 10) calculatedTier = 3;
-        else if (rep.successfulTrades >=  50 && rep.failedDisputes <=  5) calculatedTier = 2;
-        else if (rep.successfulTrades >=  15 && rep.failedDisputes <=  2) calculatedTier = 1;
-        else                                                               calculatedTier = 0;
+        if      (rep.successfulTrades >= tierMinSuccessfulTrades[4] && rep.riskPoints <= tierMaxRiskPoints[4]) calculatedTier = 4;
+        else if (rep.successfulTrades >= tierMinSuccessfulTrades[3] && rep.riskPoints <= tierMaxRiskPoints[3]) calculatedTier = 3;
+        else if (rep.successfulTrades >= tierMinSuccessfulTrades[2] && rep.riskPoints <= tierMaxRiskPoints[2]) calculatedTier = 2;
+        else if (rep.successfulTrades >= tierMinSuccessfulTrades[1] && rep.riskPoints <= tierMaxRiskPoints[1]) calculatedTier = 1;
+        else                                                                                                     calculatedTier = 0;
 
         if (calculatedTier > 0) {
             if (firstSuccessfulTradeAt[_wallet] == 0 ||
@@ -1255,7 +1439,17 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             uint256 failed,
             uint256 bannedUntil,
             uint256 consecutiveBans,
-            uint8   effectiveTier
+            uint8   effectiveTier,
+            uint256 manualReleaseCount,
+            uint256 autoReleaseCount,
+            uint256 mutualCancelCount,
+            uint256 disputedResolvedCount,
+            uint256 burnCount,
+            uint256 disputeWinCount,
+            uint256 disputeLossCount,
+            uint256 riskPoints,
+            uint256 lastPositiveEventAt,
+            uint256 lastNegativeEventAt
         )
     {
         Reputation storage rep = reputation[_wallet];
@@ -1264,7 +1458,17 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             rep.failedDisputes,
             rep.bannedUntil,
             rep.consecutiveBans,
-            _getEffectiveTier(_wallet)
+            _getEffectiveTier(_wallet),
+            rep.manualReleaseCount,
+            rep.autoReleaseCount,
+            rep.mutualCancelCount,
+            rep.disputedResolvedCount,
+            rep.burnCount,
+            rep.disputeWinCount,
+            rep.disputeLossCount,
+            rep.riskPoints,
+            rep.lastPositiveEventAt,
+            rep.lastNegativeEventAt
         );
     }
 
@@ -1451,6 +1655,84 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         });
 
         emit TokenConfigUpdated(_token, _supported, _allowSellOrders, _allowBuyOrders);
+    }
+
+    /**
+     * @notice Reputation policy katsayılarını owner seviyesinde günceller.
+     *         Değişiklikler yalnız gelecekteki outcome kayıtlarına uygulanır.
+     * @notice Updates reputation policy coefficients at owner level.
+     *         Changes apply only to future outcome recordings.
+     */
+    function setReputationPolicy(
+        uint256 _cleanPeriod,
+        uint32 _manualReleaseRewardPts,
+        uint32 _autoReleasePenaltyPts,
+        uint32 _disputeWinRewardPts,
+        uint32 _disputeLossPenaltyPts,
+        uint32 _burnPenaltyPts,
+        uint32 _mutualCancelPenaltyPts,
+        uint32 _baseBanDuration,
+        uint32 _banRiskPointsThreshold
+    ) external onlyOwner {
+        if (_cleanPeriod < 7 days) revert InvalidState();
+        if (_cleanPeriod > MAX_REPUTATION_CLEAN_PERIOD) revert InvalidState();
+        if (_baseBanDuration == 0) revert ZeroAmount();
+        if (_baseBanDuration > MAX_BAN_DURATION) revert InvalidState();
+        if (_banRiskPointsThreshold == 0) revert ZeroAmount();
+        if (_banRiskPointsThreshold > tierMaxRiskPoints[0]) revert InvalidTier();
+        // [TR] Ödül/ceza delta'ları ban eşiğini aşmamalı.
+        // [EN] Reward/penalty deltas must stay within ban threshold.
+        if (
+            _manualReleaseRewardPts > _banRiskPointsThreshold ||
+            _autoReleasePenaltyPts > _banRiskPointsThreshold ||
+            _disputeWinRewardPts > _banRiskPointsThreshold ||
+            _disputeLossPenaltyPts > _banRiskPointsThreshold ||
+            _burnPenaltyPts > _banRiskPointsThreshold ||
+            _mutualCancelPenaltyPts > _banRiskPointsThreshold
+        ) revert InvalidState();
+
+        cleanPeriod = _cleanPeriod;
+        manualReleaseRewardPts = _manualReleaseRewardPts;
+        autoReleasePenaltyPts = _autoReleasePenaltyPts;
+        disputeWinRewardPts = _disputeWinRewardPts;
+        disputeLossPenaltyPts = _disputeLossPenaltyPts;
+        burnPenaltyPts = _burnPenaltyPts;
+        mutualCancelPenaltyPts = _mutualCancelPenaltyPts;
+        baseBanDuration = _baseBanDuration;
+        banRiskPointsThreshold = _banRiskPointsThreshold;
+
+        emit ReputationPolicyUpdated(
+            _cleanPeriod,
+            _manualReleaseRewardPts,
+            _autoReleasePenaltyPts,
+            _disputeWinRewardPts,
+            _disputeLossPenaltyPts,
+            _burnPenaltyPts,
+            _mutualCancelPenaltyPts,
+            _baseBanDuration,
+            _banRiskPointsThreshold
+        );
+    }
+
+    /**
+     * @notice Tier eşiklerini owner seviyesinde günceller.
+     *         minSuccessfulTrades artan, maxRiskPoints azalan olmalıdır.
+     * @notice Updates tier thresholds at owner level.
+     *         minSuccessfulTrades must be ascending and maxRiskPoints descending.
+     */
+    function setReputationTierThresholds(
+        uint32[5] calldata _minSuccessfulTrades,
+        uint32[5] calldata _maxRiskPoints
+    ) external onlyOwner {
+        for (uint256 i = 1; i < 5; i++) {
+            if (_minSuccessfulTrades[i] < _minSuccessfulTrades[i - 1]) revert InvalidTier();
+            if (_maxRiskPoints[i] > _maxRiskPoints[i - 1]) revert InvalidTier();
+        }
+        if (_maxRiskPoints[0] < banRiskPointsThreshold) revert InvalidTier();
+
+        tierMinSuccessfulTrades = _minSuccessfulTrades;
+        tierMaxRiskPoints = _maxRiskPoints;
+        emit ReputationTierThresholdsUpdated(_minSuccessfulTrades, _maxRiskPoints);
     }
 
     /**

@@ -15,6 +15,10 @@ module.exports = {
     // Yerel geliştirme ağı (Codespaces/Local)
     hardhat: {
       chainId: 31337,
+      // [TR] V3 sözleşme test ortamında EIP-170 code-size limitine takılmadan
+      //      invariant/regresyon testlerinin çalıştırılabilmesi için açık.
+      // [EN] Enables invariant/regression tests in local Hardhat without EIP-170 size gate.
+      allowUnlimitedContractSize: true,
     },
     //MetaMask ve Deploy betiği için localhost ağ tanımı
     localhost: {

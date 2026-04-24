@@ -167,6 +167,9 @@ describe("admin routes resilience + pagination semantics", () => {
     expect(normalRes.body.paginationScope.isWindowed).toBe(false);
     expect(normalRes.body.trades[0].offchain_health_score_input.informational_only).toBe(true);
     expect(normalRes.body.trades[0].offchain_health_score_input.non_authoritative_semantics).toBe(true);
+    expect(normalRes.body.trades[0].offchain_health_score_input.readOnly).toBe(true);
+    expect(normalRes.body.trades[0].offchain_health_score_input.nonBlocking).toBe(true);
+    expect(normalRes.body.trades[0].offchain_health_score_input.canBlockProtocolActions).toBe(false);
     expect(
       normalRes.body.trades[0].offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_semantics
     ).toMatchObject({
@@ -175,7 +178,14 @@ describe("admin routes resilience + pagination semantics", () => {
       mutual_cancel_count: 2,
       disputed_but_resolved_count: 1,
     });
+    // [TR] Yeni semantic alanlar additive explainability katmanında kalır; legacy risk nesnesi korunur.
+    // [EN] New semantic fields stay additive in explainability layer; legacy risk object remains intact.
     expect(normalRes.body.trades[0].bank_profile_risk).toBeDefined();
+    expect(normalRes.body.trades[0].bank_profile_risk).toMatchObject({
+      highRiskBankProfile: false,
+      changedAfterLock: false,
+      frequentRecentChanges: false,
+    });
 
     const riskRes = await request(app).get("/api/admin/trades?status=ALL&page=1&limit=20&riskOnly=true");
     expect(riskRes.status).toBe(200);
