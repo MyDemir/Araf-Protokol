@@ -5,9 +5,9 @@ const POLL_MS = 60_000;
 
 const sourceLabel = (item, lang) => {
   if (item.sourceKind === 'FIAT_OFFICIAL_REFERENCE') {
-    return lang === 'TR' ? 'resmî ref.' : 'official ref.';
+    return lang === 'TR' ? 'harici FX ref.' : 'external FX ref.';
   }
-  return lang === 'TR' ? 'ref.' : 'ref.';
+  return lang === 'TR' ? 'bilgilendirici ref.' : 'informational ref.';
 };
 
 const formatRate = (value) => {
@@ -76,6 +76,9 @@ export default function ReferenceRateTicker({ lang = 'TR' }) {
 
   if (!items.length) return null;
 
+  // [TR] Görsel katman yalnız bilgilendirme amaçlı semantiği yansıtır;
+  //      settlement/dispute/reputation/risk otoritesi değildir.
+  // [EN] UI only reflects informational semantics and is never authoritative.
   const informationalOnly = payload?.informationalOnly === true;
 
   return (
