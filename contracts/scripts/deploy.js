@@ -3,10 +3,10 @@
  *
  * Bu sürüm, V3 kontrat yüzeyine göre hazırlanmıştır:
  *   - constructor(address treasury)
- *   - setTokenConfig(address,bool,bool,bool)
+ *   - setTokenConfig(address,bool,bool,bool,uint8,uint256[4])
+ *   - getTokenConfig(address)
  *   - getFeeConfig()
  *   - getCooldownConfig()
- *   - tokenConfigs(address)
  *   - transferOwnership(address)
  *
  * Tasarım hedefleri:
@@ -76,6 +76,20 @@ function writeJson(filePath, value) {
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2));
 }
 
+function toJsonSafe(value) {
+  return JSON.stringify(value, (_key, v) => (typeof v === "bigint" ? v.toString() : v));
+}
+
+function defaultTierLimitsByDecimals(decimals) {
+  const scale = 10n ** BigInt(decimals);
+  return [
+    150n * scale,
+    1500n * scale,
+    7500n * scale,
+    30000n * scale,
+  ];
+}
+
 async function artifactExists(contractName) {
   try {
     await artifacts.readArtifact(contractName);
@@ -120,40 +134,62 @@ async function deployMockToken(name, symbol, decimals) {
 }
 
 async function getTokenConfigSnapshot(escrow, tokenAddress) {
-  const cfg = await escrow.tokenConfigs(tokenAddress);
+  // Authoritative read path: explicit getter.
+  // Not: Solidity mapping auto-getter'ı struct içindeki fixed array alanını güvenilir döndürmeyebilir.
+  const cfg = await escrow.getTokenConfig(tokenAddress);
+  const tierMaxAmountsBaseUnit = Array.from(cfg.tierMaxAmountsBaseUnit ?? cfg[4] ?? []).map((x) => x.toString());
+
+  if (tierMaxAmountsBaseUnit.length !== 4) {
+    throw new Error(`❌ Token config tier limit snapshot invalid for ${tokenAddress}`);
+  }
 
   return {
-    supported: cfg.supported,
-    allowSellOrders: cfg.allowSellOrders,
-    allowBuyOrders: cfg.allowBuyOrders,
+    supported: Boolean(cfg.supported ?? cfg[0]),
+    allowSellOrders: Boolean(cfg.allowSellOrders ?? cfg[1]),
+    allowBuyOrders: Boolean(cfg.allowBuyOrders ?? cfg[2]),
+    decimals: Number(cfg.decimals ?? cfg[3]),
+    tierMaxAmountsBaseUnit,
   };
 }
 
 async function setAndVerifyTokenConfig(escrow, tokenAddress, symbol, config) {
+  const expectedTierLimits = config.tierMaxAmountsBaseUnit.map((v) => v.toString());
+  if (expectedTierLimits.length !== 4) {
+    throw new Error(`❌ ${symbol} tokenConfig tierMaxAmountsBaseUnit 4 eleman olmalı.`);
+  }
+
   const tx = await escrow.setTokenConfig(
     tokenAddress,
     config.supported,
     config.allowSellOrders,
-    config.allowBuyOrders
+    config.allowBuyOrders,
+    config.decimals,
+    config.tierMaxAmountsBaseUnit
   );
   const receipt = await tx.wait();
 
   const snapshot = await getTokenConfigSnapshot(escrow, tokenAddress);
+  const tierLimitExactMatch =
+    snapshot.tierMaxAmountsBaseUnit.length === 4 &&
+    expectedTierLimits.length === 4 &&
+    snapshot.tierMaxAmountsBaseUnit.every((v, i) => v === expectedTierLimits[i]);
 
   if (
     snapshot.supported !== config.supported ||
     snapshot.allowSellOrders !== config.allowSellOrders ||
-    snapshot.allowBuyOrders !== config.allowBuyOrders
+    snapshot.allowBuyOrders !== config.allowBuyOrders ||
+    snapshot.decimals !== Number(config.decimals) ||
+    !tierLimitExactMatch
   ) {
     throw new Error(
       `❌ ${symbol} tokenConfig doğrulaması başarısız. ` +
-      `Beklenen=${JSON.stringify(config)} Gerçek=${JSON.stringify(snapshot)}`
+      `Beklenen=${toJsonSafe(config)} Gerçek=${toJsonSafe(snapshot)}`
     );
   }
 
   console.log(
     `✅ ${symbol} token config doğrulandı ` +
-    `(supported=${snapshot.supported}, sell=${snapshot.allowSellOrders}, buy=${snapshot.allowBuyOrders})`
+    `(supported=${snapshot.supported}, sell=${snapshot.allowSellOrders}, buy=${snapshot.allowBuyOrders}, decimals=${snapshot.decimals})`
   );
 
   return {
@@ -292,6 +328,8 @@ async function main() {
       supported: true,
       allowSellOrders: true,
       allowBuyOrders: true,
+      decimals: 6,
+      tierMaxAmountsBaseUnit: defaultTierLimitsByDecimals(6),
     })
   );
   tokenResults.push(
@@ -299,6 +337,8 @@ async function main() {
       supported: true,
       allowSellOrders: true,
       allowBuyOrders: true,
+      decimals: 6,
+      tierMaxAmountsBaseUnit: defaultTierLimitsByDecimals(6),
     })
   );
 

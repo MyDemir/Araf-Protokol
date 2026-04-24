@@ -32,6 +32,7 @@ const {
   updateCachedFeeConfig,
   updateCachedCooldownConfig,
   updateCachedTokenConfig,
+  refreshProtocolConfig,
 } = require("./protocolConfig");
 
 const CHECKPOINT_KEY = "worker:last_block";
@@ -99,6 +100,10 @@ const EVENT_ARG_KEYS = {
   EscrowCreated: ["tradeId", "maker", "token", "amount", "tier", "listingRef"],
   EscrowLocked: ["tradeId", "taker", "takerBond"],
   PaymentReported: ["tradeId", "ipfsHash", "timestamp"],
+  // [TR] EscrowReleased payload sırası kontrat ABI ile birebir eşleşmelidir:
+  //      4. argüman takerFee/takerPenalty, 5. argüman makerFee/makerPenalty.
+  // [EN] EscrowReleased payload order must stay ABI-aligned:
+  //      4th arg is takerFee/takerPenalty, 5th arg is makerFee/makerPenalty.
   EscrowReleased: ["tradeId", "maker", "taker", "takerFee", "makerFee"],
   DisputeOpened: ["tradeId", "challenger", "timestamp"],
   CancelProposed: ["tradeId", "proposer"],
@@ -1579,7 +1584,14 @@ class EventWorker {
 
   async _onTokenConfigUpdated(event) {
     const { token, supported, allowSellOrders, allowBuyOrders } = event.args;
-    await updateCachedTokenConfig(token, { supported, allowSellOrders, allowBuyOrders });
+    // TokenConfigUpdated payload'ında decimals/tier limit alanları yok.
+    // Bu nedenle authoritative read-model'i kontrattan tazeleyerek cache drift'i önlüyoruz.
+    try {
+      await refreshProtocolConfig();
+    } catch (err) {
+      logger.warn(`[Worker] refreshProtocolConfig başarısız, event payload ile partial patch uygulanıyor: ${err.message}`);
+      await updateCachedTokenConfig(token, { supported, allowSellOrders, allowBuyOrders });
+    }
   }
 }
 

@@ -32,6 +32,12 @@ describe.skip("ArafEscrow V3", function () {
   const TRADE_AMOUNT  = ethers.parseUnits("1000", USDT_DECIMALS);
   const TIER0_AMOUNT  = ethers.parseUnits("100", USDT_DECIMALS);
   const INITIAL_BAL   = ethers.parseUnits("50000", USDT_DECIMALS);
+  const TIER_MAX_AMOUNTS_BASE_UNIT = [
+    ethers.parseUnits("150", USDT_DECIMALS),
+    ethers.parseUnits("1500", USDT_DECIMALS),
+    ethers.parseUnits("7500", USDT_DECIMALS),
+    ethers.parseUnits("30000", USDT_DECIMALS),
+  ];
   const BASELINE_SUCCESS = 200n;
 
   const SEVEN_DAYS     = 7 * 24 * 3600;
@@ -244,14 +250,14 @@ describe.skip("ArafEscrow V3", function () {
 
   async function collaborativeCancel(tradeId) {
     const deadline = (await time.latest()) + 3600;
-    const makerSig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address), deadline);
+    const makerSig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address, tradeId), deadline);
     await escrow.connect(maker).proposeOrApproveCancel(tradeId, deadline, makerSig);
     const trade = await escrow.getTrade(tradeId);
     const takerSigner = trade.taker.toLowerCase() === taker.address.toLowerCase() ? taker : attacker;
     const takerSig = await eip712CancelSig(
       takerSigner,
       tradeId,
-      await escrow.sigNonces(takerSigner.address),
+      await escrow.sigNonces(takerSigner.address, tradeId),
       deadline
     );
     await escrow.connect(takerSigner).proposeOrApproveCancel(tradeId, deadline, takerSig);
@@ -281,7 +287,7 @@ describe.skip("ArafEscrow V3", function () {
     const tokenAddr = await mockUSDT.getAddress();
     const escrowAddr = await escrow.getAddress();
 
-    await escrow.connect(owner).setTokenConfig(tokenAddr, true, true, true);
+    await escrow.connect(owner).setTokenConfig(tokenAddr, true, true, true, USDT_DECIMALS, TIER_MAX_AMOUNTS_BASE_UNIT);
 
     await mockUSDT.mint(maker.address, INITIAL_BAL);
     await mockUSDT.mint(taker.address, INITIAL_BAL);
@@ -820,11 +826,11 @@ describe.skip("ArafEscrow V3", function () {
       await escrow.connect(taker).lockEscrow(tradeId);
 
       const deadline = (await time.latest()) + 3600;
-      const makerSig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address), deadline);
+      const makerSig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address, tradeId), deadline);
       await escrow.connect(maker).proposeOrApproveCancel(tradeId, deadline, makerSig);
       expect((await escrow.getTrade(tradeId)).state).to.equal(1);
 
-      const takerSig = await eip712CancelSig(taker, tradeId, await escrow.sigNonces(taker.address), deadline);
+      const takerSig = await eip712CancelSig(taker, tradeId, await escrow.sigNonces(taker.address, tradeId), deadline);
       await escrow.connect(taker).proposeOrApproveCancel(tradeId, deadline, takerSig);
       expect((await escrow.getTrade(tradeId)).state).to.equal(5);
     });
@@ -877,7 +883,7 @@ describe.skip("ArafEscrow V3", function () {
       await escrow.connect(taker).lockEscrow(tradeId);
 
       const deadline = (await time.latest()) - 1;
-      const sig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address), deadline);
+      const sig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address, tradeId), deadline);
       await expect(
         escrow.connect(maker).proposeOrApproveCancel(tradeId, deadline, sig)
       ).to.be.revertedWithCustomError(escrow, "SignatureExpired");
@@ -888,7 +894,7 @@ describe.skip("ArafEscrow V3", function () {
       await escrow.connect(taker).lockEscrow(tradeId);
 
       const deadline = (await time.latest()) + 3600;
-      const nonce = await escrow.sigNonces(maker.address);
+      const nonce = await escrow.sigNonces(maker.address, tradeId);
       const sig = await eip712CancelSig(maker, tradeId, nonce, deadline);
 
       await escrow.connect(maker).proposeOrApproveCancel(tradeId, deadline, sig);
@@ -902,7 +908,7 @@ describe.skip("ArafEscrow V3", function () {
       await escrow.connect(taker).lockEscrow(tradeId);
 
       const deadline = (await time.latest()) + 8 * 24 * 3600;
-      const sig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address), deadline);
+      const sig = await eip712CancelSig(maker, tradeId, await escrow.sigNonces(maker.address, tradeId), deadline);
       await expect(
         escrow.connect(maker).proposeOrApproveCancel(tradeId, deadline, sig)
       ).to.be.revertedWithCustomError(escrow, "DeadlineTooFar");
@@ -959,6 +965,25 @@ describe.skip("ArafEscrow V3", function () {
         .to.equal(makerBond - makerPenalty);
       expect((await mockUSDT.balanceOf(treasury.address)) - treasuryBefore)
         .to.equal(makerPenalty + takerPenalty);
+    });
+
+    it("test_autoRelease_emits_takerPenalty_before_makerPenalty", async () => {
+      const tradeId = await setupTrade(2, TRADE_AMOUNT, "legacy-auto-release-event-order");
+      await escrow.connect(taker).lockEscrow(tradeId);
+      await escrow.connect(taker).reportPayment(tradeId, "QmHashEventOrder");
+
+      await time.increase(FORTY_EIGHT_H + 1);
+      await escrow.connect(taker).pingMaker(tradeId);
+      await time.increase(TWENTY_FOUR_H + 1);
+
+      const makerBond = await makerBondFor(maker, TRADE_AMOUNT, 2);
+      const takerBond = await takerBondFor(taker, TRADE_AMOUNT, 2);
+      const makerPenalty = (makerBond * 200n) / BPS_DENOM;
+      const takerPenalty = (takerBond * 200n) / BPS_DENOM;
+
+      await expect(escrow.connect(taker).autoRelease(tradeId))
+        .to.emit(escrow, "EscrowReleased")
+        .withArgs(tradeId, maker.address, taker.address, takerPenalty, makerPenalty);
     });
 
     it("1st ban: 30 days, consecutiveBans = 1, no tier restriction yet", async () => {
@@ -1148,7 +1173,7 @@ describe.skip("ArafEscrow V3", function () {
     });
 
     it("createSellOrder rejects token direction disabled for sell", async () => {
-      await escrow.connect(owner).setTokenConfig(await mockUSDT.getAddress(), true, false, true);
+      await escrow.connect(owner).setTokenConfig(await mockUSDT.getAddress(), true, false, true, USDT_DECIMALS, TIER_MAX_AMOUNTS_BASE_UNIT);
       await expect(
         escrow.connect(maker).createSellOrder(await mockUSDT.getAddress(), TRADE_AMOUNT, 1, 2, makeRef("sell-direction-off"))
       ).to.be.revertedWithCustomError(escrow, "TokenDirectionNotAllowed");
@@ -1520,7 +1545,7 @@ describe.skip("ArafEscrow V3", function () {
     });
 
     it("createBuyOrder rejects token direction disabled for buy", async () => {
-      await escrow.connect(owner).setTokenConfig(await mockUSDT.getAddress(), true, true, false);
+      await escrow.connect(owner).setTokenConfig(await mockUSDT.getAddress(), true, true, false, USDT_DECIMALS, TIER_MAX_AMOUNTS_BASE_UNIT);
       await expect(
         escrow.connect(taker).createBuyOrder(await mockUSDT.getAddress(), TRADE_AMOUNT, 1, 2, makeRef("buy-direction-off"))
       ).to.be.revertedWithCustomError(escrow, "TokenDirectionNotAllowed");
@@ -2083,7 +2108,7 @@ describe.skip("ArafEscrow V3", function () {
     });
 
     it("setTokenConfig can independently toggle sell and buy directions", async () => {
-      await escrow.connect(owner).setTokenConfig(await mockUSDT.getAddress(), true, false, true);
+      await escrow.connect(owner).setTokenConfig(await mockUSDT.getAddress(), true, false, true, USDT_DECIMALS, TIER_MAX_AMOUNTS_BASE_UNIT);
 
       await expect(
         escrow.connect(maker).createSellOrder(await mockUSDT.getAddress(), TRADE_AMOUNT, 1, 2, makeRef("token-config-sell-off"))
@@ -2093,7 +2118,7 @@ describe.skip("ArafEscrow V3", function () {
         escrow.connect(taker).createBuyOrder(await mockUSDT.getAddress(), TRADE_AMOUNT, 1, 2, makeRef("token-config-buy-on"))
       ).to.not.be.reverted;
 
-      await escrow.connect(owner).setTokenConfig(await mockUSDT.getAddress(), true, true, false);
+      await escrow.connect(owner).setTokenConfig(await mockUSDT.getAddress(), true, true, false, USDT_DECIMALS, TIER_MAX_AMOUNTS_BASE_UNIT);
 
       await expect(
         escrow.connect(taker).createBuyOrder(await mockUSDT.getAddress(), TRADE_AMOUNT, 1, 2, makeRef("token-config-buy-off"))
@@ -2105,7 +2130,7 @@ describe.skip("ArafEscrow V3", function () {
     });
 
     it("legacy canonical createEscrow still only depends on support, not direction toggles", async () => {
-      await escrow.connect(owner).setTokenConfig(await mockUSDT.getAddress(), true, false, false);
+      await escrow.connect(owner).setTokenConfig(await mockUSDT.getAddress(), true, false, false, USDT_DECIMALS, TIER_MAX_AMOUNTS_BASE_UNIT);
 
       await expect(
         escrow.connect(maker)["createEscrow(address,uint256,uint8,bytes32)"](
@@ -2164,7 +2189,7 @@ describe.skip("ArafEscrow V3", function () {
 
     it("only owner can set token config", async () => {
       await expect(
-        escrow.connect(taker).setTokenConfig(await mockUSDT.getAddress(), true, true, true)
+        escrow.connect(taker).setTokenConfig(await mockUSDT.getAddress(), true, true, true, USDT_DECIMALS, TIER_MAX_AMOUNTS_BASE_UNIT)
       ).to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount");
     });
 

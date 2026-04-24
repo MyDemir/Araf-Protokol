@@ -14,7 +14,7 @@ const logger = require("../utils/logger");
 const { buildBankProfileRisk, buildTradeHealthSignals } = require("./tradeRisk");
 
 const CANCEL_VERIFY_ABI = [
-  "function sigNonces(address) view returns (uint256)",
+  "function sigNonces(address,uint256) view returns (uint256)",
   "function domainSeparator() view returns (bytes32)",
 ];
 const CANCEL_TYPES = {
@@ -67,7 +67,7 @@ async function _verifyCancelSignatureOrThrow({
 
   const { provider, contract } = verifier;
   const network = await provider.getNetwork();
-  const nonce = await contract.sigNonces(wallet);
+  const nonce = await contract.sigNonces(wallet, tradeOnchainId);
 
   const domain = {
     name: "ArafEscrow",

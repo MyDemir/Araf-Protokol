@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeV3Reputation } from '../hooks/useArafContract';
+import { normalizeV3Reputation, normalizeTokenDecimalsOrThrow } from '../hooks/useArafContract';
 
 describe('useArafContract V3 reputation normalization', () => {
   it('normalizes named V3 response fields without tuple assumptions', () => {
@@ -35,5 +35,16 @@ describe('useArafContract V3 reputation normalization', () => {
     });
 
     expect(malformed).toBeNull();
+  });
+
+  it('accepts 6 and 18 decimals for safe parsing', () => {
+    expect(normalizeTokenDecimalsOrThrow(6)).toBe(6);
+    expect(normalizeTokenDecimalsOrThrow(18)).toBe(18);
+  });
+
+  it('rejects missing/invalid decimals instead of fallback', () => {
+    expect(() => normalizeTokenDecimalsOrThrow(0)).toThrow();
+    expect(() => normalizeTokenDecimalsOrThrow(19)).toThrow();
+    expect(() => normalizeTokenDecimalsOrThrow(undefined)).toThrow();
   });
 });

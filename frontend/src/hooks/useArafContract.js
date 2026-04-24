@@ -51,7 +51,7 @@ const ArafEscrowABI = parseAbi([
   'function getOrder(uint256 _orderId) view returns ((uint256 id, address owner, uint8 side, address tokenAddress, uint256 totalAmount, uint256 remainingAmount, uint256 minFillAmount, uint256 remainingMakerBondReserve, uint256 remainingTakerBondReserve, uint16 takerFeeBpsSnapshot, uint16 makerFeeBpsSnapshot, uint8 tier, uint8 state, bytes32 orderRef))',
 
   // --- EIP-712 için Gerekli View Fonksiyonları ---
-  'function sigNonces(address) view returns (uint256)',
+  'function sigNonces(address, uint256) view returns (uint256)',
   'function domainSeparator() view returns (bytes32)',
   'function getCurrentAmounts(uint256 _tradeId) view returns (uint256 cryptoRemaining, uint256 makerBondRemaining, uint256 takerBondRemaining, uint256 totalDecayed)',
   'function paused() view returns (bool)',
@@ -121,6 +121,14 @@ export function normalizeV3Reputation(rawReputation) {
     normalized[key] = toBigIntSafe(resolved, 0n);
   }
 
+  return normalized;
+}
+
+export function normalizeTokenDecimalsOrThrow(rawDecimals) {
+  const normalized = Number(rawDecimals);
+  if (!Number.isInteger(normalized) || normalized <= 0 || normalized > 18) {
+    throw new Error("Invalid token decimals");
+  }
   return normalized;
 }
 
@@ -422,22 +430,26 @@ export function useArafContract() {
 
   /**
    * Token decimals değerini on-chain okur.
-   * Okunamazsa güvenli varsayılan olarak 6 döner (USDT/USDC uyumu).
+   * Decimals okunamazsa veya güvenli aralık dışındaysa işlem bloklanır.
    *
    * @param {string} tokenAddress
    * @returns {Promise<number>}
    */
   const getTokenDecimals = useCallback(async (tokenAddress) => {
-    if (!_isValidAddress) return 6;
+    if (!_isValidAddress) {
+      throw new Error("Escrow contract address is not configured.");
+    }
+
     try {
       const decimals = await publicClient.readContract({
         address: getAddress(tokenAddress),
         abi: ERC20_ABI,
         functionName: 'decimals',
       });
-      return Number(decimals);
-    } catch {
-      return 6;
+
+      return normalizeTokenDecimalsOrThrow(decimals);
+    } catch (error) {
+      throw new Error(error?.message || "Token decimals could not be read safely.");
     }
   }, [publicClient]);
 
@@ -448,11 +460,10 @@ export function useArafContract() {
    * Kontrat tarafında da bu kontrolün yapılması önerilir.
    *
    * @param {number} tradeId   - On-chain trade ID
-   * @param {number} nonce     - Signer's current sigNonces value
    * @param {number} [deadlineOverride] - Opsiyonel: custom deadline (saniye)
    * @returns {Promise<{signature: string, deadline: number}>}
    */
-  const signCancelProposal = useCallback(async (tradeId, nonce, deadlineOverride) => {
+  const signCancelProposal = useCallback(async (tradeId, deadlineOverride) => {
     if (!walletClient) throw new Error("Cüzdan bağlı değil");
     _validateChain();
 
@@ -472,6 +483,14 @@ export function useArafContract() {
     }
 
     const deadline = requestedDeadline;
+    const tradeIdBigInt = BigInt(tradeId);
+
+    const nonce = await publicClient.readContract({
+      address: getAddress(ESCROW_ADDRESS),
+      abi: ArafEscrowABI,
+      functionName: 'sigNonces',
+      args: [walletClient.account.address, tradeIdBigInt],
+    });
 
     const domain = {
       name: "ArafEscrow",
@@ -491,7 +510,7 @@ export function useArafContract() {
     };
 
     const message = {
-      tradeId:  BigInt(tradeId),
+      tradeId:  tradeIdBigInt,
       proposer: walletClient.account.address,
       nonce:    BigInt(nonce),
       deadline: BigInt(deadline),
@@ -505,7 +524,7 @@ export function useArafContract() {
     });
 
     return { signature, deadline };
-  }, [walletClient, chainId, _validateChain]);
+  }, [walletClient, chainId, _validateChain, publicClient]);
 
   /**
    * Kontrat'a cancel proposal gönderir veya onaylar.

@@ -208,4 +208,58 @@ describe("eventListener OrderFilled mirror hardening", () => {
 
     expect(worker._captureLockedTradeSnapshot).not.toHaveBeenCalled();
   });
+
+  it("validates_amount_with_token_specific_decimals", async () => {
+    await worker._upsertTradeMirror({
+      id: 501n,
+      parentOrderId: 7n,
+      maker: "0x3333333333333333333333333333333333333333",
+      taker: "0x1111111111111111111111111111111111111111",
+      tokenAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      cryptoAmount: 123456789n, // 6-decimals style
+      makerBond: 1000n,
+      takerBond: 500n,
+      takerFeeBpsSnapshot: 15,
+      makerFeeBpsSnapshot: 15,
+      tier: 1,
+      state: 1,
+      lockedAt: 1710000000n,
+      paidAt: 0n,
+      challengedAt: 0n,
+      ipfsReceiptHash: "",
+      pingedByTaker: false,
+      challengePingedByMaker: false,
+      pingedAt: 0n,
+      challengePingedAt: 0n,
+    });
+
+    await worker._upsertTradeMirror({
+      id: 502n,
+      parentOrderId: 8n,
+      maker: "0x3333333333333333333333333333333333333333",
+      taker: "0x1111111111111111111111111111111111111111",
+      tokenAddress: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      cryptoAmount: 123456789000000000000n, // 18-decimals style
+      makerBond: 1000n,
+      takerBond: 500n,
+      takerFeeBpsSnapshot: 15,
+      makerFeeBpsSnapshot: 15,
+      tier: 1,
+      state: 1,
+      lockedAt: 1710000000n,
+      paidAt: 0n,
+      challengedAt: 0n,
+      ipfsReceiptHash: "",
+      pingedByTaker: false,
+      challengePingedByMaker: false,
+      pingedAt: 0n,
+      challengePingedAt: 0n,
+    });
+
+    const firstPayload = mockFindOneAndUpdateTrade.mock.calls[0][1].$set;
+    const secondPayload = mockFindOneAndUpdateTrade.mock.calls[1][1].$set;
+
+    expect(firstPayload.financials.crypto_amount).toBe("123456789");
+    expect(secondPayload.financials.crypto_amount).toBe("123456789000000000000");
+  });
 });

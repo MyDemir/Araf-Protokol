@@ -13,7 +13,7 @@
  *   - Bond oranları sabit constant'lardan okunur.
  *   - Fee config mutable'dır → getFeeConfig()
  *   - Cooldown config mutable'dır → getCooldownConfig()
- *   - Token yön izinleri mutable'dır → tokenConfigs(token)
+ *   - Token yön izinleri + decimals/tier limit mutable'dır → getTokenConfig(token)
  *
  * Kritik not:
  *   - Config okunamıyorsa fallback ekonomi ÜRETİLMEZ.
@@ -40,7 +40,7 @@ const CONFIG_ABI = [
   "function TAKER_BOND_TIER4_BPS() view returns (uint256)",
   "function getFeeConfig() view returns (uint256 currentTakerFeeBps, uint256 currentMakerFeeBps)",
   "function getCooldownConfig() view returns (uint256 currentTier0TradeCooldown, uint256 currentTier1TradeCooldown)",
-  "function tokenConfigs(address) view returns (bool supported, bool allowSellOrders, bool allowBuyOrders)",
+  "function getTokenConfig(address) view returns (bool supported, bool allowSellOrders, bool allowBuyOrders, uint8 decimals, uint256[4] tierMaxAmountsBaseUnit)",
 ];
 
 let protocolConfig = null;
@@ -138,12 +138,15 @@ async function loadProtocolConfig() {
 
   for (const token of trackedTokens) {
     try {
-      const cfg = await contract.tokenConfigs(token);
+      const cfg = await contract.getTokenConfig(token);
+      const tierMaxAmountsBaseUnit = Array.from(cfg.tierMaxAmountsBaseUnit ?? cfg[4] ?? []).map((v) => v.toString());
 
       tokenMap[token] = {
-        supported: Boolean(cfg.supported),
-        allowSellOrders: Boolean(cfg.allowSellOrders),
-        allowBuyOrders: Boolean(cfg.allowBuyOrders),
+        supported: Boolean(cfg.supported ?? cfg[0]),
+        allowSellOrders: Boolean(cfg.allowSellOrders ?? cfg[1]),
+        allowBuyOrders: Boolean(cfg.allowBuyOrders ?? cfg[2]),
+        decimals: Number(cfg.decimals ?? cfg[3]),
+        tierMaxAmountsBaseUnit,
       };
     } catch (err) {
       logger.warn(`[Config] tokenConfig load başarısız: token=${token} err=${err.message}`);
@@ -151,6 +154,8 @@ async function loadProtocolConfig() {
         supported: false,
         allowSellOrders: false,
         allowBuyOrders: false,
+        decimals: null,
+        tierMaxAmountsBaseUnit: [],
       };
     }
   }
@@ -225,10 +230,17 @@ async function updateCachedCooldownConfig(tier0TradeCooldown, tier1TradeCooldown
 async function updateCachedTokenConfig(tokenAddress, tokenConfig) {
   return _patchAndPersist((cfg) => {
     if (!cfg.tokenMap) cfg.tokenMap = {};
+    const hasDecimals = tokenConfig?.decimals !== undefined && tokenConfig?.decimals !== null;
+    const hasTierLimits = Array.isArray(tokenConfig?.tierMaxAmountsBaseUnit);
+
     cfg.tokenMap[tokenAddress.toLowerCase()] = {
-      supported: Boolean(tokenConfig.supported),
-      allowSellOrders: Boolean(tokenConfig.allowSellOrders),
-      allowBuyOrders: Boolean(tokenConfig.allowBuyOrders),
+      supported: Boolean(tokenConfig?.supported),
+      allowSellOrders: Boolean(tokenConfig?.allowSellOrders),
+      allowBuyOrders: Boolean(tokenConfig?.allowBuyOrders),
+      decimals: hasDecimals ? Number(tokenConfig.decimals) : null,
+      tierMaxAmountsBaseUnit: hasTierLimits
+        ? tokenConfig.tierMaxAmountsBaseUnit.map((v) => v.toString())
+        : [],
     };
   });
 }

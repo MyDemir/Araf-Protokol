@@ -98,6 +98,22 @@ describe('POST /api/trades/propose-cancel signature verification', () => {
     expect(mockVerifyTypedData).toHaveBeenCalled();
   });
 
+  it('reads_cancel_nonce_per_trade', async () => {
+    await sendRequest(buildApp());
+
+    expect(mockSigNonces).toHaveBeenCalledWith(
+      '0x1111111111111111111111111111111111111111',
+      '42'
+    );
+  });
+
+  it('does_not_use_global_cancel_nonce', async () => {
+    await sendRequest(buildApp());
+
+    const callArgs = mockSigNonces.mock.calls[0] || [];
+    expect(callArgs.length).toBe(2);
+  });
+
   it.each(['LOCKED', 'PAID', 'CHALLENGED'])('allows cancel coordination for %s state', async (status) => {
     mockTradeDoc = buildTradeDoc(status);
 

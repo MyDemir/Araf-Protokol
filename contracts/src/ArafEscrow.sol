@@ -70,6 +70,11 @@ error OrderSideMismatch();
 error TokenDirectionNotAllowed();
 error FeeBpsExceedsUint16(uint256 value);
 error FeeBpsExceedsEconomicLimit(uint256 value);
+error InvalidTransferAmount();
+error InvalidDecimals();
+error CooldownTooHigh();
+error DecayTooHigh();
+error BanTooHigh();
 
 contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     using SafeERC20 for IERC20;
@@ -189,6 +194,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         bool supported;
         bool allowSellOrders;
         bool allowBuyOrders;
+        uint8 decimals;
+        uint256[4] tierMaxAmountsBaseUnit;
     }
 
     // ═══════════════════════════════════════════════════
@@ -207,11 +214,6 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     uint256 public constant TAKER_BOND_TIER2_BPS =  800;
     uint256 public constant TAKER_BOND_TIER3_BPS =  500;
     uint256 public constant TAKER_BOND_TIER4_BPS =  200;
-
-    uint256 public constant TIER_MAX_AMOUNT_TIER0 =    150 * 10**6;
-    uint256 public constant TIER_MAX_AMOUNT_TIER1 =   1500 * 10**6;
-    uint256 public constant TIER_MAX_AMOUNT_TIER2 =   7500 * 10**6;
-    uint256 public constant TIER_MAX_AMOUNT_TIER3 =  30000 * 10**6;
 
     uint256 public constant GOOD_REP_DISCOUNT_BPS = 100;
     uint256 public constant BAD_REP_PENALTY_BPS   = 300;
@@ -239,7 +241,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     uint256 public constant CRYPTO_DECAY_BPS_H     = 34;
 
     uint256 public constant DUST_LIMIT = 0.001 ether;
-    uint256 private constant MAX_REPUTATION_CLEAN_PERIOD = 365 days;
+    // [TR] Governance yanlış konfigürasyon riskine karşı süre üst sınırları.
+    // [EN] Duration upper bounds against governance misconfiguration risk.
+    uint256 public constant MAX_TRADE_COOLDOWN = 30 days;
+    uint256 public constant MAX_REPUTATION_DECAY_PERIOD = 365 days;
     uint256 private constant MAX_BAN_DURATION = 365 days;
 
     uint256 private constant BPS_DENOMINATOR  = 10_000;
@@ -291,7 +296,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
     mapping(address => uint256) public firstSuccessfulTradeAt;
     mapping(address => TokenConfig) public tokenConfigs;
-    mapping(address => uint256) public sigNonces;
+    mapping(address => mapping(uint256 => uint256)) public sigNonces;
 
     // [TR] Owner kontrollü mutable fee / cooldown alanları
     // [EN] Owner-controlled mutable fee / cooldown state
@@ -473,7 +478,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint8 effectiveTier = _getEffectiveTier(msg.sender);
         if (_tier > effectiveTier) revert TierNotAllowed();
 
-        uint256 tierMax = _getTierMaxAmount(_tier);
+        uint256 tierMax = _getTierMaxAmount(_token, _tier);
         if (tierMax > 0 && _totalAmount > tierMax) revert AmountExceedsTierLimit();
 
         uint256 makerBondBps   = _getMakerBondBps(msg.sender, _tier);
@@ -497,7 +502,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             orderRef:                   _orderRef
         });
 
-        IERC20(_token).safeTransferFrom(msg.sender, address(this), _totalAmount + makerBondTotal);
+        _safeTransferExactIn(IERC20(_token), msg.sender, _totalAmount + makerBondTotal);
 
         emit OrderCreated(
             orderId,
@@ -550,7 +555,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         o.state = o.remainingAmount == 0 ? OrderState.FILLED : OrderState.PARTIALLY_FILLED;
 
         if (takerBond > 0) {
-            IERC20(o.tokenAddress).safeTransferFrom(msg.sender, address(this), takerBond);
+            _safeTransferExactIn(IERC20(o.tokenAddress), msg.sender, takerBond);
         }
 
         tradeId = ++tradeCounter;
@@ -646,7 +651,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         //      enforce taker entry gate at create time as well.
         _enforceTakerEntry(msg.sender, _tier);
 
-        uint256 tierMax = _getTierMaxAmount(_tier);
+        uint256 tierMax = _getTierMaxAmount(_token, _tier);
         if (tierMax > 0 && _totalAmount > tierMax) revert AmountExceedsTierLimit();
 
         uint256 takerBondBps   = _getTakerBondBps(msg.sender, _tier);
@@ -671,7 +676,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         });
 
         if (takerBondTotal > 0) {
-            IERC20(_token).safeTransferFrom(msg.sender, address(this), takerBondTotal);
+            _safeTransferExactIn(IERC20(_token), msg.sender, takerBondTotal);
         }
 
         emit OrderCreated(
@@ -732,7 +737,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         o.remainingTakerBondReserve -= takerBondSlice;
         o.state = o.remainingAmount == 0 ? OrderState.FILLED : OrderState.PARTIALLY_FILLED;
 
-        IERC20(o.tokenAddress).safeTransferFrom(msg.sender, address(this), totalLock);
+        _safeTransferExactIn(IERC20(o.tokenAddress), msg.sender, totalLock);
 
         tradeId = ++tradeCounter;
         trades[tradeId] = Trade({
@@ -942,11 +947,13 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (msg.sender != t.maker && msg.sender != t.taker) revert NotTradeParty();
         if (_deadline > block.timestamp + MAX_CANCEL_DEADLINE) revert DeadlineTooFar();
 
+        uint256 currentNonce = sigNonces[msg.sender][_tradeId];
+
         bytes32 structHash = keccak256(abi.encode(
             CANCEL_TYPEHASH,
             _tradeId,
             msg.sender,
-            sigNonces[msg.sender],
+            currentNonce,
             _deadline
         ));
 
@@ -954,7 +961,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         address recovered = ECDSA.recover(digest, _sig);
         if (recovered != msg.sender) revert InvalidSignature();
 
-        sigNonces[msg.sender]++;
+        // [TR] Replay koruması trade-scoped nonce ile uygulanır; başka trade'leri etkilemez.
+        // [EN] Replay protection uses trade-scoped nonce and does not affect other trades.
+        sigNonces[msg.sender][_tradeId]++;
 
         if (msg.sender == t.maker) t.cancelProposedByMaker = true;
         else                       t.cancelProposedByTaker = true;
@@ -1057,7 +1066,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         _recordAutoRelease(t.maker, t.taker);
 
-        emit EscrowReleased(_tradeId, t.maker, t.taker, makerPenalty, takerPenalty);
+        // Event payload order must stay aligned with EscrowReleased(takerFee, makerFee)
+        // so off-chain listeners book penalties to the correct party.
+        emit EscrowReleased(_tradeId, t.maker, t.taker, takerPenalty, makerPenalty);
     }
 
     /**
@@ -1416,12 +1427,46 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      * @notice Returns the maximum escrow amount allowed for each tier.
      *         Tier 4 is intentionally unlimited.
      */
-    function _getTierMaxAmount(uint8 _tier) internal pure returns (uint256) {
-        if (_tier == 0) return TIER_MAX_AMOUNT_TIER0;
-        if (_tier == 1) return TIER_MAX_AMOUNT_TIER1;
-        if (_tier == 2) return TIER_MAX_AMOUNT_TIER2;
-        if (_tier == 3) return TIER_MAX_AMOUNT_TIER3;
-        return 0;
+    function _getTierMaxAmount(address _token, uint8 _tier) internal view returns (uint256) {
+        if (_tier > 3) return 0;
+        return tokenConfigs[_token].tierMaxAmountsBaseUnit[_tier];
+    }
+
+    /**
+     * @notice Token config'i UI/backend read-model katmanları için döndürür.
+     *         tierMaxAmountsBaseUnit değerleri token'ın base-unit cinsindendir.
+     * @notice Returns token config for UI/backend read-model layers.
+     *         tierMaxAmountsBaseUnit values are in token base units.
+     */
+    function getTokenConfig(address _token)
+        external
+        view
+        returns (
+            bool supported,
+            bool allowSellOrders,
+            bool allowBuyOrders,
+            uint8 decimals,
+            uint256[4] memory tierMaxAmountsBaseUnit
+        )
+    {
+        TokenConfig storage cfg = tokenConfigs[_token];
+        supported = cfg.supported;
+        allowSellOrders = cfg.allowSellOrders;
+        allowBuyOrders = cfg.allowBuyOrders;
+        decimals = cfg.decimals;
+        tierMaxAmountsBaseUnit = cfg.tierMaxAmountsBaseUnit;
+    }
+
+    /**
+     * @notice Tier başına token-spesifik maksimum escrow miktarını döndürür.
+     *         Dönüş değeri token base-unit cinsindendir. Tier 4 sınırsızdır.
+     * @notice Returns token-specific max escrow amount by tier.
+     *         Return value is in token base units. Tier 4 is unlimited.
+     */
+    function getTierMaxAmount(address _token, uint8 _tier) external view returns (uint256) {
+        if (_tier > 4) revert InvalidTier();
+        if (_tier == 4) return 0;
+        return tokenConfigs[_token].tierMaxAmountsBaseUnit[_tier];
     }
 
     /**
@@ -1628,6 +1673,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      *         The change applies to new lock / fill entries.
      */
     function setCooldownConfig(uint256 _tier0TradeCooldown, uint256 _tier1TradeCooldown) external onlyOwner {
+        if (_tier0TradeCooldown > MAX_TRADE_COOLDOWN) revert CooldownTooHigh();
+        if (_tier1TradeCooldown > MAX_TRADE_COOLDOWN) revert CooldownTooHigh();
+
         tier0TradeCooldown = _tier0TradeCooldown;
         tier1TradeCooldown = _tier1TradeCooldown;
         emit CooldownConfigUpdated(_tier0TradeCooldown, _tier1TradeCooldown);
@@ -1643,15 +1691,22 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         address _token,
         bool _supported,
         bool _allowSellOrders,
-        bool _allowBuyOrders
+        bool _allowBuyOrders,
+        uint8 _decimals,
+        uint256[4] calldata _tierMaxAmountsBaseUnit
     ) external onlyOwner {
         if (_token == address(0)) revert OwnableInvalidOwner(address(0));
+        if (_decimals == 0 || _decimals > 18) revert InvalidDecimals();
+        for (uint256 i = 0; i < 4; i++) {
+            if (_tierMaxAmountsBaseUnit[i] == 0) revert ZeroAmount();
+        }
 
-        tokenConfigs[_token] = TokenConfig({
-            supported: _supported,
-            allowSellOrders: _allowSellOrders,
-            allowBuyOrders: _allowBuyOrders
-        });
+        TokenConfig storage cfg = tokenConfigs[_token];
+        cfg.supported = _supported;
+        cfg.allowSellOrders = _allowSellOrders;
+        cfg.allowBuyOrders = _allowBuyOrders;
+        cfg.decimals = _decimals;
+        cfg.tierMaxAmountsBaseUnit = _tierMaxAmountsBaseUnit;
 
         emit TokenConfigUpdated(_token, _supported, _allowSellOrders, _allowBuyOrders);
     }
@@ -1674,9 +1729,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint32 _banRiskPointsThreshold
     ) external onlyOwner {
         if (_cleanPeriod < 7 days) revert InvalidState();
-        if (_cleanPeriod > MAX_REPUTATION_CLEAN_PERIOD) revert InvalidState();
+        if (_cleanPeriod > MAX_REPUTATION_DECAY_PERIOD) revert DecayTooHigh();
         if (_baseBanDuration == 0) revert ZeroAmount();
-        if (_baseBanDuration > MAX_BAN_DURATION) revert InvalidState();
+        if (_baseBanDuration > MAX_BAN_DURATION) revert BanTooHigh();
         if (_banRiskPointsThreshold == 0) revert ZeroAmount();
         if (_banRiskPointsThreshold > tierMaxRiskPoints[0]) revert InvalidTier();
         // [TR] Ödül/ceza delta'ları ban eşiğini aşmamalı.
@@ -1842,6 +1897,23 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         TokenConfig memory cfg = tokenConfigs[_token];
         if (!cfg.supported) return false;
         return cfg.allowBuyOrders;
+    }
+
+    /**
+     * @notice Kontrata gelen token girişini exact miktar olarak zorlar.
+     *         Fee-on-transfer / deflasyonist tokenlar eksik giriş üretirse revert eder.
+     * @notice Enforces exact token inflow into the contract.
+     *         Reverts when fee-on-transfer / deflationary tokens deliver less than expected.
+     */
+    function _safeTransferExactIn(IERC20 _token, address _from, uint256 _amount) internal {
+        if (_amount == 0) return;
+
+        uint256 beforeBalance = _token.balanceOf(address(this));
+        _token.safeTransferFrom(_from, address(this), _amount);
+        uint256 afterBalance = _token.balanceOf(address(this));
+
+        if (afterBalance < beforeBalance) revert InvalidTransferAmount();
+        if (afterBalance - beforeBalance != _amount) revert InvalidTransferAmount();
     }
 
     /**
