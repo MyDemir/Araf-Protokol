@@ -213,6 +213,11 @@ function App() {
     registerWallet,
     reportPayment,
     burnExpired,
+    proposeSettlement,
+    rejectSettlement,
+    withdrawSettlement,
+    expireSettlement,
+    acceptSettlement,
     approveToken,
     getAllowance,
     getTokenDecimals,
@@ -1457,9 +1462,15 @@ const handleCreateOrder = async () => {
     rawTokenToDisplayNumber,
     fetchMyTrades,
     setIsContractLoading,
+    setLoadingText,
     getSafeTelegramUrl,
     authenticatedFetch,
     showToast,
+    proposeSettlement,
+    rejectSettlement,
+    withdrawSettlement,
+    expireSettlement,
+    acceptSettlement,
   });
 
   const {

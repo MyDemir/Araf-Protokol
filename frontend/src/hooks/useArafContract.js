@@ -107,6 +107,32 @@ const toBigIntSafe = (value, fallback = 0n) => {
   }
 };
 
+export function normalizeTradeIdOrThrow(tradeId) {
+  try {
+    const normalized = BigInt(tradeId);
+    if (normalized < 0n) throw new Error('Trade ID negatif olamaz.');
+    return normalized;
+  } catch {
+    throw new Error('Geçersiz tradeId. Lütfen işlemi yenileyin.');
+  }
+}
+
+export function normalizeMakerShareBpsOrThrow(makerShareBps) {
+  const value = Number(makerShareBps);
+  if (!Number.isInteger(value) || value < 0 || value > 10000) {
+    throw new Error('makerShareBps 0-10000 aralığında tam sayı olmalı.');
+  }
+  return value;
+}
+
+export function normalizeUnixSecondsOrThrow(expiresAt) {
+  const value = Number(expiresAt);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error('expiresAt geçerli bir Unix saniye değeri olmalı.');
+  }
+  return BigInt(Math.trunc(value));
+}
+
 export function normalizeV3Reputation(rawReputation) {
   if (!rawReputation || (typeof rawReputation !== 'object' && !Array.isArray(rawReputation))) {
     return null;
@@ -347,35 +373,39 @@ export function useArafContract() {
    * [EN] Creates an on-chain split settlement proposal.
    */
   const proposeSettlement = useCallback((tradeId, makerShareBps, expiresAt) =>
-    writeContract("proposeSettlement", [tradeId, makerShareBps, BigInt(expiresAt)]), [writeContract]);
+    writeContract("proposeSettlement", [
+      normalizeTradeIdOrThrow(tradeId),
+      normalizeMakerShareBpsOrThrow(makerShareBps),
+      normalizeUnixSecondsOrThrow(expiresAt),
+    ]), [writeContract]);
 
   /**
    * [TR] Karşı taraf aktif settlement teklifini reddeder.
    * [EN] Counterparty rejects active settlement proposal.
    */
   const rejectSettlement = useCallback((tradeId) =>
-    writeContract("rejectSettlement", [tradeId]), [writeContract]);
+    writeContract("rejectSettlement", [normalizeTradeIdOrThrow(tradeId)]), [writeContract]);
 
   /**
    * [TR] Teklif sahibi aktif settlement teklifini geri çeker.
    * [EN] Proposer withdraws active settlement proposal.
    */
   const withdrawSettlement = useCallback((tradeId) =>
-    writeContract("withdrawSettlement", [tradeId]), [writeContract]);
+    writeContract("withdrawSettlement", [normalizeTradeIdOrThrow(tradeId)]), [writeContract]);
 
   /**
    * [TR] Süresi dolmuş settlement teklifini expire eder.
    * [EN] Expires a timed-out settlement proposal.
    */
   const expireSettlement = useCallback((tradeId) =>
-    writeContract("expireSettlement", [tradeId]), [writeContract]);
+    writeContract("expireSettlement", [normalizeTradeIdOrThrow(tradeId)]), [writeContract]);
 
   /**
    * [TR] Karşı taraf aktif settlement teklifini kabul edip split payout'u finalize eder.
    * [EN] Counterparty accepts active settlement proposal and finalizes split payout.
    */
   const acceptSettlement = useCallback((tradeId) =>
-    writeContract("acceptSettlement", [tradeId]), [writeContract]);
+    writeContract("acceptSettlement", [normalizeTradeIdOrThrow(tradeId)]), [writeContract]);
 
   // ── ERC-20 Token Onayı ──
   /**

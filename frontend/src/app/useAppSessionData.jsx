@@ -26,6 +26,32 @@ const rawTokenToDisplayNumber = (rawAmount, decimals = DEFAULT_TOKEN_DECIMALS) =
   }
 };
 
+export function mapSettlementProposalFromApi(settlementProposal) {
+  if (!settlementProposal || typeof settlementProposal !== 'object') return null;
+  return {
+    ...settlementProposal,
+    state: settlementProposal.state || null,
+    proposer: settlementProposal.proposer || null,
+  };
+}
+
+export function buildSettlementQuickCounts(activeEscrows = [], connectedAddress = null) {
+  const viewer = connectedAddress?.toLowerCase?.() || null;
+  return activeEscrows.reduce((acc, escrow) => {
+    const proposal = escrow?.rawTrade?.settlementProposal;
+    if (!proposal || proposal.state !== 'PROPOSED') return acc;
+
+    acc.PROPOSED += 1;
+    const proposer = proposal.proposer?.toLowerCase?.() || null;
+    if (viewer && proposer && proposer === viewer) {
+      acc.WAITING += 1;
+    } else {
+      acc.ACTION_REQUIRED += 1;
+    }
+    return acc;
+  }, { PROPOSED: 0, ACTION_REQUIRED: 0, WAITING: 0 });
+}
+
 export function mapReputationToSessionView(repData, firstTradeAt = 0n) {
   if (!repData) return null;
 
@@ -330,6 +356,7 @@ export function useAppSessionData({
             challengePingedAt: t.timers?.challenge_pinged_at,
             challengedAt: t.timers?.challenged_at,
             onchainId: t.onchain_escrow_id,
+            settlementProposal: mapSettlementProposalFromApi(t.settlement_proposal),
             amount: `${formatTokenAmountFromRaw(cryptoAmtRaw, tokenDecimals)} ${cryptoAsset}`,
             action: t.status === 'PAID' ? (lang === 'TR' ? 'Onay Bekliyor' : 'Pending Approval') : (lang === 'TR' ? 'İşlemde' : 'In Progress'),
             rawTrade: {
@@ -352,6 +379,7 @@ export function useAppSessionData({
               challengedAt: t.timers?.challenged_at,
               cancelProposedBy: t.cancel_proposal?.proposed_by,
               chargebackAcked: t.chargeback_ack?.acknowledged === true,
+              settlementProposal: mapSettlementProposalFromApi(t.settlement_proposal),
               // [TR] Trust Visibility Layer payload'ı backend'den read-only gelir; UI explainability için taşınır.
               // [EN] Trust Visibility payload arrives read-only from backend; carried for UI explainability only.
               offchainHealthScoreInput: t.offchain_health_score_input || null,
@@ -385,6 +413,7 @@ export function useAppSessionData({
             challengedAt: updated.timers?.challenged_at ?? prev.challengedAt,
             cancelProposedBy: updated.cancel_proposal?.proposed_by ?? prev.cancelProposedBy,
             chargebackAcked: updated.chargeback_ack?.acknowledged === true,
+            settlementProposal: mapSettlementProposalFromApi(updated.settlement_proposal) ?? prev.settlementProposal ?? null,
             offchainHealthScoreInput: updated.offchain_health_score_input ?? prev.offchainHealthScoreInput ?? null,
             bankProfileRisk: updated.bank_profile_risk ?? prev.bankProfileRisk ?? null,
           };
@@ -896,6 +925,7 @@ export function useAppSessionData({
     LOCKED: activeEscrows.filter((e) => e.state === 'LOCKED').length,
     PAID: activeEscrows.filter((e) => e.state === 'PAID').length,
     CHALLENGED: activeEscrows.filter((e) => e.state === 'CHALLENGED').length,
+    settlement: buildSettlementQuickCounts(activeEscrows, address),
   };
 
   const gracePeriodEndDate = useMemo(() => activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000) : null, [activeTrade?.paidAt]);

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { mapReputationToSessionView } from '../app/useAppSessionData';
+import {
+  mapReputationToSessionView,
+  mapSettlementProposalFromApi,
+  buildSettlementQuickCounts,
+} from '../app/useAppSessionData';
 
 describe('useAppSessionData V3 reputation mapping', () => {
   it('maps V3 authority counters into frontend-friendly session state', () => {
@@ -35,5 +39,33 @@ describe('useAppSessionData V3 reputation mapping', () => {
 
   it('returns null when contract reputation payload is missing', () => {
     expect(mapReputationToSessionView(null)).toBeNull();
+  });
+
+  it('maps backend settlement proposal payload into active trade safe shape', () => {
+    const mapped = mapSettlementProposalFromApi({
+      id: 1,
+      proposer: '0xabc',
+      state: 'PROPOSED',
+    });
+    expect(mapped).toMatchObject({
+      id: 1,
+      proposer: '0xabc',
+      state: 'PROPOSED',
+    });
+  });
+
+  it('computes settlement quick counts for action-required vs waiting lanes', () => {
+    const activeEscrows = [
+      { rawTrade: { settlementProposal: { state: 'PROPOSED', proposer: '0xmaker' } } },
+      { rawTrade: { settlementProposal: { state: 'PROPOSED', proposer: '0xother' } } },
+      { rawTrade: { settlementProposal: { state: 'REJECTED', proposer: '0xmaker' } } },
+    ];
+
+    const counts = buildSettlementQuickCounts(activeEscrows, '0xmaker');
+    expect(counts).toStrictEqual({
+      PROPOSED: 2,
+      ACTION_REQUIRED: 1,
+      WAITING: 1,
+    });
   });
 });

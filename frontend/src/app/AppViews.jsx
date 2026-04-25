@@ -95,9 +95,15 @@ export const buildAppViews = (ctx) => {
     rawTokenToDisplayNumber,
     fetchMyTrades,
     setIsContractLoading,
+    setLoadingText,
     getSafeTelegramUrl,
     authenticatedFetch,
     showToast,
+    proposeSettlement,
+    rejectSettlement,
+    withdrawSettlement,
+    expireSettlement,
+    acceptSettlement,
   
   } = ctx;
 
@@ -245,6 +251,25 @@ export const buildAppViews = (ctx) => {
                 </div>
               );
             })}
+          </div>
+        </div>
+        <div className="mt-6">
+          <p className="text-[10px] font-bold text-slate-500 mb-3 tracking-widest">
+            {lang === 'TR' ? 'SETTLEMENT' : 'SETTLEMENT'}
+          </p>
+          <div className="space-y-1">
+            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-slate-300 border border-[#2a2a2e] bg-[#101014]">
+              <span className="flex items-center gap-2"><span className="text-emerald-400">🧩</span>{lang === 'TR' ? 'Aktif Teklif' : 'Active Proposals'}</span>
+              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-200">{activeEscrowCounts?.settlement?.PROPOSED ?? 0}</span>
+            </div>
+            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-slate-300 border border-[#2a2a2e] bg-[#101014]">
+              <span className="flex items-center gap-2"><span className="text-yellow-400">⏳</span>{lang === 'TR' ? 'Benden Aksiyon Bekliyor' : 'Action Required'}</span>
+              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-200">{activeEscrowCounts?.settlement?.ACTION_REQUIRED ?? 0}</span>
+            </div>
+            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-slate-300 border border-[#2a2a2e] bg-[#101014]">
+              <span className="flex items-center gap-2"><span className="text-sky-400">🕒</span>{lang === 'TR' ? 'Karşı Taraftan Yanıt Bekliyorum' : 'Waiting Counterparty'}</span>
+              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-200">{activeEscrowCounts?.settlement?.WAITING ?? 0}</span>
+            </div>
           </div>
         </div>
 
