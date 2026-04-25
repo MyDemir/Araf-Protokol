@@ -21,6 +21,7 @@ export default function PaymentRiskBadge({
     ? 'Genel payment config; bu order’a özel rail sinyali değildir.'
     : 'Generic payment config; this is not an order-specific rail signal.';
   const desc = riskEntry?.description?.[lang] || riskEntry?.description?.EN || '';
+  const isSnapshot = riskEntry?.source === 'onchain_snapshot';
   const chipClass = RISK_LEVEL_CLASS[riskLevel] || RISK_LEVEL_CLASS.MEDIUM;
   const isGenericSignal = riskEntry?.generic === true;
 
@@ -40,7 +41,9 @@ export default function PaymentRiskBadge({
     <div className="mt-3 p-3 rounded-xl border border-[#2a2a2e] bg-[#101014]">
       <div className="flex items-center justify-between gap-2 mb-2">
         <p className="text-xs text-slate-300 font-semibold">
-          {lang === 'TR' ? 'Payment Risk Class (Config)' : 'Payment Risk Class (Config)'}
+{isSnapshot
+            ? (lang === 'TR' ? 'Payment Risk Class (Snapshot)' : 'Payment Risk Class (Snapshot)')
+            : (lang === 'TR' ? 'Payment Risk Class (Config)' : 'Payment Risk Class (Config)')}
         </p>
         <span className={`text-[10px] px-2 py-0.5 rounded border font-bold ${chipClass}`}>{riskLevel}</span>
       </div>

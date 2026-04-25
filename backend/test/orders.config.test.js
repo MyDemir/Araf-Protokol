@@ -55,6 +55,7 @@ describe("GET /api/orders/config", () => {
     expect(res.body).toHaveProperty("cooldownConfig");
     expect(res.body).toHaveProperty("tokenMap");
     expect(res.body).toHaveProperty("paymentRiskConfig");
+    expect(res.body).toHaveProperty("selectedOrderRiskLevel");
     expect(res.body.feeConfig.currentTakerFeeBps).toBe(10);
     expect(res.body.tokenMap.usdt.decimals).toBe(6);
     expect(res.body.paymentRiskConfig.TR.TR_IBAN.riskLevel).toBe("MEDIUM");
@@ -84,6 +85,10 @@ describe("GET /api/orders/config", () => {
             description: { TR: "x", EN: "y" },
           },
         },
+      },
+      selectedOrderRiskLevel: {
+        source: "onchain_order_snapshot",
+        nonAuthoritative: true,
       },
     });
   });

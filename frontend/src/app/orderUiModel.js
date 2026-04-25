@@ -121,6 +121,30 @@ export const resolvePaymentRiskEntry = ({ paymentRiskConfig = {}, rail, country 
 };
 
 export const deriveOrderPaymentRiskSignal = ({ order, paymentRiskConfig = {} }) => {
+  const snapshotRiskLevel = String(
+    order?.payment_risk_level_snapshot
+      || order?.payment_risk_level
+      || order?.paymentRiskLevelSnapshot
+      || order?.paymentRiskLevel
+      || ""
+  ).toUpperCase();
+  if (["LOW", "MEDIUM", "HIGH", "RESTRICTED"].includes(snapshotRiskLevel)) {
+    return {
+      riskLevel: snapshotRiskLevel,
+      description: {
+        TR: "Order/trade oluşturulurken seçilen payment risk snapshot seviyesidir.",
+        EN: "Payment risk snapshot level selected at order/trade creation.",
+      },
+      warningKey: "PAYMENT_RISK_SNAPSHOT",
+      minBondSurchargeBps: 0,
+      feeSurchargeBps: 0,
+      enabled: true,
+      generic: false,
+      orderSpecific: true,
+      source: "onchain_snapshot",
+    };
+  }
+
   const rail = order?.payment_method?.rail
     || order?.payment_rail
     || order?.settlement_profile?.rail

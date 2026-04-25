@@ -175,6 +175,7 @@ describe.skip("ArafEscrow V3", function () {
     minFillAmount = ethers.parseUnits("200", USDT_DECIMALS),
     tier = 2,
     label = "sell-order",
+    paymentRiskLevel = 1,
   } = {}) {
     const orderRef = makeRef(`order:${label}:${tier}:${totalAmount.toString()}:${minFillAmount.toString()}:${Date.now()}:${Math.random()}`);
     const tx = await escrow.connect(ownerSigner).createSellOrder(
@@ -182,7 +183,8 @@ describe.skip("ArafEscrow V3", function () {
       totalAmount,
       minFillAmount,
       tier,
-      orderRef
+      orderRef,
+      paymentRiskLevel
     );
     const receipt = await tx.wait();
     const args = await firstEventArgs(receipt, escrow.interface, "OrderCreated");
@@ -195,6 +197,7 @@ describe.skip("ArafEscrow V3", function () {
     minFillAmount = ethers.parseUnits("200", USDT_DECIMALS),
     tier = 2,
     label = "buy-order",
+    paymentRiskLevel = 1,
   } = {}) {
     const orderRef = makeRef(`order:${label}:${tier}:${totalAmount.toString()}:${minFillAmount.toString()}:${Date.now()}:${Math.random()}`);
     const tx = await escrow.connect(ownerSigner).createBuyOrder(
@@ -202,7 +205,8 @@ describe.skip("ArafEscrow V3", function () {
       totalAmount,
       minFillAmount,
       tier,
-      orderRef
+      orderRef,
+      paymentRiskLevel
     );
     const receipt = await tx.wait();
     const args = await firstEventArgs(receipt, escrow.interface, "OrderCreated");
@@ -1137,6 +1141,21 @@ describe.skip("ArafEscrow V3", function () {
       expect(args.orderRef).to.equal(orderRef);
     });
 
+    it("createSellOrder stores selected payment risk level snapshot on order", async () => {
+      const { orderId } = await setupSellOrder({ label: "sell-risk-store", paymentRiskLevel: 3 });
+      const order = await escrow.getOrder(orderId);
+      expect(order.paymentRiskLevel).to.equal(3);
+    });
+
+    it("fillSellOrder copies order payment risk level into trade snapshot", async () => {
+      const { orderId } = await setupSellOrder({ label: "sell-risk-copy", paymentRiskLevel: 2 });
+      const { tradeId, receipt } = await fillSellOrder({ orderId, fillAmount: ethers.parseUnits("300", USDT_DECIMALS), label: "sell-risk-copy" });
+      const trade = await escrow.getTrade(tradeId);
+      const orderFilled = await firstEventArgs(receipt, escrow.interface, "OrderFilled");
+      expect(trade.paymentRiskLevelSnapshot).to.equal(2);
+      expect(orderFilled.paymentRiskLevelSnapshot).to.equal(2);
+    });
+
     it("createSellOrder rejects zero amount", async () => {
       await expect(
         escrow.connect(maker).createSellOrder(await mockUSDT.getAddress(), 0, 1, 2, makeRef("sell-zero"))
@@ -1542,6 +1561,21 @@ describe.skip("ArafEscrow V3", function () {
       const args = await firstEventArgs(receipt, escrow.interface, "OrderCreated");
       expect(args.side).to.equal(1);
       expect(args.orderRef).to.equal(orderRef);
+    });
+
+    it("createBuyOrder stores selected payment risk level snapshot on order", async () => {
+      const { orderId } = await setupBuyOrder({ label: "buy-risk-store", paymentRiskLevel: 0 });
+      const order = await escrow.getOrder(orderId);
+      expect(order.paymentRiskLevel).to.equal(0);
+    });
+
+    it("fillBuyOrder copies order payment risk level into trade snapshot", async () => {
+      const { orderId } = await setupBuyOrder({ label: "buy-risk-copy", paymentRiskLevel: 3 });
+      const { tradeId, receipt } = await fillBuyOrder({ orderId, makerSigner: maker, fillAmount: ethers.parseUnits("300", USDT_DECIMALS), label: "buy-risk-copy" });
+      const trade = await escrow.getTrade(tradeId);
+      const orderFilled = await firstEventArgs(receipt, escrow.interface, "OrderFilled");
+      expect(trade.paymentRiskLevelSnapshot).to.equal(3);
+      expect(orderFilled.paymentRiskLevelSnapshot).to.equal(3);
     });
 
     it("createBuyOrder rejects token direction disabled for buy", async () => {

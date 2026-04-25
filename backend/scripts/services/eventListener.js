@@ -92,14 +92,14 @@ const ARAF_ABI = [
   "event SettlementWithdrawn(uint256 indexed tradeId, uint256 indexed proposalId, address indexed proposer)",
   "event SettlementExpired(uint256 indexed tradeId, uint256 indexed proposalId)",
   "event SettlementFinalized(uint256 indexed tradeId, uint256 indexed proposalId, uint256 makerPayout, uint256 takerPayout, uint256 takerFee, uint256 makerFee)",
-  "event OrderCreated(uint256 indexed orderId, address indexed owner, uint8 side, address token, uint256 totalAmount, uint256 minFillAmount, uint8 tier, bytes32 orderRef)",
-  "event OrderFilled(uint256 indexed orderId, uint256 indexed tradeId, address indexed filler, uint256 fillAmount, uint256 remainingAmount, bytes32 childListingRef)",
+  "event OrderCreated(uint256 indexed orderId, address indexed owner, uint8 side, address token, uint256 totalAmount, uint256 minFillAmount, uint8 tier, uint8 paymentRiskLevel, bytes32 orderRef)",
+  "event OrderFilled(uint256 indexed orderId, uint256 indexed tradeId, address indexed filler, uint256 fillAmount, uint256 remainingAmount, uint8 paymentRiskLevelSnapshot, bytes32 childListingRef)",
   "event OrderCanceled(uint256 indexed orderId, uint8 side, uint256 remainingAmount, uint256 makerBondRefund, uint256 takerBondRefund)",
   "event FeeConfigUpdated(uint256 takerFeeBps, uint256 makerFeeBps)",
   "event CooldownConfigUpdated(uint256 tier0TradeCooldown, uint256 tier1TradeCooldown)",
   "event TokenConfigUpdated(address indexed token, bool supported, bool allowSellOrders, bool allowBuyOrders)",
-  "function getTrade(uint256 _tradeId) view returns ((uint256 id,uint256 parentOrderId,address maker,address taker,address tokenAddress,uint256 cryptoAmount,uint256 makerBond,uint256 takerBond,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 state,uint256 lockedAt,uint256 paidAt,uint256 challengedAt,string ipfsReceiptHash,bool cancelProposedByMaker,bool cancelProposedByTaker,uint256 pingedAt,bool pingedByTaker,uint256 challengePingedAt,bool challengePingedByMaker))",
-  "function getOrder(uint256 _orderId) view returns ((uint256 id,address owner,uint8 side,address tokenAddress,uint256 totalAmount,uint256 remainingAmount,uint256 minFillAmount,uint256 remainingMakerBondReserve,uint256 remainingTakerBondReserve,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 state,bytes32 orderRef))",
+  "function getTrade(uint256 _tradeId) view returns ((uint256 id,uint256 parentOrderId,address maker,address taker,address tokenAddress,uint256 cryptoAmount,uint256 makerBond,uint256 takerBond,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 paymentRiskLevelSnapshot,uint8 state,uint256 lockedAt,uint256 paidAt,uint256 challengedAt,string ipfsReceiptHash,bool cancelProposedByMaker,bool cancelProposedByTaker,uint256 pingedAt,bool pingedByTaker,uint256 challengePingedAt,bool challengePingedByMaker))",
+  "function getOrder(uint256 _orderId) view returns ((uint256 id,address owner,uint8 side,address tokenAddress,uint256 totalAmount,uint256 remainingAmount,uint256 minFillAmount,uint256 remainingMakerBondReserve,uint256 remainingTakerBondReserve,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 paymentRiskLevel,uint8 state,bytes32 orderRef))",
   // [TR] getReputation getter tuple sırası frontend + contract ile lock-step kalmalıdır.
   // [EN] Keep getReputation tuple order in lock-step with frontend + contract.
   "function getReputation(address _wallet) view returns (uint256 successful,uint256 failed,uint256 bannedUntil,uint256 consecutiveBans,uint8 effectiveTier,uint256 manualReleaseCount,uint256 autoReleaseCount,uint256 mutualCancelCount,uint256 disputedResolvedCount,uint256 burnCount,uint256 disputeWinCount,uint256 disputeLossCount,uint256 partialSettlementCount,uint256 riskPoints,uint256 lastPositiveEventAt,uint256 lastNegativeEventAt)",
@@ -144,8 +144,8 @@ const EVENT_ARG_KEYS = {
   SettlementWithdrawn: ["tradeId", "proposalId", "proposer"],
   SettlementExpired: ["tradeId", "proposalId"],
   SettlementFinalized: ["tradeId", "proposalId", "makerPayout", "takerPayout", "takerFee", "makerFee"],
-  OrderCreated: ["orderId", "owner", "side", "token", "totalAmount", "minFillAmount", "tier", "orderRef"],
-  OrderFilled: ["orderId", "tradeId", "filler", "fillAmount", "remainingAmount", "childListingRef"],
+  OrderCreated: ["orderId", "owner", "side", "token", "totalAmount", "minFillAmount", "tier", "paymentRiskLevel", "orderRef"],
+  OrderFilled: ["orderId", "tradeId", "filler", "fillAmount", "remainingAmount", "paymentRiskLevelSnapshot", "childListingRef"],
   OrderCanceled: ["orderId", "side", "remainingAmount", "makerBondRefund", "takerBondRefund"],
   FeeConfigUpdated: ["takerFeeBps", "makerFeeBps"],
   CooldownConfigUpdated: ["tier0TradeCooldown", "tier1TradeCooldown"],
@@ -236,6 +236,14 @@ function _normalizeTradeState(stateValue) {
   if (n === 5) return "CANCELED";
   if (n === 6) return "BURNED";
   return "OPEN";
+}
+
+function _normalizePaymentRiskLevel(levelValue) {
+  const n = Number(levelValue);
+  if (n === 0) return "LOW";
+  if (n === 2) return "HIGH";
+  if (n === 3) return "RESTRICTED";
+  return "MEDIUM";
 }
 
 function _toDateOrNull(unixSeconds) {
@@ -811,6 +819,7 @@ class EventWorker {
         taker_fee_bps: _toNum(orderData.takerFeeBpsSnapshot),
         maker_fee_bps: _toNum(orderData.makerFeeBpsSnapshot),
       },
+      payment_risk_level: _normalizePaymentRiskLevel(orderData.paymentRiskLevel),
       refs: {
         order_ref: (_toStr(orderData.orderRef) || "").toLowerCase(),
       },
@@ -874,6 +883,7 @@ class EventWorker {
         taker_fee_bps: _toNum(tradeData.takerFeeBpsSnapshot),
         maker_fee_bps: _toNum(tradeData.makerFeeBpsSnapshot),
       },
+      payment_risk_level_snapshot: _normalizePaymentRiskLevel(tradeData.paymentRiskLevelSnapshot),
       financials: {
         crypto_amount: _toStr(tradeData.cryptoAmount),
         crypto_amount_num: _toSafeNum(tradeData.cryptoAmount),

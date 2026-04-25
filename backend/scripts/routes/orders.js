@@ -28,6 +28,7 @@ const SAFE_ORDER_PROJECTION = [
   "side",
   "status",
   "tier",
+  "payment_risk_level",
   "token_address",
   "market",
   "amounts",
@@ -51,6 +52,7 @@ const SAFE_ORDER_TRADES_PROJECTION = [
   "taker_address",
   "status",
   "tier",
+  "payment_risk_level_snapshot",
   "token_address",
   "financials",
   "fee_snapshot",
@@ -172,6 +174,10 @@ router.get("/config", async (_req, res, next) => {
       cooldownConfig: config.cooldownConfig,
       tokenMap: config.tokenMap || {},
       paymentRiskConfig: config.paymentRiskConfig || {},
+      selectedOrderRiskLevel: {
+        source: "onchain_order_snapshot",
+        nonAuthoritative: true,
+      },
     });
   } catch (err) {
     if (err.code === "CONFIG_UNAVAILABLE") return res.status(503).json({ error: err.message });
@@ -184,6 +190,10 @@ router.get("/payment-risk-config", async (_req, res, next) => {
     const config = getConfig();
     return res.json({
       paymentRiskConfig: config.paymentRiskConfig || {},
+      selectedOrderRiskLevel: {
+        source: "onchain_order_snapshot",
+        nonAuthoritative: true,
+      },
     });
   } catch (err) {
     if (err.code === "CONFIG_UNAVAILABLE") return res.status(503).json({ error: err.message });

@@ -77,6 +77,7 @@ describe("eventListener OrderFilled mirror hardening", () => {
       takerFeeBpsSnapshot: 15,
       makerFeeBpsSnapshot: 15,
       tier: 2,
+      paymentRiskLevel: 2,
       state: 1,
       orderRef: "0x" + "11".repeat(32),
     });
@@ -92,6 +93,7 @@ describe("eventListener OrderFilled mirror hardening", () => {
       takerFeeBpsSnapshot: 15,
       makerFeeBpsSnapshot: 15,
       tier: 2,
+      paymentRiskLevelSnapshot: 2,
       state: 1,
       lockedAt: 1710000000n,
       paidAt: 0n,
@@ -119,12 +121,17 @@ describe("eventListener OrderFilled mirror hardening", () => {
         filler: "0x3333333333333333333333333333333333333333",
         fillAmount: 300n,
         remainingAmount: 700n,
+        paymentRiskLevelSnapshot: 2,
         childListingRef: "0x" + "ab".repeat(32),
       },
     });
 
     const tradeSetPayload = mockFindOneAndUpdateTrade.mock.calls[0][1].$set;
     expect(tradeSetPayload.canonical_refs.listing_ref).toBe("0x" + "ab".repeat(32));
+    expect(tradeSetPayload.payment_risk_level_snapshot).toBe("HIGH");
+
+    const orderSetPayload = mockFindOneAndUpdateOrder.mock.calls[0][1].$set;
+    expect(orderSetPayload.payment_risk_level).toBe("HIGH");
   });
 
   it("does not write unsafe precision number cache for uint256 > MAX_SAFE_INTEGER", async () => {
@@ -142,6 +149,7 @@ describe("eventListener OrderFilled mirror hardening", () => {
       takerFeeBpsSnapshot: 15,
       makerFeeBpsSnapshot: 15,
       tier: 1,
+      paymentRiskLevel: 1,
       state: 0,
       orderRef: "0x" + "12".repeat(32),
     });
@@ -222,6 +230,7 @@ describe("eventListener OrderFilled mirror hardening", () => {
       takerFeeBpsSnapshot: 15,
       makerFeeBpsSnapshot: 15,
       tier: 1,
+      paymentRiskLevelSnapshot: 1,
       state: 1,
       lockedAt: 1710000000n,
       paidAt: 0n,
@@ -245,6 +254,7 @@ describe("eventListener OrderFilled mirror hardening", () => {
       takerFeeBpsSnapshot: 15,
       makerFeeBpsSnapshot: 15,
       tier: 1,
+      paymentRiskLevelSnapshot: 1,
       state: 1,
       lockedAt: 1710000000n,
       paidAt: 0n,

@@ -23,10 +23,10 @@ import { resolveClientErrorLogUrl } from '../app/apiConfig';
 const ArafEscrowABI = parseAbi([
   // --- Write Fonksiyonları (App.jsx'te kullanılanlar) ---
   'function registerWallet()',
-  'function createSellOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef) returns (uint256)',
+  'function createSellOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef, uint8 _paymentRiskLevel) returns (uint256)',
   'function fillSellOrder(uint256 _orderId, uint256 _fillAmount, bytes32 _childListingRef) returns (uint256)',
   'function cancelSellOrder(uint256 _orderId)',
-  'function createBuyOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef) returns (uint256)',
+  'function createBuyOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef, uint8 _paymentRiskLevel) returns (uint256)',
   'function fillBuyOrder(uint256 _orderId, uint256 _fillAmount, bytes32 _childListingRef) returns (uint256)',
   'function cancelBuyOrder(uint256 _orderId)',
   'function reportPayment(uint256 _tradeId, string calldata _ipfsHash)',
@@ -54,9 +54,9 @@ const ArafEscrowABI = parseAbi([
   'function getFeeConfig() view returns (uint256 currentTakerFeeBps, uint256 currentMakerFeeBps)',
   // [TR] firstSuccessfulTradeAt artık ayrı kontrat fonksiyonundan okunur
   'function getFirstSuccessfulTradeAt(address _wallet) view returns (uint256)',
-  'function getTrade(uint256 _tradeId) view returns ((uint256 id, uint256 parentOrderId, address maker, address taker, address tokenAddress, uint256 cryptoAmount, uint256 makerBond, uint256 takerBond, uint16 takerFeeBpsSnapshot, uint16 makerFeeBpsSnapshot, uint8 tier, uint8 state, uint256 lockedAt, uint256 paidAt, uint256 challengedAt, string ipfsReceiptHash, bool cancelProposedByMaker, bool cancelProposedByTaker, uint256 pingedAt, bool pingedByTaker, uint256 challengePingedAt, bool challengePingedByMaker))',
+  'function getTrade(uint256 _tradeId) view returns ((uint256 id, uint256 parentOrderId, address maker, address taker, address tokenAddress, uint256 cryptoAmount, uint256 makerBond, uint256 takerBond, uint16 takerFeeBpsSnapshot, uint16 makerFeeBpsSnapshot, uint8 tier, uint8 paymentRiskLevelSnapshot, uint8 state, uint256 lockedAt, uint256 paidAt, uint256 challengedAt, string ipfsReceiptHash, bool cancelProposedByMaker, bool cancelProposedByTaker, uint256 pingedAt, bool pingedByTaker, uint256 challengePingedAt, bool challengePingedByMaker))',
   'function getSettlementProposal(uint256 _tradeId) view returns ((uint256 id, uint256 tradeId, address proposer, uint16 makerShareBps, uint16 takerShareBps, uint64 proposedAt, uint64 expiresAt, uint8 state))',
-  'function getOrder(uint256 _orderId) view returns ((uint256 id, address owner, uint8 side, address tokenAddress, uint256 totalAmount, uint256 remainingAmount, uint256 minFillAmount, uint256 remainingMakerBondReserve, uint256 remainingTakerBondReserve, uint16 takerFeeBpsSnapshot, uint16 makerFeeBpsSnapshot, uint8 tier, uint8 state, bytes32 orderRef))',
+  'function getOrder(uint256 _orderId) view returns ((uint256 id, address owner, uint8 side, address tokenAddress, uint256 totalAmount, uint256 remainingAmount, uint256 minFillAmount, uint256 remainingMakerBondReserve, uint256 remainingTakerBondReserve, uint16 takerFeeBpsSnapshot, uint16 makerFeeBpsSnapshot, uint8 tier, uint8 paymentRiskLevel, uint8 state, bytes32 orderRef))',
 
   // --- EIP-712 için Gerekli View Fonksiyonları ---
   'function sigNonces(address, uint256) view returns (uint256)',
@@ -68,7 +68,8 @@ const ArafEscrowABI = parseAbi([
   //      decodeEventLog() bu event ABI'si olmadan tradeId üretemez ve null döner.
   // [EN] Post fillSellOrder/fillBuyOrder, tradeId authority is only in OrderFilled.
   //      Without this event ABI decodeEventLog() cannot extract tradeId and returns null.
-  'event OrderFilled(uint256 indexed orderId, uint256 indexed tradeId, address indexed filler, uint256 fillAmount, uint256 remainingAmount, bytes32 childListingRef)',
+  'event OrderCreated(uint256 indexed orderId, address indexed owner, uint8 side, address token, uint256 totalAmount, uint256 minFillAmount, uint8 tier, uint8 paymentRiskLevel, bytes32 orderRef)',
+  'event OrderFilled(uint256 indexed orderId, uint256 indexed tradeId, address indexed filler, uint256 fillAmount, uint256 remainingAmount, uint8 paymentRiskLevelSnapshot, bytes32 childListingRef)',
 ]);
 
 // ERC-20 approve ABI — create/fill order akışlarında safeTransferFrom için zorunlu.
@@ -109,6 +110,14 @@ const toBigIntSafe = (value, fallback = 0n) => {
     return fallback;
   }
 };
+
+const PAYMENT_RISK_LEVEL_TO_ENUM = { LOW: 0, MEDIUM: 1, HIGH: 2, RESTRICTED: 3 };
+
+function normalizePaymentRiskLevelInput(rawLevel) {
+  if (typeof rawLevel === 'number' && Number.isInteger(rawLevel) && rawLevel >= 0 && rawLevel <= 3) return rawLevel;
+  const normalized = String(rawLevel || 'MEDIUM').toUpperCase();
+  return PAYMENT_RISK_LEVEL_TO_ENUM[normalized] ?? PAYMENT_RISK_LEVEL_TO_ENUM.MEDIUM;
+}
 
 export function normalizeTradeIdOrThrow(tradeId) {
   try {
@@ -301,8 +310,8 @@ export function useArafContract() {
     writeContract("registerWallet"), [writeContract]);
 
   const createSellOrder = useCallback(
-    (token, totalAmount, minFillAmount, tier, orderRef) =>
-      writeContract("createSellOrder", [token, totalAmount, minFillAmount, tier, orderRef]),
+    (token, totalAmount, minFillAmount, tier, orderRef, paymentRiskLevel = "MEDIUM") =>
+      writeContract("createSellOrder", [token, totalAmount, minFillAmount, tier, orderRef, normalizePaymentRiskLevelInput(paymentRiskLevel)]),
     [writeContract]
   );
 
@@ -324,8 +333,8 @@ export function useArafContract() {
   );
 
   const createBuyOrder = useCallback(
-    (token, totalAmount, minFillAmount, tier, orderRef) =>
-      writeContract("createBuyOrder", [token, totalAmount, minFillAmount, tier, orderRef]),
+    (token, totalAmount, minFillAmount, tier, orderRef, paymentRiskLevel = "MEDIUM") =>
+      writeContract("createBuyOrder", [token, totalAmount, minFillAmount, tier, orderRef, normalizePaymentRiskLevelInput(paymentRiskLevel)]),
     [writeContract]
   );
 

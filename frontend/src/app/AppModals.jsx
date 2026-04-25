@@ -348,6 +348,11 @@ export const buildAppModals = (ctx) => {
               <p className="text-[11px] text-slate-400 mt-2">{modalCopy.previewHint}</p>
             </div>
             <PaymentRiskBadge lang={lang} riskEntry={payoutRiskEntry} />
+            <p className="text-[11px] text-slate-400 mt-2">
+              {lang === 'TR'
+                ? 'Payment risk sınıfı kullanıcı güveni değil, ödeme yönteminin operasyonel karmaşıklığıdır.'
+                : 'Payment risk class describes payment-method complexity, not user trust.'}
+            </p>
             {isCreateTemporarilyDisabledByRisk && (
               <p className="text-[11px] text-red-400 bg-red-950/20 border border-red-900/40 rounded-lg p-2">
                 {lang === 'TR'
