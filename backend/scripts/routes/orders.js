@@ -51,6 +51,7 @@ const SAFE_ORDER_TRADES_PROJECTION = [
   "maker_address",
   "taker_address",
   "status",
+  "resolution_type",
   "tier",
   "payment_risk_level_snapshot",
   "token_address",

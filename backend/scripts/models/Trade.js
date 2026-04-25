@@ -174,6 +174,26 @@ const tradeSchema = new mongoose.Schema(
       index: true,
     },
 
+    // [TR] Terminal trade outcome taxonomy (read-model only).
+    //      Authority üretmez; yalnız on-chain event semantiğini mirror eder.
+    // [EN] Terminal trade outcome taxonomy (read-model only).
+    //      Never authoritative; mirrors on-chain event semantics only.
+    resolution_type: {
+      type: String,
+      enum: [
+        "MANUAL_RELEASE",
+        "AUTO_RELEASE",
+        "PARTIAL_SETTLEMENT",
+        "MUTUAL_CANCEL",
+        "BURNED",
+        "DISPUTED_RESOLUTION",
+        "UNKNOWN",
+        null,
+      ],
+      default: null,
+      index: true,
+    },
+
     timers: {
       created_at_onchain:    { type: Date, default: null },
       locked_at:             { type: Date, default: null },

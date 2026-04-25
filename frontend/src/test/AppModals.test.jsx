@@ -268,6 +268,26 @@ describe('AppModals side-aware behaviors', () => {
     expect(screen.getByRole('option', { name: 'phone' })).toBeInTheDocument();
   });
 
+  it('shows terminal outcome label copy from resolutionType on trade history cards', () => {
+    const modals = buildAppModals(makeCtx({
+      showMakerModal: false,
+      profileTab: 'gecmis',
+      tradeHistory: [
+        {
+          _id: 'trade-1',
+          status: 'RESOLVED',
+          resolutionType: 'PARTIAL_SETTLEMENT',
+          onchain_escrow_id: '101',
+          maker_address: '0xabc',
+          financials: { crypto_amount: '1000000', crypto_asset: 'USDT' },
+        },
+      ],
+    }));
+
+    render(<div>{modals.renderProfileModal()}</div>);
+    expect(screen.getByText('Closed by agreed partial settlement')).toBeInTheDocument();
+  });
+
   it('applies rail-aware country options', () => {
     const modals = buildAppModals(makeCtx({
       showMakerModal: false,

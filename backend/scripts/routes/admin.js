@@ -24,6 +24,15 @@ const ADMIN_TRADES_ORIGIN_VALUES = ["ALL", "ORDER_CHILD", "DIRECT_ESCROW"];
 const ADMIN_TRADES_SNAPSHOT_VALUES = ["ALL", "true", "false"];
 const ADMIN_SETTLEMENT_STATE_VALUES = ["ALL", "PROPOSED", "EXPIRED", "FINALIZED", "REJECTED", "WITHDRAWN"];
 const ADMIN_TRADES_MAX_CANDIDATE_SCAN = 1000;
+const RESOLUTION_ANALYTICS_TYPES = [
+  "MANUAL_RELEASE",
+  "AUTO_RELEASE",
+  "PARTIAL_SETTLEMENT",
+  "MUTUAL_CANCEL",
+  "BURNED",
+  "DISPUTED_RESOLUTION",
+  "UNKNOWN",
+];
 
 const ADMIN_TRADE_PROJECTION = [
   "_id",
@@ -34,6 +43,7 @@ const ADMIN_TRADE_PROJECTION = [
   "taker_address",
   "token_address",
   "status",
+  "resolution_type",
   "tier",
   "created_at",
   "payout_snapshot.maker.rail",
@@ -342,6 +352,42 @@ router.get("/summary", async (req, res, next) => {
       });
     }
 
+    let resolutionAnalytics = {
+      manualReleaseCount: 0,
+      autoReleaseCount: 0,
+      partialSettlementCount: 0,
+      mutualCancelCount: 0,
+      burnedCount: 0,
+      disputedResolutionCount: 0,
+      unknownResolvedCount: 0,
+    };
+    try {
+      const resolutionCounts = await Promise.all(
+        RESOLUTION_ANALYTICS_TYPES.map((resolutionType) =>
+          Trade.countDocuments({
+            resolution_type: resolutionType,
+            status: { $in: TERMINAL_TRADE_STATUSES },
+          })
+        )
+      );
+
+      resolutionAnalytics = {
+        manualReleaseCount: Number(resolutionCounts[0]) || 0,
+        autoReleaseCount: Number(resolutionCounts[1]) || 0,
+        partialSettlementCount: Number(resolutionCounts[2]) || 0,
+        mutualCancelCount: Number(resolutionCounts[3]) || 0,
+        burnedCount: Number(resolutionCounts[4]) || 0,
+        disputedResolutionCount: Number(resolutionCounts[5]) || 0,
+        unknownResolvedCount: Number(resolutionCounts[6]) || 0,
+      };
+    } catch (err) {
+      degraded.isDegraded = true;
+      degraded.errors.push({
+        source: "resolution_analytics",
+        message: err.message,
+      });
+    }
+
     return res.json({
       timestamp: new Date().toISOString(),
       readiness,
@@ -373,6 +419,7 @@ router.get("/summary", async (req, res, next) => {
         incompleteSnapshot: tradeCounts[4],
       },
       settlementAnalytics,
+      resolutionAnalytics,
       dlq: {
         depth: Number(dlqDepth) || 0,
         ...getDlqMetrics(),
@@ -535,6 +582,7 @@ router.get("/settlement-proposals", async (req, res, next) => {
       "_id",
       "onchain_escrow_id",
       "status",
+      "resolution_type",
       "maker_address",
       "taker_address",
       "settlement_proposal.proposal_id",
@@ -577,6 +625,7 @@ router.get("/settlement-proposals", async (req, res, next) => {
           trade_id: row?._id || null,
           onchain_escrow_id: row?.onchain_escrow_id || null,
           status: row?.status || null,
+          resolution_type: row?.resolution_type || null,
           maker_address: _toLower(row?.maker_address) || null,
           taker_address: _toLower(row?.taker_address) || null,
           proposed_by: _toLower(settlementProposal?.proposed_by) || null,

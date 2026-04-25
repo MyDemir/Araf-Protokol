@@ -160,6 +160,7 @@ describe("eventListener settlement proposal mirror", () => {
 
     const [, update] = mockTradeFindOneAndUpdate.mock.calls[0];
     expect(update.$set.status).toBe("RESOLVED");
+    expect(update.$set.resolution_type).toBe("PARTIAL_SETTLEMENT");
     expect(update.$set["settlement_proposal.state"]).toBe("FINALIZED");
     expect(update.$set["settlement_proposal.maker_payout"]).toBe("700");
     expect(update.$set["settlement_proposal.taker_payout"]).toBe("300");
@@ -196,5 +197,27 @@ describe("eventListener settlement proposal mirror", () => {
     await worker._onSettlementFinalized(event);
 
     expect(mockOrderFindOneAndUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("security_escrow_canceled_event_sets_resolution_type_mutual_cancel_from_onchain_semantics", async () => {
+    await worker._onEscrowCanceled({
+      eventName: "EscrowCanceled",
+      args: { tradeId: 20n, makerRefund: 0n, takerRefund: 0n },
+    });
+
+    const [, update] = mockTradeFindOneAndUpdate.mock.calls[0];
+    expect(update.$set.status).toBe("CANCELED");
+    expect(update.$set.resolution_type).toBe("MUTUAL_CANCEL");
+  });
+
+  it("security_escrow_burned_event_sets_resolution_type_burned_without_backend_authority_guessing", async () => {
+    await worker._onEscrowBurned({
+      eventName: "EscrowBurned",
+      args: { tradeId: 21n, burnedAmount: 10n },
+    });
+
+    const [, update] = mockTradeFindOneAndUpdate.mock.calls[0];
+    expect(update.$set.status).toBe("BURNED");
+    expect(update.$set.resolution_type).toBe("BURNED");
   });
 });

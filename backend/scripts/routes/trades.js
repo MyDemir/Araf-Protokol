@@ -130,6 +130,7 @@ const SAFE_TRADE_PROJECTION = [
   "taker_address",
   "token_address",
   "status",
+  "resolution_type",
   "tier",
   "fee_snapshot",
   "fill_metadata",
