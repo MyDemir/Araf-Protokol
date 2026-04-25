@@ -43,6 +43,8 @@ export const buildAppViews = (ctx) => {
     SUPPORTED_TOKEN_ADDRESSES,
     handleStartTrade,
     handleMint,
+    isFaucetEnabled,
+    isSupportedChainId,
     handleOpenMakerModal,
     activeEscrowCounts,
     setShowProfileModal,
@@ -414,14 +416,16 @@ export const buildAppViews = (ctx) => {
     <div className="p-4 md:p-8 max-w-[1200px] w-full">
       <div className="mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <h2 className="text-xl font-bold text-white">{lang === 'TR' ? 'Pazar Yeri' : 'Marketplace'}</h2>
-        <div className="flex gap-3 w-full md:w-auto">
-          <button onClick={() => handleMint('USDT')} disabled={isContractLoading} className="flex-1 md:flex-none px-4 py-2 bg-[#111113] border border-[#222] hover:bg-[#1a1a1f] rounded-xl text-xs sm:text-sm font-bold text-emerald-400 transition shadow-lg flex items-center justify-center gap-2">
-            {isContractLoading && loadingText.includes('USDT') ? '⏳' : '🚰'} {lang === 'TR' ? 'Test USDT Al' : 'Get Test USDT'}
-          </button>
-          <button onClick={() => handleMint('USDC')} disabled={isContractLoading} className="flex-1 md:flex-none px-4 py-2 bg-[#111113] border border-[#222] hover:bg-[#1a1a1f] rounded-xl text-xs sm:text-sm font-bold text-blue-400 transition shadow-lg flex items-center justify-center gap-2">
-            {isContractLoading && loadingText.includes('USDC') ? '⏳' : '🚰'} {lang === 'TR' ? 'Test USDC Al' : 'Get Test USDC'}
-          </button>
-        </div>
+        {isFaucetEnabled && (
+          <div className="flex gap-3 w-full md:w-auto">
+            <button onClick={() => handleMint('USDT')} disabled={isContractLoading} className="flex-1 md:flex-none px-4 py-2 bg-[#111113] border border-[#222] hover:bg-[#1a1a1f] rounded-xl text-xs sm:text-sm font-bold text-emerald-400 transition shadow-lg flex items-center justify-center gap-2">
+              {isContractLoading && loadingText.includes('USDT') ? '⏳' : '🚰'} {lang === 'TR' ? 'Test USDT Al' : 'Get Test USDT'}
+            </button>
+            <button onClick={() => handleMint('USDC')} disabled={isContractLoading} className="flex-1 md:flex-none px-4 py-2 bg-[#111113] border border-[#222] hover:bg-[#1a1a1f] rounded-xl text-xs sm:text-sm font-bold text-blue-400 transition shadow-lg flex items-center justify-center gap-2">
+              {isContractLoading && loadingText.includes('USDC') ? '⏳' : '🚰'} {lang === 'TR' ? 'Test USDC Al' : 'Get Test USDC'}
+            </button>
+          </div>
+        )}
       </div>
 
       <ReferenceRateTicker lang={lang} />
@@ -445,7 +449,7 @@ export const buildAppViews = (ctx) => {
             const canTakeOrder = isConnected && isAuthenticated && !isMyOwnAd && !isTierLocked && !isPaused;
             const tokenAddr    = SUPPORTED_TOKEN_ADDRESSES[order.crypto || 'USDT'];
             const isTokenConfigured = Boolean(tokenAddr);
-            const isCorrectChain    = [8453, 84532, 31337].includes(chainId);
+            const isCorrectChain    = isSupportedChainId(chainId);
             const isFunded          = sybilStatus ? sybilStatus.funded : true;
             const isCooldownOk      = sybilStatus ? sybilStatus.cooldownOk : true;
             const finalCanTakeOrder = canTakeOrder && isCooldownOk && isFunded && !isPaused && isTokenConfigured && isCorrectChain;

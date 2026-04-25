@@ -7,6 +7,12 @@ import { WagmiProvider, createConfig, http } from 'wagmi'
 import { base, baseSepolia, hardhat } from 'wagmi/chains'
 import { coinbaseWallet, injected } from 'wagmi/connectors'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  BASE_MAINNET_CHAIN_ID,
+  BASE_SEPOLIA_CHAIN_ID,
+  HARDHAT_CHAIN_ID,
+  getSupportedChainIds,
+} from './app/chainPolicy'
 
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 
@@ -34,12 +40,16 @@ const getCodespacesRPC = (port) => {
   }
 };
 
+const CHAIN_BY_ID = {
+  [BASE_MAINNET_CHAIN_ID]: base,
+  [BASE_SEPOLIA_CHAIN_ID]: baseSepolia,
+  [HARDHAT_CHAIN_ID]: hardhat,
+};
+
+const wagmiChains = getSupportedChainIds().map((id) => CHAIN_BY_ID[id]).filter(Boolean);
+
 const config = createConfig({
-  // [TR] Geliştirme modunda Hardhat başa alınıyor — MetaMask Base'e bağlanmasın
-  // [EN] In dev mode, Hardhat first — prevents MetaMask from defaulting to Base
-  chains: import.meta.env.PROD
-    ? [base, baseSepolia]
-    : [hardhat, baseSepolia, base],
+  chains: wagmiChains,
   connectors: [
     injected(), // OKX Wallet ve diğer injected cüzdanlar
     coinbaseWallet({ appName: 'Araf Protocol' }),
@@ -48,9 +58,11 @@ const config = createConfig({
   ],
   transports: {
     [base.id]:        http(),
-    [baseSepolia.id]: http(),
-    // [TR] Hardhat yerel ağı — FRONT-05: sadece development'ta aktif
-    [hardhat.id]:     http(import.meta.env.PROD ? undefined : getCodespacesRPC(8545)),
+    ...(import.meta.env.PROD ? {} : {
+      [baseSepolia.id]: http(),
+      // [TR] Hardhat yerel ağı — FRONT-05: sadece development'ta aktif
+      [hardhat.id]:     http(getCodespacesRPC(8545)),
+    }),
   },
 })
 

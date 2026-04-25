@@ -19,6 +19,7 @@ import { useCallback } from 'react';
 import { usePublicClient, useWalletClient, useChainId } from 'wagmi';
 import { parseAbi, getAddress, decodeEventLog } from 'viem';
 import { resolveClientErrorLogUrl } from '../app/apiConfig';
+import { getSupportedChainsMap, isMintTokenEnabled } from '../app/chainPolicy';
 
 const ArafEscrowABI = parseAbi([
   // --- Write Fonksiyonları (App.jsx'te kullanılanlar) ---
@@ -177,13 +178,6 @@ export function normalizeTokenDecimalsOrThrow(rawDecimals) {
 }
 
 
-// Desteklenen chain ID'ler — Base Mainnet ve Base Sepolia
-const SUPPORTED_CHAINS = {
-  8453:  "Base Mainnet",
-  84532: "Base Sepolia",
-  31337: "Hardhat Local", // Yerel test ağı da listeye eklendi
-};
-
 //Kontrat adresi geçerlilik kontrolü — hem write hem read fonksiyonları için
 const _isValidAddress = ESCROW_ADDRESS && ESCROW_ADDRESS !== "0x0000000000000000000000000000000000000000";
 
@@ -191,6 +185,7 @@ export function useArafContract() {
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
   const chainId = useChainId();
+  const supportedChains = getSupportedChainsMap();
 
   /**
    * [TR] Receipt içinden hedef event'i decode eder.
@@ -222,15 +217,15 @@ export function useArafContract() {
    * @throws {Error} Desteklenmeyen ağ algılandığında
    */
   const _validateChain = useCallback(() => {
-    if (!SUPPORTED_CHAINS[chainId]) {
-      const supportedNames = Object.values(SUPPORTED_CHAINS).join(" veya ");
+    if (!supportedChains[chainId]) {
+      const supportedNames = Object.values(supportedChains).join(" veya ");
       throw new Error(
         `Yanlış ağ! Cüzdanınız şu an Chain ID ${chainId} üzerinde. ` +
         `Araf Protocol sadece ${supportedNames} üzerinde çalışır. ` +
         `Lütfen cüzdanınızdan ağı değiştirin.`
       );
     }
-  }, [chainId]);
+  }, [chainId, supportedChains]);
 
   /**
    * @dev Temel kontrat çağrısı yardımcisi ve Her işlem öncesi chain ID doğrulanır.
@@ -466,6 +461,9 @@ export function useArafContract() {
    */
   const mintToken = useCallback(async (tokenAddress) => {
     if (!walletClient) throw new Error("İşlem için aktif wallet client bulunamadı. Cüzdan bağlantınızı ve oturum imzanızı kontrol edin.");
+    if (!isMintTokenEnabled()) {
+      throw new Error("Production ortamında test faucet (mint) devre dışıdır. Lütfen Base Mainnet üzerinde gerçek token kullanın.");
+    }
     _validateChain();
     
     try {

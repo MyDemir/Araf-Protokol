@@ -42,6 +42,8 @@ describe('frontend ↔ backend API path alignment', () => {
     const contract = readFront('src/hooks/useArafContract.js');
     expect(contract).toContain('resolveClientErrorLogUrl');
     expect(contract).toContain('fetch(logUrl, {');
+    expect(contract).toContain('isMintTokenEnabled');
+    expect(contract).toContain('Production ortamında test faucet (mint) devre dışıdır');
     expect(contract).toContain('manualReleaseCount');
     expect(contract).not.toContain('view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier)');
 

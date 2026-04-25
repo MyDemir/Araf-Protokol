@@ -11,6 +11,7 @@ import AdminPanel from './AdminPanel';
 import { getInitialLang, getInitialTermsAccepted, APP_LANG_STORAGE_KEY } from './app/bootstrapState';
 import { resolveOrderActionFns, normalizeOrderSide, removeOrderByOnchainId, resolvePaymentRiskEntry } from './app/orderUiModel';
 import { buildApiUrl } from './app/apiConfig';
+import { getSupportedChainsMap, isMintTokenEnabled, isSupportedChainId } from './app/chainPolicy';
 
 // [TR] Uygulama başlangıcında kritik env değişkenlerini doğrula
 // [EN] Validate critical env variables on app start
@@ -180,6 +181,9 @@ function App() {
   const { signMessageAsync } = useSignMessage();
   const chainId = useChainId();
   const publicClient = usePublicClient();
+  const supportedChains = getSupportedChainsMap();
+  const isFaucetEnabled = isMintTokenEnabled();
+  const isSupportedChain = isSupportedChainId(chainId);
 
   React.useEffect(() => {
     setConnectedWallet(address?.toLowerCase?.() || null);
@@ -488,6 +492,11 @@ function App() {
       return;
     }
     try {
+      if (!isFaucetEnabled) {
+        throw new Error(lang === 'TR'
+          ? 'Production ortamında test faucet devre dışıdır.'
+          : 'Test faucet is disabled in production.');
+      }
       setIsContractLoading(true);
       setLoadingText(lang === 'TR' ? `${tokenName} alınıyor...` : `Minting ${tokenName}...`);
       const tokenAddr = SUPPORTED_TOKEN_ADDRESSES[tokenName];
@@ -1418,6 +1427,8 @@ const handleCreateOrder = async () => {
     paymentRiskConfig,
     handleStartTrade,
     handleMint,
+    isFaucetEnabled,
+    isSupportedChainId,
     handleOpenMakerModal,
     activeEscrowCounts,
     setShowProfileModal,
@@ -1599,9 +1610,13 @@ const handleCreateOrder = async () => {
         </div>
       )}
 
-      {isConnected && ![8453, 84532, 31337].includes(chainId) && (
+      {isConnected && !isSupportedChain && (
         <div className="absolute top-0 left-0 right-0 z-[80] bg-red-950/95 backdrop-blur border-b border-red-800 px-6 py-2 flex justify-center items-center shadow-xl">
-          <span className="text-sm font-bold text-red-200">⚠️ {lang === 'TR' ? 'Yanlış Ağ! Lütfen cüzdanınızdan Base Sepolia ağına geçin.' : 'Wrong Network! Please switch to Base Sepolia in your wallet.'}</span>
+          <span className="text-sm font-bold text-red-200">
+            ⚠️ {lang === 'TR'
+              ? `Yanlış Ağ! Lütfen ${Object.values(supportedChains).join(' / ')} ağına geçin.`
+              : `Wrong Network! Please switch to ${Object.values(supportedChains).join(' / ')}.`}
+          </span>
         </div>
       )}
 
