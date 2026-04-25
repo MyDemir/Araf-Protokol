@@ -13,7 +13,8 @@
 - `EXPECTED_CHAIN_ID` (örn. Base Mainnet için `8453`)
 - `BASE_WS_RPC_URL` (önerilir)
 - `WORKER_START_BLOCK` veya `ARAF_DEPLOYMENT_BLOCK` (checkpoint yoksa production'da zorunlu)
-- `MAINNET_USDT_ADDRESS` ve `MAINNET_USDC_ADDRESS` (production deploy script için zorunlu)
+- `MAINNET_USDT_ADDRESS` ve `MAINNET_USDC_ADDRESS` (kanonik token env; backend tracked token fallback kaynağı)
+- `ARAF_TRACKED_TOKENS` (opsiyonel; boşsa MAINNET_USDT/USDC'den deterministic türetilir)
 - `RELAYER_PRIVATE_KEY` (sadece automation job açıksa)
 
 ## Deploy Sonrası Zorunlu Admin Adımları
@@ -24,6 +25,9 @@
 5. Smoke trade çalıştırıp DB event senkronunu doğrula.
 6. Provider chain doğrulamasını kontrol et:
    - `EXPECTED_CHAIN_ID=8453` iken RPC `84532/31337` dönerse backend fail-closed durmalıdır.
+7. Token env doğrulamasını kontrol et:
+   - Production'da `ARAF_TRACKED_TOKENS` boşsa backend `MAINNET_USDT_ADDRESS`/`MAINNET_USDC_ADDRESS` ile set üretmeli.
+   - Bu env'ler de boşsa config load fail-closed olmalıdır.
 
 ## Smoke Test Komutları
 - `cd backend && npm test -- --runInBand`

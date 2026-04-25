@@ -35,6 +35,7 @@ const {
   refreshProtocolConfig,
 } = require("./protocolConfig");
 const { assertProviderExpectedChainOrThrow } = require("./expectedChain");
+const { inferCryptoAssetFromTokenAddress } = require("./tokenEnv");
 
 const CHECKPOINT_KEY = "worker:last_block";
 const LAST_SAFE_BLOCK_KEY = "worker:last_safe_block";
@@ -253,15 +254,7 @@ function _toDateOrNull(unixSeconds) {
 }
 
 function _inferCryptoAssetFromToken(tokenAddress) {
-  const addr = (tokenAddress || "").toLowerCase();
-  if (!addr) return null;
-
-  const usdt = (process.env.USDT_ADDRESS || "").toLowerCase();
-  const usdc = (process.env.USDC_ADDRESS || "").toLowerCase();
-
-  if (usdt && addr === usdt) return "USDT";
-  if (usdc && addr === usdc) return "USDC";
-  return null;
+  return inferCryptoAssetFromTokenAddress(tokenAddress, { surface: "EventWorker" });
 }
 
 const TRADE_STATE_ORDER = {
@@ -1847,6 +1840,7 @@ worker._runtimeConfig = {
   CHECKPOINT_INTERVAL_BLOCKS,
 };
 worker._getPositiveIntEnv = _getPositiveIntEnv;
+worker._inferCryptoAssetFromToken = _inferCryptoAssetFromToken;
 
 worker.buildSyntheticEventFromDLQEntry = function buildSyntheticEventFromDLQEntry(entry) {
   const mappedArgs = { ...(entry.namedArgs || {}) };

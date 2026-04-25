@@ -114,4 +114,23 @@ describe("eventListener identity + env wiring", () => {
     const [filter] = mockOrderFindOneAndUpdate.mock.calls[0];
     expect(filter.onchain_order_id).toBe("42");
   });
+
+  it("security_inferCryptoAssetFromToken_prefers_canonical_mainnet_env", () => {
+    process.env.MAINNET_USDT_ADDRESS = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    process.env.USDT_ADDRESS = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; // legacy farklı olsa da canonical öncelikli
+
+    const worker = loadWorkerWithEnv("", "");
+    expect(worker._inferCryptoAssetFromToken("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).toBe("USDT");
+    expect(worker._inferCryptoAssetFromToken("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")).toBe(null);
+  });
+
+  it("security_inferCryptoAssetFromToken_supports_legacy_env_with_warning", () => {
+    delete process.env.MAINNET_USDC_ADDRESS;
+    process.env.USDC_ADDRESS = "0xcccccccccccccccccccccccccccccccccccccccc";
+
+    const worker = loadWorkerWithEnv("", "");
+    const mockLogger = require("../scripts/utils/logger");
+    expect(worker._inferCryptoAssetFromToken("0xcccccccccccccccccccccccccccccccccccccccc")).toBe("USDC");
+    expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringMatching(/Legacy env USDC_ADDRESS kullanılıyor/));
+  });
 });
