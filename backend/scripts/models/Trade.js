@@ -229,6 +229,9 @@ const tradeSchema = new mongoose.Schema(
           disputed_resolved_count: { type: Number, default: null, min: 0 },
           dispute_win_count: { type: Number, default: null, min: 0 },
           dispute_loss_count: { type: Number, default: null, min: 0 },
+          // [TR] Partial settlement başarısızlık sayacı değildir; lock-time authority mirror alanıdır.
+          // [EN] Partial settlement is non-penal; stored as lock-time authority mirror counter.
+          partial_settlement_count: { type: Number, default: null, min: 0 },
           risk_points: { type: Number, default: null, min: 0 },
         },
       },
@@ -259,6 +262,9 @@ const tradeSchema = new mongoose.Schema(
           disputed_resolved_count: { type: Number, default: null, min: 0 },
           dispute_win_count: { type: Number, default: null, min: 0 },
           dispute_loss_count: { type: Number, default: null, min: 0 },
+          // [TR] Partial settlement başarısızlık sayacı değildir; lock-time authority mirror alanıdır.
+          // [EN] Partial settlement is non-penal; stored as lock-time authority mirror counter.
+          partial_settlement_count: { type: Number, default: null, min: 0 },
           risk_points: { type: Number, default: null, min: 0 },
         },
       },
