@@ -99,5 +99,31 @@ describe("protocolConfig token config compatibility", () => {
       tierMaxAmountsBaseUnit: [],
     });
   });
-});
 
+  it("updateCachedTokenConfig_preserves_existing_precision_limits_on_partial_event_patch_after_refresh_failure", async () => {
+    const { service } = loadServiceWith({
+      getTokenConfigImpl: async () => ({
+        supported: true,
+        allowSellOrders: true,
+        allowBuyOrders: false,
+        decimals: 6,
+        tierMaxAmountsBaseUnit: [150n, 1500n, 7500n, 30000n],
+      }),
+    });
+
+    await service.loadProtocolConfig();
+    await service.updateCachedTokenConfig(tokenA, {
+      supported: false,
+      allowSellOrders: false,
+      allowBuyOrders: false,
+    });
+
+    expect(service.getConfig().tokenMap[tokenA]).toEqual({
+      supported: false,
+      allowSellOrders: false,
+      allowBuyOrders: false,
+      decimals: 6,
+      tierMaxAmountsBaseUnit: ["150", "1500", "7500", "30000"],
+    });
+  });
+});
