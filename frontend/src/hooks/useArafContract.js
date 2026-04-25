@@ -35,6 +35,11 @@ const ArafEscrowABI = parseAbi([
   'function autoRelease(uint256 _tradeId)',
   'function burnExpired(uint256 _tradeId)',
   'function proposeOrApproveCancel(uint256 _tradeId, uint256 _deadline, bytes calldata _sig)',
+  'function proposeSettlement(uint256 _tradeId, uint16 _makerShareBps, uint64 _expiresAt)',
+  'function rejectSettlement(uint256 _tradeId)',
+  'function withdrawSettlement(uint256 _tradeId)',
+  'function expireSettlement(uint256 _tradeId)',
+  'function acceptSettlement(uint256 _tradeId)',
   'function pingMaker(uint256 _tradeId)',
   'function pingTakerForChallenge(uint256 _tradeId)', // Gelecekteki kullanım için eklenebilir
   'function decayReputation(address _wallet)',
@@ -48,6 +53,7 @@ const ArafEscrowABI = parseAbi([
   // [TR] firstSuccessfulTradeAt artık ayrı kontrat fonksiyonundan okunur
   'function getFirstSuccessfulTradeAt(address _wallet) view returns (uint256)',
   'function getTrade(uint256 _tradeId) view returns ((uint256 id, uint256 parentOrderId, address maker, address taker, address tokenAddress, uint256 cryptoAmount, uint256 makerBond, uint256 takerBond, uint16 takerFeeBpsSnapshot, uint16 makerFeeBpsSnapshot, uint8 tier, uint8 state, uint256 lockedAt, uint256 paidAt, uint256 challengedAt, string ipfsReceiptHash, bool cancelProposedByMaker, bool cancelProposedByTaker, uint256 pingedAt, bool pingedByTaker, uint256 challengePingedAt, bool challengePingedByMaker))',
+  'function getSettlementProposal(uint256 _tradeId) view returns ((uint256 id, uint256 tradeId, address proposer, uint16 makerShareBps, uint16 takerShareBps, uint64 proposedAt, uint64 expiresAt, uint8 state))',
   'function getOrder(uint256 _orderId) view returns ((uint256 id, address owner, uint8 side, address tokenAddress, uint256 totalAmount, uint256 remainingAmount, uint256 minFillAmount, uint256 remainingMakerBondReserve, uint256 remainingTakerBondReserve, uint16 takerFeeBpsSnapshot, uint16 makerFeeBpsSnapshot, uint8 tier, uint8 state, bytes32 orderRef))',
 
   // --- EIP-712 için Gerekli View Fonksiyonları ---
@@ -335,6 +341,42 @@ export function useArafContract() {
   const decayReputation = useCallback((wallet) =>
     writeContract("decayReputation", [wallet]), [writeContract]);
 
+  // ── Partial Settlement (Faz 2 Core) ──
+  /**
+   * [TR] On-chain split settlement teklifi oluşturur.
+   * [EN] Creates an on-chain split settlement proposal.
+   */
+  const proposeSettlement = useCallback((tradeId, makerShareBps, expiresAt) =>
+    writeContract("proposeSettlement", [tradeId, makerShareBps, BigInt(expiresAt)]), [writeContract]);
+
+  /**
+   * [TR] Karşı taraf aktif settlement teklifini reddeder.
+   * [EN] Counterparty rejects active settlement proposal.
+   */
+  const rejectSettlement = useCallback((tradeId) =>
+    writeContract("rejectSettlement", [tradeId]), [writeContract]);
+
+  /**
+   * [TR] Teklif sahibi aktif settlement teklifini geri çeker.
+   * [EN] Proposer withdraws active settlement proposal.
+   */
+  const withdrawSettlement = useCallback((tradeId) =>
+    writeContract("withdrawSettlement", [tradeId]), [writeContract]);
+
+  /**
+   * [TR] Süresi dolmuş settlement teklifini expire eder.
+   * [EN] Expires a timed-out settlement proposal.
+   */
+  const expireSettlement = useCallback((tradeId) =>
+    writeContract("expireSettlement", [tradeId]), [writeContract]);
+
+  /**
+   * [TR] Karşı taraf aktif settlement teklifini kabul edip split payout'u finalize eder.
+   * [EN] Counterparty accepts active settlement proposal and finalizes split payout.
+   */
+  const acceptSettlement = useCallback((tradeId) =>
+    writeContract("acceptSettlement", [tradeId]), [writeContract]);
+
   // ── ERC-20 Token Onayı ──
   /**
    *ERC-20 approve — create/fill order akışlarında zorunlu.
@@ -555,6 +597,11 @@ export function useArafContract() {
     // EIP-712 Cancel
     signCancelProposal,
     proposeOrApproveCancel,
+    proposeSettlement,
+    rejectSettlement,
+    withdrawSettlement,
+    expireSettlement,
+    acceptSettlement,
   
     getCurrentAmounts: useCallback(
       async (tradeId) => {
@@ -568,6 +615,23 @@ export function useArafContract() {
           });
         } catch (err) {
           console.error('[ArafContract] getCurrentAmounts hatası:', err.message);
+          return null;
+        }
+      },
+      [publicClient]
+    ),
+    getSettlementProposal: useCallback(
+      async (tradeId) => {
+        if (!_isValidAddress) return null;
+        try {
+          return await publicClient.readContract({
+            address: getAddress(ESCROW_ADDRESS),
+            abi: ArafEscrowABI,
+            functionName: 'getSettlementProposal',
+            args: [BigInt(tradeId)],
+          });
+        } catch (err) {
+          console.error('[ArafContract] getSettlementProposal hatası:', err.message);
           return null;
         }
       },

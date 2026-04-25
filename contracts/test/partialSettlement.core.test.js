@@ -71,7 +71,7 @@ describe("ArafEscrow partial settlement core", () => {
     }
     await time.increase(7 * 24 * 3600 + 1);
 
-    return { escrow, mockUSDT, maker, taker, outsider };
+    return { escrow, mockUSDT, owner, maker, taker, outsider };
   }
 
   async function openLockedTrade({ escrow, maker, taker, token, label }) {
@@ -149,6 +149,30 @@ describe("ArafEscrow partial settlement core", () => {
       .to.be.revertedWithCustomError(escrow, "OnlySettlementCounterparty");
     await expect(escrow.connect(outsider).acceptSettlement(tradeId))
       .to.be.revertedWithCustomError(escrow, "NotTradeParty");
+    await expect(escrow.connect(outsider).rejectSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "NotTradeParty");
+  });
+
+  it("security_non_party_cannot_propose_settlement", async () => {
+    const { escrow, mockUSDT, maker, taker, outsider } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeId = await openLockedTrade({ escrow, maker, taker, token, label: "outsider-propose" });
+
+    const now = await time.latest();
+    await expect(escrow.connect(outsider).proposeSettlement(tradeId, 5000, now + 3600))
+      .to.be.revertedWithCustomError(escrow, "NotTradeParty");
+  });
+
+  it("security_non_counterparty_cannot_reject_settlement", async () => {
+    const { escrow, mockUSDT, maker, taker, outsider } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeId = await openLockedTrade({ escrow, maker, taker, token, label: "reject-guard" });
+
+    const now = await time.latest();
+    await escrow.connect(maker).proposeSettlement(tradeId, 5000, now + 3600);
+
+    await expect(escrow.connect(maker).rejectSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "OnlySettlementCounterparty");
     await expect(escrow.connect(outsider).rejectSettlement(tradeId))
       .to.be.revertedWithCustomError(escrow, "NotTradeParty");
   });
@@ -232,5 +256,21 @@ describe("ArafEscrow partial settlement core", () => {
 
     await expect(escrow.burnExpired(tradeId))
       .to.be.revertedWithCustomError(escrow, "InvalidState");
+  });
+
+  it("security_no_hidden_admin_or_backend_authority_on_partial_settlement", async () => {
+    const { escrow, mockUSDT, owner, maker, taker } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeId = await openLockedTrade({ escrow, maker, taker, token, label: "no-admin-authority" });
+
+    const now = await time.latest();
+    await escrow.connect(maker).proposeSettlement(tradeId, 7000, now + 3600);
+
+    await expect(escrow.connect(owner).acceptSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "NotTradeParty");
+    await expect(escrow.connect(owner).rejectSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "NotTradeParty");
+    await expect(escrow.connect(owner).withdrawSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "OnlySettlementProposer");
   });
 });
