@@ -40,11 +40,16 @@ describe('frontend ↔ backend API path alignment', () => {
     expect(pii).toContain('buildApiUrl(`pii/${tradeId}`)');
 
     const contract = readFront('src/hooks/useArafContract.js');
+    const frontendAbi = readFront('src/abi/ArafEscrow.json');
     expect(contract).toContain('resolveClientErrorLogUrl');
     expect(contract).toContain('fetch(logUrl, {');
     expect(contract).toContain('isMintTokenEnabled');
+    expect(contract).toContain("import ArafEscrowAbiJson from '../abi/ArafEscrow.json'");
+    expect(contract).toContain('const ArafEscrowABI = resolveEscrowAbi(ArafEscrowAbiJson);');
+    expect(contract).not.toContain("'function registerWallet()'");
     expect(contract).toContain('Production ortamında test faucet (mint) devre dışıdır');
     expect(contract).toContain('manualReleaseCount');
+    expect(frontendAbi).toContain('"name": "registerWallet"');
     expect(contract).not.toContain('view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier)');
 
     const sessionSource = readFront('src/app/useAppSessionData.jsx');

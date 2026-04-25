@@ -20,58 +20,21 @@ import { usePublicClient, useWalletClient, useChainId } from 'wagmi';
 import { parseAbi, getAddress, decodeEventLog } from 'viem';
 import { resolveClientErrorLogUrl } from '../app/apiConfig';
 import { getSupportedChainsMap, isMintTokenEnabled } from '../app/chainPolicy';
+import ArafEscrowAbiJson from '../abi/ArafEscrow.json';
 
-const ArafEscrowABI = parseAbi([
-  // --- Write Fonksiyonları (App.jsx'te kullanılanlar) ---
-  'function registerWallet()',
-  'function createSellOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef, uint8 _paymentRiskLevel) returns (uint256)',
-  'function fillSellOrder(uint256 _orderId, uint256 _fillAmount, bytes32 _childListingRef) returns (uint256)',
-  'function cancelSellOrder(uint256 _orderId)',
-  'function createBuyOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef, uint8 _paymentRiskLevel) returns (uint256)',
-  'function fillBuyOrder(uint256 _orderId, uint256 _fillAmount, bytes32 _childListingRef) returns (uint256)',
-  'function cancelBuyOrder(uint256 _orderId)',
-  'function reportPayment(uint256 _tradeId, string calldata _ipfsHash)',
-  'function releaseFunds(uint256 _tradeId)',
-  'function challengeTrade(uint256 _tradeId)',
-  'function autoRelease(uint256 _tradeId)',
-  'function burnExpired(uint256 _tradeId)',
-  'function proposeOrApproveCancel(uint256 _tradeId, uint256 _deadline, bytes calldata _sig)',
-  'function proposeSettlement(uint256 _tradeId, uint16 _makerShareBps, uint64 _expiresAt)',
-  'function rejectSettlement(uint256 _tradeId)',
-  'function withdrawSettlement(uint256 _tradeId)',
-  'function expireSettlement(uint256 _tradeId)',
-  'function acceptSettlement(uint256 _tradeId)',
-  'function pingMaker(uint256 _tradeId)',
-  'function pingTakerForChallenge(uint256 _tradeId)', // Gelecekteki kullanım için eklenebilir
-  'function decayReputation(address _wallet)',
+const resolveEscrowAbi = (artifactLike) => {
+  // [TR] syncAbiToFrontend çıktısı düz ABI array'i yazar.
+  //      Gelecekte artifact object gelirse de fail-closed ayrıştırma uygulanır.
+  // [EN] syncAbiToFrontend currently writes a plain ABI array.
+  //      If artifact object shape appears later, keep fail-closed extraction.
+  if (Array.isArray(artifactLike)) return artifactLike;
+  if (Array.isArray(artifactLike?.abi)) return artifactLike.abi;
+  if (Array.isArray(artifactLike?.default)) return artifactLike.default;
+  if (Array.isArray(artifactLike?.default?.abi)) return artifactLike.default.abi;
+  throw new Error('ArafEscrow ABI yüklenemedi: geçerli ABI formatı bulunamadı.');
+};
 
-  // View Fonksiyonları (App.jsx'te kullanılanlar) 
-  // [TR] getReputation tuple sırası contracts/src/ArafEscrow.sol ile birebir lock-step kalmalıdır.
-  // [EN] Keep getReputation tuple order in strict lock-step with contracts/src/ArafEscrow.sol.
-  'function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier, uint256 manualReleaseCount, uint256 autoReleaseCount, uint256 mutualCancelCount, uint256 disputedResolvedCount, uint256 burnCount, uint256 disputeWinCount, uint256 disputeLossCount, uint256 partialSettlementCount, uint256 riskPoints, uint256 lastPositiveEventAt, uint256 lastNegativeEventAt)',
-  'function antiSybilCheck(address _wallet) view returns (bool aged, bool funded, bool cooldownOk)',
-  'function getCooldownRemaining(address _wallet) view returns (uint256)',
-  'function walletRegisteredAt(address _wallet) view returns (uint256)',
-  'function getFeeConfig() view returns (uint256 currentTakerFeeBps, uint256 currentMakerFeeBps)',
-  // [TR] firstSuccessfulTradeAt artık ayrı kontrat fonksiyonundan okunur
-  'function getFirstSuccessfulTradeAt(address _wallet) view returns (uint256)',
-  'function getTrade(uint256 _tradeId) view returns ((uint256 id, uint256 parentOrderId, address maker, address taker, address tokenAddress, uint256 cryptoAmount, uint256 makerBond, uint256 takerBond, uint16 takerFeeBpsSnapshot, uint16 makerFeeBpsSnapshot, uint8 tier, uint8 paymentRiskLevelSnapshot, uint8 state, uint256 lockedAt, uint256 paidAt, uint256 challengedAt, string ipfsReceiptHash, bool cancelProposedByMaker, bool cancelProposedByTaker, uint256 pingedAt, bool pingedByTaker, uint256 challengePingedAt, bool challengePingedByMaker))',
-  'function getSettlementProposal(uint256 _tradeId) view returns ((uint256 id, uint256 tradeId, address proposer, uint16 makerShareBps, uint16 takerShareBps, uint64 proposedAt, uint64 expiresAt, uint8 state))',
-  'function getOrder(uint256 _orderId) view returns ((uint256 id, address owner, uint8 side, address tokenAddress, uint256 totalAmount, uint256 remainingAmount, uint256 minFillAmount, uint256 remainingMakerBondReserve, uint256 remainingTakerBondReserve, uint16 takerFeeBpsSnapshot, uint16 makerFeeBpsSnapshot, uint8 tier, uint8 paymentRiskLevel, uint8 state, bytes32 orderRef))',
-
-  // --- EIP-712 için Gerekli View Fonksiyonları ---
-  'function sigNonces(address, uint256) view returns (uint256)',
-  'function domainSeparator() view returns (bytes32)',
-  'function getCurrentAmounts(uint256 _tradeId) view returns (uint256 cryptoRemaining, uint256 makerBondRemaining, uint256 takerBondRemaining, uint256 totalDecayed)',
-  'function paused() view returns (bool)',
-
-  // [TR] fillSellOrder/fillBuyOrder sonrası tradeId authority'si yalnız OrderFilled event'indedir.
-  //      decodeEventLog() bu event ABI'si olmadan tradeId üretemez ve null döner.
-  // [EN] Post fillSellOrder/fillBuyOrder, tradeId authority is only in OrderFilled.
-  //      Without this event ABI decodeEventLog() cannot extract tradeId and returns null.
-  'event OrderCreated(uint256 indexed orderId, address indexed owner, uint8 side, address token, uint256 totalAmount, uint256 minFillAmount, uint8 tier, uint8 paymentRiskLevel, bytes32 orderRef)',
-  'event OrderFilled(uint256 indexed orderId, uint256 indexed tradeId, address indexed filler, uint256 fillAmount, uint256 remainingAmount, uint8 paymentRiskLevelSnapshot, bytes32 childListingRef)',
-]);
+const ArafEscrowABI = resolveEscrowAbi(ArafEscrowAbiJson);
 
 // ERC-20 approve ABI — create/fill order akışlarında safeTransferFrom için zorunlu.
 // Escrow kontratına izin vermeden transferFrom çağrısı revert eder.
