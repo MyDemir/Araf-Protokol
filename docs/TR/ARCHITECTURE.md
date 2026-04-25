@@ -134,6 +134,7 @@ graph TB
 - Backend kullanıcı fonlarını hareket ettiren custody anahtarı taşımaz.
 - Backend, kontrat adına release/challenge/cancel sonucu “uyduramaz”.
 - Backend’in güçlü olduğu yer: session/policy/PII access boundary ve operasyonel görünürlük.
+- Araf kimin haklı olduğuna karar vermez; iki tarafın imzasıyla kontrollü settlement sağlar.
 
 ---
 

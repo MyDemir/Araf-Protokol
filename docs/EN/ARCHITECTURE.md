@@ -137,6 +137,7 @@ This yields a Web2.5 model: on-chain authority + off-chain operational accelerat
 - Backend does not hold user-fund custody authority.
 - Backend cannot fabricate release/challenge/cancel outcomes against contract rules.
 - Backend strength lies in coordination, observability, and secure PII boundaries.
+- Araf does not decide who is right; it enables counterparty-signed settlement.
 
 ---
 
