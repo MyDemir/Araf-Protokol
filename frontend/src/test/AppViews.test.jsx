@@ -221,4 +221,36 @@ describe('AppViews market side-aware rendering', () => {
     await user.click(screen.getByRole('button', { name: /Go to Marketplace/i }));
     expect(setCurrentView).toHaveBeenCalledWith('market');
   });
+
+  it('does not render payment complexity badge when all orders have null paymentRiskSignal', () => {
+    const views = buildAppViews({
+      ...baseCtx,
+      filteredOrders: [
+        {
+          id: '1',
+          side: 'SELL_CRYPTO',
+          sideLabel: 'Sell Order',
+          ctaLabel: 'Buy',
+          statusLabel: 'Open',
+          bondLabel: '8%',
+          maker: '0xmaker',
+          makerFull: '0xmaker',
+          rate: 33,
+          fiat: 'TRY',
+          crypto: 'USDT',
+          minFillAmount: 10,
+          limitLabel: 'Min Fill 10 USDT • Remaining 50 USDT',
+          tier: 1,
+          ownerSideHint: 'Order owner is selling crypto',
+          trustSummary: { available: false, band: null, label: 'Signal unavailable', chipClass: 'text-slate-400' },
+          paymentRiskSignal: null,
+          tokenPolicy: { supported: true, allowSellOrders: true, allowBuyOrders: true },
+        },
+      ],
+      orders: [{ crypto: 'USDT' }],
+    });
+
+    render(<div>{views.renderMarket()}</div>);
+    expect(screen.getAllByText(/Payment method complexity/i).length).toBe(1);
+  });
 });

@@ -70,14 +70,22 @@ export default function SettlementProposalCard({
   const roomState = activeTrade?.state || 'LOCKED';
   const isActionableRoom = ACTIVE_ROOM_STATES.includes(roomState);
   const isTerminalRoom = TERMINAL_ROOM_STATES.includes(roomState);
+  const hasBackendTradeId = Boolean(activeTrade?.id);
+  const onchainTradeId = activeTrade?.onchainId ?? activeTrade?.rawTrade?.onchainId ?? null;
+  const hasOnchainTradeId = onchainTradeId !== null && onchainTradeId !== undefined && onchainTradeId !== '';
 
-  const makerAddress = activeTrade?.makerFull?.toLowerCase?.() || null;
-  const takerAddress = activeTrade?.takerFull?.toLowerCase?.() || null;
+  const makerAddress = (activeTrade?.makerFull || activeTrade?.rawTrade?.maker_address || null)?.toLowerCase?.() || null;
+  const takerAddress = (activeTrade?.takerFull || activeTrade?.rawTrade?.taker_address || null)?.toLowerCase?.() || null;
   const userAddress = address?.toLowerCase?.() || null;
   const userIsMaker = userRole === 'maker' || (userAddress && makerAddress === userAddress);
+  const isTradeParty = Boolean(userAddress && (userAddress === makerAddress || userAddress === takerAddress));
   const proposer = (proposal?.proposer ?? proposal?.proposed_by)?.toLowerCase?.() || null;
-  const isProposer = userAddress && proposer && userAddress === proposer;
-  const isCounterparty = Boolean(userAddress && proposer && userAddress !== proposer);
+  const isProposer = Boolean(isTradeParty && userAddress && proposer && userAddress === proposer);
+  const isCounterparty = Boolean(isTradeParty && userAddress && proposer && userAddress !== proposer);
+  const previewUnavailableMessage = lang === 'TR'
+    ? 'Backend trade kaydı hazır olmadığı için settlement önizleme açılamıyor.'
+    : 'Settlement preview is unavailable until backend trade record is ready.';
+  const missingOnchainIdMessage = lang === 'TR' ? 'On-chain trade ID bulunamadı.' : 'Missing on-chain trade ID.';
 
   const normalizedMakerShareBps = Number(makerShareBps);
   const normalizedTakerShareBps = 10000 - normalizedMakerShareBps;
@@ -108,8 +116,8 @@ export default function SettlementProposalCard({
   }, [normalizedMakerShareBps, computedExpiryMinutes, lang]);
 
   const loadPreview = React.useCallback(async (makerBpsOverride = normalizedMakerShareBps) => {
-    if (!activeTrade?.id) {
-      setPreviewError(lang === 'TR' ? 'Backend trade ID bulunamadı. Önizleme açılamadı.' : 'Missing backend trade ID. Preview unavailable.');
+    if (!hasBackendTradeId) {
+      setPreviewError(previewUnavailableMessage);
       return false;
     }
     setPreviewLoading(true);
@@ -131,7 +139,7 @@ export default function SettlementProposalCard({
     } finally {
       setPreviewLoading(false);
     }
-  }, [activeTrade?.id, authenticatedFetch, lang, normalizedMakerShareBps]);
+  }, [activeTrade?.id, authenticatedFetch, hasBackendTradeId, lang, normalizedMakerShareBps, previewUnavailableMessage]);
 
   const refreshTradesAfterTx = React.useCallback(async () => {
     await fetchMyTrades();
@@ -153,14 +161,19 @@ export default function SettlementProposalCard({
 
   const onPreviewCreate = async () => {
     if (!validateInput()) return;
+    if (!hasBackendTradeId) {
+      setPreviewError(previewUnavailableMessage);
+      return;
+    }
     setPreviewMode('create');
     const ok = await loadPreview(normalizedMakerShareBps);
     if (ok) setPreviewOpen(true);
   };
 
   const onConfirmCreate = async () => {
+    if (!hasOnchainTradeId) return;
     await runTx(
-      () => proposeSettlement(BigInt(activeTrade.onchainId), normalizedMakerShareBps, computedExpiresAt),
+      () => proposeSettlement(BigInt(onchainTradeId), normalizedMakerShareBps, computedExpiresAt),
       lang === 'TR' ? 'Settlement teklifi zincire gönderildi.' : 'Settlement proposal submitted on-chain.'
     );
     setPreviewOpen(false);
@@ -251,11 +264,13 @@ export default function SettlementProposalCard({
           </div>
 
           {validationError && <p className="text-xs text-red-400">{validationError}</p>}
+          {!hasBackendTradeId && <p className="text-xs text-amber-300">{previewUnavailableMessage}</p>}
+          {!hasOnchainTradeId && <p className="text-xs text-amber-300">{missingOnchainIdMessage}</p>}
 
           <div className="flex gap-2">
             <button
               onClick={onPreviewCreate}
-              disabled={isContractLoading}
+              disabled={isContractLoading || !hasBackendTradeId || !hasOnchainTradeId}
               className={`px-4 py-2 rounded-lg text-sm font-bold transition ${isContractLoading ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
             >
               {lang === 'TR' ? 'Önizleme' : 'Preview'}
@@ -284,37 +299,40 @@ export default function SettlementProposalCard({
           </p>
 
           <div className="flex flex-wrap gap-2">
-            {isProposer && (
+            {!hasOnchainTradeId && (
+              <p className="text-xs text-amber-300">{missingOnchainIdMessage}</p>
+            )}
+            {!isExpired && isProposer && (
               <button
-                onClick={() => runTx(() => withdrawSettlement(BigInt(activeTrade.onchainId)), lang === 'TR' ? 'Settlement teklifi geri çekildi.' : 'Settlement proposal withdrawn.')}
-                disabled={isContractLoading}
+                onClick={() => runTx(() => withdrawSettlement(BigInt(onchainTradeId)), lang === 'TR' ? 'Settlement teklifi geri çekildi.' : 'Settlement proposal withdrawn.')}
+                disabled={isContractLoading || !hasOnchainTradeId}
                 className="px-3 py-2 text-sm rounded-lg border border-orange-500/40 text-orange-400 hover:bg-orange-500 hover:text-white transition disabled:opacity-50"
               >
                 {lang === 'TR' ? 'Geri Çek' : 'Withdraw'}
               </button>
             )}
-            {isCounterparty && (
+            {!isExpired && isCounterparty && (
               <>
                 <button
                   onClick={onPreviewAccept}
-                  disabled={isContractLoading}
+                  disabled={isContractLoading || !hasOnchainTradeId || !hasBackendTradeId}
                   className="px-3 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 transition disabled:opacity-50"
                 >
                   {lang === 'TR' ? 'Kabul Et (Önizleme)' : 'Accept (Preview)'}
                 </button>
                 <button
-                  onClick={() => runTx(() => rejectSettlement(BigInt(activeTrade.onchainId)), lang === 'TR' ? 'Settlement teklifi reddedildi.' : 'Settlement proposal rejected.')}
-                  disabled={isContractLoading}
+                  onClick={() => runTx(() => rejectSettlement(BigInt(onchainTradeId)), lang === 'TR' ? 'Settlement teklifi reddedildi.' : 'Settlement proposal rejected.')}
+                  disabled={isContractLoading || !hasOnchainTradeId}
                   className="px-3 py-2 text-sm rounded-lg border border-red-500/40 text-red-400 hover:bg-red-500 hover:text-white transition disabled:opacity-50"
                 >
                   {lang === 'TR' ? 'Reddet' : 'Reject'}
                 </button>
               </>
             )}
-            {isExpired && (
+            {isExpired && isTradeParty && (
               <button
-                onClick={() => runTx(() => expireSettlement(BigInt(activeTrade.onchainId)), lang === 'TR' ? 'Settlement teklifi süresi doldu olarak işaretlendi.' : 'Settlement proposal marked expired.')}
-                disabled={isContractLoading}
+                onClick={() => runTx(() => expireSettlement(BigInt(onchainTradeId)), lang === 'TR' ? 'Settlement teklifi süresi doldu olarak işaretlendi.' : 'Settlement proposal marked expired.')}
+                disabled={isContractLoading || !hasOnchainTradeId}
                 className="px-3 py-2 text-sm rounded-lg border border-yellow-500/40 text-yellow-400 hover:bg-yellow-500 hover:text-black transition disabled:opacity-50"
               >
                 {lang === 'TR' ? 'Süresi Doldu Olarak İşaretle' : 'Mark as Expired'}
@@ -352,12 +370,12 @@ export default function SettlementProposalCard({
         takerShareBps={previewMode === 'accept' ? (proposal?.takerShareBps ?? proposal?.taker_share_bps ?? '—') : normalizedTakerShareBps}
         previewData={previewData}
         onConfirm={previewMode === 'accept'
-          ? () => runTx(() => acceptSettlement(BigInt(activeTrade.onchainId)), lang === 'TR' ? 'Settlement kabul edildi ve işlem on-chain kapanacak.' : 'Settlement accepted; trade will close on-chain.')
+          ? () => runTx(() => acceptSettlement(BigInt(onchainTradeId)), lang === 'TR' ? 'Settlement kabul edildi ve işlem on-chain kapanacak.' : 'Settlement accepted; trade will close on-chain.')
           : onConfirmCreate}
         confirmLabel={previewMode === 'accept'
           ? (lang === 'TR' ? 'Kabul Et ve On-Chain Gönder' : 'Accept and Submit On-Chain')
           : (lang === 'TR' ? 'Teklifi On-Chain Gönder' : 'Submit Proposal On-Chain')}
-        disableConfirm={previewLoading || Boolean(previewError)}
+        disableConfirm={previewLoading || Boolean(previewError) || !hasOnchainTradeId}
       />
     </div>
   );

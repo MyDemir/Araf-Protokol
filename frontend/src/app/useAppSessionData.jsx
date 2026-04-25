@@ -415,7 +415,8 @@ export function useAppSessionData({
 
         setActiveTrade((prev) => {
           if (!prev) return prev;
-          const updated = data.trades.find((t) => t.onchain_escrow_id === prev.onchainId);
+          const prevOnchainId = String(prev.onchainId ?? '');
+          const updated = data.trades.find((t) => String(t.onchain_escrow_id ?? '') === prevOnchainId);
           if (!updated) return prev;
 
           const wasPendingSync = prev._pendingBackendSync && !prev.id;
