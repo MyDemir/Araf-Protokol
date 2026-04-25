@@ -17,8 +17,12 @@ export default function PaymentRiskBadge({
   const warningText = lang === 'TR'
     ? 'Bu ödeme yöntemi karşı taraf hakkında kesin hüküm vermez. Yalnızca işlem karmaşıklığı sinyalidir.'
     : 'This payment method does not judge the counterparty. It is only a transaction-complexity signal.';
+  const genericWarning = lang === 'TR'
+    ? 'Genel payment config; bu order’a özel rail sinyali değildir.'
+    : 'Generic payment config; this is not an order-specific rail signal.';
   const desc = riskEntry?.description?.[lang] || riskEntry?.description?.EN || '';
   const chipClass = RISK_LEVEL_CLASS[riskLevel] || RISK_LEVEL_CLASS.MEDIUM;
+  const isGenericSignal = riskEntry?.generic === true;
 
   if (compact) {
     return (
@@ -26,6 +30,7 @@ export default function PaymentRiskBadge({
         <p className="text-[11px] text-slate-300">
           {lang === 'TR' ? 'Payment method complexity' : 'Payment method complexity'}: <span className="font-bold text-amber-300">{riskLevel}</span>
         </p>
+        {isGenericSignal && <p className="text-[10px] text-amber-300 mt-1">{genericWarning}</p>}
         <p className="text-[10px] text-slate-500 mt-1">{warningText}</p>
       </div>
     );
@@ -40,6 +45,7 @@ export default function PaymentRiskBadge({
         <span className={`text-[10px] px-2 py-0.5 rounded border font-bold ${chipClass}`}>{riskLevel}</span>
       </div>
       <p className="text-[11px] text-slate-400">{desc}</p>
+      {isGenericSignal && <p className="text-[11px] text-amber-300 mt-1">{genericWarning}</p>}
       <div className="grid grid-cols-2 gap-2 mt-2 text-[11px]">
         <p className="text-slate-400">minBondSurchargeBps: <span className="text-white font-mono">{riskEntry.minBondSurchargeBps ?? 0}</span></p>
         <p className="text-slate-400">feeSurchargeBps: <span className="text-white font-mono">{riskEntry.feeSurchargeBps ?? 0}</span></p>

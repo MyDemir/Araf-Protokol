@@ -174,14 +174,7 @@ describe('AppViews market side-aware rendering', () => {
             label: 'Signal unavailable',
             chipClass: 'text-slate-400 border-slate-700/60 bg-slate-900/20',
           },
-          paymentRiskSignal: {
-            riskLevel: 'HIGH',
-            enabled: true,
-            minBondSurchargeBps: 50,
-            feeSurchargeBps: 0,
-            warningKey: 'ACH_REVERSAL_AND_SETTLEMENT_DELAY_RISK',
-            description: { EN: 'x', TR: 'y' },
-          },
+          paymentRiskSignal: null,
           tokenPolicy: { supported: true, allowSellOrders: true, allowBuyOrders: true },
         },
       ],
@@ -204,7 +197,7 @@ describe('AppViews market side-aware rendering', () => {
     expect(screen.queryByText('SELLER PROFILE')).not.toBeInTheDocument();
     expect(screen.getAllByText('Open').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Bond/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Payment method complexity:/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Payment method complexity:/i).length).toBe(1);
   });
 
   it('shows explicit empty-state instead of broken trade room when activeTrade is missing', async () => {

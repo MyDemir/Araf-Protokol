@@ -28,4 +28,9 @@ describe('PaymentRiskBadge non-authoritative complexity copy', () => {
     expect(screen.getByText(/Preview\/config only/i)).toBeInTheDocument();
     expect(screen.getByText(/availability config signal/i)).toBeInTheDocument();
   });
+
+  it('renders generic config warning when payload is generic in compact mode', () => {
+    render(<PaymentRiskBadge lang="EN" compact riskEntry={{ riskLevel: 'LOW', generic: true }} />);
+    expect(screen.getByText(/Generic payment config; this is not an order-specific rail signal/i)).toBeInTheDocument();
+  });
 });

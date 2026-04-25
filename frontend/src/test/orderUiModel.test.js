@@ -207,7 +207,7 @@ describe('orderUiModel mapping', () => {
     expect(resolved?.riskLevel).toBe('MEDIUM');
   });
 
-  it('derives generic payment complexity signal when order feed has no rail/country hint', () => {
+  it('returns null when order feed has no explicit rail/country hint', () => {
     const paymentRiskConfig = {
       TR: {
         TR_IBAN: { riskLevel: 'MEDIUM', enabled: true },
@@ -217,7 +217,26 @@ describe('orderUiModel mapping', () => {
       order: { ...baseOrder, side: 'SELL_CRYPTO' },
       paymentRiskConfig,
     });
+    expect(signal).toBeNull();
+  });
+
+  it('returns order-specific payment signal when explicit rail and country are present', () => {
+    const paymentRiskConfig = {
+      TR: {
+        TR_IBAN: { riskLevel: 'MEDIUM', enabled: true },
+      },
+    };
+    const signal = deriveOrderPaymentRiskSignal({
+      order: {
+        ...baseOrder,
+        side: 'SELL_CRYPTO',
+        payment_method: { rail: 'TR_IBAN', country: 'TR' },
+      },
+      paymentRiskConfig,
+    });
     expect(signal?.riskLevel).toBe('MEDIUM');
+    expect(signal?.orderSpecific).toBe(true);
+    expect(signal?.generic).toBe(false);
   });
 
 });

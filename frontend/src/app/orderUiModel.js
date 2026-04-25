@@ -129,15 +129,20 @@ export const deriveOrderPaymentRiskSignal = ({ order, paymentRiskConfig = {} }) 
     || order?.payment_country
     || order?.settlement_profile?.country
     || null;
-  const resolved = resolvePaymentRiskEntry({ paymentRiskConfig, rail, country });
-  if (resolved) return resolved;
+  const hasExplicitRailCountry = Boolean(rail && country);
+  if (!hasExplicitRailCountry) {
+    // [TR] Feed rail/country taşımıyorsa order-specific risk sinyali üretilmez.
+    // [EN] If feed lacks explicit rail/country, do not fabricate an order-specific risk signal.
+    return null;
+  }
 
-  // [TR] Feed rail/country hint taşımıyorsa privacy-safe generic signal döndürülür.
-  // [EN] If feed has no rail/country hint, return a privacy-safe generic signal.
-  const fallbackBucket = Object.values(paymentRiskConfig || {}).find((bucket) => bucket && typeof bucket === 'object');
-  if (!fallbackBucket) return null;
-  const firstEntry = Object.values(fallbackBucket).find(Boolean);
-  return firstEntry || null;
+  const resolved = resolvePaymentRiskEntry({ paymentRiskConfig, rail, country });
+  if (!resolved) return null;
+  return {
+    ...resolved,
+    generic: resolved?.generic === true,
+    orderSpecific: resolved?.generic === true ? false : true,
+  };
 };
 
 
