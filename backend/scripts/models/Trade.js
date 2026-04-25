@@ -229,6 +229,9 @@ const tradeSchema = new mongoose.Schema(
           disputed_resolved_count: { type: Number, default: null, min: 0 },
           dispute_win_count: { type: Number, default: null, min: 0 },
           dispute_loss_count: { type: Number, default: null, min: 0 },
+          // [TR] Partial settlement başarısızlık sayacı değildir; lock-time authority mirror alanıdır.
+          // [EN] Partial settlement is non-penal; stored as lock-time authority mirror counter.
+          partial_settlement_count: { type: Number, default: null, min: 0 },
           risk_points: { type: Number, default: null, min: 0 },
         },
       },
@@ -259,6 +262,9 @@ const tradeSchema = new mongoose.Schema(
           disputed_resolved_count: { type: Number, default: null, min: 0 },
           dispute_win_count: { type: Number, default: null, min: 0 },
           dispute_loss_count: { type: Number, default: null, min: 0 },
+          // [TR] Partial settlement başarısızlık sayacı değildir; lock-time authority mirror alanıdır.
+          // [EN] Partial settlement is non-penal; stored as lock-time authority mirror counter.
+          partial_settlement_count: { type: Number, default: null, min: 0 },
           risk_points: { type: Number, default: null, min: 0 },
         },
       },
@@ -277,6 +283,35 @@ const tradeSchema = new mongoose.Schema(
       maker_signature: { type: String, default: null },
       taker_signature: { type: String, default: null },
       deadline:        { type: Date,   default: null },
+    },
+
+    // [TR] Faz-2 partial settlement mirror alanı.
+    //      Bu alan yalnız on-chain event mirror + UI preview amacıyla taşınır.
+    //      Economic authority üretmez.
+    // [EN] Phase-2 partial settlement mirror block.
+    //      Used only for on-chain event mirroring + UI preview surfaces.
+    //      Never creates economic authority.
+    settlement_proposal: {
+      proposal_id: { type: String, default: null },
+      state: {
+        type: String,
+        enum: ["NONE", "PROPOSED", "REJECTED", "WITHDRAWN", "EXPIRED", "FINALIZED", null],
+        default: null,
+        index: true,
+      },
+      proposed_by: { type: String, lowercase: true, default: null },
+      maker_share_bps: { type: Number, default: null, min: 0, max: 10000 },
+      taker_share_bps: { type: Number, default: null, min: 0, max: 10000 },
+      proposed_at: { type: Date, default: null },
+      expires_at: { type: Date, default: null },
+      expired_at: { type: Date, default: null },
+      finalized_at: { type: Date, default: null },
+      maker_payout: { type: String, default: null },
+      taker_payout: { type: String, default: null },
+      taker_fee: { type: String, default: null },
+      maker_fee: { type: String, default: null },
+      tx_hash: { type: String, default: null },
+      last_event_name: { type: String, default: null },
     },
 
     chargeback_ack: {
@@ -300,6 +335,10 @@ tradeSchema.index({ trade_origin: 1, status: 1 });
 tradeSchema.index({ parent_order_side: 1, status: 1 });
 tradeSchema.index({ token_address: 1, status: 1 });
 tradeSchema.index({ tier: 1, status: 1 });
+tradeSchema.index({ "settlement_proposal.state": 1, status: 1 });
+tradeSchema.index({ "settlement_proposal.expires_at": 1 }, { sparse: true });
+tradeSchema.index({ "settlement_proposal.proposed_at": -1 }, { sparse: true });
+tradeSchema.index({ "settlement_proposal.finalized_at": -1 }, { sparse: true });
 
 // [TR] Trade'leri 1 yıl sonra sil — GDPR uyumu
 // [EN] Delete trades after 1 year — GDPR compliance

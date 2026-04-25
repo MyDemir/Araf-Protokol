@@ -23,6 +23,7 @@
 const { ethers } = require("ethers");
 const logger = require("../utils/logger");
 const { getRedisClient } = require("../config/redis");
+const { getPaymentRailRiskConfig } = require("../config/paymentRailRiskConfig");
 
 const CONFIG_CACHE_KEY = "cache:protocol_config:v3";
 const CONFIG_CACHE_TTL = Number(process.env.CONFIG_CACHE_TTL_SECONDS || 3600);
@@ -44,6 +45,7 @@ const CONFIG_ABI = [
 ];
 
 let protocolConfig = null;
+const PAYMENT_RISK_CONFIG = getPaymentRailRiskConfig();
 
 function _isConfigLoaded(cfg) {
   return Boolean(
@@ -178,6 +180,7 @@ async function loadProtocolConfig() {
       tier1TradeCooldown: Number(cooldownConfig.currentTier1TradeCooldown ?? cooldownConfig[1]),
     },
     tokenMap,
+    paymentRiskConfig: PAYMENT_RISK_CONFIG,
   };
 
   await _writeCache(redis, protocolConfig);
@@ -264,7 +267,10 @@ function getConfig() {
     err.code = "CONFIG_UNAVAILABLE";
     throw err;
   }
-  return protocolConfig;
+  return {
+    ...protocolConfig,
+    paymentRiskConfig: protocolConfig.paymentRiskConfig || PAYMENT_RISK_CONFIG,
+  };
 }
 
 module.exports = {

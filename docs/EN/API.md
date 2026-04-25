@@ -152,6 +152,30 @@ Returns child trades for caller-owned order (owner-only access).
 ## 5) Trades routes (`/api/trades`)
 
 Trades are child-trade read/coordination endpoints.
+Backend remains **non-authoritative** for settlement outcomes:
+- no backend/admin approval can finalize settlement,
+- no backend/admin action can override release/cancel/burn/payout,
+- final economic outcome is determined only by accepted on-chain tx.
+
+### Partial settlement semantics
+- **What it is:** a party-agreed split payout flow for a single child trade.
+- **Lifecycle:** `NONE -> PROPOSED -> REJECTED/WITHDRAWN/EXPIRED/FINALIZED`.
+- **Who can propose:** only one of the two trade counterparties (`maker` or `taker`) of that trade.
+- **Who can accept/reject:** only the **counterparty** can accept or reject an active proposal.
+- **Who can withdraw:** only the proposer can withdraw a still-active proposal.
+- **Who can expire:** anyone can trigger expiry after deadline; this is still contract-validated.
+
+### Backend role in settlement flow
+- preview surface (`POST /api/trades/:id/settlement-proposal/preview`) for informational split math
+- event mirror from contract logs
+- read model projection for query/UX
+- audit/observability for operations (including admin read-only analytics)
+
+### Backend is NOT allowed to do
+- determine settlement outcome
+- override `release/cancel/burn` or payout authority
+- write reputation authority state
+- transfer funds
 
 ### `GET /api/trades/my`
 Active trades for the caller (`LOCKED/PAID/CHALLENGED/...` non-terminal set).
@@ -179,6 +203,45 @@ Request:
 
 ### `POST /api/trades/:id/chargeback-ack`
 Maker acknowledgment endpoint (legal/risk audit signal) for `PAID/CHALLENGED` states.
+
+### `GET /api/trades/:id/settlement-proposal`
+Returns trade-scoped partial-settlement mirror payload (party-restricted).
+Read-model only; **informational**, non-authoritative.
+
+### `POST /api/trades/:id/settlement-proposal/preview`
+Computes an informational split preview from mirrored trade amounts.
+
+Request:
+```json
+{ "makerShareBps": 7000 }
+```
+
+Response fields:
+- `informationalOnly: true`
+- `nonAuthoritative: true`
+- `makerShareBps`, `takerShareBps`
+- `pool`, `makerPayout`, `takerPayout` (BigInt-safe string values)
+- warning message that only on-chain accepted tx determines final outcome
+
+---
+
+## 5.1) Admin settlement observability (`/api/admin`)
+
+### `GET /api/admin/settlement-proposals`
+Read-only monitoring endpoint for mirrored settlement proposals.
+
+Query:
+- `state=ALL|PROPOSED|EXPIRED|FINALIZED|REJECTED|WITHDRAWN`
+- `page`
+- `limit`
+
+Returns paginated `{ proposals, total, page, limit }`.
+No write/override actions are exposed on this endpoint.
+
+### Payment risk semantics (`PaymentRiskLevel`)
+- `PaymentRiskLevel` is **not** a trust/reputation grade for a user.
+- It is a payment-rail complexity/availability signal for UX/read-model purposes.
+- It must never become authority for on-chain outcome or settlement finalization.
 
 ---
 

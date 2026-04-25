@@ -1,6 +1,7 @@
 import React from 'react';
-import { buildMakerPreview, getMakerModalCopy, mapOffchainHealthToUi } from './orderUiModel';
+import { buildMakerPreview, getMakerModalCopy, mapOffchainHealthToUi, resolvePaymentRiskEntry } from './orderUiModel';
 import { TERMS_ACCEPTED_STORAGE_KEY } from './bootstrapState';
+import PaymentRiskBadge from '../components/PaymentRiskBadge';
 
 // [TR] Eksik env değişkenleri için kapatılabilir uyarı şeridi.
 // [EN] Dismissible warning strip for missing env variables.
@@ -65,6 +66,7 @@ export const buildAppModals = (ctx) => {
     makerFiat,
     setMakerFiat,
     onchainBondMap,
+    paymentRiskConfig,
     userReputation,
     SUPPORTED_TOKEN_ADDRESSES,
     onchainTokenMap,
@@ -244,6 +246,15 @@ export const buildAppModals = (ctx) => {
     const maxLimNum    = parseFloat(makerMaxLimit) || 0;
     const totalFiatValue = cryptoAmtNum * rateNum;
     const modalCopy = getMakerModalCopy(makerSide, lang);
+    const payoutRail = payoutProfileDraft?.rail || null;
+    const payoutCountry = payoutProfileDraft?.country || null;
+    const payoutRiskEntry = resolvePaymentRiskEntry({
+      paymentRiskConfig: paymentRiskConfig || {},
+      rail: payoutRail,
+      country: payoutCountry,
+    });
+    const isCreateTemporarilyDisabledByRisk = payoutRiskEntry
+      && (String(payoutRiskEntry.riskLevel || '').toUpperCase() === 'RESTRICTED' || payoutRiskEntry.enabled === false);
 
     let validationError = null;
     if (!makerAmount || cryptoAmtNum <= 0)                    validationError = lang === 'TR' ? 'Order miktarını giriniz.' : 'Enter order amount.';
@@ -336,14 +347,22 @@ export const buildAppModals = (ctx) => {
               </div>
               <p className="text-[11px] text-slate-400 mt-2">{modalCopy.previewHint}</p>
             </div>
+            <PaymentRiskBadge lang={lang} riskEntry={payoutRiskEntry} />
+            {isCreateTemporarilyDisabledByRisk && (
+              <p className="text-[11px] text-red-400 bg-red-950/20 border border-red-900/40 rounded-lg p-2">
+                {lang === 'TR'
+                  ? 'Bu rail/country kombinasyonu şu an availability config nedeniyle kısıtlı görünüyor. Bu bir kontrat hükmü değildir.'
+                  : 'This rail/country pair is currently restricted by availability config. This is not a contract authority rule.'}
+              </p>
+            )}
             {validationError && (
               <p className="text-red-400 text-[11px] font-medium text-center bg-red-950/30 py-2 rounded-lg border border-red-900/50 mt-2">{validationError}</p>
             )}
             <button
               onClick={handleCreateOrder}
-              disabled={isContractLoading || validationError !== null}
+              disabled={isContractLoading || validationError !== null || isCreateTemporarilyDisabledByRisk}
               className={`w-full py-3 rounded-xl font-bold mt-2 shadow-lg transition ${
-                isContractLoading || validationError !== null
+                isContractLoading || validationError !== null || isCreateTemporarilyDisabledByRisk
                   ? 'bg-[#151518] text-slate-500 border border-[#2a2a2e] cursor-not-allowed'
                   : 'bg-white hover:bg-slate-200 text-black shadow-white/10'
               }`}>
@@ -518,6 +537,7 @@ export const buildAppModals = (ctx) => {
                   <div className="text-center text-slate-500 animate-pulse">{lang === 'TR' ? 'İtibar verisi yükleniyor...' : 'Loading reputation data...'}</div>
                 ) : (() => {
                   const { successful, failed, effectiveTier, bannedUntil, consecutiveBans, firstSuccessfulTradeAt } = userReputation;
+                  const partialSettlementCount = Number(userReputation?.authorityCounters?.partialSettlementCount ?? 0);
                   const totalTrades = successful + failed;
                   const successRate = totalTrades > 0 ? Math.round((successful / totalTrades) * 100) : 100;
                   const TIER_REQUIREMENTS = {
@@ -574,6 +594,13 @@ export const buildAppModals = (ctx) => {
                         <div className="bg-[#151518] p-3 rounded-xl border border-[#2a2a2e] text-center">
                           <p className="text-slate-500 text-[10px] font-bold tracking-widest">{lang === 'TR' ? 'ARDIŞIK YASAK' : 'CONSEC. BANS'}</p>
                           <p className="text-2xl font-bold text-white mt-1">{consecutiveBans}</p>
+                        </div>
+                        <div className="bg-[#151518] p-3 rounded-xl border border-[#2a2a2e] text-center col-span-2">
+                          <p className="text-slate-500 text-[10px] font-bold tracking-widest">{lang === 'TR' ? 'UZLAŞMALI KAPANIŞ' : 'AGREED SETTLEMENT'}</p>
+                          <p className="text-2xl font-bold text-cyan-300 mt-1">{partialSettlementCount}</p>
+                          <p className="text-[10px] text-slate-500 mt-1">
+                            {lang === 'TR' ? 'Risk cezası değil, uzlaşmalı kapanış geçmişi göstergesidir.' : 'This is an event-history marker, not a risk penalty.'}
+                          </p>
                         </div>
                       </div>
                       {firstSuccessfulTradeAt > 0 && new Date().getTime() / 1000 < firstSuccessfulTradeAt + 15 * 24 * 3600 && (
@@ -800,7 +827,12 @@ export const buildAppModals = (ctx) => {
                   <div className="text-center text-slate-500 animate-pulse">{lang === 'TR' ? 'Geçmiş yükleniyor...' : 'Loading history...'}</div>
                 ) : tradeHistory.length > 0 ? (
                   tradeHistory.map(tx => {
-                    const statusMap = { RESOLVED: { text: lang === 'TR' ? 'Tamamlandı' : 'Resolved', color: 'emerald' }, CANCELED: { text: lang === 'TR' ? 'İptal Edildi' : 'Canceled', color: 'slate' }, BURNED: { text: lang === 'TR' ? 'Yakıldı' : 'Burned', color: 'red' } };
+                    const isPartialSettlement = tx.status === 'RESOLVED' && tx?.settlement_proposal?.state === 'FINALIZED';
+                    const statusMap = {
+                      RESOLVED: { text: isPartialSettlement ? (lang === 'TR' ? 'Uzlaşmalı Kapanış' : 'Partial settlement') : (lang === 'TR' ? 'Tamamlandı' : 'Resolved'), color: isPartialSettlement ? 'cyan' : 'emerald' },
+                      CANCELED: { text: lang === 'TR' ? 'İptal Edildi' : 'Canceled', color: 'slate' },
+                      BURNED: { text: lang === 'TR' ? 'Yakıldı' : 'Burned', color: 'red' },
+                    };
                     const displayStatus = statusMap[tx.status] || { text: tx.status, color: 'slate' };
                     const isMaker = tx.maker_address === address?.toLowerCase();
                     const historyAsset = tx.financials?.crypto_asset || 'USDT';

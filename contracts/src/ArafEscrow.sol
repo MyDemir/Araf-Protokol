@@ -57,6 +57,16 @@ error CleanPeriodNotElapsed();
 error NoBansToReset();
 error DeadlineTooFar();
 error ConflictingPingPath();
+error InvalidSettlementSplit();
+error SettlementNotAllowedInState();
+error ActiveSettlementProposalExists();
+error NoActiveSettlementProposal();
+error OnlySettlementProposer();
+error OnlySettlementCounterparty();
+error SettlementProposalExpired();
+error SettlementProposalNotExpired();
+error InvalidSettlementDeadline();
+error SettlementAlreadyFinalized();
 
 // [TR] V3 Order katmanı için yeni özel hatalar
 // [EN] New custom errors for the V3 Order layer
@@ -108,6 +118,17 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         PARTIALLY_FILLED,
         FILLED,
         CANCELED
+    }
+
+    // [TR] Faz-2 partial settlement teklif yaşam döngüsü.
+    // [EN] Phase-2 partial settlement proposal lifecycle.
+    enum SettlementProposalState {
+        NONE,
+        PROPOSED,
+        REJECTED,
+        WITHDRAWN,
+        EXPIRED,
+        FINALIZED
     }
 
     struct Trade {
@@ -168,9 +189,25 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint32 burnCount;
         uint32 disputeWinCount;
         uint32 disputeLossCount;
+        uint32 partialSettlementCount;
         uint32 riskPoints;
         uint64 lastPositiveEventAt;
         uint64 lastNegativeEventAt;
+    }
+
+    // [TR] Trade taraflarının tamamen on-chain iradeyle kurduğu split anlaşması.
+    //      Backend/admin yalnız izleyebilir; ekonomik authority kontrattadır.
+    // [EN] Split agreement formed by trade parties with fully on-chain consent.
+    //      Backend/admin are observers only; economic authority remains in contract.
+    struct SettlementProposal {
+        uint256 id;
+        uint256 tradeId;
+        address proposer;
+        uint16 makerShareBps;
+        uint16 takerShareBps;
+        uint64 proposedAt;
+        uint64 expiresAt;
+        SettlementProposalState state;
     }
 
     // [TR] Kontratın tek otorite olduğu terminal semantik sınıfları.
@@ -181,7 +218,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         MUTUAL_CANCEL,
         DISPUTED_RESOLUTION_WIN,
         DISPUTED_RESOLUTION_LOSS,
-        BURNED
+        BURNED,
+        PARTIAL_SETTLEMENT
     }
 
     // [TR] Token bazlı yön kontrolü — owner tarafından yönetilir.
@@ -234,6 +272,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     uint256 public constant DEFAULT_TIER0_TRADE_COOLDOWN = 4 hours;
     uint256 public constant DEFAULT_TIER1_TRADE_COOLDOWN = 4 hours;
     uint256 public constant MAX_CANCEL_DEADLINE  =   7 days;
+    uint256 public constant MIN_SETTLEMENT_EXPIRY = 10 minutes;
     uint256 public constant MIN_ACTIVE_PERIOD    =  15 days;
 
     uint256 public constant TAKER_BOND_DECAY_BPS_H = 42;
@@ -286,6 +325,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
     mapping(uint256 => Trade) public trades;
     mapping(uint256 => Order) public orders;
+    mapping(uint256 => SettlementProposal) public settlementProposalsByTrade;
+    mapping(uint256 => uint256) public settlementProposalNonceByTrade;
     mapping(address => Reputation) public reputation;
 
     mapping(address => uint256) public walletRegisteredAt;
@@ -331,6 +372,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint256 burnCount,
         uint256 disputeWinCount,
         uint256 disputeLossCount,
+        uint256 partialSettlementCount,
         uint256 riskPoints,
         uint256 lastPositiveEventAt,
         uint256 lastNegativeEventAt
@@ -389,6 +431,36 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         bool supported,
         bool allowSellOrders,
         bool allowBuyOrders
+    );
+    event SettlementProposed(
+        uint256 indexed tradeId,
+        uint256 indexed proposalId,
+        address indexed proposer,
+        uint16 makerShareBps,
+        uint16 takerShareBps,
+        uint256 expiresAt
+    );
+    event SettlementRejected(
+        uint256 indexed tradeId,
+        uint256 indexed proposalId,
+        address indexed rejecter
+    );
+    event SettlementWithdrawn(
+        uint256 indexed tradeId,
+        uint256 indexed proposalId,
+        address indexed proposer
+    );
+    event SettlementExpired(
+        uint256 indexed tradeId,
+        uint256 indexed proposalId
+    );
+    event SettlementFinalized(
+        uint256 indexed tradeId,
+        uint256 indexed proposalId,
+        uint256 makerPayout,
+        uint256 takerPayout,
+        uint256 takerFee,
+        uint256 makerFee
     );
 
     // ═══════════════════════════════════════════════════
@@ -1071,6 +1143,147 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         emit EscrowReleased(_tradeId, t.maker, t.taker, takerPenalty, makerPenalty);
     }
 
+    // ═══════════════════════════════════════════════════
+    //  PARTIAL SETTLEMENT — ON-CHAIN SPLIT AGREEMENT
+    // ═══════════════════════════════════════════════════
+
+    /**
+     * @notice Trade taraflarından biri split settlement teklifi açar.
+     *         Bu teklif yalnızca on-chain taraf iradesiyle kurulabilir.
+     * @notice One trade party opens a split-settlement proposal.
+     *         The proposal can only be formed by on-chain party consent.
+     */
+    function proposeSettlement(
+        uint256 _tradeId,
+        uint16 _makerShareBps,
+        uint64 _expiresAt
+    ) external nonReentrant {
+        Trade storage t = trades[_tradeId];
+        if (!_isSettlementAllowedTradeState(t.state)) revert SettlementNotAllowedInState();
+        if (msg.sender != t.maker && msg.sender != t.taker) revert NotTradeParty();
+
+        SettlementProposal storage current = settlementProposalsByTrade[_tradeId];
+        _expireSettlementProposalIfNeeded(_tradeId, current);
+        if (current.state == SettlementProposalState.PROPOSED) revert ActiveSettlementProposalExists();
+        if (current.state == SettlementProposalState.FINALIZED) revert SettlementAlreadyFinalized();
+
+        if (_makerShareBps > BPS_DENOMINATOR) revert InvalidSettlementSplit();
+        uint16 takerShareBps = uint16(BPS_DENOMINATOR - _makerShareBps);
+        if (uint256(_makerShareBps) + uint256(takerShareBps) != BPS_DENOMINATOR) revert InvalidSettlementSplit();
+
+        uint256 nowTs = block.timestamp;
+        if (_expiresAt <= nowTs) revert InvalidSettlementDeadline();
+        if (_expiresAt < nowTs + MIN_SETTLEMENT_EXPIRY) revert InvalidSettlementDeadline();
+        if (_expiresAt > nowTs + MAX_CANCEL_DEADLINE) revert InvalidSettlementDeadline();
+
+        uint256 proposalId = ++settlementProposalNonceByTrade[_tradeId];
+        settlementProposalsByTrade[_tradeId] = SettlementProposal({
+            id: proposalId,
+            tradeId: _tradeId,
+            proposer: msg.sender,
+            makerShareBps: _makerShareBps,
+            takerShareBps: takerShareBps,
+            proposedAt: uint64(nowTs),
+            expiresAt: _expiresAt,
+            state: SettlementProposalState.PROPOSED
+        });
+
+        emit SettlementProposed(_tradeId, proposalId, msg.sender, _makerShareBps, takerShareBps, _expiresAt);
+    }
+
+    /**
+     * @notice Karşı taraf aktif settlement teklifini reddeder.
+     * @notice Counterparty rejects an active settlement proposal.
+     */
+    function rejectSettlement(uint256 _tradeId) external nonReentrant {
+        Trade storage t = trades[_tradeId];
+        SettlementProposal storage sp = settlementProposalsByTrade[_tradeId];
+
+        if (sp.state == SettlementProposalState.FINALIZED) revert SettlementAlreadyFinalized();
+        _expireSettlementProposalIfNeeded(_tradeId, sp);
+        if (sp.state == SettlementProposalState.EXPIRED) revert SettlementProposalExpired();
+        if (sp.state != SettlementProposalState.PROPOSED) revert NoActiveSettlementProposal();
+        if (msg.sender != t.maker && msg.sender != t.taker) revert NotTradeParty();
+        if (msg.sender == sp.proposer) revert OnlySettlementCounterparty();
+
+        sp.state = SettlementProposalState.REJECTED;
+        emit SettlementRejected(_tradeId, sp.id, msg.sender);
+    }
+
+    /**
+     * @notice Teklif sahibi aktif settlement teklifini geri çeker.
+     * @notice Proposal owner withdraws an active settlement proposal.
+     */
+    function withdrawSettlement(uint256 _tradeId) external nonReentrant {
+        SettlementProposal storage sp = settlementProposalsByTrade[_tradeId];
+
+        if (sp.state == SettlementProposalState.FINALIZED) revert SettlementAlreadyFinalized();
+        _expireSettlementProposalIfNeeded(_tradeId, sp);
+        if (sp.state == SettlementProposalState.EXPIRED) revert SettlementProposalExpired();
+        if (sp.state != SettlementProposalState.PROPOSED) revert NoActiveSettlementProposal();
+        if (sp.proposer != msg.sender) revert OnlySettlementProposer();
+
+        sp.state = SettlementProposalState.WITHDRAWN;
+        emit SettlementWithdrawn(_tradeId, sp.id, msg.sender);
+    }
+
+    /**
+     * @notice Süresi dolan settlement teklifini herkes expire edebilir.
+     * @notice Anyone can expire a settlement proposal once its deadline passes.
+     */
+    function expireSettlement(uint256 _tradeId) external nonReentrant {
+        SettlementProposal storage sp = settlementProposalsByTrade[_tradeId];
+        if (sp.state == SettlementProposalState.FINALIZED) revert SettlementAlreadyFinalized();
+        if (sp.state != SettlementProposalState.PROPOSED) revert NoActiveSettlementProposal();
+        if (block.timestamp <= sp.expiresAt) revert SettlementProposalNotExpired();
+
+        sp.state = SettlementProposalState.EXPIRED;
+        emit SettlementExpired(_tradeId, sp.id);
+    }
+
+    /**
+     * @notice Karşı taraf aktif split settlement teklifini kabul eder ve fon dağıtımı yapılır.
+     *         Trade terminal state olarak RESOLVED'a çekilir.
+     * @notice Counterparty accepts active split settlement proposal and executes payouts.
+     *         Trade transitions to RESOLVED as terminal state.
+     */
+    function acceptSettlement(uint256 _tradeId) external nonReentrant {
+        Trade storage t = trades[_tradeId];
+        SettlementProposal storage sp = settlementProposalsByTrade[_tradeId];
+
+        if (sp.state == SettlementProposalState.FINALIZED) revert SettlementAlreadyFinalized();
+        _expireSettlementProposalIfNeeded(_tradeId, sp);
+        if (sp.state == SettlementProposalState.EXPIRED) revert SettlementProposalExpired();
+        if (sp.state != SettlementProposalState.PROPOSED) revert NoActiveSettlementProposal();
+        if (!_isSettlementAllowedTradeState(t.state)) revert SettlementNotAllowedInState();
+        if (msg.sender != t.maker && msg.sender != t.taker) revert NotTradeParty();
+        if (msg.sender == sp.proposer) revert OnlySettlementCounterparty();
+        if (uint256(sp.makerShareBps) + uint256(sp.takerShareBps) != BPS_DENOMINATOR) revert InvalidSettlementSplit();
+
+        uint256 settlementPool = t.cryptoAmount + t.makerBond + t.takerBond;
+        uint256 makerPayout = (settlementPool * sp.makerShareBps) / BPS_DENOMINATOR;
+        uint256 takerPayout = settlementPool - makerPayout;
+
+        // [TR] Fee snapshot modeli release/autoRelease yolunda principal ağırlıklıdır.
+        //      Partial settlement'te principal+bond tek havuz split edildiği için belirsiz
+        //     /çifte kesinti riski oluşturmamak adına MVP'de fee=0 uygulanır.
+        // [EN] Fee snapshots are principal-oriented on release/autoRelease paths.
+        //      Since partial settlement splits a unified principal+bond pool, MVP keeps fee=0
+        //      to avoid semantic ambiguity and accidental double-charging.
+        uint256 takerFee = 0;
+        uint256 makerFee = 0;
+
+        sp.state = SettlementProposalState.FINALIZED;
+        t.state = TradeState.RESOLVED;
+
+        if (makerPayout > 0) IERC20(t.tokenAddress).safeTransfer(t.maker, makerPayout);
+        if (takerPayout > 0) IERC20(t.tokenAddress).safeTransfer(t.taker, takerPayout);
+
+        _recordPartialSettlement(t.maker, t.taker);
+
+        emit SettlementFinalized(_tradeId, sp.id, makerPayout, takerPayout, takerFee, makerFee);
+    }
+
     /**
      * @notice Karşılıklı iptalin fon dağıtımını yürütür.
      *         LOCKED ile PAID/CHALLENGED akışları ekonomik olarak bilinçli biçimde ayrılır.
@@ -1305,6 +1518,20 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         _emitReputationUpdated(_taker, takerRep);
     }
 
+    function _recordPartialSettlement(address _maker, address _taker) internal {
+        Reputation storage makerRep = reputation[_maker];
+        Reputation storage takerRep = reputation[_taker];
+        makerRep.successfulTrades++;
+        takerRep.successfulTrades++;
+        makerRep.partialSettlementCount++;
+        takerRep.partialSettlementCount++;
+
+        // [TR] Partial settlement ceza semantiği taşımaz; risk/failure artışı üretmez.
+        // [EN] Partial settlement is non-penal; it never increments risk/failure paths.
+        _emitReputationUpdated(_maker, makerRep);
+        _emitReputationUpdated(_taker, takerRep);
+    }
+
     function _applyPositiveSignal(address _wallet, Reputation storage rep, uint32 rewardPts) internal {
         uint64 nowTs = uint64(block.timestamp);
         rep.lastPositiveEventAt = nowTs;
@@ -1369,6 +1596,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             rep.burnCount,
             rep.disputeWinCount,
             rep.disputeLossCount,
+            rep.partialSettlementCount,
             rep.riskPoints,
             rep.lastPositiveEventAt,
             rep.lastNegativeEventAt
@@ -1491,6 +1719,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             uint256 burnCount,
             uint256 disputeWinCount,
             uint256 disputeLossCount,
+            uint256 partialSettlementCount,
             uint256 riskPoints,
             uint256 lastPositiveEventAt,
             uint256 lastNegativeEventAt
@@ -1510,6 +1739,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             rep.burnCount,
             rep.disputeWinCount,
             rep.disputeLossCount,
+            rep.partialSettlementCount,
             rep.riskPoints,
             rep.lastPositiveEventAt,
             rep.lastNegativeEventAt
@@ -1550,6 +1780,16 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      */
     function getTrade(uint256 _tradeId) external view returns (Trade memory) {
         return trades[_tradeId];
+    }
+
+    /**
+     * @notice Trade'e bağlı settlement teklifini döndürür.
+     *         Bu getter yalnız mirror/UI tüketimi içindir; authority yine state-changing fonksiyonlardadır.
+     * @notice Returns the settlement proposal associated with a trade.
+     *         This getter is for mirror/UI consumption only; authority remains in state-changing functions.
+     */
+    function getSettlementProposal(uint256 _tradeId) external view returns (SettlementProposal memory) {
+        return settlementProposalsByTrade[_tradeId];
     }
 
     /**
@@ -1876,6 +2116,20 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
                 block.timestamp < lastTradeAt[_wallet] + cooldown) {
                 revert TierCooldownActive();
             }
+        }
+    }
+
+    function _isSettlementAllowedTradeState(TradeState _state) internal pure returns (bool) {
+        return _state == TradeState.LOCKED || _state == TradeState.PAID || _state == TradeState.CHALLENGED;
+    }
+
+    function _expireSettlementProposalIfNeeded(
+        uint256 _tradeId,
+        SettlementProposal storage _proposal
+    ) internal {
+        if (_proposal.state == SettlementProposalState.PROPOSED && block.timestamp > _proposal.expiresAt) {
+            _proposal.state = SettlementProposalState.EXPIRED;
+            emit SettlementExpired(_tradeId, _proposal.id);
         }
     }
 

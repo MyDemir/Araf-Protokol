@@ -137,6 +137,7 @@ This yields a Web2.5 model: on-chain authority + off-chain operational accelerat
 - Backend does not hold user-fund custody authority.
 - Backend cannot fabricate release/challenge/cancel outcomes against contract rules.
 - Backend strength lies in coordination, observability, and secure PII boundaries.
+- Araf does not decide who is right; it enables counterparty-signed settlement.
 
 ---
 
@@ -677,6 +678,8 @@ erDiagram
 ### Reputation/ban mirror boundary
 - `reputation_cache` and ban mirrors (`is_banned`, `banned_until`, `consecutive_bans`, `max_allowed_tier`) support query/UI convenience.
 - If mirror state diverges from chain state, on-chain data remains authoritative.
+- Reputation extension includes `partialSettlementCount` as an event-taxonomy counter.
+- `partialSettlementCount` is not a penalty by itself and does not imply user failure.
 
 ## 13.2 Order model (field-aware)
 
@@ -728,6 +731,10 @@ erDiagram
 ### Cancel / chargeback audit fields
 - `cancel_proposal.{proposed_by, proposed_at, approved_by, maker_signed, taker_signed, maker_signature, taker_signature, deadline}`
 - `chargeback_ack.{acknowledged, acknowledged_by, acknowledged_at, ip_hash}`
+- `settlement_proposal` mirrors party-signed partial-settlement lifecycle:
+  - `NONE -> PROPOSED -> REJECTED/WITHDRAWN/EXPIRED/FINALIZED`
+  - proposer is one trade party; accept/reject requires counterparty action
+  - backend stores mirror/audit context only; contract remains settlement authority
 
 ### Retention and terminal-TTL separation
 - Trade document lifecycle uses terminal-state TTL policy.
@@ -762,6 +769,13 @@ The V3 backend surface does not manufacture authority; routes apply projection, 
 - active/history/by-escrow reads
 - cancel-signature coordination
 - chargeback-ack audit surface
+- settlement-proposal preview + mirror reads are informational and non-authoritative
+- backend role: preview, event mirror, read-model, audit/observability
+- backend cannot: determine outcome, override release/cancel/burn/payout, write reputation authority, or transfer funds
+
+### 14.2.1 Payment risk boundary
+- `PaymentRiskLevel` is a rail-level complexity signal for UI/read-model use.
+- It is not a user trust/reputation score and not an on-chain authority source.
 
 ### 14.3 Auth routes
 - nonce/verify/refresh/logout/me/profile

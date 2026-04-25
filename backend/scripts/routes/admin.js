@@ -22,6 +22,7 @@ const DLQ_KEY = "worker:dlq";
 const ADMIN_TRADES_STATUS_VALUES = ["ALL", "LOCKED", "PAID", "CHALLENGED", "RESOLVED", "CANCELED", "BURNED"];
 const ADMIN_TRADES_ORIGIN_VALUES = ["ALL", "ORDER_CHILD", "DIRECT_ESCROW"];
 const ADMIN_TRADES_SNAPSHOT_VALUES = ["ALL", "true", "false"];
+const ADMIN_SETTLEMENT_STATE_VALUES = ["ALL", "PROPOSED", "EXPIRED", "FINALIZED", "REJECTED", "WITHDRAWN"];
 const ADMIN_TRADES_MAX_CANDIDATE_SCAN = 1000;
 
 const ADMIN_TRADE_PROJECTION = [
@@ -55,6 +56,7 @@ const ADMIN_TRADE_PROJECTION = [
   "payout_snapshot.maker.reputation_context_at_lock.disputed_but_resolved_count",
   "payout_snapshot.maker.reputation_context_at_lock.dispute_win_count",
   "payout_snapshot.maker.reputation_context_at_lock.dispute_loss_count",
+  "payout_snapshot.maker.reputation_context_at_lock.partial_settlement_count",
   "payout_snapshot.maker.reputation_context_at_lock.risk_points",
   "payout_snapshot.taker.rail",
   "payout_snapshot.taker.country",
@@ -75,10 +77,24 @@ const ADMIN_TRADE_PROJECTION = [
   "payout_snapshot.taker.reputation_context_at_lock.disputed_but_resolved_count",
   "payout_snapshot.taker.reputation_context_at_lock.dispute_win_count",
   "payout_snapshot.taker.reputation_context_at_lock.dispute_loss_count",
+  "payout_snapshot.taker.reputation_context_at_lock.partial_settlement_count",
   "payout_snapshot.taker.reputation_context_at_lock.risk_points",
   "payout_snapshot.is_complete",
   "payout_snapshot.incomplete_reason",
   "payout_snapshot.captured_at",
+  "settlement_proposal.proposal_id",
+  "settlement_proposal.state",
+  "settlement_proposal.proposed_by",
+  "settlement_proposal.maker_share_bps",
+  "settlement_proposal.taker_share_bps",
+  "settlement_proposal.proposed_at",
+  "settlement_proposal.expires_at",
+  "settlement_proposal.finalized_at",
+  "settlement_proposal.maker_payout",
+  "settlement_proposal.taker_payout",
+  "settlement_proposal.taker_fee",
+  "settlement_proposal.maker_fee",
+  "settlement_proposal.tx_hash",
 ].join(" ");
 
 function requireAdminWallet(req, res, next) {
@@ -152,6 +168,25 @@ function _sortAdminTradesDeterministic(trades) {
   });
 }
 
+function _toLower(value) {
+  return String(value || "").toLowerCase();
+}
+
+function _isSettlementExpired(state, expiresAt, now = new Date()) {
+  if (state === "EXPIRED") return true;
+  if (state !== "PROPOSED") return false;
+  const expiresMs = new Date(expiresAt || 0).getTime();
+  if (!Number.isFinite(expiresMs) || expiresMs <= 0) return false;
+  return expiresMs <= now.getTime();
+}
+
+function _toProposalAgeSeconds(proposedAt, now = new Date()) {
+  const proposedMs = new Date(proposedAt || 0).getTime();
+  if (!Number.isFinite(proposedMs) || proposedMs <= 0) return null;
+  const age = Math.floor((now.getTime() - proposedMs) / 1000);
+  return age >= 0 ? age : 0;
+}
+
 // [TR] Tüm admin yüzeyi read-only gözlem amaçlıdır; auth zinciri zorunludur.
 // [EN] Entire admin surface is read-only observability and always gated by auth chain.
 router.use(requireAuth, requireSessionWalletMatch, requireAdminWallet);
@@ -201,13 +236,17 @@ router.get("/summary", async (req, res, next) => {
     const activeFilter = { status: { $nin: TERMINAL_TRADE_STATUSES } };
     let tradeCounts = [0, 0, 0, 0, 0];
     try {
-      tradeCounts = await Promise.all([
+      const countResults = await Promise.allSettled([
         Trade.countDocuments(activeFilter),
         Trade.countDocuments({ status: "LOCKED" }),
         Trade.countDocuments({ status: "PAID" }),
         Trade.countDocuments({ status: "CHALLENGED" }),
         Trade.countDocuments({ "payout_snapshot.is_complete": false }),
       ]);
+
+      const rejectedCount = countResults.find((result) => result.status === "rejected");
+      if (rejectedCount) throw rejectedCount.reason;
+      tradeCounts = countResults.map((result) => Number(result.value) || 0);
     } catch (err) {
       degraded.isDegraded = true;
       degraded.sources.tradeCountsFallbackUsed = true;
@@ -230,6 +269,75 @@ router.get("/summary", async (req, res, next) => {
     }
 
     const schedulerState = req.app.locals.schedulerState || {};
+    let settlementAnalytics = {
+      activeSettlementProposals: 0,
+      expiredSettlementProposals: 0,
+      finalizedSettlementProposals24h: 0,
+      avgSettlementSplitMakerBps: null,
+      settlementFinalizationRate: null,
+    };
+    try {
+      const now = new Date();
+      const finalized24hStart = new Date(now.getTime() - 24 * 3600 * 1000);
+      const proposalStateFilter = { "settlement_proposal.state": { $in: ADMIN_SETTLEMENT_STATE_VALUES.filter((v) => v !== "ALL") } };
+      const settlementSplitRowsPromise = Promise.resolve().then(() =>
+        Trade.find({
+          "settlement_proposal.state": "FINALIZED",
+          "settlement_proposal.maker_share_bps": { $gte: 0, $lte: 10_000 },
+        })
+          .select("settlement_proposal.maker_share_bps")
+          .limit(5000)
+          .lean()
+      );
+
+      const settlementResults = await Promise.allSettled([
+        Trade.countDocuments({ "settlement_proposal.state": "PROPOSED" }),
+        Trade.countDocuments({ "settlement_proposal.state": "EXPIRED" }),
+        Trade.countDocuments({
+          "settlement_proposal.state": "FINALIZED",
+          "settlement_proposal.finalized_at": { $gte: finalized24hStart },
+        }),
+        Trade.countDocuments({ "settlement_proposal.state": "FINALIZED" }),
+        settlementSplitRowsPromise,
+        Trade.countDocuments(proposalStateFilter),
+      ]);
+
+      const rejectedSettlement = settlementResults.find((result) => result.status === "rejected");
+      if (rejectedSettlement) throw rejectedSettlement.reason;
+
+      const activeSettlementProposals = Number(settlementResults[0].value) || 0;
+      const expiredSettlementProposals = Number(settlementResults[1].value) || 0;
+      const finalizedSettlementProposals24h = Number(settlementResults[2].value) || 0;
+      const finalizedSettlementProposalsTotal = Number(settlementResults[3].value) || 0;
+      const settlementSplitRows = Array.isArray(settlementResults[4].value) ? settlementResults[4].value : [];
+      const settlementProposalTotal = Number(settlementResults[5].value) || 0;
+
+      const safeMakerSplitValues = settlementSplitRows
+        .map((row) => Number(row?.settlement_proposal?.maker_share_bps))
+        .filter((n) => Number.isInteger(n) && n >= 0 && n <= 10_000);
+      const avgSettlementSplitMakerBps = safeMakerSplitValues.length > 0
+        ? Number(
+            (safeMakerSplitValues.reduce((acc, n) => acc + n, 0) / safeMakerSplitValues.length).toFixed(2)
+          )
+        : null;
+      const settlementFinalizationRate = settlementProposalTotal > 0
+        ? Number((finalizedSettlementProposalsTotal / settlementProposalTotal).toFixed(4))
+        : null;
+
+      settlementAnalytics = {
+        activeSettlementProposals,
+        expiredSettlementProposals,
+        finalizedSettlementProposals24h,
+        avgSettlementSplitMakerBps,
+        settlementFinalizationRate,
+      };
+    } catch (err) {
+      degraded.isDegraded = true;
+      degraded.errors.push({
+        source: "settlement_analytics",
+        message: err.message,
+      });
+    }
 
     return res.json({
       timestamp: new Date().toISOString(),
@@ -261,6 +369,7 @@ router.get("/summary", async (req, res, next) => {
         challenged: tradeCounts[3],
         incompleteSnapshot: tradeCounts[4],
       },
+      settlementAnalytics,
       dlq: {
         depth: Number(dlqDepth) || 0,
         ...getDlqMetrics(),
@@ -392,6 +501,102 @@ router.get("/trades", async (req, res, next) => {
         windowSize: ADMIN_TRADES_MAX_CANDIDATE_SCAN,
         totalRepresents: "window_filtered_total",
       },
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+router.get("/settlement-proposals", async (req, res, next) => {
+  try {
+    // [TR] Bu endpoint settlement authority üretmez; yalnız mirror/read-model gözlem verisi döner.
+    // [EN] This endpoint never determines settlement outcomes; it returns mirror/read-model observability only.
+    const schema = Joi.object({
+      state: Joi.string().valid(...ADMIN_SETTLEMENT_STATE_VALUES).default("ALL"),
+      riskOnly: Joi.boolean().truthy("true").falsy("false").default(false),
+      page: Joi.number().integer().min(1).default(1),
+      limit: Joi.number().integer().min(1).max(50).default(20),
+    });
+    const { error, value } = schema.validate(req.query);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const filter = {};
+    if (value.state !== "ALL") {
+      filter["settlement_proposal.state"] = value.state;
+    } else {
+      filter["settlement_proposal.state"] = { $in: ["PROPOSED", "EXPIRED", "FINALIZED", "REJECTED", "WITHDRAWN"] };
+    }
+
+    const skip = (value.page - 1) * value.limit;
+    const projection = [
+      "_id",
+      "onchain_escrow_id",
+      "status",
+      "maker_address",
+      "taker_address",
+      "settlement_proposal.proposal_id",
+      "settlement_proposal.state",
+      "settlement_proposal.proposed_by",
+      "settlement_proposal.maker_share_bps",
+      "settlement_proposal.taker_share_bps",
+      "settlement_proposal.proposed_at",
+      "settlement_proposal.expires_at",
+      "settlement_proposal.finalized_at",
+      "settlement_proposal.maker_payout",
+      "settlement_proposal.taker_payout",
+      "settlement_proposal.taker_fee",
+      "settlement_proposal.maker_fee",
+      "settlement_proposal.tx_hash",
+    ].join(" ");
+
+    const now = new Date();
+    const [rows, total] = await Promise.all([
+      Trade.find(filter)
+        .select(projection)
+        .sort({ "settlement_proposal.proposed_at": -1, _id: -1 })
+        .skip(skip)
+        .limit(value.limit)
+        .lean(),
+      Trade.countDocuments(filter),
+    ]);
+
+    const proposals = rows
+      .map((row) => {
+        const settlementProposal = row?.settlement_proposal || {};
+        const isExpired = _isSettlementExpired(settlementProposal?.state, settlementProposal?.expires_at, now);
+        const requiresCounterpartyAction = settlementProposal?.state === "PROPOSED" && !isExpired;
+
+        return {
+          // [TR] Aşağıdaki alanlar bilgilendirme içindir; release/cancel/burn/payout authority kontratta kalır.
+          // [EN] Fields below are informational only; release/cancel/burn/payout authority remains on-chain.
+          proposal_id: settlementProposal?.proposal_id || null,
+          trade_id: row?._id || null,
+          onchain_escrow_id: row?.onchain_escrow_id || null,
+          status: row?.status || null,
+          maker_address: _toLower(row?.maker_address) || null,
+          taker_address: _toLower(row?.taker_address) || null,
+          proposed_by: _toLower(settlementProposal?.proposed_by) || null,
+          maker_share_bps: settlementProposal?.maker_share_bps ?? null,
+          taker_share_bps: settlementProposal?.taker_share_bps ?? null,
+          proposed_at: settlementProposal?.proposed_at || null,
+          expires_at: settlementProposal?.expires_at || null,
+          finalized_at: settlementProposal?.finalized_at || null,
+          tx_hash: settlementProposal?.tx_hash || null,
+          state: settlementProposal?.state || null,
+          is_expired: isExpired,
+          requires_counterparty_action: requiresCounterpartyAction,
+          proposal_age_seconds: _toProposalAgeSeconds(settlementProposal?.proposed_at, now),
+          informational_only: true,
+          non_authoritative_semantics: true,
+        };
+      })
+      .filter((proposal) => (value.riskOnly ? proposal.requires_counterparty_action || proposal.is_expired : true));
+
+    return res.json({
+      proposals,
+      total,
+      page: value.page,
+      limit: value.limit,
     });
   } catch (err) {
     return next(err);

@@ -156,6 +156,7 @@ const SAFE_TRADE_PROJECTION = [
   "payout_snapshot.maker.reputation_context_at_lock.disputed_but_resolved_count",
   "payout_snapshot.maker.reputation_context_at_lock.dispute_win_count",
   "payout_snapshot.maker.reputation_context_at_lock.dispute_loss_count",
+  "payout_snapshot.maker.reputation_context_at_lock.partial_settlement_count",
   "payout_snapshot.maker.reputation_context_at_lock.risk_points",
   "payout_snapshot.taker.rail",
   "payout_snapshot.taker.country",
@@ -176,6 +177,7 @@ const SAFE_TRADE_PROJECTION = [
   "payout_snapshot.taker.reputation_context_at_lock.disputed_but_resolved_count",
   "payout_snapshot.taker.reputation_context_at_lock.dispute_win_count",
   "payout_snapshot.taker.reputation_context_at_lock.dispute_loss_count",
+  "payout_snapshot.taker.reputation_context_at_lock.partial_settlement_count",
   "payout_snapshot.taker.reputation_context_at_lock.risk_points",
   "payout_snapshot.is_complete",
   "payout_snapshot.incomplete_reason",
@@ -186,6 +188,19 @@ const SAFE_TRADE_PROJECTION = [
   "cancel_proposal.deadline",
   "cancel_proposal.maker_signed",
   "cancel_proposal.taker_signed",
+  "settlement_proposal.proposal_id",
+  "settlement_proposal.state",
+  "settlement_proposal.proposed_by",
+  "settlement_proposal.maker_share_bps",
+  "settlement_proposal.taker_share_bps",
+  "settlement_proposal.proposed_at",
+  "settlement_proposal.expires_at",
+  "settlement_proposal.finalized_at",
+  "settlement_proposal.maker_payout",
+  "settlement_proposal.taker_payout",
+  "settlement_proposal.taker_fee",
+  "settlement_proposal.maker_fee",
+  "settlement_proposal.tx_hash",
   "evidence.ipfs_receipt_hash",
   "evidence.receipt_timestamp",
   "chargeback_ack.acknowledged",
@@ -204,6 +219,42 @@ function _parsePositiveOnchainId(rawId) {
 
 function _buildIdentityLookup(field, idString) {
   return { [field]: idString };
+}
+
+function _parseBpsOrNull(raw) {
+  if (raw === null || raw === undefined) return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0 || n > 10_000) return null;
+  return n;
+}
+
+function _toBigIntStringSafe(raw) {
+  try {
+    return BigInt(raw ?? 0).toString();
+  } catch {
+    return "0";
+  }
+}
+
+function _extractSafeSettlementProposalPayload(trade) {
+  const sp = trade?.settlement_proposal || {};
+  return {
+    proposal_id: sp?.proposal_id || null,
+    state: sp?.state || null,
+    proposed_by: sp?.proposed_by || null,
+    maker_share_bps: _parseBpsOrNull(sp?.maker_share_bps),
+    taker_share_bps: _parseBpsOrNull(sp?.taker_share_bps),
+    proposed_at: sp?.proposed_at || null,
+    expires_at: sp?.expires_at || null,
+    finalized_at: sp?.finalized_at || null,
+    maker_payout: sp?.maker_payout || null,
+    taker_payout: sp?.taker_payout || null,
+    taker_fee: sp?.taker_fee || null,
+    maker_fee: sp?.maker_fee || null,
+    tx_hash: sp?.tx_hash || null,
+    informational_only: true,
+    non_authoritative_semantics: true,
+  };
 }
 
 /**
@@ -359,6 +410,81 @@ router.get("/by-escrow/:onchainId", requireAuth, requireSessionWalletMatch, room
 
     const [enrichedTrade] = await _attachBankProfileRisk([trade]);
     return res.json({ trade: enrichedTrade });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── GET /api/trades/:id/settlement-proposal ─────────────────────────────────
+// [TR] Settlement proposal read-model endpoint'i yalnız bilgilendirme amaçlıdır.
+//      Backend proposal outcome üretmez; authority kontrattadır.
+// [EN] Settlement proposal read-model endpoint is informational-only.
+router.get("/:id/settlement-proposal", requireAuth, requireSessionWalletMatch, roomReadLimiter, async (req, res, next) => {
+  try {
+    if (!/^[a-fA-F0-9]{24}$/.test(req.params.id)) {
+      return res.status(400).json({ error: "Geçersiz trade ID formatı." });
+    }
+
+    const trade = await Trade.findById(req.params.id)
+      .select("maker_address taker_address settlement_proposal")
+      .lean();
+    if (!trade) return res.status(404).json({ error: "İşlem bulunamadı." });
+    if (trade.maker_address !== req.wallet && trade.taker_address !== req.wallet) {
+      return res.status(403).json({ error: "Erişim reddedildi." });
+    }
+
+    return res.json({
+      tradeId: req.params.id,
+      settlement_proposal: _extractSafeSettlementProposalPayload(trade),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── POST /api/trades/:id/settlement-proposal/preview ───────────────────────
+// [TR] Preview hesaplama informational-only'dir ve on-chain authority üretmez.
+// [EN] Preview computation is informational-only and never authoritative.
+router.post("/:id/settlement-proposal/preview", requireAuth, requireSessionWalletMatch, roomReadLimiter, async (req, res, next) => {
+  try {
+    if (!/^[a-fA-F0-9]{24}$/.test(req.params.id)) {
+      return res.status(400).json({ error: "Geçersiz trade ID formatı." });
+    }
+
+    const schema = Joi.object({
+      makerShareBps: Joi.number().integer().min(0).max(10_000).required(),
+    });
+    const { error, value } = schema.validate(req.body || {});
+    if (error) return res.status(400).json({ error: error.message });
+
+    const trade = await Trade.findById(req.params.id)
+      .select("maker_address taker_address financials.crypto_amount financials.maker_bond financials.taker_bond")
+      .lean();
+    if (!trade) return res.status(404).json({ error: "İşlem bulunamadı." });
+    if (trade.maker_address !== req.wallet && trade.taker_address !== req.wallet) {
+      return res.status(403).json({ error: "Erişim reddedildi." });
+    }
+
+    const makerShareBps = Number(value.makerShareBps);
+    const takerShareBps = 10_000 - makerShareBps;
+
+    const cryptoAmount = BigInt(_toBigIntStringSafe(trade?.financials?.crypto_amount));
+    const makerBond = BigInt(_toBigIntStringSafe(trade?.financials?.maker_bond));
+    const takerBond = BigInt(_toBigIntStringSafe(trade?.financials?.taker_bond));
+    const pool = cryptoAmount + makerBond + takerBond;
+    const makerPayout = (pool * BigInt(makerShareBps)) / 10_000n;
+    const takerPayout = pool - makerPayout;
+
+    return res.json({
+      informationalOnly: true,
+      nonAuthoritative: true,
+      makerShareBps,
+      takerShareBps,
+      pool: pool.toString(),
+      makerPayout: makerPayout.toString(),
+      takerPayout: takerPayout.toString(),
+      warning: "Final outcome is determined only by the on-chain transaction accepted by both parties.",
+    });
   } catch (err) {
     next(err);
   }

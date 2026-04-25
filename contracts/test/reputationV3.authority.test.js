@@ -111,7 +111,7 @@ describe("ArafEscrow V3 reputation authority", () => {
     await time.increase(REF_1D + 1);
     await escrow.connect(taker).autoRelease(fill2Args.tradeId);
 
-    const [, makerFailed, , , , makerManual, makerAuto, , , , , , makerRisk] =
+    const [, makerFailed, , , , makerManual, makerAuto, , , , , , , makerRisk] =
       await escrow.getReputation(maker.address);
     const [takerSuccessful, takerFailed, , , , takerManual, takerAuto] =
       await escrow.getReputation(taker.address);
@@ -275,7 +275,19 @@ describe("ArafEscrow V3 reputation authority", () => {
     ).to.emit(escrow, "ReputationPolicyUpdated");
 
     const rep = await escrow.getReputation(maker.address);
-    expect(rep.length).to.equal(15);
+    expect(rep.length).to.equal(16);
+  });
+
+  it("security_getReputation_tuple_order_keeps_partialSettlementCount_before_riskPoints", async () => {
+    const { escrow, maker } = await loadFixture(deployFixture);
+    const rep = await escrow.getReputation(maker.address);
+
+    // [TR] ABI lock-step guard: index 12 partialSettlementCount, index 13 riskPoints olmalı.
+    // [EN] ABI lock-step guard: index 12 must be partialSettlementCount, index 13 riskPoints.
+    expect(rep[12]).to.equal(rep.partialSettlementCount);
+    expect(rep[13]).to.equal(rep.riskPoints);
+    expect(rep[14]).to.equal(rep.lastPositiveEventAt);
+    expect(rep[15]).to.equal(rep.lastNegativeEventAt);
   });
 
   it("test_setCooldownConfig_accepts_maximum", async () => {

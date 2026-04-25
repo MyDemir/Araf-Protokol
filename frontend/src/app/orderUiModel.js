@@ -7,6 +7,7 @@ import { formatUnits } from 'viem';
 
 const DEFAULT_TOKEN_DECIMALS = 6;
 const VALID_ORDER_SIDES = new Set(['SELL_CRYPTO', 'BUY_CRYPTO']);
+const SEPA_COUNTRIES = new Set(['DE', 'FR', 'NL', 'BE', 'ES', 'IT', 'AT', 'PT', 'IE', 'LU', 'FI', 'GR']);
 
 export const SIDE_META = {
   SELL_CRYPTO: {
@@ -105,6 +106,45 @@ export const buildMakerPreview = ({ side, amountUi, bondPct }) => {
   };
 };
 
+export const resolvePaymentRiskEntry = ({ paymentRiskConfig = {}, rail, country }) => {
+  const safeRail = String(rail || '').toUpperCase();
+  const safeCountry = String(country || '').toUpperCase();
+  if (!safeRail || !paymentRiskConfig || typeof paymentRiskConfig !== 'object') return null;
+  const direct = paymentRiskConfig?.[safeCountry]?.[safeRail];
+  if (direct) return direct;
+  if (safeRail === 'SEPA_IBAN' && SEPA_COUNTRIES.has(safeCountry)) {
+    return paymentRiskConfig?.EU?.SEPA_IBAN || null;
+  }
+  const genericEntry = Object.values(paymentRiskConfig)
+    .find((bucket) => bucket && typeof bucket === 'object' && bucket[safeRail]);
+  return genericEntry?.[safeRail] || null;
+};
+
+export const deriveOrderPaymentRiskSignal = ({ order, paymentRiskConfig = {} }) => {
+  const rail = order?.payment_method?.rail
+    || order?.payment_rail
+    || order?.settlement_profile?.rail
+    || null;
+  const country = order?.payment_method?.country
+    || order?.payment_country
+    || order?.settlement_profile?.country
+    || null;
+  const hasExplicitRailCountry = Boolean(rail && country);
+  if (!hasExplicitRailCountry) {
+    // [TR] Feed rail/country taşımıyorsa order-specific risk sinyali üretilmez.
+    // [EN] If feed lacks explicit rail/country, do not fabricate an order-specific risk signal.
+    return null;
+  }
+
+  const resolved = resolvePaymentRiskEntry({ paymentRiskConfig, rail, country });
+  if (!resolved) return null;
+  return {
+    ...resolved,
+    generic: resolved?.generic === true,
+    orderSpecific: resolved?.generic === true ? false : true,
+  };
+};
+
 
 export const removeOrderByOnchainId = (orders = [], onchainId) => {
   return orders.filter((o) => o?.onchainId !== onchainId);
@@ -127,6 +167,10 @@ const HEALTH_REASON_COPY = {
     TR: 'Maker ban mirror sinyali lock bağlamında aktif görünüyor.',
     EN: 'Maker ban mirror signal appears active in lock context.',
   },
+  counterparty_high_partial_settlement_ratio: {
+    TR: 'Karşı taraf geçmişinde uzlaşmalı kapanış oranı yüksek (ceza değil, davranış sinyali).',
+    EN: 'Counterparty has a high agreed-settlement ratio (behavioral signal, not a penalty).',
+  },
 };
 
 export const mapOffchainHealthToUi = ({ signal, lang = 'TR' }) => {
@@ -141,6 +185,7 @@ export const mapOffchainHealthToUi = ({ signal, lang = 'TR' }) => {
     if (reason === 'maker_profile_changed_after_lock') return acc + 1;
     if (reason === 'maker_frequent_recent_bank_changes_at_lock') return acc + 1;
     if (reason === 'partial_or_incomplete_snapshot') return acc + 1;
+    if (reason === 'counterparty_high_partial_settlement_ratio') return acc;
     return acc;
   }, 0);
 
@@ -210,7 +255,7 @@ export const mapCompactTrustSummary = ({ compactSummary, signal, lang = 'TR' }) 
   };
 };
 
-export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {}, formatAddress = (v) => v }) => {
+export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {}, paymentRiskConfig = {}, formatAddress = (v) => v }) => {
   const side = normalizeOrderSide(order?.side);
   const sideMeta = SIDE_META[side] || null;
   const status = order?.status || 'UNKNOWN';
@@ -252,6 +297,7 @@ export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {
     signal: order?.offchain_health_score_input || null,
     lang,
   });
+  const paymentRiskSignal = deriveOrderPaymentRiskSignal({ order, paymentRiskConfig });
   return {
     id: order?._id,
     onchainId: order?.onchain_order_id ?? null,
@@ -279,6 +325,7 @@ export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {
     // [EN] Side-aware summary hint for V3 hover card (avoids seller-only terminology).
     ownerSideHint,
     trustSummary,
+    paymentRiskSignal,
     // legacy ui analytics fields
     successRate: Number(order?.stats?.fill_rate_pct ?? 100),
     txCount: fillsCount,

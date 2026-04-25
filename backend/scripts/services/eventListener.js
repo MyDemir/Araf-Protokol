@@ -67,6 +67,7 @@ const EVENT_NAMES = [
   "CancelProposed", "EscrowCanceled",
   "MakerPinged", "ReputationUpdated",
   "BleedingDecayed", "EscrowBurned",
+  "SettlementProposed", "SettlementRejected", "SettlementWithdrawn", "SettlementExpired", "SettlementFinalized",
   "OrderCreated", "OrderFilled", "OrderCanceled",
   "FeeConfigUpdated", "CooldownConfigUpdated", "TokenConfigUpdated",
 ];
@@ -81,9 +82,16 @@ const ARAF_ABI = [
   "event CancelProposed(uint256 indexed tradeId, address indexed proposer)",
   "event EscrowCanceled(uint256 indexed tradeId, uint256 makerRefund, uint256 takerRefund)",
   "event MakerPinged(uint256 indexed tradeId, address indexed pinger, uint256 timestamp)",
-  "event ReputationUpdated(address indexed wallet, uint256 successful, uint256 failed, uint256 bannedUntil, uint8 effectiveTier, uint256 manualReleaseCount, uint256 autoReleaseCount, uint256 mutualCancelCount, uint256 disputedResolvedCount, uint256 burnCount, uint256 disputeWinCount, uint256 disputeLossCount, uint256 riskPoints, uint256 lastPositiveEventAt, uint256 lastNegativeEventAt)",
+  // [TR] ReputationUpdated arg sırası kontrat event imzasıyla birebir eşleşmelidir (index kayması mirror bozar).
+  // [EN] ReputationUpdated arg order must exactly match contract event signature (index drift breaks mirroring).
+  "event ReputationUpdated(address indexed wallet, uint256 successful, uint256 failed, uint256 bannedUntil, uint8 effectiveTier, uint256 manualReleaseCount, uint256 autoReleaseCount, uint256 mutualCancelCount, uint256 disputedResolvedCount, uint256 burnCount, uint256 disputeWinCount, uint256 disputeLossCount, uint256 partialSettlementCount, uint256 riskPoints, uint256 lastPositiveEventAt, uint256 lastNegativeEventAt)",
   "event BleedingDecayed(uint256 indexed tradeId, uint256 decayedAmount, uint256 timestamp)",
   "event EscrowBurned(uint256 indexed tradeId, uint256 burnedAmount)",
+  "event SettlementProposed(uint256 indexed tradeId, uint256 indexed proposalId, address indexed proposer, uint16 makerShareBps, uint16 takerShareBps, uint256 expiresAt)",
+  "event SettlementRejected(uint256 indexed tradeId, uint256 indexed proposalId, address indexed rejecter)",
+  "event SettlementWithdrawn(uint256 indexed tradeId, uint256 indexed proposalId, address indexed proposer)",
+  "event SettlementExpired(uint256 indexed tradeId, uint256 indexed proposalId)",
+  "event SettlementFinalized(uint256 indexed tradeId, uint256 indexed proposalId, uint256 makerPayout, uint256 takerPayout, uint256 takerFee, uint256 makerFee)",
   "event OrderCreated(uint256 indexed orderId, address indexed owner, uint8 side, address token, uint256 totalAmount, uint256 minFillAmount, uint8 tier, bytes32 orderRef)",
   "event OrderFilled(uint256 indexed orderId, uint256 indexed tradeId, address indexed filler, uint256 fillAmount, uint256 remainingAmount, bytes32 childListingRef)",
   "event OrderCanceled(uint256 indexed orderId, uint8 side, uint256 remainingAmount, uint256 makerBondRefund, uint256 takerBondRefund)",
@@ -92,7 +100,9 @@ const ARAF_ABI = [
   "event TokenConfigUpdated(address indexed token, bool supported, bool allowSellOrders, bool allowBuyOrders)",
   "function getTrade(uint256 _tradeId) view returns ((uint256 id,uint256 parentOrderId,address maker,address taker,address tokenAddress,uint256 cryptoAmount,uint256 makerBond,uint256 takerBond,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 state,uint256 lockedAt,uint256 paidAt,uint256 challengedAt,string ipfsReceiptHash,bool cancelProposedByMaker,bool cancelProposedByTaker,uint256 pingedAt,bool pingedByTaker,uint256 challengePingedAt,bool challengePingedByMaker))",
   "function getOrder(uint256 _orderId) view returns ((uint256 id,address owner,uint8 side,address tokenAddress,uint256 totalAmount,uint256 remainingAmount,uint256 minFillAmount,uint256 remainingMakerBondReserve,uint256 remainingTakerBondReserve,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 state,bytes32 orderRef))",
-  "function getReputation(address _wallet) view returns (uint256 successful,uint256 failed,uint256 bannedUntil,uint256 consecutiveBans,uint8 effectiveTier,uint256 manualReleaseCount,uint256 autoReleaseCount,uint256 mutualCancelCount,uint256 disputedResolvedCount,uint256 burnCount,uint256 disputeWinCount,uint256 disputeLossCount,uint256 riskPoints,uint256 lastPositiveEventAt,uint256 lastNegativeEventAt)",
+  // [TR] getReputation getter tuple sırası frontend + contract ile lock-step kalmalıdır.
+  // [EN] Keep getReputation tuple order in lock-step with frontend + contract.
+  "function getReputation(address _wallet) view returns (uint256 successful,uint256 failed,uint256 bannedUntil,uint256 consecutiveBans,uint8 effectiveTier,uint256 manualReleaseCount,uint256 autoReleaseCount,uint256 mutualCancelCount,uint256 disputedResolvedCount,uint256 burnCount,uint256 disputeWinCount,uint256 disputeLossCount,uint256 partialSettlementCount,uint256 riskPoints,uint256 lastPositiveEventAt,uint256 lastNegativeEventAt)",
 ];
 
 const EVENT_ARG_KEYS = {
@@ -122,12 +132,18 @@ const EVENT_ARG_KEYS = {
     "burnCount",
     "disputeWinCount",
     "disputeLossCount",
+    "partialSettlementCount",
     "riskPoints",
     "lastPositiveEventAt",
     "lastNegativeEventAt",
   ],
   BleedingDecayed: ["tradeId", "decayedAmount", "timestamp"],
   EscrowBurned: ["tradeId", "burnedAmount"],
+  SettlementProposed: ["tradeId", "proposalId", "proposer", "makerShareBps", "takerShareBps", "expiresAt"],
+  SettlementRejected: ["tradeId", "proposalId", "rejecter"],
+  SettlementWithdrawn: ["tradeId", "proposalId", "proposer"],
+  SettlementExpired: ["tradeId", "proposalId"],
+  SettlementFinalized: ["tradeId", "proposalId", "makerPayout", "takerPayout", "takerFee", "makerFee"],
   OrderCreated: ["orderId", "owner", "side", "token", "totalAmount", "minFillAmount", "tier", "orderRef"],
   OrderFilled: ["orderId", "tradeId", "filler", "fillAmount", "remainingAmount", "childListingRef"],
   OrderCanceled: ["orderId", "side", "remainingAmount", "makerBondRefund", "takerBondRefund"],
@@ -174,6 +190,7 @@ function _buildReputationContextAtLock(user) {
     disputed_resolved_count: user?.reputation_breakdown?.disputed_resolved_count ?? null,
     dispute_win_count: user?.reputation_breakdown?.dispute_win_count ?? null,
     dispute_loss_count: user?.reputation_breakdown?.dispute_loss_count ?? null,
+    partial_settlement_count: user?.reputation_breakdown?.partial_settlement_count ?? null,
     risk_points: user?.reputation_breakdown?.risk_points ?? null,
   };
 }
@@ -980,6 +997,11 @@ class EventWorker {
       ReputationUpdated: this._onReputationUpdated.bind(this),
       BleedingDecayed: this._onBleedingDecayed.bind(this),
       EscrowBurned: this._onEscrowBurned.bind(this),
+      SettlementProposed: this._onSettlementProposed.bind(this),
+      SettlementRejected: this._onSettlementRejected.bind(this),
+      SettlementWithdrawn: this._onSettlementWithdrawn.bind(this),
+      SettlementExpired: this._onSettlementExpired.bind(this),
+      SettlementFinalized: this._onSettlementFinalized.bind(this),
       OrderCreated: this._onOrderCreated.bind(this),
       OrderFilled: this._onOrderFilled.bind(this),
       OrderCanceled: this._onOrderCanceled.bind(this),
@@ -1468,6 +1490,190 @@ class EventWorker {
     );
   }
 
+  async _onSettlementProposed(event) {
+    const { tradeId, proposalId, proposer, makerShareBps, takerShareBps, expiresAt } = event.args;
+    const proposedAt = await this._getEventDate(event);
+    const proposalState = "PROPOSED";
+    const txHash = event?.transactionHash || null;
+    const expiresAtDate = _toDateOrNull(expiresAt);
+    const tradeLookup = _buildIdentityLookup("onchain_escrow_id", tradeId);
+
+    const mirrored = await Trade.findOneAndUpdate(
+      {
+        ...tradeLookup,
+        "settlement_proposal.state": { $ne: "FINALIZED" },
+      },
+      {
+        $set: {
+          "settlement_proposal.proposal_id": _toStr(proposalId),
+          "settlement_proposal.state": proposalState,
+          "settlement_proposal.proposed_by": proposer?.toLowerCase?.() || null,
+          "settlement_proposal.maker_share_bps": _toNum(makerShareBps),
+          "settlement_proposal.taker_share_bps": _toNum(takerShareBps),
+          "settlement_proposal.proposed_at": proposedAt,
+          "settlement_proposal.expires_at": expiresAtDate,
+          "settlement_proposal.expired_at": null,
+          "settlement_proposal.finalized_at": null,
+          "settlement_proposal.tx_hash": txHash,
+          "settlement_proposal.last_event_name": "SettlementProposed",
+        },
+      },
+      { new: true }
+    );
+
+    if (!mirrored) {
+      const existingTrade = await Trade.findOne(tradeLookup).select("settlement_proposal.state").lean();
+      if (!existingTrade) {
+        // [TR] Trade mirror yoksa worker standart retry/DLQ akışı için throw edilir.
+        // [EN] Throw to trigger standard retry/DLQ flow when trade mirror is missing.
+        throw new Error("SettlementProposed geldi ama trade mirror bulunamadı.");
+      }
+      if (existingTrade?.settlement_proposal?.state === "FINALIZED") return;
+      throw new Error("SettlementProposed mirror güncellemesi başarısız.");
+    }
+  }
+
+  async _onSettlementRejected(event) {
+    const { tradeId, proposalId, rejecter } = event.args;
+    void rejecter;
+    await this._getEventDate(event);
+    const txHash = event?.transactionHash || null;
+
+    await Trade.findOneAndUpdate(
+      {
+        ..._buildIdentityLookup("onchain_escrow_id", tradeId),
+        "settlement_proposal.state": { $ne: "FINALIZED" },
+      },
+      {
+        $set: {
+          "settlement_proposal.proposal_id": _toStr(proposalId),
+          "settlement_proposal.state": "REJECTED",
+          "settlement_proposal.tx_hash": txHash,
+          "settlement_proposal.last_event_name": "SettlementRejected",
+          "settlement_proposal.finalized_at": null,
+        },
+      }
+    );
+  }
+
+  async _onSettlementWithdrawn(event) {
+    const { tradeId, proposalId, proposer } = event.args;
+    void proposer;
+    await this._getEventDate(event);
+    const txHash = event?.transactionHash || null;
+
+    await Trade.findOneAndUpdate(
+      {
+        ..._buildIdentityLookup("onchain_escrow_id", tradeId),
+        "settlement_proposal.state": { $ne: "FINALIZED" },
+      },
+      {
+        $set: {
+          "settlement_proposal.proposal_id": _toStr(proposalId),
+          "settlement_proposal.state": "WITHDRAWN",
+          "settlement_proposal.tx_hash": txHash,
+          "settlement_proposal.last_event_name": "SettlementWithdrawn",
+          "settlement_proposal.finalized_at": null,
+        },
+      }
+    );
+  }
+
+  async _onSettlementExpired(event) {
+    const { tradeId, proposalId } = event.args;
+    const expiredAt = await this._getEventDate(event);
+    const txHash = event?.transactionHash || null;
+
+    await Trade.findOneAndUpdate(
+      {
+        ..._buildIdentityLookup("onchain_escrow_id", tradeId),
+        "settlement_proposal.state": { $ne: "FINALIZED" },
+      },
+      {
+        $set: {
+          "settlement_proposal.proposal_id": _toStr(proposalId),
+          "settlement_proposal.state": "EXPIRED",
+          // [TR] expires_at deadline alanıdır; event zamanı ayrı expired_at alanına yazılır.
+          // [EN] Keep expires_at as proposal deadline; store event time separately at expired_at.
+          "settlement_proposal.expired_at": expiredAt,
+          "settlement_proposal.finalized_at": null,
+          "settlement_proposal.tx_hash": txHash,
+          "settlement_proposal.last_event_name": "SettlementExpired",
+        },
+      }
+    );
+  }
+
+  async _onSettlementFinalized(event) {
+    const { tradeId, proposalId, makerPayout, takerPayout, takerFee, makerFee } = event.args;
+    const finalizedAt = await this._getEventDate(event);
+    const txHash = event?.transactionHash || null;
+    const tradeIdNum = _toIdentityString(tradeId);
+
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    try {
+      const trade = await Trade.findOneAndUpdate(
+        {
+          ..._buildIdentityLookup("onchain_escrow_id", tradeIdNum),
+          status: { $ne: "RESOLVED" },
+        },
+        {
+          $set: {
+            status: "RESOLVED",
+            "timers.resolved_at": finalizedAt,
+            "settlement_proposal.proposal_id": _toStr(proposalId),
+            "settlement_proposal.state": "FINALIZED",
+            "settlement_proposal.finalized_at": finalizedAt,
+            "settlement_proposal.maker_payout": _toStr(makerPayout),
+            "settlement_proposal.taker_payout": _toStr(takerPayout),
+            "settlement_proposal.taker_fee": _toStr(takerFee),
+            "settlement_proposal.maker_fee": _toStr(makerFee),
+            "settlement_proposal.tx_hash": txHash,
+            "settlement_proposal.last_event_name": "SettlementFinalized",
+            "evidence.receipt_delete_at": new Date(finalizedAt.getTime() + 24 * 3600 * 1000),
+          },
+        },
+        { new: true, session }
+      );
+
+      if (!trade) {
+        const existingTrade = await Trade.findOne(_buildIdentityLookup("onchain_escrow_id", tradeIdNum))
+          .select("status")
+          .lean();
+        if (!existingTrade) {
+          throw new Error("SettlementFinalized geldi ama trade mirror bulunamadı.");
+        }
+        if (existingTrade.status === "RESOLVED") {
+          // [TR] Replay/idempotent durum: trade zaten terminal mirror'da, order stats tekrar düşülmez.
+          // [EN] Replay/idempotent case: trade already terminal; skip duplicate order-stats decrement.
+          await session.commitTransaction();
+          return;
+        }
+      }
+
+      if (trade?.parent_order_id) {
+        await Order.findOneAndUpdate(
+          _buildIdentityLookup("onchain_order_id", trade.parent_order_id),
+          {
+            $inc: {
+              "stats.active_child_trade_count": -1,
+              "stats.resolved_child_trade_count": 1,
+            },
+          },
+          { session }
+        );
+      }
+
+      await session.commitTransaction();
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      await session.endSession();
+    }
+  }
+
   async _onMakerPinged(event) {
     const { tradeId, pinger, timestamp } = event.args;
     const pingAt = await this._getEventDate(event, timestamp);
@@ -1505,6 +1711,7 @@ class EventWorker {
       burnCount,
       disputeWinCount,
       disputeLossCount,
+      partialSettlementCount,
       riskPoints,
       lastPositiveEventAt,
       lastNegativeEventAt,
@@ -1557,6 +1764,7 @@ class EventWorker {
           "reputation_breakdown.burn_count": _toNum(burnCount),
           "reputation_breakdown.dispute_win_count": _toNum(disputeWinCount),
           "reputation_breakdown.dispute_loss_count": _toNum(disputeLossCount),
+          "reputation_breakdown.partial_settlement_count": _toNum(partialSettlementCount),
           "reputation_breakdown.risk_points": _toNum(riskPoints),
           "reputation_breakdown.last_positive_event_at":
             _toNum(lastPositiveEventAt) > 0 ? new Date(_toNum(lastPositiveEventAt) * 1000) : null,

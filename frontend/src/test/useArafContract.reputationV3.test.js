@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeV3Reputation, normalizeTokenDecimalsOrThrow } from '../hooks/useArafContract';
+import {
+  normalizeV3Reputation,
+  normalizeTokenDecimalsOrThrow,
+  normalizeTradeIdOrThrow,
+  normalizeMakerShareBpsOrThrow,
+  normalizeUnixSecondsOrThrow,
+} from '../hooks/useArafContract';
 
 describe('useArafContract V3 reputation normalization', () => {
   it('normalizes named V3 response fields without tuple assumptions', () => {
@@ -16,6 +22,7 @@ describe('useArafContract V3 reputation normalization', () => {
       burnCount: 8n,
       disputeWinCount: 9n,
       disputeLossCount: 1n,
+      partialSettlementCount: 12n,
       riskPoints: 44n,
       lastPositiveEventAt: 100n,
       lastNegativeEventAt: 90n,
@@ -23,6 +30,7 @@ describe('useArafContract V3 reputation normalization', () => {
 
     expect(normalized?.riskPoints).toBe(44n);
     expect(normalized?.disputedResolvedCount).toBe(7n);
+    expect(normalized?.partialSettlementCount).toBe(12n);
   });
 
   it('returns null for stale/malformed V3 shapes with missing fields', () => {
@@ -46,5 +54,18 @@ describe('useArafContract V3 reputation normalization', () => {
     expect(() => normalizeTokenDecimalsOrThrow(0)).toThrow();
     expect(() => normalizeTokenDecimalsOrThrow(19)).toThrow();
     expect(() => normalizeTokenDecimalsOrThrow(undefined)).toThrow();
+  });
+
+  it('normalizes settlement tx primitives safely for BigInt-compatible writes', () => {
+    expect(normalizeTradeIdOrThrow('42')).toBe(42n);
+    expect(normalizeMakerShareBpsOrThrow('1500')).toBe(1500);
+    expect(normalizeUnixSecondsOrThrow(1760000000.93)).toBe(1760000000n);
+  });
+
+  it('fails closed on malformed settlement tx primitives', () => {
+    expect(() => normalizeTradeIdOrThrow('invalid-id')).toThrow();
+    expect(() => normalizeMakerShareBpsOrThrow(10001)).toThrow();
+    expect(() => normalizeMakerShareBpsOrThrow(-1)).toThrow();
+    expect(() => normalizeUnixSecondsOrThrow(0)).toThrow();
   });
 });

@@ -59,7 +59,7 @@ describe("admin routes resilience + pagination semantics", () => {
         })),
       }));
       jest.doMock("../scripts/models/Trade", () => ({
-        countDocuments: jest.fn().mockRejectedValue(new Error("count failed")),
+        countDocuments: jest.fn(() => Promise.reject(new Error("count failed"))),
         find: jest.fn(),
       }));
       jest.doMock("../scripts/models/User", () => ({ find: jest.fn() }));
@@ -75,6 +75,11 @@ describe("admin routes resilience + pagination semantics", () => {
     expect(res.body.degraded.sources.latestStatFallbackUsed).toBe(true);
     expect(res.body.degraded.sources.tradeCountsFallbackUsed).toBe(true);
     expect(res.body.degraded.sources.dlqDepthFallbackUsed).toBe(true);
+    expect(res.body.settlementAnalytics).toMatchObject({
+      activeSettlementProposals: 0,
+      expiredSettlementProposals: 0,
+      finalizedSettlementProposals24h: 0,
+    });
     expect(Array.isArray(res.body.degraded.errors)).toBe(true);
     expect(adminReadLimiter).toHaveBeenCalled();
   });
@@ -191,5 +196,97 @@ describe("admin routes resilience + pagination semantics", () => {
     expect(riskRes.status).toBe(200);
     expect(riskRes.body.paginationScope.mode).toBe("risk_only_bounded_window");
     expect(riskRes.body.paginationScope.isWindowed).toBe(true);
+  });
+
+  it("returns settlement proposal analytics payload with derived fields and riskOnly filter", async () => {
+    const adminReadLimiter = jest.fn((_req, _res, next) => next());
+    const now = Date.now();
+    const rows = [
+      {
+        _id: "trade-a",
+        onchain_escrow_id: "101",
+        status: "LOCKED",
+        maker_address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        taker_address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        settlement_proposal: {
+          proposal_id: "5",
+          state: "PROPOSED",
+          proposed_by: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          maker_share_bps: 6200,
+          taker_share_bps: 3800,
+          proposed_at: new Date(now - 3600 * 1000),
+          expires_at: new Date(now + 3600 * 1000),
+          finalized_at: null,
+          tx_hash: "0xabc",
+        },
+      },
+      {
+        _id: "trade-b",
+        onchain_escrow_id: "102",
+        status: "LOCKED",
+        maker_address: "0xcccccccccccccccccccccccccccccccccccccccc",
+        taker_address: "0xdddddddddddddddddddddddddddddddddddddddd",
+        settlement_proposal: {
+          proposal_id: "6",
+          state: "PROPOSED",
+          proposed_by: "0xcccccccccccccccccccccccccccccccccccccccc",
+          maker_share_bps: 5000,
+          taker_share_bps: 5000,
+          proposed_at: new Date(now - 7200 * 1000),
+          expires_at: new Date(now - 1000),
+          finalized_at: null,
+          tx_hash: "0xdef",
+        },
+      },
+    ];
+
+    let router;
+    jest.isolateModules(() => {
+      jest.doMock("../scripts/middleware/auth", () => ({
+        requireAuth: (_req, _res, next) => next(),
+        requireSessionWalletMatch: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../scripts/middleware/rateLimiter", () => ({ adminReadLimiter }));
+      jest.doMock("../scripts/services/health", () => ({ getReadiness: jest.fn().mockResolvedValue({ ok: true }) }));
+      jest.doMock("../scripts/services/dlqProcessor", () => ({ getDlqMetrics: jest.fn(() => ({})) }));
+      jest.doMock("../scripts/config/redis", () => ({ getRedisClient: jest.fn(() => ({ lLen: jest.fn().mockResolvedValue(0) })) }));
+      jest.doMock("../scripts/services/eventListener", () => ({ provider: null }));
+      jest.doMock("../scripts/models/HistoricalStat", () => ({
+        findOne: jest.fn(() => ({ sort: jest.fn(() => ({ lean: jest.fn().mockResolvedValue(null) })) })),
+      }));
+      jest.doMock("../scripts/models/Trade", () => ({
+        find: jest.fn(() => ({
+          select: jest.fn().mockReturnThis(),
+          sort: jest.fn().mockReturnThis(),
+          skip: jest.fn().mockReturnThis(),
+          limit: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockResolvedValue(rows),
+        })),
+        countDocuments: jest.fn().mockResolvedValue(2),
+      }));
+      jest.doMock("../scripts/models/User", () => ({ find: jest.fn() }));
+      jest.doMock("../scripts/models/Feedback", () => ({ find: jest.fn(), countDocuments: jest.fn() }));
+      router = require("../scripts/routes/admin");
+    });
+
+    const app = buildApp(router);
+    const resAll = await request(app).get("/api/admin/settlement-proposals?state=ALL&page=1&limit=20");
+    expect(resAll.status).toBe(200);
+    expect(resAll.body.proposals.length).toBe(2);
+    expect(resAll.body.proposals[0]).toMatchObject({
+      proposal_id: "5",
+      state: "PROPOSED",
+      is_expired: false,
+      requires_counterparty_action: true,
+      informational_only: true,
+      non_authoritative_semantics: true,
+    });
+    expect(typeof resAll.body.proposals[0].proposal_age_seconds).toBe("number");
+    expect(resAll.body.proposals[1].is_expired).toBe(true);
+    expect(resAll.body.proposals[1].requires_counterparty_action).toBe(false);
+
+    const resRiskOnly = await request(app).get("/api/admin/settlement-proposals?state=ALL&page=1&limit=20&riskOnly=true");
+    expect(resRiskOnly.status).toBe(200);
+    expect(resRiskOnly.body.proposals.length).toBe(2);
   });
 });

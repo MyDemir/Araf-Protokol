@@ -152,6 +152,30 @@ Order owner için child trade listesi (owner-only).
 ## 5) Trade rotaları (`/api/trades`)
 
 Trade rotaları child-trade read/coordination yüzeyidir.
+Settlement outcome tarafında backend **non-authoritative** kalır:
+- backend/admin settlement finalize edemez,
+- backend/admin release/cancel/burn/payout override yapamaz,
+- nihai ekonomik sonuç yalnız tarafların kabul ettiği on-chain tx ile oluşur.
+
+### Partial settlement semantiği
+- **Nedir:** tek bir child trade için tarafların anlaşmalı split payout akışıdır.
+- **Lifecycle:** `NONE -> PROPOSED -> REJECTED/WITHDRAWN/EXPIRED/FINALIZED`.
+- **Teklifi kim oluşturabilir:** yalnız o trade’in iki tarafından biri (`maker` veya `taker`).
+- **Kabul/red kimde:** aktif teklifi yalnız **karşı taraf** kabul veya reddedebilir.
+- **Withdraw kimde:** aktif teklifi yalnız teklifi oluşturan taraf geri çekebilir.
+- **Expire kim tetikler:** deadline geçince expire çağrısını herkes tetikleyebilir; doğrulama yine kontrattadır.
+
+### Settlement akışında backend rolü
+- bilgilendirme amaçlı preview (`POST /api/trades/:id/settlement-proposal/preview`)
+- kontrat event mirror
+- query/UX için read-model projection
+- operasyonel audit/observability (admin read-only analytics dahil)
+
+### Backend’in rolü OLMAYAN alanlar
+- outcome belirleme
+- `release/cancel/burn` veya payout authority override
+- reputation authority state yazımı
+- fon transferi
 
 ### `GET /api/trades/my`
 Kullanıcının aktif trade listesi.
@@ -179,6 +203,45 @@ On-chain submit öncesi EIP-712 cancel imza koordinasyonunu tutar.
 
 ### `POST /api/trades/:id/chargeback-ack`
 Maker’ın `PAID/CHALLENGED` durumlarında risk/yasal acknowledgement kaydı.
+
+### `GET /api/trades/:id/settlement-proposal`
+Trade’e bağlı partial-settlement mirror payload döner (yalnız trade tarafları erişebilir).
+Read-model amaçlıdır; authoritative değildir.
+
+### `POST /api/trades/:id/settlement-proposal/preview`
+Mirror trade tutarlarından bilgilendirme amaçlı split preview hesaplar.
+
+İstek:
+```json
+{ "makerShareBps": 7000 }
+```
+
+Yanıt alanları:
+- `informationalOnly: true`
+- `nonAuthoritative: true`
+- `makerShareBps`, `takerShareBps`
+- `pool`, `makerPayout`, `takerPayout` (BigInt-safe string)
+- nihai sonucun yalnız on-chain kabul edilen tx ile belirlendiğini söyleyen uyarı
+
+---
+
+## 5.1) Admin settlement gözlem yüzeyi (`/api/admin`)
+
+### `GET /api/admin/settlement-proposals`
+Mirror settlement proposal kayıtlarını read-only izleme endpoint’i.
+
+Query:
+- `state=ALL|PROPOSED|EXPIRED|FINALIZED|REJECTED|WITHDRAWN`
+- `page`
+- `limit`
+
+Sayfalı `{ proposals, total, page, limit }` döner.
+Bu endpoint write/override aksiyonu içermez.
+
+### Payment risk semantiği (`PaymentRiskLevel`)
+- `PaymentRiskLevel`, kullanıcı güven/reputation puanı **değildir**.
+- Payment rail complexity/availability sinyalidir; UX/read-model amaçlıdır.
+- On-chain outcome veya settlement finalization authority’sine dönüşemez.
 
 ---
 

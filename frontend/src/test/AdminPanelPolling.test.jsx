@@ -95,4 +95,11 @@ describe('AdminPanel polling auth behavior', () => {
     expect(source).toContain('Contract-authority mirror counters (informational/read-only)');
     expect(source).toContain('reputation_authority_counters?.burn_count');
   });
+
+  it('adds settlement observability tab with explicit no-authority badge text', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/AdminPanel.jsx'), 'utf8');
+    expect(source).toContain("const TAB_SETTLEMENT = 'settlement';");
+    expect(source).toContain('admin/settlement-proposals');
+    expect(source).toContain('Admin panel is observability-only. It cannot change settlement outcomes.');
+  });
 });

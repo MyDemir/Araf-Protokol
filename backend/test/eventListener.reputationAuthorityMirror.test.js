@@ -54,6 +54,7 @@ describe("eventListener V3 authority reputation mirror", () => {
         burnCount: 1,
         disputeWinCount: 4,
         disputeLossCount: 2,
+        partialSettlementCount: 9,
         riskPoints: 66,
         lastPositiveEventAt: 1713916800,
         lastNegativeEventAt: 1714003200,
@@ -75,6 +76,7 @@ describe("eventListener V3 authority reputation mirror", () => {
       "reputation_breakdown.burn_count": 1,
       "reputation_breakdown.dispute_win_count": 4,
       "reputation_breakdown.dispute_loss_count": 2,
+      "reputation_breakdown.partial_settlement_count": 9,
       "reputation_breakdown.risk_points": 66,
     });
   });
@@ -103,6 +105,7 @@ describe("eventListener V3 authority reputation mirror", () => {
           burnCount: 0,
           disputeWinCount: 1,
           disputeLossCount: 0,
+          partialSettlementCount: 2,
           riskPoints: 11,
           lastPositiveEventAt: 1713916800,
           lastNegativeEventAt: 1714003200,
@@ -138,6 +141,7 @@ describe("eventListener V3 authority reputation mirror", () => {
         burnCount: 0,
         disputeWinCount: 0,
         disputeLossCount: 0,
+        partialSettlementCount: 0,
         riskPoints: 0,
         lastPositiveEventAt: 1713916800,
         lastNegativeEventAt: 0,

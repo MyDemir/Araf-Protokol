@@ -1,6 +1,8 @@
 "use strict";
 
 const BANK_PROFILE_RISK_THRESHOLD_7D = 3;
+const PARTIAL_SETTLEMENT_RATIO_MIN_TOTAL = 10;
+const PARTIAL_SETTLEMENT_RATIO_YELLOW_THRESHOLD = 0.7;
 
 function _toSafeNumber(value, fallback = 0) {
   const n = Number(value);
@@ -17,6 +19,7 @@ function _buildMirrorContext(lockContext, fallbackUser) {
       lockContext?.disputed_resolved_count ?? lockContext?.disputed_but_resolved_count,
     dispute_win_count: lockContext?.dispute_win_count,
     dispute_loss_count: lockContext?.dispute_loss_count,
+    partial_settlement_count: lockContext?.partial_settlement_count,
     risk_points: lockContext?.risk_points,
   };
   return {
@@ -44,6 +47,10 @@ function _buildMirrorContext(lockContext, fallbackUser) {
         authorityLock.dispute_win_count ?? fallbackUser?.reputation_breakdown?.dispute_win_count ?? null,
       dispute_loss_count:
         authorityLock.dispute_loss_count ?? fallbackUser?.reputation_breakdown?.dispute_loss_count ?? null,
+      partial_settlement_count:
+        authorityLock.partial_settlement_count ??
+        fallbackUser?.reputation_breakdown?.partial_settlement_count ??
+        null,
       risk_points:
         authorityLock.risk_points ?? fallbackUser?.reputation_breakdown?.risk_points ?? null,
       // [TR] Geriye-uyum: eski isim route seviyesinde maplenir, DB truth çoğaltılmaz.
@@ -71,6 +78,10 @@ function _buildMirrorContext(lockContext, fallbackUser) {
         authorityLock.dispute_win_count ?? fallbackUser?.reputation_breakdown?.dispute_win_count ?? null,
       dispute_loss_count:
         authorityLock.dispute_loss_count ?? fallbackUser?.reputation_breakdown?.dispute_loss_count ?? null,
+      partial_settlement_count:
+        authorityLock.partial_settlement_count ??
+        fallbackUser?.reputation_breakdown?.partial_settlement_count ??
+        null,
       risk_points:
         authorityLock.risk_points ?? fallbackUser?.reputation_breakdown?.risk_points ?? null,
       disputed_but_resolved_count:
@@ -78,6 +89,36 @@ function _buildMirrorContext(lockContext, fallbackUser) {
         fallbackUser?.reputation_breakdown?.disputed_resolved_count ??
         null,
     },
+  };
+}
+
+function _computePartialSettlementRatioSemantics(reputationCounters) {
+  const manual = _toSafeNumber(reputationCounters?.manual_release_count, 0);
+  const auto = _toSafeNumber(reputationCounters?.auto_release_count, 0);
+  const mutual = _toSafeNumber(reputationCounters?.mutual_cancel_count, 0);
+  const disputed = _toSafeNumber(reputationCounters?.disputed_resolved_count, 0);
+  const burned = _toSafeNumber(reputationCounters?.burn_count, 0);
+  const partial = _toSafeNumber(reputationCounters?.partial_settlement_count, 0);
+  const sampleTotal = manual + auto + mutual + disputed + burned + partial;
+
+  if (sampleTotal < PARTIAL_SETTLEMENT_RATIO_MIN_TOTAL) {
+    return {
+      sample_total: sampleTotal,
+      ratio: null,
+      high_partial_settlement_ratio: false,
+      reason: null,
+      severity: null,
+    };
+  }
+
+  const ratio = partial / sampleTotal;
+  const highRatio = ratio >= PARTIAL_SETTLEMENT_RATIO_YELLOW_THRESHOLD;
+  return {
+    sample_total: sampleTotal,
+    ratio,
+    high_partial_settlement_ratio: highRatio,
+    reason: highRatio ? "counterparty_high_partial_settlement_ratio" : null,
+    severity: highRatio ? "YELLOW" : null,
   };
 }
 
@@ -122,6 +163,8 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
     reasons.push("maker_ban_mirror_active");
   }
 
+  const makerMirrorContext = _buildMirrorContext(makerReputationContextAtLock, makerUser);
+
   // [TR] Bu nesne yalnız explainability için üretilir; authority değildir.
   // [EN] This object is explainability-only and non-authoritative.
   const makerBreakdown = {
@@ -138,7 +181,7 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
     frequentRecentChanges,
     // [TR] Öncelik lock-time snapshot'tadır; legacy kayıtlar için fallback live mirror.
     // [EN] Prefer lock-time snapshot; fallback to live mirror only for legacy records.
-    reputationBanMirrorContext: _buildMirrorContext(makerReputationContextAtLock, makerUser),
+    reputationBanMirrorContext: makerMirrorContext,
   };
 
   // [TR] "taker" anahtarı compatibility için korunur; payload takerin kendisini değil,
@@ -153,9 +196,15 @@ function buildTradeHealthSignals(trade, makerUser, takerUser) {
     makerEffectiveTierMirrorAtLock: makerReputationContextAtLock?.effective_tier ?? null,
     makerFailedDisputesMirrorAtLock: makerReputationContextAtLock?.failed_disputes ?? null,
     makerWasBannedMirrorAtLock: makerReputationContextAtLock?.is_banned ?? null,
-    reputation_authority_counters:
-      _buildMirrorContext(makerReputationContextAtLock, makerUser).reputation_authority_counters,
+    reputation_authority_counters: makerMirrorContext.reputation_authority_counters,
+    partial_settlement_semantics: _computePartialSettlementRatioSemantics(
+      makerMirrorContext.reputation_authority_counters
+    ),
   };
+
+  if (takerFacingCounterpartySummary.partial_settlement_semantics?.reason) {
+    reasons.push(takerFacingCounterpartySummary.partial_settlement_semantics.reason);
+  }
 
   return {
     readOnly: true,

@@ -171,6 +171,19 @@ router.get("/config", async (_req, res, next) => {
       feeConfig: config.feeConfig,
       cooldownConfig: config.cooldownConfig,
       tokenMap: config.tokenMap || {},
+      paymentRiskConfig: config.paymentRiskConfig || {},
+    });
+  } catch (err) {
+    if (err.code === "CONFIG_UNAVAILABLE") return res.status(503).json({ error: err.message });
+    next(err);
+  }
+});
+
+router.get("/payment-risk-config", async (_req, res, next) => {
+  try {
+    const config = getConfig();
+    return res.json({
+      paymentRiskConfig: config.paymentRiskConfig || {},
     });
   } catch (err) {
     if (err.code === "CONFIG_UNAVAILABLE") return res.status(503).json({ error: err.message });

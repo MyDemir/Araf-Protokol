@@ -5,6 +5,8 @@ import {
   mapApiOrderToUi,
   mapOffchainHealthToUi,
   resolveOrderActionFns,
+  resolvePaymentRiskEntry,
+  deriveOrderPaymentRiskSignal,
 } from '../app/orderUiModel';
 
 describe('orderUiModel mapping', () => {
@@ -135,6 +137,21 @@ describe('orderUiModel mapping', () => {
     expect(ui.reasonLabels.length).toBe(2);
   });
 
+  it('treats high partial settlement ratio as non-penal informational reason', () => {
+    const ui = mapOffchainHealthToUi({
+      lang: 'EN',
+      signal: {
+        readOnly: true,
+        nonBlocking: true,
+        canBlockProtocolActions: false,
+        explainableReasons: ['counterparty_high_partial_settlement_ratio'],
+      },
+    });
+
+    expect(ui.severityBand).toBe('GREEN');
+    expect(ui.reasonLabels[0]).toMatch(/not a penalty/i);
+  });
+
   it('maps compact trust summary for market hover without detailed reasons', () => {
     const ui = mapApiOrderToUi({
       order: {
@@ -174,6 +191,52 @@ describe('orderUiModel mapping', () => {
     });
     expect(ui.trustSummary.available).toBe(false);
     expect(ui.trustSummary.label).toBe('Signal unavailable');
+  });
+
+  it('resolves payment risk entry with SEPA EU fallback safely', () => {
+    const paymentRiskConfig = {
+      EU: {
+        SEPA_IBAN: { riskLevel: 'MEDIUM', enabled: true },
+      },
+    };
+    const resolved = resolvePaymentRiskEntry({
+      paymentRiskConfig,
+      rail: 'SEPA_IBAN',
+      country: 'DE',
+    });
+    expect(resolved?.riskLevel).toBe('MEDIUM');
+  });
+
+  it('returns null when order feed has no explicit rail/country hint', () => {
+    const paymentRiskConfig = {
+      TR: {
+        TR_IBAN: { riskLevel: 'MEDIUM', enabled: true },
+      },
+    };
+    const signal = deriveOrderPaymentRiskSignal({
+      order: { ...baseOrder, side: 'SELL_CRYPTO' },
+      paymentRiskConfig,
+    });
+    expect(signal).toBeNull();
+  });
+
+  it('returns order-specific payment signal when explicit rail and country are present', () => {
+    const paymentRiskConfig = {
+      TR: {
+        TR_IBAN: { riskLevel: 'MEDIUM', enabled: true },
+      },
+    };
+    const signal = deriveOrderPaymentRiskSignal({
+      order: {
+        ...baseOrder,
+        side: 'SELL_CRYPTO',
+        payment_method: { rail: 'TR_IBAN', country: 'TR' },
+      },
+      paymentRiskConfig,
+    });
+    expect(signal?.riskLevel).toBe('MEDIUM');
+    expect(signal?.orderSpecific).toBe(true);
+    expect(signal?.generic).toBe(false);
   });
 
 });

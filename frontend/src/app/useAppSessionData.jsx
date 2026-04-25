@@ -26,6 +26,55 @@ const rawTokenToDisplayNumber = (rawAmount, decimals = DEFAULT_TOKEN_DECIMALS) =
   }
 };
 
+export function mapSettlementProposalFromApi(settlementProposal) {
+  if (!settlementProposal || typeof settlementProposal !== 'object') return null;
+  if (Object.keys(settlementProposal).length === 0) return null;
+
+  // [TR] Fail-closed: state/id yoksa proposal authoritative kabul edilmez.
+  // [EN] Fail-closed: without state/id we do not treat payload as an actionable proposal.
+  const state = settlementProposal.state || null;
+  if (!state || state === 'NONE') return null;
+
+  const id = settlementProposal.id ?? settlementProposal.proposal_id ?? null;
+  if (id === null || id === undefined || id === '') return null;
+
+  const proposer = settlementProposal.proposer || settlementProposal.proposed_by || null;
+
+  return {
+    ...settlementProposal,
+    id,
+    proposalId: id,
+    state,
+    proposer,
+    makerShareBps: settlementProposal.makerShareBps ?? settlementProposal.maker_share_bps ?? null,
+    takerShareBps: settlementProposal.takerShareBps ?? settlementProposal.taker_share_bps ?? null,
+    expiresAt: settlementProposal.expiresAt ?? settlementProposal.expires_at ?? null,
+    finalizedAt: settlementProposal.finalizedAt ?? settlementProposal.finalized_at ?? null,
+    makerPayout: settlementProposal.makerPayout ?? settlementProposal.maker_payout ?? null,
+    takerPayout: settlementProposal.takerPayout ?? settlementProposal.taker_payout ?? null,
+    txHash: settlementProposal.txHash ?? settlementProposal.tx_hash ?? null,
+  };
+}
+
+export function buildSettlementQuickCounts(activeEscrows = [], connectedAddress = null) {
+  const viewer = connectedAddress?.toLowerCase?.() || null;
+  return activeEscrows.reduce((acc, escrow) => {
+    const proposal = escrow?.rawTrade?.settlementProposal;
+    if (!proposal || proposal.state !== 'PROPOSED') return acc;
+
+    acc.PROPOSED += 1;
+    // [TR] quick-count action lane sadece normalize proposer varsa hesaplanır.
+    // [EN] action-required lane is counted only when normalized proposer exists.
+    const proposer = proposal.proposer?.toLowerCase?.() || null;
+    if (viewer && proposer && proposer === viewer) {
+      acc.WAITING += 1;
+    } else if (viewer && proposer && proposer !== viewer) {
+      acc.ACTION_REQUIRED += 1;
+    }
+    return acc;
+  }, { PROPOSED: 0, ACTION_REQUIRED: 0, WAITING: 0 });
+}
+
 export function mapReputationToSessionView(repData, firstTradeAt = 0n) {
   if (!repData) return null;
 
@@ -46,6 +95,7 @@ export function mapReputationToSessionView(repData, firstTradeAt = 0n) {
       burnCount: Number(repData.burnCount ?? 0n),
       disputeWinCount: Number(repData.disputeWinCount ?? 0n),
       disputeLossCount: Number(repData.disputeLossCount ?? 0n),
+      partialSettlementCount: Number(repData.partialSettlementCount ?? 0n),
       riskPoints: Number(repData.riskPoints ?? 0n),
       lastPositiveEventAt: Number(repData.lastPositiveEventAt ?? 0n),
       lastNegativeEventAt: Number(repData.lastNegativeEventAt ?? 0n),
@@ -133,6 +183,7 @@ export function useAppSessionData({
 
   const [onchainBondMap, setOnchainBondMap] = useState(null);
   const [onchainTokenMap, setOnchainTokenMap] = useState({});
+  const [paymentRiskConfig, setPaymentRiskConfig] = useState({});
   const [takerFeeBps, setTakerFeeBps] = useState(10);
   const [tokenDecimalsMap, setTokenDecimalsMap] = useState({ USDT: DEFAULT_TOKEN_DECIMALS, USDC: DEFAULT_TOKEN_DECIMALS });
   const [bleedingAmounts, setBleedingAmounts] = useState(null);
@@ -330,6 +381,7 @@ export function useAppSessionData({
             challengePingedAt: t.timers?.challenge_pinged_at,
             challengedAt: t.timers?.challenged_at,
             onchainId: t.onchain_escrow_id,
+            settlementProposal: mapSettlementProposalFromApi(t.settlement_proposal),
             amount: `${formatTokenAmountFromRaw(cryptoAmtRaw, tokenDecimals)} ${cryptoAsset}`,
             action: t.status === 'PAID' ? (lang === 'TR' ? 'Onay Bekliyor' : 'Pending Approval') : (lang === 'TR' ? 'İşlemde' : 'In Progress'),
             rawTrade: {
@@ -352,6 +404,7 @@ export function useAppSessionData({
               challengedAt: t.timers?.challenged_at,
               cancelProposedBy: t.cancel_proposal?.proposed_by,
               chargebackAcked: t.chargeback_ack?.acknowledged === true,
+              settlementProposal: mapSettlementProposalFromApi(t.settlement_proposal),
               // [TR] Trust Visibility Layer payload'ı backend'den read-only gelir; UI explainability için taşınır.
               // [EN] Trust Visibility payload arrives read-only from backend; carried for UI explainability only.
               offchainHealthScoreInput: t.offchain_health_score_input || null,
@@ -362,7 +415,8 @@ export function useAppSessionData({
 
         setActiveTrade((prev) => {
           if (!prev) return prev;
-          const updated = data.trades.find((t) => t.onchain_escrow_id === prev.onchainId);
+          const prevOnchainId = String(prev.onchainId ?? '');
+          const updated = data.trades.find((t) => String(t.onchain_escrow_id ?? '') === prevOnchainId);
           if (!updated) return prev;
 
           const wasPendingSync = prev._pendingBackendSync && !prev.id;
@@ -385,6 +439,7 @@ export function useAppSessionData({
             challengedAt: updated.timers?.challenged_at ?? prev.challengedAt,
             cancelProposedBy: updated.cancel_proposal?.proposed_by ?? prev.cancelProposedBy,
             chargebackAcked: updated.chargeback_ack?.acknowledged === true,
+            settlementProposal: mapSettlementProposalFromApi(updated.settlement_proposal) ?? prev.settlementProposal ?? null,
             offchainHealthScoreInput: updated.offchain_health_score_input ?? prev.offchainHealthScoreInput ?? null,
             bankProfileRisk: updated.bank_profile_risk ?? prev.bankProfileRisk ?? null,
           };
@@ -402,6 +457,7 @@ export function useAppSessionData({
       .then((data) => {
         if (data.bondMap) setOnchainBondMap(data.bondMap);
         if (data.tokenMap) setOnchainTokenMap(data.tokenMap);
+        if (data.paymentRiskConfig) setPaymentRiskConfig(data.paymentRiskConfig);
       })
       .catch((err) => console.error('[ProtocolConfig] fetch failed:', err));
   }, []);
@@ -534,6 +590,7 @@ export function useAppSessionData({
       lang,
       bondMap: onchainBondMap || {},
       tokenMap: onchainTokenMap || {},
+      paymentRiskConfig: paymentRiskConfig || {},
       formatAddress,
     }));
 
@@ -552,7 +609,7 @@ export function useAppSessionData({
       }
     };
     fetchOrders();
-  }, [lang, onchainBondMap, onchainTokenMap]);
+  }, [lang, onchainBondMap, onchainTokenMap, paymentRiskConfig]);
 
   useEffect(() => {
     if (!isAuthenticated || !isConnected) {
@@ -570,6 +627,7 @@ export function useAppSessionData({
             lang,
             bondMap: onchainBondMap || {},
             tokenMap: onchainTokenMap || {},
+            paymentRiskConfig: paymentRiskConfig || {},
             formatAddress,
           })));
         }
@@ -579,7 +637,7 @@ export function useAppSessionData({
     };
 
     fetchMyOrders();
-  }, [isAuthenticated, isConnected, authenticatedFetch, lang, onchainBondMap, onchainTokenMap]);
+  }, [isAuthenticated, isConnected, authenticatedFetch, lang, onchainBondMap, onchainTokenMap, paymentRiskConfig]);
 
   useEffect(() => { fetchStats(); }, [fetchStats]);
 
@@ -896,6 +954,7 @@ export function useAppSessionData({
     LOCKED: activeEscrows.filter((e) => e.state === 'LOCKED').length,
     PAID: activeEscrows.filter((e) => e.state === 'PAID').length,
     CHALLENGED: activeEscrows.filter((e) => e.state === 'CHALLENGED').length,
+    settlement: buildSettlementQuickCounts(activeEscrows, address),
   };
 
   const gracePeriodEndDate = useMemo(() => activeTrade?.paidAt ? new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000) : null, [activeTrade?.paidAt]);
@@ -949,6 +1008,7 @@ export function useAppSessionData({
     statsError,
     onchainBondMap,
     onchainTokenMap,
+    paymentRiskConfig,
     takerFeeBps,
     tokenDecimalsMap,
     bleedingAmounts,

@@ -1,6 +1,7 @@
 "use strict";
 
 const { buildBankProfileRisk, buildTradeHealthSignals } = require("../scripts/routes/tradeRisk");
+const Trade = require("../scripts/models/Trade");
 
 function makeBaseTrade(overrides = {}) {
   return {
@@ -26,6 +27,32 @@ function makeBaseTrade(overrides = {}) {
 }
 
 describe("tradeRisk read-model regression", () => {
+  it("security_schema_accepts_locktime_partial_settlement_count_for_maker_and_taker_contexts", () => {
+    const makerPath = Trade.schema.path("payout_snapshot.maker.reputation_context_at_lock.partial_settlement_count");
+    const takerPath = Trade.schema.path("payout_snapshot.taker.reputation_context_at_lock.partial_settlement_count");
+    expect(makerPath).toBeTruthy();
+    expect(takerPath).toBeTruthy();
+    expect(makerPath.instance).toBe("Number");
+    expect(takerPath.instance).toBe("Number");
+  });
+
+  it("security_locktime_partial_settlement_snapshot_survives_strict_schema_cast", () => {
+    const doc = new Trade({
+      onchain_escrow_id: "999001",
+      maker_address: "0x1111111111111111111111111111111111111111",
+      taker_address: "0x2222222222222222222222222222222222222222",
+      financials: { crypto_amount: "1000000" },
+      tier: 1,
+      payout_snapshot: {
+        maker: { reputation_context_at_lock: { partial_settlement_count: 4 } },
+        taker: { reputation_context_at_lock: { partial_settlement_count: 7 } },
+      },
+    });
+    const obj = doc.toObject();
+    expect(obj.payout_snapshot.maker.reputation_context_at_lock.partial_settlement_count).toBe(4);
+    expect(obj.payout_snapshot.taker.reputation_context_at_lock.partial_settlement_count).toBe(7);
+  });
+
   it("changed-after-lock durumunu maker breakdown + geriye uyumlu bank_profile_risk içinde taşır", () => {
     const trade = makeBaseTrade();
     const makerUser = {
@@ -166,6 +193,7 @@ describe("tradeRisk read-model regression", () => {
             auto_release_count: 4,
             mutual_cancel_count: 3,
             disputed_but_resolved_count: 2,
+            partial_settlement_count: 6,
           },
         },
       },
@@ -177,14 +205,45 @@ describe("tradeRisk read-model regression", () => {
       auto_release_count: 4,
       mutual_cancel_count: 3,
       disputed_but_resolved_count: 2,
+      partial_settlement_count: 6,
     });
     expect(health.maker.reputationBanMirrorContext.reputation_authority_counters).toMatchObject({
       burn_count: 5,
       auto_release_count: 4,
       mutual_cancel_count: 3,
       disputed_resolved_count: 2,
+      partial_settlement_count: 6,
     });
     expect(health.informational_only).toBe(true);
     expect(health.non_authoritative_semantics).toBe(true);
+  });
+
+  it("partial settlement ratio only emits non-penal YELLOW reason with sufficient sample size", () => {
+    const trade = makeBaseTrade({
+      payout_snapshot: {
+        is_complete: true,
+        maker: {
+          profile_version_at_lock: 2,
+          reputation_context_at_lock: {
+            manual_release_count: 1,
+            auto_release_count: 1,
+            mutual_cancel_count: 0,
+            disputed_resolved_count: 0,
+            burn_count: 0,
+            partial_settlement_count: 8,
+          },
+        },
+      },
+    });
+
+    const health = buildTradeHealthSignals(trade, { profileVersion: 2 }, null);
+    expect(health.explainableReasons).toContain("counterparty_high_partial_settlement_ratio");
+    expect(health.taker?.partial_settlement_semantics).toMatchObject({
+      high_partial_settlement_ratio: true,
+      reason: "counterparty_high_partial_settlement_ratio",
+      severity: "YELLOW",
+      sample_total: 10,
+    });
+    expect(health.taker?.highRiskBankProfile).toBe(false);
   });
 });

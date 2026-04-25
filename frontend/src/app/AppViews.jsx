@@ -1,6 +1,8 @@
 import React from 'react';
 import PIIDisplay from '../components/PIIDisplay';
 import ReferenceRateTicker from '../components/ReferenceRateTicker';
+import SettlementProposalCard, { normalizeSettlementState } from '../components/SettlementProposalCard';
+import PaymentRiskBadge from '../components/PaymentRiskBadge';
 
 // [TR] App ana görünüm/render katmanı burada tutulur.
 // [EN] Main application view/render layer lives here.
@@ -95,9 +97,15 @@ export const buildAppViews = (ctx) => {
     rawTokenToDisplayNumber,
     fetchMyTrades,
     setIsContractLoading,
+    setLoadingText,
     getSafeTelegramUrl,
     authenticatedFetch,
     showToast,
+    proposeSettlement,
+    rejectSettlement,
+    withdrawSettlement,
+    expireSettlement,
+    acceptSettlement,
   
   } = ctx;
 
@@ -130,8 +138,8 @@ export const buildAppViews = (ctx) => {
           <button
             onClick={() => setCurrentView('admin')}
             title={isLikelyAdminWallet
-              ? (lang === 'TR' ? 'Admin Paneli' : 'Admin Panel')
-              : (lang === 'TR' ? 'Admin Gözlem (sunucu yetkisine bağlı)' : 'Admin Observability (server-authorized)')}
+              ? (lang === 'TR' ? 'Admin Paneli (Settlement analytics: read-only)' : 'Admin Panel (Settlement analytics: read-only)')
+              : (lang === 'TR' ? 'Admin Gözlem (sunucu yetkisine bağlı, read-only)' : 'Admin Observability (server-authorized, read-only)')}
             className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'admin' ? 'bg-emerald-900/30 text-emerald-400' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}
           >
             🧭
@@ -245,6 +253,55 @@ export const buildAppViews = (ctx) => {
                 </div>
               );
             })}
+          </div>
+        </div>
+        <div className="mt-6">
+          <p className="text-[10px] font-bold text-slate-500 mb-3 tracking-widest">
+            {lang === 'TR' ? 'SETTLEMENT' : 'SETTLEMENT'}
+          </p>
+          <div className="space-y-1">
+            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-slate-300 border border-[#2a2a2e] bg-[#101014]">
+              <span className="flex items-center gap-2"><span className="text-emerald-400">🧩</span>{lang === 'TR' ? 'Aktif Teklif' : 'Active Proposals'}</span>
+              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-200">{activeEscrowCounts?.settlement?.PROPOSED ?? 0}</span>
+            </div>
+            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-slate-300 border border-[#2a2a2e] bg-[#101014]">
+              <span className="flex items-center gap-2"><span className="text-yellow-400">⏳</span>{lang === 'TR' ? 'Benden Aksiyon Bekliyor' : 'Action Required'}</span>
+              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-200">{activeEscrowCounts?.settlement?.ACTION_REQUIRED ?? 0}</span>
+            </div>
+            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-slate-300 border border-[#2a2a2e] bg-[#101014]">
+              <span className="flex items-center gap-2"><span className="text-sky-400">🕒</span>{lang === 'TR' ? 'Karşı Taraftan Yanıt Bekliyorum' : 'Waiting Counterparty'}</span>
+              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-200">{activeEscrowCounts?.settlement?.WAITING ?? 0}</span>
+            </div>
+            {activeEscrows
+              .filter((escrow) => normalizeSettlementState(escrow?.rawTrade?.settlementProposal?.state) === 'PROPOSED')
+              .map((escrow) => {
+                const proposer = escrow?.rawTrade?.settlementProposal?.proposer?.toLowerCase?.() || null;
+                const viewer = address?.toLowerCase?.() || null;
+                const isWaiting = Boolean(proposer && viewer && proposer === viewer);
+                return (
+                  <div key={`settle-${escrow.onchainId}`} className="border border-[#2a2a2e] bg-[#0f1014] rounded-lg p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] font-mono text-emerald-400">#{escrow.onchainId}</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded border ${isWaiting ? 'text-sky-400 border-sky-500/30' : 'text-orange-400 border-orange-500/30'}`}>
+                        {isWaiting ? (lang === 'TR' ? 'Bekleniyor' : 'Waiting') : (lang === 'TR' ? 'Aksiyon Gerekli' : 'Action Required')}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setActiveTrade(escrow.rawTrade);
+                        setUserRole(escrow.role);
+                        setTradeState(escrow.state);
+                        setChargebackAccepted(escrow.rawTrade?.chargebackAcked === true);
+                        setCurrentView('tradeRoom');
+                        setSidebarOpen(false);
+                      }}
+                      className="w-full bg-[#1a1a1f] hover:bg-[#222] text-white text-[10px] font-bold py-1.5 rounded transition border border-[#333]"
+                    >
+                      {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
+                    </button>
+                  </div>
+                );
+              })}
           </div>
         </div>
 
@@ -467,6 +524,7 @@ export const buildAppViews = (ctx) => {
                   <p className="text-[10px] text-emerald-500/80 mt-0.5 uppercase tracking-wider">
                     {order.bondLabel} {lang === 'TR' ? 'Teminat' : 'Bond'}
                   </p>
+                  {order.paymentRiskSignal && <PaymentRiskBadge lang={lang} riskEntry={order.paymentRiskSignal} compact />}
                 </div>
 
                 <div className="w-full md:w-1/3 flex flex-col items-start md:items-end justify-center relative">
@@ -652,6 +710,22 @@ export const buildAppViews = (ctx) => {
           )}
 
           <div className="space-y-6">
+            <SettlementProposalCard
+              activeTrade={activeTrade}
+              userRole={userRole}
+              address={address}
+              lang={lang}
+              authenticatedFetch={authenticatedFetch}
+              proposeSettlement={proposeSettlement}
+              acceptSettlement={acceptSettlement}
+              rejectSettlement={rejectSettlement}
+              withdrawSettlement={withdrawSettlement}
+              expireSettlement={expireSettlement}
+              fetchMyTrades={fetchMyTrades}
+              showToast={showToast}
+              isContractLoading={isContractLoading}
+              setIsContractLoading={setIsContractLoading}
+            />
             {/* LOCKED state aksiyon paneli */}
             {roomState === 'LOCKED' && (
               <div className="text-center py-6">

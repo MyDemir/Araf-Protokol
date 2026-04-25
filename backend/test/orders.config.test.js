@@ -17,6 +17,18 @@ jest.mock("../scripts/services/protocolConfig", () => ({
         tierMaxAmountsBaseUnit: ["150000000", "1500000000", "7500000000", "30000000000"],
       },
     },
+    paymentRiskConfig: {
+      TR: {
+        TR_IBAN: {
+          riskLevel: "MEDIUM",
+          minBondSurchargeBps: 0,
+          feeSurchargeBps: 0,
+          warningKey: "BANK_TRANSFER_CONFIRMATION_REQUIRED",
+          enabled: true,
+          description: { TR: "x", EN: "y" },
+        },
+      },
+    },
   })),
 }));
 
@@ -42,13 +54,37 @@ describe("GET /api/orders/config", () => {
     expect(res.body).toHaveProperty("feeConfig");
     expect(res.body).toHaveProperty("cooldownConfig");
     expect(res.body).toHaveProperty("tokenMap");
+    expect(res.body).toHaveProperty("paymentRiskConfig");
     expect(res.body.feeConfig.currentTakerFeeBps).toBe(10);
     expect(res.body.tokenMap.usdt.decimals).toBe(6);
+    expect(res.body.paymentRiskConfig.TR.TR_IBAN.riskLevel).toBe("MEDIUM");
     expect(res.body.tokenMap.usdt.tierMaxAmountsBaseUnit).toEqual([
       "150000000",
       "1500000000",
       "7500000000",
       "30000000000",
     ]);
+  });
+
+  it("orders_payment_risk_config_endpoint_returns_privacy_safe_config_only", async () => {
+    const router = require("../scripts/routes/orders");
+    const app = express();
+    app.use("/api/orders", router);
+
+    const res = await request(app).get("/api/orders/payment-risk-config").expect(200);
+    expect(res.body).toStrictEqual({
+      paymentRiskConfig: {
+        TR: {
+          TR_IBAN: {
+            riskLevel: "MEDIUM",
+            minBondSurchargeBps: 0,
+            feeSurchargeBps: 0,
+            warningKey: "BANK_TRANSFER_CONFIRMATION_REQUIRED",
+            enabled: true,
+            description: { TR: "x", EN: "y" },
+          },
+        },
+      },
+    });
   });
 });
