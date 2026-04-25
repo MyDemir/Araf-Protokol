@@ -10,18 +10,15 @@ import { useAppSessionData } from './app/useAppSessionData';
 import AdminPanel from './AdminPanel';
 import { getInitialLang, getInitialTermsAccepted, APP_LANG_STORAGE_KEY } from './app/bootstrapState';
 import { resolveOrderActionFns, normalizeOrderSide, removeOrderByOnchainId, resolvePaymentRiskEntry } from './app/orderUiModel';
-import { buildApiUrl } from './app/apiConfig';
+import { buildApiUrl, resolveApiPolicyDiagnostics } from './app/apiConfig';
 import { getSupportedChainsMap, isMintTokenEnabled, isSupportedChainId } from './app/chainPolicy';
+import { resolveValidatedFillAmountRaw } from './app/fillAmountPolicy';
 
 // [TR] Uygulama başlangıcında kritik env değişkenlerini doğrula
 // [EN] Validate critical env variables on app start
 const ENV_ERRORS = [];
-if (!import.meta.env.VITE_API_URL && import.meta.env.PROD) {
-  ENV_ERRORS.push('VITE_API_URL tanımlı değil — yalnızca aynı origin /api proxy (frontend/vercel.json) varsa çağrılar çalışır');
-}
-if (import.meta.env.PROD && /^https?:\/\//i.test((import.meta.env.VITE_API_URL || '').trim())) {
-  ENV_ERRORS.push('Production policy: external VITE_API_URL kapalı. Aynı origin /api proxy kullanın.');
-}
+const { errors: API_POLICY_ERRORS } = resolveApiPolicyDiagnostics(import.meta.env);
+ENV_ERRORS.push(...API_POLICY_ERRORS);
 if (!import.meta.env.VITE_ESCROW_ADDRESS ||
     import.meta.env.VITE_ESCROW_ADDRESS === '0x0000000000000000000000000000000000000000') {
   ENV_ERRORS.push('VITE_ESCROW_ADDRESS tanımlı değil veya sıfır adres — kontrat işlemleri çalışmayacak');
@@ -575,20 +572,20 @@ function App() {
       );
       return;
     }
-    // [TR] Minimal partial-fill altyapısı: order nesnesi fillAmountRaw sağlarsa kullan,
-    //      yoksa mevcut davranışla remaining amount doldur.
-    // [EN] Minimal partial-fill support: use order.fillAmountRaw if provided, else fill remaining.
-    let fillAmountRaw = remainingAmountRaw;
-    if (order.fillAmountRaw !== undefined && order.fillAmountRaw !== null && order.fillAmountRaw !== '') {
-      try {
-        const requested = BigInt(order.fillAmountRaw);
-        if (requested > 0n && requested <= remainingAmountRaw) {
-          fillAmountRaw = requested;
-        }
-      } catch (_) {
-        // Geçersiz partial miktarda fail-closed yerine remaining fallback.
-      }
-    }
+    const orderMinFill = onchainOrder
+      ? (typeof onchainOrder.minFillAmount !== 'undefined' ? onchainOrder.minFillAmount : onchainOrder[6])
+      : 0n;
+
+    // [TR] Partial-fill input parse/guard fail-closed:
+    //      geçersiz değerlerde sessiz remaining fallback YOK.
+    // [EN] Partial-fill parse/guard is fail-closed:
+    //      no silent fallback to remaining on invalid input.
+    const fillAmountRaw = resolveValidatedFillAmountRaw({
+      fillAmountRaw: order.fillAmountRaw,
+      remainingAmountRaw,
+      minFillAmountRaw: BigInt(orderMinFill || 0n),
+      lang,
+    });
 
     const side = normalizeOrderSide(String(order.side || '').toUpperCase());
     if (side === 'UNKNOWN') {

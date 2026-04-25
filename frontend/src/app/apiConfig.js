@@ -48,6 +48,32 @@ export const resolveApiBaseUrl = (env = import.meta.env) => {
 };
 
 /**
+ * [TR] Frontend env banner için API policy teşhis çıktısı üretir.
+ *      - Production + boş VITE_API_URL hata değildir (same-origin /api beklenir)
+ *      - Production + absolute VITE_API_URL fail-closed policy ihlalidir (error)
+ * [EN] Produces API policy diagnostics for frontend env banner.
+ */
+export const resolveApiPolicyDiagnostics = (env = import.meta.env) => {
+  const errors = [];
+  const infos = [];
+  let apiBaseUrl = null;
+
+  try {
+    apiBaseUrl = resolveApiBaseUrl(env);
+  } catch (error) {
+    errors.push(error?.message || 'API base URL policy error.');
+    return { errors, infos, apiBaseUrl: null };
+  }
+
+  const raw = trimTrailingSlashes((env.VITE_API_URL || '').trim());
+  if (env.PROD && !raw) {
+    infos.push('Production: same-origin /api proxy bekleniyor (VITE_API_URL boş).');
+  }
+
+  return { errors, infos, apiBaseUrl };
+};
+
+/**
  * [TR] API path'ini canonical base URL üstünden birleştirir.
  *      Path başında / olsa da olmasa da tek slash üretir.
  * [EN] Builds full API URL from canonical base URL with normalized slashes.

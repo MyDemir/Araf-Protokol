@@ -7,11 +7,11 @@ const read = (p) => fs.readFileSync(path.resolve(process.cwd(), p), 'utf8');
 describe('frontend production env/api resolution guards', () => {
   it('App.jsx uses canonical API resolver + explicit prod warning gate', () => {
     const appSrc = read('src/App.jsx');
-    expect(appSrc).toContain("import { buildApiUrl } from './app/apiConfig';");
+    expect(appSrc).toContain("import { buildApiUrl, resolveApiPolicyDiagnostics } from './app/apiConfig';");
     expect(appSrc).toContain("fetch(buildApiUrl(`auth/nonce?wallet=${address}`)");
-    expect(appSrc).toContain('VITE_API_URL tanımlı değil');
-    expect(appSrc).toContain('external VITE_API_URL kapalı');
-    expect(appSrc).toContain('/api proxy (frontend/vercel.json)');
+    expect(appSrc).toContain('resolveApiPolicyDiagnostics(import.meta.env)');
+    expect(appSrc).toContain('ENV_ERRORS.push(...API_POLICY_ERRORS)');
+    expect(appSrc).not.toContain('VITE_API_URL tanımlı değil');
   });
 
   it('useAppSessionData uses canonical buildApiUrl instead of raw API_URL', () => {

@@ -4,6 +4,7 @@ import {
   resolveApiBaseUrl,
   resolveClientErrorLogUrl,
   buildSettlementPreviewUrl,
+  resolveApiPolicyDiagnostics,
 } from '../app/apiConfig';
 
 describe('apiConfig client-error endpoint resolution', () => {
@@ -35,5 +36,18 @@ describe('apiConfig client-error endpoint resolution', () => {
   it('builds settlement preview endpoint under canonical API base', () => {
     const env = { PROD: true, VITE_API_URL: '' };
     expect(buildSettlementPreviewUrl('trade-123', env)).toBe('/api/trades/trade-123/settlement-proposal/preview');
+  });
+
+  it('returns no env error for production when VITE_API_URL is empty (same-origin /api policy)', () => {
+    const env = { PROD: true, VITE_API_URL: '' };
+    const diagnostics = resolveApiPolicyDiagnostics(env);
+    expect(diagnostics.errors).toEqual([]);
+    expect(diagnostics.apiBaseUrl).toBe('/api');
+  });
+
+  it('returns policy violation error for production absolute VITE_API_URL', () => {
+    const env = { PROD: true, VITE_API_URL: 'https://api.example.com' };
+    const diagnostics = resolveApiPolicyDiagnostics(env);
+    expect(diagnostics.errors.join(' ')).toMatch(/external VITE_API_URL is disabled/i);
   });
 });
