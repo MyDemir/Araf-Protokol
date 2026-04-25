@@ -157,6 +157,26 @@ Backend remains **non-authoritative** for settlement outcomes:
 - no backend/admin action can override release/cancel/burn/payout,
 - final economic outcome is determined only by accepted on-chain tx.
 
+### Partial settlement semantics
+- **What it is:** a party-agreed split payout flow for a single child trade.
+- **Lifecycle:** `NONE -> PROPOSED -> REJECTED/WITHDRAWN/EXPIRED/FINALIZED`.
+- **Who can propose:** only one of the two trade counterparties (`maker` or `taker`) of that trade.
+- **Who can accept/reject:** only the **counterparty** can accept or reject an active proposal.
+- **Who can withdraw:** only the proposer can withdraw a still-active proposal.
+- **Who can expire:** anyone can trigger expiry after deadline; this is still contract-validated.
+
+### Backend role in settlement flow
+- preview surface (`POST /api/trades/:id/settlement-proposal/preview`) for informational split math
+- event mirror from contract logs
+- read model projection for query/UX
+- audit/observability for operations (including admin read-only analytics)
+
+### Backend is NOT allowed to do
+- determine settlement outcome
+- override `release/cancel/burn` or payout authority
+- write reputation authority state
+- transfer funds
+
 ### `GET /api/trades/my`
 Active trades for the caller (`LOCKED/PAID/CHALLENGED/...` non-terminal set).
 
@@ -217,6 +237,11 @@ Query:
 
 Returns paginated `{ proposals, total, page, limit }`.
 No write/override actions are exposed on this endpoint.
+
+### Payment risk semantics (`PaymentRiskLevel`)
+- `PaymentRiskLevel` is **not** a trust/reputation grade for a user.
+- It is a payment-rail complexity/availability signal for UX/read-model purposes.
+- It must never become authority for on-chain outcome or settlement finalization.
 
 ---
 

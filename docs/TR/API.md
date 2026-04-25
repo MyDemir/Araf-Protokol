@@ -157,6 +157,26 @@ Settlement outcome tarafında backend **non-authoritative** kalır:
 - backend/admin release/cancel/burn/payout override yapamaz,
 - nihai ekonomik sonuç yalnız tarafların kabul ettiği on-chain tx ile oluşur.
 
+### Partial settlement semantiği
+- **Nedir:** tek bir child trade için tarafların anlaşmalı split payout akışıdır.
+- **Lifecycle:** `NONE -> PROPOSED -> REJECTED/WITHDRAWN/EXPIRED/FINALIZED`.
+- **Teklifi kim oluşturabilir:** yalnız o trade’in iki tarafından biri (`maker` veya `taker`).
+- **Kabul/red kimde:** aktif teklifi yalnız **karşı taraf** kabul veya reddedebilir.
+- **Withdraw kimde:** aktif teklifi yalnız teklifi oluşturan taraf geri çekebilir.
+- **Expire kim tetikler:** deadline geçince expire çağrısını herkes tetikleyebilir; doğrulama yine kontrattadır.
+
+### Settlement akışında backend rolü
+- bilgilendirme amaçlı preview (`POST /api/trades/:id/settlement-proposal/preview`)
+- kontrat event mirror
+- query/UX için read-model projection
+- operasyonel audit/observability (admin read-only analytics dahil)
+
+### Backend’in rolü OLMAYAN alanlar
+- outcome belirleme
+- `release/cancel/burn` veya payout authority override
+- reputation authority state yazımı
+- fon transferi
+
 ### `GET /api/trades/my`
 Kullanıcının aktif trade listesi.
 
@@ -217,6 +237,11 @@ Query:
 
 Sayfalı `{ proposals, total, page, limit }` döner.
 Bu endpoint write/override aksiyonu içermez.
+
+### Payment risk semantiği (`PaymentRiskLevel`)
+- `PaymentRiskLevel`, kullanıcı güven/reputation puanı **değildir**.
+- Payment rail complexity/availability sinyalidir; UX/read-model amaçlıdır.
+- On-chain outcome veya settlement finalization authority’sine dönüşemez.
 
 ---
 

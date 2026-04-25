@@ -5,6 +5,10 @@ import SettlementPreviewModal from './SettlementPreviewModal';
 const ACTIVE_ROOM_STATES = ['LOCKED', 'PAID', 'CHALLENGED'];
 const TERMINAL_ROOM_STATES = ['RESOLVED', 'CANCELED', 'BURNED'];
 const SETTLEMENT_STATE_BY_INDEX = ['NONE', 'PROPOSED', 'REJECTED', 'WITHDRAWN', 'EXPIRED', 'FINALIZED'];
+export const SETTLEMENT_NEUTRALITY_COPY = {
+  TR: 'Araf kimin haklı olduğuna karar vermez; iki tarafın imzasıyla kontrollü settlement sağlar.',
+  EN: 'Araf does not decide who is right; it enables counterparty-signed settlement.',
+};
 
 export function normalizeSettlementState(rawState) {
   if (typeof rawState === 'number') return SETTLEMENT_STATE_BY_INDEX[rawState] || 'UNKNOWN';
@@ -163,8 +167,8 @@ export default function SettlementProposalCard({
         <h3 className="text-sm font-bold text-white">{lang === 'TR' ? 'On-Chain Settlement' : 'On-Chain Settlement'}</h3>
         <p className="text-[11px] text-slate-400">
           {lang === 'TR'
-            ? 'Araf kimin haklı olduğuna karar vermez; iki tarafın imzasıyla kontrollü settlement sağlar.'
-            : 'Araf does not decide who is right; it enables counterparty-signed settlement.'}
+            ? SETTLEMENT_NEUTRALITY_COPY.TR
+            : SETTLEMENT_NEUTRALITY_COPY.EN}
         </p>
       </div>
 

@@ -674,6 +674,8 @@ erDiagram
 #### Reputation/ban mirror sınırı
 - `reputation_cache` ve ban mirror alanları (`is_banned`, `banned_until`, `consecutive_bans`, `max_allowed_tier`) query/UI kolaylığı içindir.
 - Kontrat ile çelişki durumunda otorite on-chain veridedir.
+- Reputation extension içinde `partialSettlementCount` event-taxonomy amaçlı sayaçtır.
+- `partialSettlementCount` tek başına ceza/failure anlamına gelmez.
 
 ### 13.2 Order modeli (field-aware)
 
@@ -725,6 +727,10 @@ erDiagram
 #### Cancel / chargeback audit alanları
 - `cancel_proposal.{proposed_by, proposed_at, approved_by, maker_signed, taker_signed, maker_signature, taker_signature, deadline}`
 - `chargeback_ack.{acknowledged, acknowledged_by, acknowledged_at, ip_hash}`
+- `settlement_proposal` taraf-imzalı partial-settlement lifecycle mirror’ını taşır:
+  - `NONE -> PROPOSED -> REJECTED/WITHDRAWN/EXPIRED/FINALIZED`
+  - proposer trade taraflarından biridir; accept/reject yalnız karşı tarafla tamamlanır
+  - backend yalnız mirror/audit tutar; settlement authority kontratta kalır
 
 #### Retention ve terminal TTL ayrımı
 - Trade dokümanı terminal state’lerde ayrı TTL index politikasıyla temizlenir.
@@ -759,6 +765,13 @@ V3 backend yüzeyi authority üretmez; route’lar projection, coordination ve g
 - active/history/by-escrow kimlikli okuma
 - cancel signature coordination
 - chargeback ack audit surface
+- settlement-proposal preview + mirror read yüzeyi bilgilendirme/non-authoritative amaçlıdır
+- backend rolü: preview, event mirror, read-model, audit/observability
+- backend’in rolü olmayanlar: outcome belirleme, release/cancel/burn/payout override, reputation authority yazma, fon transferi
+
+### 14.2.1 Payment risk sınırı
+- `PaymentRiskLevel`, payment rail complexity sinyalidir (UI/read-model).
+- Kullanıcı güven/reputation skoru değildir; on-chain authority kaynağı olamaz.
 
 ### 14.3 Auth routes
 - nonce/verify/refresh/logout/me/profile

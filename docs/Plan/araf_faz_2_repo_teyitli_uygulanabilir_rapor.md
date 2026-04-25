@@ -4,6 +4,8 @@ Hazırlanma tarihi: 24 Nisan 2026
 Repo: `MyDemir/Araf-Protokol`  
 Odak: Faz 2 — Simetrik çözüm semantiği, coarse payment risk class ve reputation signal separation
 
+> **Not (25 Nisan 2026):** Bu plan dokümanı tarihsel bir keşif raporudur. Uygulama ilerledikçe canonical kaynak API/Architecture dokümanlarıdır; settlement ve payment risk için non-authoritative/read-only sınırlar oradan takip edilmelidir.
+
 ---
 
 ## 1. Yönetici özeti

@@ -509,6 +509,8 @@ router.get("/trades", async (req, res, next) => {
 
 router.get("/settlement-proposals", async (req, res, next) => {
   try {
+    // [TR] Bu endpoint settlement authority üretmez; yalnız mirror/read-model gözlem verisi döner.
+    // [EN] This endpoint never determines settlement outcomes; it returns mirror/read-model observability only.
     const schema = Joi.object({
       state: Joi.string().valid(...ADMIN_SETTLEMENT_STATE_VALUES).default("ALL"),
       riskOnly: Joi.boolean().truthy("true").falsy("false").default(false),
@@ -565,6 +567,8 @@ router.get("/settlement-proposals", async (req, res, next) => {
         const requiresCounterpartyAction = settlementProposal?.state === "PROPOSED" && !isExpired;
 
         return {
+          // [TR] Aşağıdaki alanlar bilgilendirme içindir; release/cancel/burn/payout authority kontratta kalır.
+          // [EN] Fields below are informational only; release/cancel/burn/payout authority remains on-chain.
           proposal_id: settlementProposal?.proposal_id || null,
           trade_id: row?._id || null,
           onchain_escrow_id: row?.onchain_escrow_id || null,
