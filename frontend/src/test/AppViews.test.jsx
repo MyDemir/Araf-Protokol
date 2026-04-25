@@ -110,7 +110,7 @@ describe('AppViews market side-aware rendering', () => {
         isAuthenticated: true,
       });
       render(<div>{views.renderSlimRail()}</div>);
-      expect(screen.getByTitle('Admin Observability (server-authorized)')).toBeInTheDocument();
+      expect(screen.getByTitle('Admin Observability (server-authorized, read-only)')).toBeInTheDocument();
     } finally {
       import.meta.env.VITE_ADMIN_WALLETS = previous;
     }

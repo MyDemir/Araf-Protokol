@@ -5,6 +5,7 @@ const TAB_OVERVIEW = 'overview';
 const TAB_SYNC = 'sync';
 const TAB_FEEDBACK = 'feedback';
 const TAB_TRADES = 'trades';
+const TAB_SETTLEMENT = 'settlement';
 
 const FEEDBACK_CATEGORY_OPTIONS = ['', 'bug', 'suggestion', 'ui/ux', 'other'];
 const FEEDBACK_RATING_OPTIONS = ['', '1', '2', '3', '4', '5'];
@@ -14,6 +15,8 @@ const TRADES_TIER_OPTIONS = ['', '0', '1', '2', '3', '4'];
 const TRADES_ORIGIN_OPTIONS = ['ALL', 'ORDER_CHILD', 'DIRECT_ESCROW'];
 const TRADES_SNAPSHOT_OPTIONS = ['ALL', 'true', 'false'];
 const TRADES_LIMIT_OPTIONS = [10, 20, 50];
+const SETTLEMENT_STATE_OPTIONS = ['ALL', 'PROPOSED', 'EXPIRED', 'FINALIZED', 'REJECTED', 'WITHDRAWN'];
+const SETTLEMENT_LIMIT_OPTIONS = [10, 20, 50];
 const ADMIN_POLL_INTERVAL_MS = 10 * 60 * 1000;
 
 const shortenWallet = (wallet) => {
@@ -63,6 +66,12 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
   const [tradesUnauthorized, setTradesUnauthorized] = React.useState(false);
   const [tradesPollingEnabled, setTradesPollingEnabled] = React.useState(true);
   const [expandedTradeIds, setExpandedTradeIds] = React.useState({});
+  const [settlementProposals, setSettlementProposals] = React.useState([]);
+  const [settlementTotal, setSettlementTotal] = React.useState(0);
+  const [settlementLoading, setSettlementLoading] = React.useState(false);
+  const [settlementError, setSettlementError] = React.useState('');
+  const [settlementUnauthorized, setSettlementUnauthorized] = React.useState(false);
+  const [settlementPollingEnabled, setSettlementPollingEnabled] = React.useState(true);
 
   const [feedbackFilters, setFeedbackFilters] = React.useState({
     category: '',
@@ -77,6 +86,12 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
     origin: 'ALL',
     riskOnly: false,
     snapshotComplete: 'ALL',
+    page: 1,
+    limit: 20,
+  });
+  const [settlementFilters, setSettlementFilters] = React.useState({
+    state: 'ALL',
+    riskOnly: false,
     page: 1,
     limit: 20,
   });
@@ -250,6 +265,62 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
     }
   }, [authenticatedFetch, lang, tradesFilters]);
 
+  const fetchSettlementProposals = React.useCallback(async () => {
+    setSettlementLoading(true);
+    setSettlementError('');
+    setSettlementUnauthorized(false);
+
+    try {
+      const qs = new URLSearchParams();
+      qs.set('state', settlementFilters.state);
+      qs.set('riskOnly', String(settlementFilters.riskOnly));
+      qs.set('page', String(settlementFilters.page || 1));
+      qs.set('limit', String(settlementFilters.limit || 20));
+
+      const res = await authenticatedFetch(buildApiUrl(`admin/settlement-proposals?${qs.toString()}`), {
+        skipRefresh: authInvalidRef.current,
+        suppressAuthToast: true,
+      });
+
+      if (res.status === 403) {
+        setSettlementProposals([]);
+        setSettlementTotal(0);
+        setSettlementUnauthorized(true);
+        setSettlementPollingEnabled(false);
+        authInvalidRef.current = true;
+        return;
+      }
+
+      if (res.status === 401 || res.status === 409) {
+        setSettlementProposals([]);
+        setSettlementTotal(0);
+        setSettlementPollingEnabled(false);
+        authInvalidRef.current = true;
+        setSettlementError(
+          lang === 'TR'
+            ? 'Admin settlement oturumu doğrulanamadı. Yeniden giriş yapın.'
+            : 'Admin settlement session is no longer valid. Please sign in again.'
+        );
+        return;
+      }
+
+      if (!res.ok) {
+        setSettlementError(lang === 'TR' ? 'Settlement verisi alınamadı.' : 'Failed to load settlement data.');
+        return;
+      }
+
+      const data = await res.json();
+      authInvalidRef.current = false;
+      setSettlementProposals(Array.isArray(data.proposals) ? data.proposals : []);
+      setSettlementTotal(Number(data.total) || 0);
+      setLastRefreshedAt(new Date().toISOString());
+    } catch (_err) {
+      setSettlementError(lang === 'TR' ? 'Settlement isteğinde hata oluştu.' : 'Settlement request failed.');
+    } finally {
+      setSettlementLoading(false);
+    }
+  }, [authenticatedFetch, lang, settlementFilters]);
+
   React.useEffect(() => {
     if (!summaryPollingEnabled) return undefined;
     fetchSummary();
@@ -273,10 +344,19 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
   }, [activeTab, fetchTrades, tradesPollingEnabled]);
 
   React.useEffect(() => {
+    if (activeTab !== TAB_SETTLEMENT) return undefined;
+    if (!settlementPollingEnabled) return undefined;
+    fetchSettlementProposals();
+    const timer = setInterval(fetchSettlementProposals, ADMIN_POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [activeTab, fetchSettlementProposals, settlementPollingEnabled]);
+
+  React.useEffect(() => {
     if (!authChecked || !isAuthenticated) return;
     authInvalidRef.current = false;
     setSummaryPollingEnabled(true);
     setTradesPollingEnabled(true);
+    setSettlementPollingEnabled(true);
   }, [authChecked, isAuthenticated]);
 
   const readiness = summary?.readiness || {};
@@ -286,6 +366,7 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
   const stats = summary?.stats || {};
   const tradeCounts = summary?.tradeCounts || {};
   const dlq = summary?.dlq || {};
+  const settlementAnalytics = summary?.settlementAnalytics || {};
 
   const kpis = [
     { labelTR: 'Readiness', labelEN: 'Readiness', value: readiness?.ok ? 'OK' : 'NOT_READY', tone: readiness?.ok ? 'text-emerald-400' : 'text-red-400' },
@@ -300,6 +381,11 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
     { labelTR: 'Eksik Snapshot', labelEN: 'Incomplete Snapshot Trades', value: `${tradeCounts?.incompleteSnapshot ?? 0}`, tone: 'text-orange-400' },
     { labelTR: 'Challenged', labelEN: 'Challenged Trades', value: `${tradeCounts?.challenged ?? 0}`, tone: 'text-orange-400' },
     { labelTR: 'DLQ Depth', labelEN: 'DLQ Depth', value: `${dlq?.depth ?? 0}`, tone: Number(dlq?.depth || 0) > 0 ? 'text-orange-400' : 'text-emerald-400' },
+    { labelTR: 'Aktif Settlement', labelEN: 'Active Settlement Proposals', value: `${settlementAnalytics?.activeSettlementProposals ?? 0}`, tone: 'text-cyan-300' },
+    { labelTR: 'Expired Settlement', labelEN: 'Expired Settlement Proposals', value: `${settlementAnalytics?.expiredSettlementProposals ?? 0}`, tone: 'text-orange-400' },
+    { labelTR: '24s Finalized', labelEN: 'Finalized 24h', value: `${settlementAnalytics?.finalizedSettlementProposals24h ?? 0}`, tone: 'text-emerald-400' },
+    { labelTR: 'Ort. Maker Split', labelEN: 'Avg Maker Split Bps', value: `${settlementAnalytics?.avgSettlementSplitMakerBps ?? '—'}`, tone: 'text-slate-100' },
+    { labelTR: 'Finalization Rate', labelEN: 'Settlement Finalization Rate', value: settlementAnalytics?.settlementFinalizationRate === null || settlementAnalytics?.settlementFinalizationRate === undefined ? '—' : `${Number(settlementAnalytics.settlementFinalizationRate * 100).toFixed(2)}%`, tone: 'text-slate-100' },
   ];
 
   const updateFeedbackFilter = (key, value) => {
@@ -318,6 +404,17 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
     }));
     if (key === 'status' || key === 'tier' || key === 'origin' || key === 'riskOnly' || key === 'snapshotComplete') {
       setTradesPollingEnabled(true);
+    }
+  };
+
+  const updateSettlementFilter = (key, value) => {
+    setSettlementFilters((prev) => ({
+      ...prev,
+      [key]: key === 'page' || key === 'limit' ? Number(value) : value,
+      ...(key !== 'page' ? { page: 1 } : {}),
+    }));
+    if (key === 'state' || key === 'riskOnly') {
+      setSettlementPollingEnabled(true);
     }
   };
 
@@ -341,6 +438,14 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
     await fetchTrades();
     if (typeof showToast === 'function') {
       showToast(lang === 'TR' ? 'Trades yenilendi.' : 'Trades refreshed.', 'info');
+    }
+  };
+
+  const refreshSettlementNow = async () => {
+    setSettlementPollingEnabled(true);
+    await fetchSettlementProposals();
+    if (typeof showToast === 'function') {
+      showToast(lang === 'TR' ? 'Settlement görünümü yenilendi.' : 'Settlement observability refreshed.', 'info');
     }
   };
 
@@ -381,14 +486,16 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
       </div>
 
       <div className="mb-6 flex gap-2">
-        {[TAB_OVERVIEW, TAB_SYNC, TAB_FEEDBACK, TAB_TRADES].map((tab) => {
+        {[TAB_OVERVIEW, TAB_SYNC, TAB_FEEDBACK, TAB_TRADES, TAB_SETTLEMENT].map((tab) => {
           const label = tab === TAB_OVERVIEW
             ? (lang === 'TR' ? 'Overview' : 'Overview')
             : tab === TAB_SYNC
               ? (lang === 'TR' ? 'Sync' : 'Sync')
               : tab === TAB_FEEDBACK
                 ? (lang === 'TR' ? 'Feedback' : 'Feedback')
-                : (lang === 'TR' ? 'Trades' : 'Trades');
+                : tab === TAB_TRADES
+                  ? (lang === 'TR' ? 'Trades' : 'Trades')
+                  : (lang === 'TR' ? 'Settlement' : 'Settlement');
           const active = activeTab === tab;
           return (
             <button
@@ -772,6 +879,162 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
                     : 'Window total (not global)'}
                 </span>
               )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {activeTab === TAB_SETTLEMENT && (
+        <section className="space-y-4">
+          {settlementUnauthorized && renderUnauthorizedBox(
+            lang === 'TR' ? 'Yetkisiz Erişim' : 'Unauthorized Access',
+            lang === 'TR'
+              ? 'Bu admin settlement ekranını görüntüleme yetkiniz bulunmuyor.'
+              : 'You are not authorized to view this admin settlement screen.'
+          )}
+          {!settlementUnauthorized && settlementError && renderErrorBox(settlementError)}
+          {!settlementUnauthorized && settlementLoading && <div className="text-slate-400 text-sm">{lang === 'TR' ? 'Settlement verisi yükleniyor...' : 'Loading settlement data...'}</div>}
+
+          {!settlementUnauthorized && (
+            <div className="bg-[#111113] border border-[#222] rounded-xl p-4 space-y-3">
+              <p className="text-xs text-amber-300 border border-amber-800/40 bg-amber-950/20 rounded px-3 py-2">
+                {lang === 'TR'
+                  ? 'Admin panel yalnız gözlem içindir. Settlement sonucunu değiştiremez.'
+                  : 'Admin panel is observability-only. It cannot change settlement outcomes.'}
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                <label className="text-sm text-slate-300 flex flex-col gap-1">
+                  <span>State</span>
+                  <select value={settlementFilters.state} onChange={(e) => updateSettlementFilter('state', e.target.value)} className="bg-[#0d0d0f] border border-[#222] rounded-lg px-3 py-2 text-white">
+                    {SETTLEMENT_STATE_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                </label>
+                <label className="text-sm text-slate-300 flex flex-col gap-1">
+                  <span>Page</span>
+                  <input type="number" min="1" value={settlementFilters.page} onChange={(e) => updateSettlementFilter('page', e.target.value)} className="bg-[#0d0d0f] border border-[#222] rounded-lg px-3 py-2 text-white" />
+                </label>
+                <label className="text-sm text-slate-300 flex flex-col gap-1">
+                  <span>Limit</span>
+                  <select value={settlementFilters.limit} onChange={(e) => updateSettlementFilter('limit', e.target.value)} className="bg-[#0d0d0f] border border-[#222] rounded-lg px-3 py-2 text-white">
+                    {SETTLEMENT_LIMIT_OPTIONS.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                </label>
+                <div className="flex items-end">
+                  <label className="text-sm text-slate-300 flex items-center gap-2">
+                    <input type="checkbox" checked={settlementFilters.riskOnly} onChange={(e) => updateSettlementFilter('riskOnly', e.target.checked)} />
+                    Risk Only
+                  </label>
+                </div>
+                <div className="flex items-end">
+                  <button onClick={refreshSettlementNow} disabled={settlementLoading} className="w-full bg-[#173428] hover:bg-[#1b3d2e] disabled:opacity-60 border border-emerald-800/50 text-emerald-300 rounded-lg px-3 py-2 text-sm font-semibold">
+                    {settlementLoading ? (lang === 'TR' ? 'Yükleniyor...' : 'Loading...') : (lang === 'TR' ? 'Yenile' : 'Refresh')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!settlementUnauthorized && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+              {[
+                {
+                  key: 'active',
+                  title: lang === 'TR' ? 'Aktif Proposals' : 'Active proposals',
+                  rows: settlementProposals.filter((row) => row?.state === 'PROPOSED' && row?.is_expired !== true),
+                },
+                {
+                  key: 'expired',
+                  title: lang === 'TR' ? 'Expired Proposals' : 'Expired proposals',
+                  rows: settlementProposals.filter((row) => row?.is_expired === true),
+                },
+                {
+                  key: 'finalized',
+                  title: lang === 'TR' ? 'Sonuçlanan (Yakın)' : 'Finalized (recent)',
+                  rows: settlementProposals.filter((row) => row?.state === 'FINALIZED').slice(0, 10),
+                },
+              ].map((group) => (
+                <div key={group.key} className="bg-[#111113] border border-[#222] rounded-xl p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-sm font-semibold text-white">{group.title}</h3>
+                    <span className="text-xs text-slate-400">{group.rows.length}</span>
+                  </div>
+                  <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                    {group.rows.map((row) => (
+                      <div key={`${group.key}-${row?.proposal_id}-${row?.trade_id}`} className="bg-[#0d0d0f] border border-[#1d1d1f] rounded-lg p-2 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-emerald-300 font-mono">#{row?.onchain_escrow_id || '—'}</span>
+                          <span className="text-slate-300">{row?.state || '—'}</span>
+                        </div>
+                        <div className="text-slate-400 mt-1 font-mono">p:{row?.proposal_id || '—'} · age:{row?.proposal_age_seconds ?? '—'}s</div>
+                        <div className="text-slate-400 mt-1">maker:{shortenWallet(row?.maker_address)} · taker:{shortenWallet(row?.taker_address)}</div>
+                        <div className="text-slate-400 mt-1">split:{row?.maker_share_bps ?? '—'} / {row?.taker_share_bps ?? '—'}</div>
+                        <div className="text-slate-500 mt-1 truncate" title={row?.tx_hash || ''}>tx:{row?.tx_hash || '—'}</div>
+                      </div>
+                    ))}
+                    {!settlementLoading && group.rows.length === 0 && (
+                      <div className="text-slate-500 text-xs">{lang === 'TR' ? 'Kayıt yok.' : 'No records.'}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!settlementUnauthorized && (
+            <div className="bg-[#111113] border border-[#222] rounded-xl overflow-x-auto">
+              <table className="w-full min-w-[1500px] text-sm">
+                <thead>
+                  <tr className="bg-[#0d0d0f] border-b border-[#222] text-slate-300">
+                    <th className="text-left px-3 py-2">Proposal</th>
+                    <th className="text-left px-3 py-2">Escrow</th>
+                    <th className="text-left px-3 py-2">Status</th>
+                    <th className="text-left px-3 py-2">Maker</th>
+                    <th className="text-left px-3 py-2">Taker</th>
+                    <th className="text-left px-3 py-2">Proposed By</th>
+                    <th className="text-left px-3 py-2">Split</th>
+                    <th className="text-left px-3 py-2">Proposed At</th>
+                    <th className="text-left px-3 py-2">Expires At</th>
+                    <th className="text-left px-3 py-2">Finalized At</th>
+                    <th className="text-left px-3 py-2">Derived</th>
+                    <th className="text-left px-3 py-2">Tx</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {settlementProposals.map((row) => (
+                    <tr key={`${row?.proposal_id}-${row?.trade_id}`} className="border-b border-[#1c1c1f]">
+                      <td className="px-3 py-2 text-emerald-300 font-mono">{row?.proposal_id || '—'}</td>
+                      <td className="px-3 py-2 text-slate-300 font-mono">{row?.onchain_escrow_id || '—'}</td>
+                      <td className="px-3 py-2 text-slate-200">{row?.status || '—'} / {row?.state || '—'}</td>
+                      <td className="px-3 py-2 text-slate-300 font-mono">{shortenWallet(row?.maker_address)}</td>
+                      <td className="px-3 py-2 text-slate-300 font-mono">{shortenWallet(row?.taker_address)}</td>
+                      <td className="px-3 py-2 text-slate-300 font-mono">{shortenWallet(row?.proposed_by)}</td>
+                      <td className="px-3 py-2 text-slate-300">{row?.maker_share_bps ?? '—'} / {row?.taker_share_bps ?? '—'}</td>
+                      <td className="px-3 py-2 text-slate-300">{formatDate(row?.proposed_at)}</td>
+                      <td className="px-3 py-2 text-slate-300">{formatDate(row?.expires_at)}</td>
+                      <td className="px-3 py-2 text-slate-300">{formatDate(row?.finalized_at)}</td>
+                      <td className="px-3 py-2 text-slate-300">
+                        <div className="flex flex-wrap gap-1">
+                          <span className={`px-2 py-0.5 rounded text-xs ${toBoolBadgeClass(row?.is_expired === true)}`}>expired:{String(row?.is_expired === true)}</span>
+                          <span className={`px-2 py-0.5 rounded text-xs ${toBoolBadgeClass(row?.requires_counterparty_action === true)}`}>counterparty_action:{String(row?.requires_counterparty_action === true)}</span>
+                          <span className="px-2 py-0.5 rounded text-xs bg-[#1a1a1f] border border-[#333]">age:{row?.proposal_age_seconds ?? '—'}s</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-slate-400 font-mono truncate max-w-[220px]" title={row?.tx_hash || ''}>{row?.tx_hash || '—'}</td>
+                    </tr>
+                  ))}
+                  {!settlementLoading && settlementProposals.length === 0 && (
+                    <tr>
+                      <td colSpan={12} className="px-3 py-5 text-center text-slate-500">{lang === 'TR' ? 'Settlement kaydı bulunamadı.' : 'No settlement records found.'}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {!settlementUnauthorized && (
+            <div className="text-xs text-slate-500">
+              {lang === 'TR' ? 'Toplam settlement kaydı' : 'Total settlement records'}: {settlementTotal}
             </div>
           )}
         </section>

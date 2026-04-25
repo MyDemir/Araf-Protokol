@@ -330,6 +330,8 @@ tradeSchema.index({ token_address: 1, status: 1 });
 tradeSchema.index({ tier: 1, status: 1 });
 tradeSchema.index({ "settlement_proposal.state": 1, status: 1 });
 tradeSchema.index({ "settlement_proposal.expires_at": 1 }, { sparse: true });
+tradeSchema.index({ "settlement_proposal.proposed_at": -1 }, { sparse: true });
+tradeSchema.index({ "settlement_proposal.finalized_at": -1 }, { sparse: true });
 
 // [TR] Trade'leri 1 yıl sonra sil — GDPR uyumu
 // [EN] Delete trades after 1 year — GDPR compliance

@@ -138,8 +138,8 @@ export const buildAppViews = (ctx) => {
           <button
             onClick={() => setCurrentView('admin')}
             title={isLikelyAdminWallet
-              ? (lang === 'TR' ? 'Admin Paneli' : 'Admin Panel')
-              : (lang === 'TR' ? 'Admin Gözlem (sunucu yetkisine bağlı)' : 'Admin Observability (server-authorized)')}
+              ? (lang === 'TR' ? 'Admin Paneli (Settlement analytics: read-only)' : 'Admin Panel (Settlement analytics: read-only)')
+              : (lang === 'TR' ? 'Admin Gözlem (sunucu yetkisine bağlı, read-only)' : 'Admin Observability (server-authorized, read-only)')}
             className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'admin' ? 'bg-emerald-900/30 text-emerald-400' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}
           >
             🧭
