@@ -291,7 +291,10 @@ router.get("/summary", async (req, res, next) => {
       );
 
       const settlementResults = await Promise.allSettled([
-        Trade.countDocuments({ "settlement_proposal.state": "PROPOSED" }),
+        Trade.countDocuments({
+          "settlement_proposal.state": "PROPOSED",
+          status: { $nin: TERMINAL_TRADE_STATUSES },
+        }),
         Trade.countDocuments({ "settlement_proposal.state": "EXPIRED" }),
         Trade.countDocuments({
           "settlement_proposal.state": "FINALIZED",
@@ -563,8 +566,9 @@ router.get("/settlement-proposals", async (req, res, next) => {
     const proposals = rows
       .map((row) => {
         const settlementProposal = row?.settlement_proposal || {};
+        const isTradeTerminal = TERMINAL_TRADE_STATUSES.includes(row?.status);
         const isExpired = _isSettlementExpired(settlementProposal?.state, settlementProposal?.expires_at, now);
-        const requiresCounterpartyAction = settlementProposal?.state === "PROPOSED" && !isExpired;
+        const requiresCounterpartyAction = !isTradeTerminal && settlementProposal?.state === "PROPOSED" && !isExpired;
 
         return {
           // [TR] Aşağıdaki alanlar bilgilendirme içindir; release/cancel/burn/payout authority kontratta kalır.
@@ -583,6 +587,7 @@ router.get("/settlement-proposals", async (req, res, next) => {
           finalized_at: settlementProposal?.finalized_at || null,
           tx_hash: settlementProposal?.tx_hash || null,
           state: settlementProposal?.state || null,
+          is_trade_terminal: isTradeTerminal,
           is_expired: isExpired,
           requires_counterparty_action: requiresCounterpartyAction,
           proposal_age_seconds: _toProposalAgeSeconds(settlementProposal?.proposed_at, now),
