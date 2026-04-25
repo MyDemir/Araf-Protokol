@@ -163,8 +163,8 @@ export default function SettlementProposalCard({
         <h3 className="text-sm font-bold text-white">{lang === 'TR' ? 'On-Chain Settlement' : 'On-Chain Settlement'}</h3>
         <p className="text-[11px] text-slate-400">
           {lang === 'TR'
-            ? 'Araf kimin haklı olduğuna karar vermez. Kararı sen ve karşı taraf on-chain olarak verirsiniz.'
-            : 'Araf does not decide who is right. You and the counterparty decide on-chain.'}
+            ? 'Araf kimin haklı olduğuna karar vermez; iki tarafın imzasıyla kontrollü settlement sağlar.'
+            : 'Araf does not decide who is right; it enables counterparty-signed settlement.'}
         </p>
       </div>
 
