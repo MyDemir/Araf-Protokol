@@ -46,6 +46,18 @@ const makeCtx = (overrides = {}) => ({
   makerFiat: 'TRY',
   setMakerFiat: vi.fn(),
   onchainBondMap: { 1: { maker: 8, taker: 10 } },
+  paymentRiskConfig: {
+    TR: {
+      TR_IBAN: {
+        riskLevel: 'MEDIUM',
+        minBondSurchargeBps: 0,
+        feeSurchargeBps: 0,
+        warningKey: 'BANK_TRANSFER_CONFIRMATION_REQUIRED',
+        enabled: true,
+        description: { TR: 'x', EN: 'y' },
+      },
+    },
+  },
   userReputation: { effectiveTier: 3 },
   SUPPORTED_TOKEN_ADDRESSES: { USDT: '0x1' },
   onchainTokenMap: {},
@@ -137,6 +149,38 @@ describe('AppModals side-aware behaviors', () => {
 
     expect(screen.getAllByText(/Total Locked:/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/108 USDT/).length).toBeGreaterThan(0);
+  });
+
+  it('disables create order button when payout rail risk is restricted by config (non-authoritative)', () => {
+    const modals = buildAppModals(makeCtx({
+      profileTab: 'ayarlar',
+      showProfileModal: false,
+      paymentRiskConfig: {
+        US: {
+          US_ACH: {
+            riskLevel: 'RESTRICTED',
+            minBondSurchargeBps: 0,
+            feeSurchargeBps: 0,
+            warningKey: 'RESTRICTED',
+            enabled: false,
+            description: { TR: 'x', EN: 'Restricted in UI config only.' },
+          },
+        },
+      },
+      payoutProfileDraft: {
+        rail: 'US_ACH',
+        country: 'US',
+        contact: { channel: null, value: null },
+        fields: { account_holder_name: '', iban: null, routing_number: null, account_number: null, account_type: null, bic: null, bank_name: null },
+      },
+    }));
+    render(<div>{modals.renderMakerModal()}</div>);
+    const createButton = screen
+      .getAllByRole('button', { name: /Open Sell Order|Open Buy Order|Order Aç/i })
+      .find((btn) => btn.hasAttribute('disabled'));
+    expect(createButton).toBeTruthy();
+    expect(createButton).toBeDisabled();
+    expect(screen.getByText(/not a contract authority rule|kontrat hükmü değildir/i)).toBeInTheDocument();
   });
 
   it('renders authoritative my orders fields', () => {

@@ -2,6 +2,7 @@ import React from 'react';
 import PIIDisplay from '../components/PIIDisplay';
 import ReferenceRateTicker from '../components/ReferenceRateTicker';
 import SettlementProposalCard, { normalizeSettlementState } from '../components/SettlementProposalCard';
+import PaymentRiskBadge from '../components/PaymentRiskBadge';
 
 // [TR] App ana görünüm/render katmanı burada tutulur.
 // [EN] Main application view/render layer lives here.
@@ -523,6 +524,7 @@ export const buildAppViews = (ctx) => {
                   <p className="text-[10px] text-emerald-500/80 mt-0.5 uppercase tracking-wider">
                     {order.bondLabel} {lang === 'TR' ? 'Teminat' : 'Bond'}
                   </p>
+                  <PaymentRiskBadge lang={lang} riskEntry={order.paymentRiskSignal} compact />
                 </div>
 
                 <div className="w-full md:w-1/3 flex flex-col items-start md:items-end justify-center relative">

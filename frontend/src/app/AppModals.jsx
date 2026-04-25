@@ -1,6 +1,7 @@
 import React from 'react';
-import { buildMakerPreview, getMakerModalCopy, mapOffchainHealthToUi } from './orderUiModel';
+import { buildMakerPreview, getMakerModalCopy, mapOffchainHealthToUi, resolvePaymentRiskEntry } from './orderUiModel';
 import { TERMS_ACCEPTED_STORAGE_KEY } from './bootstrapState';
+import PaymentRiskBadge from '../components/PaymentRiskBadge';
 
 // [TR] Eksik env değişkenleri için kapatılabilir uyarı şeridi.
 // [EN] Dismissible warning strip for missing env variables.
@@ -65,6 +66,7 @@ export const buildAppModals = (ctx) => {
     makerFiat,
     setMakerFiat,
     onchainBondMap,
+    paymentRiskConfig,
     userReputation,
     SUPPORTED_TOKEN_ADDRESSES,
     onchainTokenMap,
@@ -244,6 +246,15 @@ export const buildAppModals = (ctx) => {
     const maxLimNum    = parseFloat(makerMaxLimit) || 0;
     const totalFiatValue = cryptoAmtNum * rateNum;
     const modalCopy = getMakerModalCopy(makerSide, lang);
+    const payoutRail = payoutProfileDraft?.rail || null;
+    const payoutCountry = payoutProfileDraft?.country || null;
+    const payoutRiskEntry = resolvePaymentRiskEntry({
+      paymentRiskConfig: paymentRiskConfig || {},
+      rail: payoutRail,
+      country: payoutCountry,
+    });
+    const isCreateTemporarilyDisabledByRisk = payoutRiskEntry
+      && (String(payoutRiskEntry.riskLevel || '').toUpperCase() === 'RESTRICTED' || payoutRiskEntry.enabled === false);
 
     let validationError = null;
     if (!makerAmount || cryptoAmtNum <= 0)                    validationError = lang === 'TR' ? 'Order miktarını giriniz.' : 'Enter order amount.';
@@ -336,14 +347,22 @@ export const buildAppModals = (ctx) => {
               </div>
               <p className="text-[11px] text-slate-400 mt-2">{modalCopy.previewHint}</p>
             </div>
+            <PaymentRiskBadge lang={lang} riskEntry={payoutRiskEntry} />
+            {isCreateTemporarilyDisabledByRisk && (
+              <p className="text-[11px] text-red-400 bg-red-950/20 border border-red-900/40 rounded-lg p-2">
+                {lang === 'TR'
+                  ? 'Bu rail/country kombinasyonu şu an availability config nedeniyle kısıtlı görünüyor. Bu bir kontrat hükmü değildir.'
+                  : 'This rail/country pair is currently restricted by availability config. This is not a contract authority rule.'}
+              </p>
+            )}
             {validationError && (
               <p className="text-red-400 text-[11px] font-medium text-center bg-red-950/30 py-2 rounded-lg border border-red-900/50 mt-2">{validationError}</p>
             )}
             <button
               onClick={handleCreateOrder}
-              disabled={isContractLoading || validationError !== null}
+              disabled={isContractLoading || validationError !== null || isCreateTemporarilyDisabledByRisk}
               className={`w-full py-3 rounded-xl font-bold mt-2 shadow-lg transition ${
-                isContractLoading || validationError !== null
+                isContractLoading || validationError !== null || isCreateTemporarilyDisabledByRisk
                   ? 'bg-[#151518] text-slate-500 border border-[#2a2a2e] cursor-not-allowed'
                   : 'bg-white hover:bg-slate-200 text-black shadow-white/10'
               }`}>

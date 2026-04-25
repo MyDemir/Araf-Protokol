@@ -5,6 +5,8 @@ import {
   mapApiOrderToUi,
   mapOffchainHealthToUi,
   resolveOrderActionFns,
+  resolvePaymentRiskEntry,
+  deriveOrderPaymentRiskSignal,
 } from '../app/orderUiModel';
 
 describe('orderUiModel mapping', () => {
@@ -174,6 +176,33 @@ describe('orderUiModel mapping', () => {
     });
     expect(ui.trustSummary.available).toBe(false);
     expect(ui.trustSummary.label).toBe('Signal unavailable');
+  });
+
+  it('resolves payment risk entry with SEPA EU fallback safely', () => {
+    const paymentRiskConfig = {
+      EU: {
+        SEPA_IBAN: { riskLevel: 'MEDIUM', enabled: true },
+      },
+    };
+    const resolved = resolvePaymentRiskEntry({
+      paymentRiskConfig,
+      rail: 'SEPA_IBAN',
+      country: 'DE',
+    });
+    expect(resolved?.riskLevel).toBe('MEDIUM');
+  });
+
+  it('derives generic payment complexity signal when order feed has no rail/country hint', () => {
+    const paymentRiskConfig = {
+      TR: {
+        TR_IBAN: { riskLevel: 'MEDIUM', enabled: true },
+      },
+    };
+    const signal = deriveOrderPaymentRiskSignal({
+      order: { ...baseOrder, side: 'SELL_CRYPTO' },
+      paymentRiskConfig,
+    });
+    expect(signal?.riskLevel).toBe('MEDIUM');
   });
 
 });

@@ -7,6 +7,7 @@ import { formatUnits } from 'viem';
 
 const DEFAULT_TOKEN_DECIMALS = 6;
 const VALID_ORDER_SIDES = new Set(['SELL_CRYPTO', 'BUY_CRYPTO']);
+const SEPA_COUNTRIES = new Set(['DE', 'FR', 'NL', 'BE', 'ES', 'IT', 'AT', 'PT', 'IE', 'LU', 'FI', 'GR']);
 
 export const SIDE_META = {
   SELL_CRYPTO: {
@@ -103,6 +104,40 @@ export const buildMakerPreview = ({ side, amountUi, bondPct }) => {
     totalAmount: safeAmount + reserveAmount,
     includesInventory: true,
   };
+};
+
+export const resolvePaymentRiskEntry = ({ paymentRiskConfig = {}, rail, country }) => {
+  const safeRail = String(rail || '').toUpperCase();
+  const safeCountry = String(country || '').toUpperCase();
+  if (!safeRail || !paymentRiskConfig || typeof paymentRiskConfig !== 'object') return null;
+  const direct = paymentRiskConfig?.[safeCountry]?.[safeRail];
+  if (direct) return direct;
+  if (safeRail === 'SEPA_IBAN' && SEPA_COUNTRIES.has(safeCountry)) {
+    return paymentRiskConfig?.EU?.SEPA_IBAN || null;
+  }
+  const genericEntry = Object.values(paymentRiskConfig)
+    .find((bucket) => bucket && typeof bucket === 'object' && bucket[safeRail]);
+  return genericEntry?.[safeRail] || null;
+};
+
+export const deriveOrderPaymentRiskSignal = ({ order, paymentRiskConfig = {} }) => {
+  const rail = order?.payment_method?.rail
+    || order?.payment_rail
+    || order?.settlement_profile?.rail
+    || null;
+  const country = order?.payment_method?.country
+    || order?.payment_country
+    || order?.settlement_profile?.country
+    || null;
+  const resolved = resolvePaymentRiskEntry({ paymentRiskConfig, rail, country });
+  if (resolved) return resolved;
+
+  // [TR] Feed rail/country hint taşımıyorsa privacy-safe generic signal döndürülür.
+  // [EN] If feed has no rail/country hint, return a privacy-safe generic signal.
+  const fallbackBucket = Object.values(paymentRiskConfig || {}).find((bucket) => bucket && typeof bucket === 'object');
+  if (!fallbackBucket) return null;
+  const firstEntry = Object.values(fallbackBucket).find(Boolean);
+  return firstEntry || null;
 };
 
 
@@ -210,7 +245,7 @@ export const mapCompactTrustSummary = ({ compactSummary, signal, lang = 'TR' }) 
   };
 };
 
-export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {}, formatAddress = (v) => v }) => {
+export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {}, paymentRiskConfig = {}, formatAddress = (v) => v }) => {
   const side = normalizeOrderSide(order?.side);
   const sideMeta = SIDE_META[side] || null;
   const status = order?.status || 'UNKNOWN';
@@ -252,6 +287,7 @@ export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {
     signal: order?.offchain_health_score_input || null,
     lang,
   });
+  const paymentRiskSignal = deriveOrderPaymentRiskSignal({ order, paymentRiskConfig });
   return {
     id: order?._id,
     onchainId: order?.onchain_order_id ?? null,
@@ -279,6 +315,7 @@ export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {
     // [EN] Side-aware summary hint for V3 hover card (avoids seller-only terminology).
     ownerSideHint,
     trustSummary,
+    paymentRiskSignal,
     // legacy ui analytics fields
     successRate: Number(order?.stats?.fill_rate_pct ?? 100),
     txCount: fillsCount,

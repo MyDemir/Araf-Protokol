@@ -142,6 +142,14 @@ describe('AppViews market side-aware rendering', () => {
             label: 'Medium Signal',
             chipClass: 'text-amber-400 border-amber-700/60 bg-amber-900/20',
           },
+          paymentRiskSignal: {
+            riskLevel: 'MEDIUM',
+            enabled: true,
+            minBondSurchargeBps: 0,
+            feeSurchargeBps: 0,
+            warningKey: 'BANK_TRANSFER_CONFIRMATION_REQUIRED',
+            description: { EN: 'x', TR: 'y' },
+          },
           tokenPolicy: { supported: true, allowSellOrders: true, allowBuyOrders: true },
         },
         {
@@ -166,6 +174,14 @@ describe('AppViews market side-aware rendering', () => {
             label: 'Signal unavailable',
             chipClass: 'text-slate-400 border-slate-700/60 bg-slate-900/20',
           },
+          paymentRiskSignal: {
+            riskLevel: 'HIGH',
+            enabled: true,
+            minBondSurchargeBps: 50,
+            feeSurchargeBps: 0,
+            warningKey: 'ACH_REVERSAL_AND_SETTLEMENT_DELAY_RISK',
+            description: { EN: 'x', TR: 'y' },
+          },
           tokenPolicy: { supported: true, allowSellOrders: true, allowBuyOrders: true },
         },
       ],
@@ -188,6 +204,7 @@ describe('AppViews market side-aware rendering', () => {
     expect(screen.queryByText('SELLER PROFILE')).not.toBeInTheDocument();
     expect(screen.getAllByText('Open').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Bond/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Payment method complexity:/i).length).toBeGreaterThan(0);
   });
 
   it('shows explicit empty-state instead of broken trade room when activeTrade is missing', async () => {
@@ -206,7 +223,7 @@ describe('AppViews market side-aware rendering', () => {
 
     expect(screen.getByText(/No active trade found/i)).toBeInTheDocument();
     expect(screen.queryByText(/0.00/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/COUNTERPARTY/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^COUNTERPARTY$/i)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /Go to Marketplace/i }));
     expect(setCurrentView).toHaveBeenCalledWith('market');
