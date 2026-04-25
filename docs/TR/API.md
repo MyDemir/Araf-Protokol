@@ -152,6 +152,10 @@ Order owner için child trade listesi (owner-only).
 ## 5) Trade rotaları (`/api/trades`)
 
 Trade rotaları child-trade read/coordination yüzeyidir.
+Settlement outcome tarafında backend **non-authoritative** kalır:
+- backend/admin settlement finalize edemez,
+- backend/admin release/cancel/burn/payout override yapamaz,
+- nihai ekonomik sonuç yalnız tarafların kabul ettiği on-chain tx ile oluşur.
 
 ### `GET /api/trades/my`
 Kullanıcının aktif trade listesi.
@@ -179,6 +183,40 @@ On-chain submit öncesi EIP-712 cancel imza koordinasyonunu tutar.
 
 ### `POST /api/trades/:id/chargeback-ack`
 Maker’ın `PAID/CHALLENGED` durumlarında risk/yasal acknowledgement kaydı.
+
+### `GET /api/trades/:id/settlement-proposal`
+Trade’e bağlı partial-settlement mirror payload döner (yalnız trade tarafları erişebilir).
+Read-model amaçlıdır; authoritative değildir.
+
+### `POST /api/trades/:id/settlement-proposal/preview`
+Mirror trade tutarlarından bilgilendirme amaçlı split preview hesaplar.
+
+İstek:
+```json
+{ "makerShareBps": 7000 }
+```
+
+Yanıt alanları:
+- `informationalOnly: true`
+- `nonAuthoritative: true`
+- `makerShareBps`, `takerShareBps`
+- `pool`, `makerPayout`, `takerPayout` (BigInt-safe string)
+- nihai sonucun yalnız on-chain kabul edilen tx ile belirlendiğini söyleyen uyarı
+
+---
+
+## 5.1) Admin settlement gözlem yüzeyi (`/api/admin`)
+
+### `GET /api/admin/settlement-proposals`
+Mirror settlement proposal kayıtlarını read-only izleme endpoint’i.
+
+Query:
+- `state=ALL|PROPOSED|EXPIRED|FINALIZED|REJECTED|WITHDRAWN`
+- `page`
+- `limit`
+
+Sayfalı `{ proposals, total, page, limit }` döner.
+Bu endpoint write/override aksiyonu içermez.
 
 ---
 

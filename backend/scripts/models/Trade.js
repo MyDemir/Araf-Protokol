@@ -279,6 +279,34 @@ const tradeSchema = new mongoose.Schema(
       deadline:        { type: Date,   default: null },
     },
 
+    // [TR] Faz-2 partial settlement mirror alanı.
+    //      Bu alan yalnız on-chain event mirror + UI preview amacıyla taşınır.
+    //      Economic authority üretmez.
+    // [EN] Phase-2 partial settlement mirror block.
+    //      Used only for on-chain event mirroring + UI preview surfaces.
+    //      Never creates economic authority.
+    settlement_proposal: {
+      proposal_id: { type: String, default: null },
+      state: {
+        type: String,
+        enum: ["NONE", "PROPOSED", "REJECTED", "WITHDRAWN", "EXPIRED", "FINALIZED", null],
+        default: null,
+        index: true,
+      },
+      proposed_by: { type: String, lowercase: true, default: null },
+      maker_share_bps: { type: Number, default: null, min: 0, max: 10000 },
+      taker_share_bps: { type: Number, default: null, min: 0, max: 10000 },
+      proposed_at: { type: Date, default: null },
+      expires_at: { type: Date, default: null },
+      finalized_at: { type: Date, default: null },
+      maker_payout: { type: String, default: null },
+      taker_payout: { type: String, default: null },
+      taker_fee: { type: String, default: null },
+      maker_fee: { type: String, default: null },
+      tx_hash: { type: String, default: null },
+      last_event_name: { type: String, default: null },
+    },
+
     chargeback_ack: {
       acknowledged:    { type: Boolean, default: false },
       acknowledged_by: { type: String,  lowercase: true, default: null },
@@ -300,6 +328,8 @@ tradeSchema.index({ trade_origin: 1, status: 1 });
 tradeSchema.index({ parent_order_side: 1, status: 1 });
 tradeSchema.index({ token_address: 1, status: 1 });
 tradeSchema.index({ tier: 1, status: 1 });
+tradeSchema.index({ "settlement_proposal.state": 1, status: 1 });
+tradeSchema.index({ "settlement_proposal.expires_at": 1 }, { sparse: true });
 
 // [TR] Trade'leri 1 yıl sonra sil — GDPR uyumu
 // [EN] Delete trades after 1 year — GDPR compliance

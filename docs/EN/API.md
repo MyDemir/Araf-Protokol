@@ -152,6 +152,10 @@ Returns child trades for caller-owned order (owner-only access).
 ## 5) Trades routes (`/api/trades`)
 
 Trades are child-trade read/coordination endpoints.
+Backend remains **non-authoritative** for settlement outcomes:
+- no backend/admin approval can finalize settlement,
+- no backend/admin action can override release/cancel/burn/payout,
+- final economic outcome is determined only by accepted on-chain tx.
 
 ### `GET /api/trades/my`
 Active trades for the caller (`LOCKED/PAID/CHALLENGED/...` non-terminal set).
@@ -179,6 +183,40 @@ Request:
 
 ### `POST /api/trades/:id/chargeback-ack`
 Maker acknowledgment endpoint (legal/risk audit signal) for `PAID/CHALLENGED` states.
+
+### `GET /api/trades/:id/settlement-proposal`
+Returns trade-scoped partial-settlement mirror payload (party-restricted).
+Read-model only; **informational**, non-authoritative.
+
+### `POST /api/trades/:id/settlement-proposal/preview`
+Computes an informational split preview from mirrored trade amounts.
+
+Request:
+```json
+{ "makerShareBps": 7000 }
+```
+
+Response fields:
+- `informationalOnly: true`
+- `nonAuthoritative: true`
+- `makerShareBps`, `takerShareBps`
+- `pool`, `makerPayout`, `takerPayout` (BigInt-safe string values)
+- warning message that only on-chain accepted tx determines final outcome
+
+---
+
+## 5.1) Admin settlement observability (`/api/admin`)
+
+### `GET /api/admin/settlement-proposals`
+Read-only monitoring endpoint for mirrored settlement proposals.
+
+Query:
+- `state=ALL|PROPOSED|EXPIRED|FINALIZED|REJECTED|WITHDRAWN`
+- `page`
+- `limit`
+
+Returns paginated `{ proposals, total, page, limit }`.
+No write/override actions are exposed on this endpoint.
 
 ---
 

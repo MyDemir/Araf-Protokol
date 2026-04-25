@@ -22,6 +22,7 @@ const DLQ_KEY = "worker:dlq";
 const ADMIN_TRADES_STATUS_VALUES = ["ALL", "LOCKED", "PAID", "CHALLENGED", "RESOLVED", "CANCELED", "BURNED"];
 const ADMIN_TRADES_ORIGIN_VALUES = ["ALL", "ORDER_CHILD", "DIRECT_ESCROW"];
 const ADMIN_TRADES_SNAPSHOT_VALUES = ["ALL", "true", "false"];
+const ADMIN_SETTLEMENT_STATE_VALUES = ["ALL", "PROPOSED", "EXPIRED", "FINALIZED", "REJECTED", "WITHDRAWN"];
 const ADMIN_TRADES_MAX_CANDIDATE_SCAN = 1000;
 
 const ADMIN_TRADE_PROJECTION = [
@@ -79,6 +80,19 @@ const ADMIN_TRADE_PROJECTION = [
   "payout_snapshot.is_complete",
   "payout_snapshot.incomplete_reason",
   "payout_snapshot.captured_at",
+  "settlement_proposal.proposal_id",
+  "settlement_proposal.state",
+  "settlement_proposal.proposed_by",
+  "settlement_proposal.maker_share_bps",
+  "settlement_proposal.taker_share_bps",
+  "settlement_proposal.proposed_at",
+  "settlement_proposal.expires_at",
+  "settlement_proposal.finalized_at",
+  "settlement_proposal.maker_payout",
+  "settlement_proposal.taker_payout",
+  "settlement_proposal.taker_fee",
+  "settlement_proposal.maker_fee",
+  "settlement_proposal.tx_hash",
 ].join(" ");
 
 function requireAdminWallet(req, res, next) {
@@ -392,6 +406,77 @@ router.get("/trades", async (req, res, next) => {
         windowSize: ADMIN_TRADES_MAX_CANDIDATE_SCAN,
         totalRepresents: "window_filtered_total",
       },
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+router.get("/settlement-proposals", async (req, res, next) => {
+  try {
+    const schema = Joi.object({
+      state: Joi.string().valid(...ADMIN_SETTLEMENT_STATE_VALUES).default("ALL"),
+      page: Joi.number().integer().min(1).default(1),
+      limit: Joi.number().integer().min(1).max(50).default(20),
+    });
+    const { error, value } = schema.validate(req.query);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const filter = {};
+    if (value.state !== "ALL") {
+      filter["settlement_proposal.state"] = value.state;
+    } else {
+      filter["settlement_proposal.state"] = { $in: ["PROPOSED", "EXPIRED", "FINALIZED", "REJECTED", "WITHDRAWN"] };
+    }
+
+    const skip = (value.page - 1) * value.limit;
+    const projection = [
+      "_id",
+      "onchain_escrow_id",
+      "status",
+      "maker_address",
+      "taker_address",
+      "settlement_proposal.proposal_id",
+      "settlement_proposal.state",
+      "settlement_proposal.proposed_by",
+      "settlement_proposal.maker_share_bps",
+      "settlement_proposal.taker_share_bps",
+      "settlement_proposal.proposed_at",
+      "settlement_proposal.expires_at",
+      "settlement_proposal.finalized_at",
+      "settlement_proposal.maker_payout",
+      "settlement_proposal.taker_payout",
+      "settlement_proposal.taker_fee",
+      "settlement_proposal.maker_fee",
+      "settlement_proposal.tx_hash",
+    ].join(" ");
+
+    const [rows, total] = await Promise.all([
+      Trade.find(filter)
+        .select(projection)
+        .sort({ "settlement_proposal.proposed_at": -1, _id: -1 })
+        .skip(skip)
+        .limit(value.limit)
+        .lean(),
+      Trade.countDocuments(filter),
+    ]);
+
+    const proposals = rows.map((row) => ({
+      trade_id: row._id,
+      onchain_escrow_id: row.onchain_escrow_id || null,
+      trade_status: row.status || null,
+      maker_address: row.maker_address || null,
+      taker_address: row.taker_address || null,
+      settlement_proposal: row.settlement_proposal || null,
+      informational_only: true,
+      non_authoritative_semantics: true,
+    }));
+
+    return res.json({
+      proposals,
+      total,
+      page: value.page,
+      limit: value.limit,
     });
   } catch (err) {
     return next(err);
