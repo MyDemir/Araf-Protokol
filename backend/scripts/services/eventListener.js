@@ -1281,11 +1281,24 @@ class EventWorker {
     const { tradeId } = event.args;
     const resolvedAt = await this._getEventDate(event);
     const tradeIdNum = _toIdentityString(tradeId);
+    let releaseResolutionType = "UNKNOWN";
 
     const session = await mongoose.startSession();
     session.startTransaction();
 
     try {
+      const existingTrade = await Trade.findOne(_buildIdentityLookup("onchain_escrow_id", tradeIdNum))
+        .select("status")
+        .lean();
+
+      // [TR] CHALLENGED, zincirde mirror edilen yaşam döngüsü durumudur; EscrowReleased'in CHALLENGED'dan
+      //      gelmesi DISPUTED_RESOLUTION sınıflandırmasını deterministik yapar, backend otoritesi oluşturmaz.
+      // [EN] CHALLENGED is an on-chain mirrored lifecycle state, so mapping EscrowReleased from CHALLENGED
+      //      to DISPUTED_RESOLUTION is deterministic read-model classification, not backend authority.
+      if (existingTrade?.status === "CHALLENGED") {
+        releaseResolutionType = "DISPUTED_RESOLUTION";
+      }
+
       const trade = await Trade.findOneAndUpdate(
         {
           ..._buildIdentityLookup("onchain_escrow_id", tradeIdNum),
@@ -1298,7 +1311,7 @@ class EventWorker {
             //      Backend heuristik yapmaz; outcome read-model alanını UNKNOWN olarak mirror eder.
             // [EN] EscrowReleased alone does not safely distinguish manual vs auto release.
             //      We do not infer heuristically; mirror as UNKNOWN.
-            resolution_type: "UNKNOWN",
+            resolution_type: releaseResolutionType,
             "timers.resolved_at": resolvedAt,
             "evidence.receipt_delete_at": new Date(resolvedAt.getTime() + 24 * 3600 * 1000),
           },

@@ -84,9 +84,10 @@ describe("admin routes resilience + pagination semantics", () => {
     expect(adminReadLimiter).toHaveBeenCalled();
   });
 
-  it("summary_resolution_analytics_counts_are_computed_from_resolution_type_not_status_only", async () => {
+  it("summary_resolution_analytics_unknown_includes_terminal_null_and_missing_resolution_type_rows", async () => {
     const adminReadLimiter = jest.fn((_req, _res, next) => next());
     let router;
+    let countDocumentsMock;
 
     jest.isolateModules(() => {
       jest.doMock("../scripts/middleware/auth", () => ({
@@ -110,28 +111,29 @@ describe("admin routes resilience + pagination semantics", () => {
         })),
       }));
 
-      const resolutionCounts = {
+      const exactResolutionCounts = {
         MANUAL_RELEASE: 4,
         AUTO_RELEASE: 3,
         PARTIAL_SETTLEMENT: 2,
         MUTUAL_CANCEL: 5,
         BURNED: 1,
         DISPUTED_RESOLUTION: 6,
-        UNKNOWN: 7,
       };
+      countDocumentsMock = jest.fn((filter = {}) => {
+        const resolutionType = filter?.resolution_type;
+        if (resolutionType && exactResolutionCounts[resolutionType] !== undefined) {
+          return Promise.resolve(exactResolutionCounts[resolutionType]);
+        }
+        if (Array.isArray(filter?.$or)) return Promise.resolve(10);
+        return Promise.resolve(0);
+      });
       jest.doMock("../scripts/models/Trade", () => ({
         find: jest.fn(() => ({
           select: jest.fn().mockReturnThis(),
           limit: jest.fn().mockReturnThis(),
           lean: jest.fn().mockResolvedValue([]),
         })),
-        countDocuments: jest.fn((filter = {}) => {
-          const resolutionType = filter?.resolution_type;
-          if (resolutionType && resolutionCounts[resolutionType] !== undefined) {
-            return Promise.resolve(resolutionCounts[resolutionType]);
-          }
-          return Promise.resolve(0);
-        }),
+        countDocuments: countDocumentsMock,
       }));
       jest.doMock("../scripts/models/User", () => ({ find: jest.fn() }));
       jest.doMock("../scripts/models/Feedback", () => ({ find: jest.fn(), countDocuments: jest.fn() }));
@@ -148,7 +150,18 @@ describe("admin routes resilience + pagination semantics", () => {
       mutualCancelCount: 5,
       burnedCount: 1,
       disputedResolutionCount: 6,
-      unknownResolvedCount: 7,
+      unknownResolvedCount: 10,
+    });
+    const unknownQuery = countDocumentsMock.mock.calls
+      .map(([filter]) => filter)
+      .find((filter) => Array.isArray(filter?.$or));
+    expect(unknownQuery).toEqual({
+      status: { $in: ["RESOLVED", "CANCELED", "BURNED"] },
+      $or: [
+        { resolution_type: "UNKNOWN" },
+        { resolution_type: null },
+        { resolution_type: { $exists: false } },
+      ],
     });
   });
 
