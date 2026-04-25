@@ -6,7 +6,7 @@
 [![Version](https://img.shields.io/badge/versiyon-V3_Order--First-00c9a7?style=flat-square)](.)
 [![Network](https://img.shields.io/badge/ağ-Base_L2_(8453)-0052FF?style=flat-square&logo=coinbase)](.)
 [![Status](https://img.shields.io/badge/durum-Canonical-f5a623?style=flat-square)](.)
-[![Updated](https://img.shields.io/badge/güncelleme-Mart_2026-purple?style=flat-square)](.)
+[![Updated](https://img.shields.io/badge/güncelleme-Nisan_2026-purple?style=flat-square)](.)
 [![Solidity](https://img.shields.io/badge/Solidity-0.8.24-363636?style=flat-square&logo=solidity)](.)
 [![Docs](https://img.shields.io/badge/docs-Source_of_Truth-green?style=flat-square)](.)
 
