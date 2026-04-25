@@ -4,6 +4,8 @@ import SettlementPreviewModal from './SettlementPreviewModal';
 
 const ACTIVE_ROOM_STATES = ['LOCKED', 'PAID', 'CHALLENGED'];
 const TERMINAL_ROOM_STATES = ['RESOLVED', 'CANCELED', 'BURNED'];
+const MIN_CUSTOM_EXPIRY_MINUTES = 10;
+const MAX_CUSTOM_EXPIRY_MINUTES = 7 * 24 * 60;
 const SETTLEMENT_STATE_BY_INDEX = ['NONE', 'PROPOSED', 'REJECTED', 'WITHDRAWN', 'EXPIRED', 'FINALIZED'];
 export const SETTLEMENT_NEUTRALITY_COPY = {
   TR: 'Araf kimin haklı olduğuna karar vermez; iki tarafın imzasıyla kontrollü settlement sağlar.',
@@ -92,9 +94,14 @@ export default function SettlementProposalCard({
   const computedExpiryMinutes = expiryPreset === 'custom'
     ? Number(customMinutes)
     : (expiryPreset === '30m' ? 30 : expiryPreset === '2h' ? 120 : 24 * 60);
-  const computedExpiresAt = Math.floor(Date.now() / 1000) + Math.max(1, computedExpiryMinutes) * 60;
+  const computedExpiresAt = Math.floor(Date.now() / 1000) + (Number.isFinite(computedExpiryMinutes) ? computedExpiryMinutes : 0) * 60;
   const expiresAt = toUnixSeconds(proposal?.expiresAt ?? proposal?.expires_at ?? 0);
   const isExpired = expiresAt > 0 && nowTs >= expiresAt;
+  const isProposedState = proposalState === 'PROPOSED';
+  // [TR] Aksiyon butonları yalnız aktif trade durumlarında görünür.
+  // [EN] Action buttons must remain available only in actionable trade states.
+  const showActionableProposedControls = proposalIsRenderable && isProposedState && isActionableRoom;
+  const showTerminalProposedHistory = proposalIsRenderable && isProposedState && isTerminalRoom;
 
   React.useEffect(() => {
     if (!proposal || proposalState !== 'PROPOSED' || !expiresAt) return undefined;
@@ -107,8 +114,16 @@ export default function SettlementProposalCard({
       setValidationError(lang === 'TR' ? 'makerShareBps 0..10000 aralığında olmalı.' : 'makerShareBps must be in range 0..10000.');
       return false;
     }
-    if (!Number.isInteger(computedExpiryMinutes) || computedExpiryMinutes <= 0) {
+    if (!Number.isInteger(computedExpiryMinutes)) {
       setValidationError(lang === 'TR' ? 'Geçerli bir süre girin.' : 'Enter a valid expiry duration.');
+      return false;
+    }
+    if (computedExpiryMinutes < MIN_CUSTOM_EXPIRY_MINUTES || computedExpiryMinutes > MAX_CUSTOM_EXPIRY_MINUTES) {
+      setValidationError(
+        lang === 'TR'
+          ? 'Özel süre 10 dakika ile 7 gün arasında olmalı.'
+          : 'Custom expiry must be between 10 minutes and 7 days.'
+      );
       return false;
     }
     setValidationError('');
@@ -254,7 +269,8 @@ export default function SettlementProposalCard({
                 {lang === 'TR' ? 'Özel dakika' : 'Custom minutes'}
                 <input
                   type="number"
-                  min="1"
+                  min={String(MIN_CUSTOM_EXPIRY_MINUTES)}
+                  max={String(MAX_CUSTOM_EXPIRY_MINUTES)}
                   value={customMinutes}
                   onChange={(e) => setCustomMinutes(e.target.value)}
                   className="mt-1 w-full bg-[#111113] border border-[#2a2a2e] rounded-lg px-3 py-2 text-sm text-white"
@@ -298,47 +314,57 @@ export default function SettlementProposalCard({
               : (lang === 'TR' ? `Kalan süre: ${Math.max(0, expiresAt - nowTs)} sn` : `Time left: ${Math.max(0, expiresAt - nowTs)} sec`)}
           </p>
 
-          <div className="flex flex-wrap gap-2">
-            {!hasOnchainTradeId && (
-              <p className="text-xs text-amber-300">{missingOnchainIdMessage}</p>
-            )}
-            {!isExpired && isProposer && (
-              <button
-                onClick={() => runTx(() => withdrawSettlement(BigInt(onchainTradeId)), lang === 'TR' ? 'Settlement teklifi geri çekildi.' : 'Settlement proposal withdrawn.')}
-                disabled={isContractLoading || !hasOnchainTradeId}
-                className="px-3 py-2 text-sm rounded-lg border border-orange-500/40 text-orange-400 hover:bg-orange-500 hover:text-white transition disabled:opacity-50"
-              >
-                {lang === 'TR' ? 'Geri Çek' : 'Withdraw'}
-              </button>
-            )}
-            {!isExpired && isCounterparty && (
-              <>
+          {showTerminalProposedHistory && (
+            <p className="text-xs text-slate-500">
+              {lang === 'TR'
+                ? 'Bu işlem terminal duruma ulaştı. Bu settlement teklifi artık işleme alınamaz.'
+                : 'This trade already reached a terminal state. This settlement proposal can no longer be acted on.'}
+            </p>
+          )}
+
+          {showActionableProposedControls && (
+            <div className="flex flex-wrap gap-2">
+              {!hasOnchainTradeId && (
+                <p className="text-xs text-amber-300">{missingOnchainIdMessage}</p>
+              )}
+              {!isExpired && isProposer && (
                 <button
-                  onClick={onPreviewAccept}
-                  disabled={isContractLoading || !hasOnchainTradeId || !hasBackendTradeId}
-                  className="px-3 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 transition disabled:opacity-50"
-                >
-                  {lang === 'TR' ? 'Kabul Et (Önizleme)' : 'Accept (Preview)'}
-                </button>
-                <button
-                  onClick={() => runTx(() => rejectSettlement(BigInt(onchainTradeId)), lang === 'TR' ? 'Settlement teklifi reddedildi.' : 'Settlement proposal rejected.')}
+                  onClick={() => runTx(() => withdrawSettlement(BigInt(onchainTradeId)), lang === 'TR' ? 'Settlement teklifi geri çekildi.' : 'Settlement proposal withdrawn.')}
                   disabled={isContractLoading || !hasOnchainTradeId}
-                  className="px-3 py-2 text-sm rounded-lg border border-red-500/40 text-red-400 hover:bg-red-500 hover:text-white transition disabled:opacity-50"
+                  className="px-3 py-2 text-sm rounded-lg border border-orange-500/40 text-orange-400 hover:bg-orange-500 hover:text-white transition disabled:opacity-50"
                 >
-                  {lang === 'TR' ? 'Reddet' : 'Reject'}
+                  {lang === 'TR' ? 'Geri Çek' : 'Withdraw'}
                 </button>
-              </>
-            )}
-            {isExpired && isTradeParty && (
-              <button
-                onClick={() => runTx(() => expireSettlement(BigInt(onchainTradeId)), lang === 'TR' ? 'Settlement teklifi süresi doldu olarak işaretlendi.' : 'Settlement proposal marked expired.')}
-                disabled={isContractLoading || !hasOnchainTradeId}
-                className="px-3 py-2 text-sm rounded-lg border border-yellow-500/40 text-yellow-400 hover:bg-yellow-500 hover:text-black transition disabled:opacity-50"
-              >
-                {lang === 'TR' ? 'Süresi Doldu Olarak İşaretle' : 'Mark as Expired'}
-              </button>
-            )}
-          </div>
+              )}
+              {!isExpired && isCounterparty && (
+                <>
+                  <button
+                    onClick={onPreviewAccept}
+                    disabled={isContractLoading || !hasOnchainTradeId || !hasBackendTradeId}
+                    className="px-3 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 transition disabled:opacity-50"
+                  >
+                    {lang === 'TR' ? 'Kabul Et (Önizleme)' : 'Accept (Preview)'}
+                  </button>
+                  <button
+                    onClick={() => runTx(() => rejectSettlement(BigInt(onchainTradeId)), lang === 'TR' ? 'Settlement teklifi reddedildi.' : 'Settlement proposal rejected.')}
+                    disabled={isContractLoading || !hasOnchainTradeId}
+                    className="px-3 py-2 text-sm rounded-lg border border-red-500/40 text-red-400 hover:bg-red-500 hover:text-white transition disabled:opacity-50"
+                  >
+                    {lang === 'TR' ? 'Reddet' : 'Reject'}
+                  </button>
+                </>
+              )}
+              {isExpired && isTradeParty && (
+                <button
+                  onClick={() => runTx(() => expireSettlement(BigInt(onchainTradeId)), lang === 'TR' ? 'Settlement teklifi süresi doldu olarak işaretlendi.' : 'Settlement proposal marked expired.')}
+                  disabled={isContractLoading || !hasOnchainTradeId}
+                  className="px-3 py-2 text-sm rounded-lg border border-yellow-500/40 text-yellow-400 hover:bg-yellow-500 hover:text-black transition disabled:opacity-50"
+                >
+                  {lang === 'TR' ? 'Süresi Doldu Olarak İşaretle' : 'Mark as Expired'}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 
