@@ -1,10 +1,47 @@
 import React from 'react';
 
-const shortNum = (value) => {
-  const num = Number(value ?? 0);
-  if (!Number.isFinite(num)) return '0';
-  return num.toLocaleString('en-US', { maximumFractionDigits: 6 });
-};
+function normalizeRawBigInt(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || !Number.isInteger(value)) return null;
+    return BigInt(value);
+  }
+  if (typeof value === 'string') {
+    if (!/^-?\d+$/.test(value.trim())) return null;
+    try {
+      return BigInt(value.trim());
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+export function shortNum(value) {
+  const asBigInt = normalizeRawBigInt(value);
+  if (asBigInt === null) {
+    const num = Number(value ?? 0);
+    if (!Number.isFinite(num)) return String(value ?? '0');
+    return num.toLocaleString('en-US', { maximumFractionDigits: 6 });
+  }
+  const abs = asBigInt < 0n ? -asBigInt : asBigInt;
+  const raw = abs.toString();
+  const grouped = raw.length > 3 ? raw.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : raw;
+  return `${asBigInt < 0n ? '-' : ''}${grouped}`;
+}
+
+export function getPreviewTotalPool(previewData) {
+  // [TR] Backend canonical alanı `pool`; legacy aliaslar geri uyumluluk için korunur.
+  // [EN] Backend canonical field is `pool`; legacy aliases are fallback-only for compatibility.
+  return previewData?.pool ?? previewData?.totalPool ?? previewData?.total_pool ?? 0;
+}
+
+function renderRawAmount(value) {
+  const asBigInt = normalizeRawBigInt(value);
+  if (asBigInt !== null) return shortNum(asBigInt);
+  return String(value ?? '0');
+}
 
 export default function SettlementPreviewModal({
   isOpen,
@@ -23,7 +60,7 @@ export default function SettlementPreviewModal({
 
   const makerPayout = previewData?.makerPayout ?? previewData?.maker_payout ?? 0;
   const takerPayout = previewData?.takerPayout ?? previewData?.taker_payout ?? 0;
-  const totalPool = previewData?.totalPool ?? previewData?.total_pool ?? 0;
+  const totalPool = getPreviewTotalPool(previewData);
 
   return (
     <div className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
@@ -38,9 +75,9 @@ export default function SettlementPreviewModal({
         </p>
 
         <div className="bg-[#0c0c0e] border border-[#222] rounded-xl p-4 space-y-2 text-sm">
-          <div className="flex justify-between"><span className="text-slate-400">{lang === 'TR' ? 'Maker alır' : 'Maker receives'}</span><span className="text-white font-bold">{shortNum(makerPayout)}</span></div>
-          <div className="flex justify-between"><span className="text-slate-400">{lang === 'TR' ? 'Taker alır' : 'Taker receives'}</span><span className="text-white font-bold">{shortNum(takerPayout)}</span></div>
-          <div className="flex justify-between"><span className="text-slate-400">{lang === 'TR' ? 'Toplam pool' : 'Total pool'}</span><span className="text-white font-bold">{shortNum(totalPool)}</span></div>
+          <div className="flex justify-between"><span className="text-slate-400">{lang === 'TR' ? 'Maker alır' : 'Maker receives'}</span><span className="text-white font-bold">{renderRawAmount(makerPayout)}</span></div>
+          <div className="flex justify-between"><span className="text-slate-400">{lang === 'TR' ? 'Taker alır' : 'Taker receives'}</span><span className="text-white font-bold">{renderRawAmount(takerPayout)}</span></div>
+          <div className="flex justify-between"><span className="text-slate-400">{lang === 'TR' ? 'Toplam pool' : 'Total pool'}</span><span className="text-white font-bold">{renderRawAmount(totalPool)}</span></div>
           <div className="flex justify-between"><span className="text-slate-400">makerShareBps</span><span className="text-emerald-400 font-mono">{makerShareBps}</span></div>
           <div className="flex justify-between"><span className="text-slate-400">takerShareBps</span><span className="text-emerald-400 font-mono">{takerShareBps}</span></div>
         </div>

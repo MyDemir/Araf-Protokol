@@ -28,10 +28,31 @@ const rawTokenToDisplayNumber = (rawAmount, decimals = DEFAULT_TOKEN_DECIMALS) =
 
 export function mapSettlementProposalFromApi(settlementProposal) {
   if (!settlementProposal || typeof settlementProposal !== 'object') return null;
+  if (Object.keys(settlementProposal).length === 0) return null;
+
+  // [TR] Fail-closed: state/id yoksa proposal authoritative kabul edilmez.
+  // [EN] Fail-closed: without state/id we do not treat payload as an actionable proposal.
+  const state = settlementProposal.state || null;
+  if (!state || state === 'NONE') return null;
+
+  const id = settlementProposal.id ?? settlementProposal.proposal_id ?? null;
+  if (id === null || id === undefined || id === '') return null;
+
+  const proposer = settlementProposal.proposer || settlementProposal.proposed_by || null;
+
   return {
     ...settlementProposal,
-    state: settlementProposal.state || null,
-    proposer: settlementProposal.proposer || null,
+    id,
+    proposalId: id,
+    state,
+    proposer,
+    makerShareBps: settlementProposal.makerShareBps ?? settlementProposal.maker_share_bps ?? null,
+    takerShareBps: settlementProposal.takerShareBps ?? settlementProposal.taker_share_bps ?? null,
+    expiresAt: settlementProposal.expiresAt ?? settlementProposal.expires_at ?? null,
+    finalizedAt: settlementProposal.finalizedAt ?? settlementProposal.finalized_at ?? null,
+    makerPayout: settlementProposal.makerPayout ?? settlementProposal.maker_payout ?? null,
+    takerPayout: settlementProposal.takerPayout ?? settlementProposal.taker_payout ?? null,
+    txHash: settlementProposal.txHash ?? settlementProposal.tx_hash ?? null,
   };
 }
 
@@ -42,10 +63,12 @@ export function buildSettlementQuickCounts(activeEscrows = [], connectedAddress 
     if (!proposal || proposal.state !== 'PROPOSED') return acc;
 
     acc.PROPOSED += 1;
+    // [TR] quick-count action lane sadece normalize proposer varsa hesaplanır.
+    // [EN] action-required lane is counted only when normalized proposer exists.
     const proposer = proposal.proposer?.toLowerCase?.() || null;
     if (viewer && proposer && proposer === viewer) {
       acc.WAITING += 1;
-    } else {
+    } else if (viewer && proposer && proposer !== viewer) {
       acc.ACTION_REQUIRED += 1;
     }
     return acc;

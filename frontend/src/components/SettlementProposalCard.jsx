@@ -17,10 +17,23 @@ export function normalizeSettlementState(rawState) {
   return 'NONE';
 }
 
+export function toUnixSeconds(value) {
+  // [TR] Backend hem unix hem ISO tarih dönebildiği için tek normalize kapısı.
+  // [EN] Single normalization gate because backend payload may provide unix or ISO time values.
+  if (!value) return 0;
+  if (typeof value === 'bigint') return Number(value);
+  if (typeof value === 'number') return value > 1e12 ? Math.floor(value / 1000) : Math.floor(value);
+  const asNumber = Number(value);
+  if (Number.isFinite(asNumber)) return asNumber > 1e12 ? Math.floor(asNumber / 1000) : Math.floor(asNumber);
+  const asDateMs = new Date(value).getTime();
+  return Number.isFinite(asDateMs) ? Math.floor(asDateMs / 1000) : 0;
+}
+
 const shortHash = (hash) => (hash && hash.length > 12 ? `${hash.slice(0, 8)}...${hash.slice(-4)}` : hash || '—');
-const safeDate = (v) => {
-  if (!v) return '—';
-  const d = new Date(Number(v) * 1000);
+export const safeDate = (v) => {
+  const ts = toUnixSeconds(v);
+  if (!ts) return '—';
+  const d = new Date(ts * 1000);
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
 };
 
@@ -53,6 +66,7 @@ export default function SettlementProposalCard({
 
   const proposal = activeTrade?.settlementProposal || null;
   const proposalState = normalizeSettlementState(proposal?.state);
+  const proposalIsRenderable = proposal && !['NONE', 'UNKNOWN', null].includes(proposalState);
   const roomState = activeTrade?.state || 'LOCKED';
   const isActionableRoom = ACTIVE_ROOM_STATES.includes(roomState);
   const isTerminalRoom = TERMINAL_ROOM_STATES.includes(roomState);
@@ -61,7 +75,7 @@ export default function SettlementProposalCard({
   const takerAddress = activeTrade?.takerFull?.toLowerCase?.() || null;
   const userAddress = address?.toLowerCase?.() || null;
   const userIsMaker = userRole === 'maker' || (userAddress && makerAddress === userAddress);
-  const proposer = proposal?.proposer?.toLowerCase?.() || null;
+  const proposer = (proposal?.proposer ?? proposal?.proposed_by)?.toLowerCase?.() || null;
   const isProposer = userAddress && proposer && userAddress === proposer;
   const isCounterparty = Boolean(userAddress && proposer && userAddress !== proposer);
 
@@ -71,7 +85,7 @@ export default function SettlementProposalCard({
     ? Number(customMinutes)
     : (expiryPreset === '30m' ? 30 : expiryPreset === '2h' ? 120 : 24 * 60);
   const computedExpiresAt = Math.floor(Date.now() / 1000) + Math.max(1, computedExpiryMinutes) * 60;
-  const expiresAt = Number(proposal?.expiresAt ?? proposal?.expires_at ?? 0);
+  const expiresAt = toUnixSeconds(proposal?.expiresAt ?? proposal?.expires_at ?? 0);
   const isExpired = expiresAt > 0 && nowTs >= expiresAt;
 
   React.useEffect(() => {
@@ -176,11 +190,11 @@ export default function SettlementProposalCard({
         <p className="text-xs text-slate-500">{lang === 'TR' ? 'Settlement bu işlem durumunda aktif değil.' : 'Settlement is not active in this trade state.'}</p>
       )}
 
-      {isTerminalRoom && !proposal && (
+      {isTerminalRoom && !proposalIsRenderable && (
         <p className="text-xs text-slate-500">{lang === 'TR' ? 'İşlem sonlandı. Settlement yalnız geçmiş bilgi olarak gösterilir.' : 'Trade is terminal. Settlement is shown only as history.'}</p>
       )}
 
-      {isActionableRoom && !proposal && (
+      {isActionableRoom && !proposalIsRenderable && (
         <div className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <label className="text-xs text-slate-300">
@@ -255,10 +269,10 @@ export default function SettlementProposalCard({
         </div>
       )}
 
-      {proposal && proposalState === 'PROPOSED' && (
+      {proposalIsRenderable && proposalState === 'PROPOSED' && (
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-2 text-xs">
-            <p className="text-slate-400">{lang === 'TR' ? 'Proposer' : 'Proposer'}: <span className="text-white font-mono">{proposal?.proposer || '—'}</span></p>
+            <p className="text-slate-400">{lang === 'TR' ? 'Proposer' : 'Proposer'}: <span className="text-white font-mono">{proposal?.proposer ?? proposal?.proposed_by ?? '—'}</span></p>
             <p className="text-slate-400">makerShareBps: <span className="text-white font-mono">{proposal?.makerShareBps ?? proposal?.maker_share_bps ?? '—'}</span></p>
             <p className="text-slate-400">takerShareBps: <span className="text-white font-mono">{proposal?.takerShareBps ?? proposal?.taker_share_bps ?? '—'}</span></p>
             <p className="text-slate-400">{lang === 'TR' ? 'Sona erme' : 'Expires'}: <span className="text-white font-mono">{safeDate(expiresAt)}</span></p>
@@ -310,7 +324,7 @@ export default function SettlementProposalCard({
         </div>
       )}
 
-      {proposal && proposalState === 'FINALIZED' && (
+      {proposalIsRenderable && proposalState === 'FINALIZED' && (
         <div className="space-y-2 text-xs">
           <p className="text-emerald-400 font-bold">{lang === 'TR' ? 'Settlement Finalized' : 'Settlement Finalized'}</p>
           <p className="text-slate-300">{lang === 'TR' ? 'Maker payout' : 'Maker payout'}: <span className="font-mono">{proposal?.makerPayout ?? proposal?.maker_payout ?? '—'}</span></p>
@@ -320,7 +334,7 @@ export default function SettlementProposalCard({
         </div>
       )}
 
-      {proposal && !['PROPOSED', 'FINALIZED'].includes(proposalState) && (
+      {proposalIsRenderable && !['PROPOSED', 'FINALIZED'].includes(proposalState) && (
         <p className="text-xs text-slate-400">
           {lang === 'TR'
             ? `Settlement geçmiş durumu: ${proposalState}`
