@@ -162,6 +162,10 @@ const HEALTH_REASON_COPY = {
     TR: 'Maker ban mirror sinyali lock bağlamında aktif görünüyor.',
     EN: 'Maker ban mirror signal appears active in lock context.',
   },
+  counterparty_high_partial_settlement_ratio: {
+    TR: 'Karşı taraf geçmişinde uzlaşmalı kapanış oranı yüksek (ceza değil, davranış sinyali).',
+    EN: 'Counterparty has a high agreed-settlement ratio (behavioral signal, not a penalty).',
+  },
 };
 
 export const mapOffchainHealthToUi = ({ signal, lang = 'TR' }) => {
@@ -176,6 +180,7 @@ export const mapOffchainHealthToUi = ({ signal, lang = 'TR' }) => {
     if (reason === 'maker_profile_changed_after_lock') return acc + 1;
     if (reason === 'maker_frequent_recent_bank_changes_at_lock') return acc + 1;
     if (reason === 'partial_or_incomplete_snapshot') return acc + 1;
+    if (reason === 'counterparty_high_partial_settlement_ratio') return acc;
     return acc;
   }, 0);
 

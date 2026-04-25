@@ -22,6 +22,7 @@ describe('useArafContract V3 reputation normalization', () => {
       burnCount: 8n,
       disputeWinCount: 9n,
       disputeLossCount: 1n,
+      partialSettlementCount: 12n,
       riskPoints: 44n,
       lastPositiveEventAt: 100n,
       lastNegativeEventAt: 90n,
@@ -29,6 +30,7 @@ describe('useArafContract V3 reputation normalization', () => {
 
     expect(normalized?.riskPoints).toBe(44n);
     expect(normalized?.disputedResolvedCount).toBe(7n);
+    expect(normalized?.partialSettlementCount).toBe(12n);
   });
 
   it('returns null for stale/malformed V3 shapes with missing fields', () => {

@@ -189,6 +189,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint32 burnCount;
         uint32 disputeWinCount;
         uint32 disputeLossCount;
+        uint32 partialSettlementCount;
         uint32 riskPoints;
         uint64 lastPositiveEventAt;
         uint64 lastNegativeEventAt;
@@ -217,7 +218,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         MUTUAL_CANCEL,
         DISPUTED_RESOLUTION_WIN,
         DISPUTED_RESOLUTION_LOSS,
-        BURNED
+        BURNED,
+        PARTIAL_SETTLEMENT
     }
 
     // [TR] Token bazlı yön kontrolü — owner tarafından yönetilir.
@@ -370,6 +372,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint256 burnCount,
         uint256 disputeWinCount,
         uint256 disputeLossCount,
+        uint256 partialSettlementCount,
         uint256 riskPoints,
         uint256 lastPositiveEventAt,
         uint256 lastNegativeEventAt
@@ -1276,8 +1279,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (makerPayout > 0) IERC20(t.tokenAddress).safeTransfer(t.maker, makerPayout);
         if (takerPayout > 0) IERC20(t.tokenAddress).safeTransfer(t.taker, takerPayout);
 
-        // TODO(Faz-2 reputation extension): partialSettlementCount gibi additive sayaçlar
-        //      ayrı bir prompt/PR'da güvenli şekilde eklenecek.
+        _recordPartialSettlement(t.maker, t.taker);
 
         emit SettlementFinalized(_tradeId, sp.id, makerPayout, takerPayout, takerFee, makerFee);
     }
@@ -1516,6 +1518,20 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         _emitReputationUpdated(_taker, takerRep);
     }
 
+    function _recordPartialSettlement(address _maker, address _taker) internal {
+        Reputation storage makerRep = reputation[_maker];
+        Reputation storage takerRep = reputation[_taker];
+        makerRep.successfulTrades++;
+        takerRep.successfulTrades++;
+        makerRep.partialSettlementCount++;
+        takerRep.partialSettlementCount++;
+
+        // [TR] Partial settlement ceza semantiği taşımaz; risk/failure artışı üretmez.
+        // [EN] Partial settlement is non-penal; it never increments risk/failure paths.
+        _emitReputationUpdated(_maker, makerRep);
+        _emitReputationUpdated(_taker, takerRep);
+    }
+
     function _applyPositiveSignal(address _wallet, Reputation storage rep, uint32 rewardPts) internal {
         uint64 nowTs = uint64(block.timestamp);
         rep.lastPositiveEventAt = nowTs;
@@ -1580,6 +1596,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             rep.burnCount,
             rep.disputeWinCount,
             rep.disputeLossCount,
+            rep.partialSettlementCount,
             rep.riskPoints,
             rep.lastPositiveEventAt,
             rep.lastNegativeEventAt
@@ -1702,6 +1719,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             uint256 burnCount,
             uint256 disputeWinCount,
             uint256 disputeLossCount,
+            uint256 partialSettlementCount,
             uint256 riskPoints,
             uint256 lastPositiveEventAt,
             uint256 lastNegativeEventAt
@@ -1721,6 +1739,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             rep.burnCount,
             rep.disputeWinCount,
             rep.disputeLossCount,
+            rep.partialSettlementCount,
             rep.riskPoints,
             rep.lastPositiveEventAt,
             rep.lastNegativeEventAt

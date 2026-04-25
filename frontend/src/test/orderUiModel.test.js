@@ -137,6 +137,21 @@ describe('orderUiModel mapping', () => {
     expect(ui.reasonLabels.length).toBe(2);
   });
 
+  it('treats high partial settlement ratio as non-penal informational reason', () => {
+    const ui = mapOffchainHealthToUi({
+      lang: 'EN',
+      signal: {
+        readOnly: true,
+        nonBlocking: true,
+        canBlockProtocolActions: false,
+        explainableReasons: ['counterparty_high_partial_settlement_ratio'],
+      },
+    });
+
+    expect(ui.severityBand).toBe('GREEN');
+    expect(ui.reasonLabels[0]).toMatch(/not a penalty/i);
+  });
+
   it('maps compact trust summary for market hover without detailed reasons', () => {
     const ui = mapApiOrderToUi({
       order: {

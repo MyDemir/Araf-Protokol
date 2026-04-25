@@ -20,6 +20,7 @@ describe('useAppSessionData V3 reputation mapping', () => {
       burnCount: 8n,
       disputeWinCount: 9n,
       disputeLossCount: 10n,
+      partialSettlementCount: 5n,
       riskPoints: 77n,
       lastPositiveEventAt: 123n,
       lastNegativeEventAt: 122n,
@@ -32,6 +33,7 @@ describe('useAppSessionData V3 reputation mapping', () => {
       authorityCounters: {
         manualReleaseCount: 4,
         disputedResolvedCount: 7,
+        partialSettlementCount: 5,
         riskPoints: 77,
       },
     });

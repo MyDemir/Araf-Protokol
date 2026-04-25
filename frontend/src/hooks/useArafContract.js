@@ -45,7 +45,7 @@ const ArafEscrowABI = parseAbi([
   'function decayReputation(address _wallet)',
 
   // View Fonksiyonları (App.jsx'te kullanılanlar) 
-  'function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier, uint256 manualReleaseCount, uint256 autoReleaseCount, uint256 mutualCancelCount, uint256 disputedResolvedCount, uint256 burnCount, uint256 disputeWinCount, uint256 disputeLossCount, uint256 riskPoints, uint256 lastPositiveEventAt, uint256 lastNegativeEventAt)',
+  'function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier, uint256 manualReleaseCount, uint256 autoReleaseCount, uint256 mutualCancelCount, uint256 disputedResolvedCount, uint256 burnCount, uint256 disputeWinCount, uint256 disputeLossCount, uint256 partialSettlementCount, uint256 riskPoints, uint256 lastPositiveEventAt, uint256 lastNegativeEventAt)',
   'function antiSybilCheck(address _wallet) view returns (bool aged, bool funded, bool cooldownOk)',
   'function getCooldownRemaining(address _wallet) view returns (uint256)',
   'function walletRegisteredAt(address _wallet) view returns (uint256)',
@@ -94,6 +94,7 @@ const REPUTATION_V3_KEYS = [
   'burnCount',
   'disputeWinCount',
   'disputeLossCount',
+  'partialSettlementCount',
   'riskPoints',
   'lastPositiveEventAt',
   'lastNegativeEventAt',

@@ -537,6 +537,7 @@ export const buildAppModals = (ctx) => {
                   <div className="text-center text-slate-500 animate-pulse">{lang === 'TR' ? 'İtibar verisi yükleniyor...' : 'Loading reputation data...'}</div>
                 ) : (() => {
                   const { successful, failed, effectiveTier, bannedUntil, consecutiveBans, firstSuccessfulTradeAt } = userReputation;
+                  const partialSettlementCount = Number(userReputation?.authorityCounters?.partialSettlementCount ?? 0);
                   const totalTrades = successful + failed;
                   const successRate = totalTrades > 0 ? Math.round((successful / totalTrades) * 100) : 100;
                   const TIER_REQUIREMENTS = {
@@ -593,6 +594,13 @@ export const buildAppModals = (ctx) => {
                         <div className="bg-[#151518] p-3 rounded-xl border border-[#2a2a2e] text-center">
                           <p className="text-slate-500 text-[10px] font-bold tracking-widest">{lang === 'TR' ? 'ARDIŞIK YASAK' : 'CONSEC. BANS'}</p>
                           <p className="text-2xl font-bold text-white mt-1">{consecutiveBans}</p>
+                        </div>
+                        <div className="bg-[#151518] p-3 rounded-xl border border-[#2a2a2e] text-center col-span-2">
+                          <p className="text-slate-500 text-[10px] font-bold tracking-widest">{lang === 'TR' ? 'UZLAŞMALI KAPANIŞ' : 'AGREED SETTLEMENT'}</p>
+                          <p className="text-2xl font-bold text-cyan-300 mt-1">{partialSettlementCount}</p>
+                          <p className="text-[10px] text-slate-500 mt-1">
+                            {lang === 'TR' ? 'Risk cezası değil, uzlaşmalı kapanış geçmişi göstergesidir.' : 'This is an event-history marker, not a risk penalty.'}
+                          </p>
                         </div>
                       </div>
                       {firstSuccessfulTradeAt > 0 && new Date().getTime() / 1000 < firstSuccessfulTradeAt + 15 * 24 * 3600 && (
@@ -819,7 +827,12 @@ export const buildAppModals = (ctx) => {
                   <div className="text-center text-slate-500 animate-pulse">{lang === 'TR' ? 'Geçmiş yükleniyor...' : 'Loading history...'}</div>
                 ) : tradeHistory.length > 0 ? (
                   tradeHistory.map(tx => {
-                    const statusMap = { RESOLVED: { text: lang === 'TR' ? 'Tamamlandı' : 'Resolved', color: 'emerald' }, CANCELED: { text: lang === 'TR' ? 'İptal Edildi' : 'Canceled', color: 'slate' }, BURNED: { text: lang === 'TR' ? 'Yakıldı' : 'Burned', color: 'red' } };
+                    const isPartialSettlement = tx.status === 'RESOLVED' && tx?.settlement_proposal?.state === 'FINALIZED';
+                    const statusMap = {
+                      RESOLVED: { text: isPartialSettlement ? (lang === 'TR' ? 'Uzlaşmalı Kapanış' : 'Partial settlement') : (lang === 'TR' ? 'Tamamlandı' : 'Resolved'), color: isPartialSettlement ? 'cyan' : 'emerald' },
+                      CANCELED: { text: lang === 'TR' ? 'İptal Edildi' : 'Canceled', color: 'slate' },
+                      BURNED: { text: lang === 'TR' ? 'Yakıldı' : 'Burned', color: 'red' },
+                    };
                     const displayStatus = statusMap[tx.status] || { text: tx.status, color: 'slate' };
                     const isMaker = tx.maker_address === address?.toLowerCase();
                     const historyAsset = tx.financials?.crypto_asset || 'USDT';

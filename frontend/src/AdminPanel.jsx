@@ -742,6 +742,7 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
                                     <div><span className="text-slate-500">auto_release_count:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_authority_counters?.auto_release_count ?? '—'}</span></div>
                                     <div><span className="text-slate-500">mutual_cancel_count:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_authority_counters?.mutual_cancel_count ?? '—'}</span></div>
                                     <div><span className="text-slate-500">disputed_resolved_count:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_authority_counters?.disputed_resolved_count ?? '—'}</span></div>
+                                    <div><span className="text-slate-500">partial_settlement_count:</span> <span className="text-white">{row?.offchain_health_score_input?.maker?.reputationBanMirrorContext?.reputation_authority_counters?.partial_settlement_count ?? '—'}</span></div>
                                   </div>
                                 </div>
                               </div>

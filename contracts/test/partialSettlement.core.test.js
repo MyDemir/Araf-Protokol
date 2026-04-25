@@ -112,6 +112,31 @@ describe("ArafEscrow partial settlement core", () => {
     expect((await escrow.getSettlementProposal(tradeId)).state).to.equal(5); // FINALIZED
   });
 
+  it("security_partial_settlement_increments_agreed_counter_without_failure_or_risk_penalty", async () => {
+    const { escrow, mockUSDT, maker, taker } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeId = await openLockedTrade({ escrow, maker, taker, token, label: "partial-reputation" });
+    const now = await time.latest();
+
+    const makerRepBefore = await escrow.getReputation(maker.address);
+    const takerRepBefore = await escrow.getReputation(taker.address);
+
+    await escrow.connect(maker).proposeSettlement(tradeId, 7000, now + 3600);
+    await escrow.connect(taker).acceptSettlement(tradeId);
+
+    const makerRepAfter = await escrow.getReputation(maker.address);
+    const takerRepAfter = await escrow.getReputation(taker.address);
+
+    expect(makerRepAfter.successful).to.equal(makerRepBefore.successful + 1n);
+    expect(takerRepAfter.successful).to.equal(takerRepBefore.successful + 1n);
+    expect(makerRepAfter.partialSettlementCount).to.equal(makerRepBefore.partialSettlementCount + 1n);
+    expect(takerRepAfter.partialSettlementCount).to.equal(takerRepBefore.partialSettlementCount + 1n);
+    expect(makerRepAfter.failed).to.equal(makerRepBefore.failed);
+    expect(takerRepAfter.failed).to.equal(takerRepBefore.failed);
+    expect(makerRepAfter.riskPoints).to.equal(makerRepBefore.riskPoints);
+    expect(takerRepAfter.riskPoints).to.equal(takerRepBefore.riskPoints);
+  });
+
   it("taker proposal accepted by maker finalizes with deterministic rounding", async () => {
     const { escrow, mockUSDT, maker, taker } = await loadFixture(deployFixture);
     const token = await mockUSDT.getAddress();

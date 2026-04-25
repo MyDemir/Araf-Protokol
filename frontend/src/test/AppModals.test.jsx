@@ -213,6 +213,13 @@ describe('AppModals side-aware behaviors', () => {
     expect(source).toContain('decayReputation,');
   });
 
+  it('renders agreed settlement copy as event history (non-penal reputation semantics)', async () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/app/AppModals.jsx'), 'utf8');
+    expect(source).toContain('AGREED SETTLEMENT');
+    expect(source).toContain('event-history marker, not a risk penalty');
+    expect(source).toContain('Partial settlement');
+  });
+
   it('renders Trust Visibility Layer in profile reputation tab with non-authoritative semantics', () => {
     const modals = buildAppModals(makeCtx({
       showMakerModal: false,

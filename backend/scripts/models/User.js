@@ -113,6 +113,7 @@ const userSchema = new mongoose.Schema(
       disputed_resolved_count: { type: Number, default: 0, min: 0 },
       dispute_win_count: { type: Number, default: 0, min: 0 },
       dispute_loss_count: { type: Number, default: 0, min: 0 },
+      partial_settlement_count: { type: Number, default: 0, min: 0 },
       risk_points: { type: Number, default: 0, min: 0 },
       last_positive_event_at: { type: Date, default: null },
       last_negative_event_at: { type: Date, default: null },

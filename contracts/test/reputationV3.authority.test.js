@@ -111,7 +111,7 @@ describe("ArafEscrow V3 reputation authority", () => {
     await time.increase(REF_1D + 1);
     await escrow.connect(taker).autoRelease(fill2Args.tradeId);
 
-    const [, makerFailed, , , , makerManual, makerAuto, , , , , , makerRisk] =
+    const [, makerFailed, , , , makerManual, makerAuto, , , , , , , makerRisk] =
       await escrow.getReputation(maker.address);
     const [takerSuccessful, takerFailed, , , , takerManual, takerAuto] =
       await escrow.getReputation(taker.address);
@@ -275,7 +275,7 @@ describe("ArafEscrow V3 reputation authority", () => {
     ).to.emit(escrow, "ReputationPolicyUpdated");
 
     const rep = await escrow.getReputation(maker.address);
-    expect(rep.length).to.equal(15);
+    expect(rep.length).to.equal(16);
   });
 
   it("test_setCooldownConfig_accepts_maximum", async () => {

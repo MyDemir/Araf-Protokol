@@ -72,6 +72,7 @@ export function mapReputationToSessionView(repData, firstTradeAt = 0n) {
       burnCount: Number(repData.burnCount ?? 0n),
       disputeWinCount: Number(repData.disputeWinCount ?? 0n),
       disputeLossCount: Number(repData.disputeLossCount ?? 0n),
+      partialSettlementCount: Number(repData.partialSettlementCount ?? 0n),
       riskPoints: Number(repData.riskPoints ?? 0n),
       lastPositiveEventAt: Number(repData.lastPositiveEventAt ?? 0n),
       lastNegativeEventAt: Number(repData.lastNegativeEventAt ?? 0n),
