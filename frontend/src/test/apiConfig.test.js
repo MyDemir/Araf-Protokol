@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildApiUrl, resolveApiBaseUrl, resolveClientErrorLogUrl } from '../app/apiConfig';
+import {
+  buildApiUrl,
+  resolveApiBaseUrl,
+  resolveClientErrorLogUrl,
+  buildSettlementPreviewUrl,
+} from '../app/apiConfig';
 
 describe('apiConfig client-error endpoint resolution', () => {
   it('uses same-origin /api in production when VITE_API_URL is empty', () => {
@@ -25,5 +30,10 @@ describe('apiConfig client-error endpoint resolution', () => {
     const env = { PROD: false, VITE_API_URL: 'https://api.example.com' };
     expect(resolveApiBaseUrl(env)).toBe('https://api.example.com/api');
     expect(buildApiUrl('/orders', env)).toBe('https://api.example.com/api/orders');
+  });
+
+  it('builds settlement preview endpoint under canonical API base', () => {
+    const env = { PROD: true, VITE_API_URL: '' };
+    expect(buildSettlementPreviewUrl('trade-123', env)).toBe('/api/trades/trade-123/settlement-proposal/preview');
   });
 });

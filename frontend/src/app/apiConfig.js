@@ -63,3 +63,10 @@ export const buildApiUrl = (path = '', env = import.meta.env) => {
  * [EN] Builds client error log endpoint from a single canonical resolver.
  */
 export const resolveClientErrorLogUrl = (env = import.meta.env) => buildApiUrl('logs/client-error', env);
+
+/**
+ * [TR] Settlement preview endpoint URL'ini üretir.
+ * [EN] Builds settlement preview endpoint URL.
+ */
+export const buildSettlementPreviewUrl = (tradeId, env = import.meta.env) =>
+  buildApiUrl(`trades/${encodeURIComponent(String(tradeId || ''))}/settlement-proposal/preview`, env);

@@ -1,0 +1,346 @@
+import React from 'react';
+import { buildSettlementPreviewUrl } from '../app/apiConfig';
+import SettlementPreviewModal from './SettlementPreviewModal';
+
+const ACTIVE_ROOM_STATES = ['LOCKED', 'PAID', 'CHALLENGED'];
+const TERMINAL_ROOM_STATES = ['RESOLVED', 'CANCELED', 'BURNED'];
+const SETTLEMENT_STATE_BY_INDEX = ['NONE', 'PROPOSED', 'REJECTED', 'WITHDRAWN', 'EXPIRED', 'FINALIZED'];
+
+export function normalizeSettlementState(rawState) {
+  if (typeof rawState === 'number') return SETTLEMENT_STATE_BY_INDEX[rawState] || 'UNKNOWN';
+  if (typeof rawState === 'bigint') return SETTLEMENT_STATE_BY_INDEX[Number(rawState)] || 'UNKNOWN';
+  if (typeof rawState === 'string') return rawState.toUpperCase();
+  return 'NONE';
+}
+
+const shortHash = (hash) => (hash && hash.length > 12 ? `${hash.slice(0, 8)}...${hash.slice(-4)}` : hash || '—');
+const safeDate = (v) => {
+  if (!v) return '—';
+  const d = new Date(Number(v) * 1000);
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+};
+
+export default function SettlementProposalCard({
+  activeTrade,
+  userRole,
+  address,
+  lang,
+  authenticatedFetch,
+  proposeSettlement,
+  acceptSettlement,
+  rejectSettlement,
+  withdrawSettlement,
+  expireSettlement,
+  fetchMyTrades,
+  showToast,
+  isContractLoading,
+  setIsContractLoading,
+}) {
+  const [makerShareBps, setMakerShareBps] = React.useState(5000);
+  const [expiryPreset, setExpiryPreset] = React.useState('2h');
+  const [customMinutes, setCustomMinutes] = React.useState('120');
+  const [validationError, setValidationError] = React.useState('');
+  const [previewOpen, setPreviewOpen] = React.useState(false);
+  const [previewLoading, setPreviewLoading] = React.useState(false);
+  const [previewError, setPreviewError] = React.useState('');
+  const [previewData, setPreviewData] = React.useState(null);
+  const [previewMode, setPreviewMode] = React.useState('create');
+  const [nowTs, setNowTs] = React.useState(Math.floor(Date.now() / 1000));
+
+  const proposal = activeTrade?.settlementProposal || null;
+  const proposalState = normalizeSettlementState(proposal?.state);
+  const roomState = activeTrade?.state || 'LOCKED';
+  const isActionableRoom = ACTIVE_ROOM_STATES.includes(roomState);
+  const isTerminalRoom = TERMINAL_ROOM_STATES.includes(roomState);
+
+  const makerAddress = activeTrade?.makerFull?.toLowerCase?.() || null;
+  const takerAddress = activeTrade?.takerFull?.toLowerCase?.() || null;
+  const userAddress = address?.toLowerCase?.() || null;
+  const userIsMaker = userRole === 'maker' || (userAddress && makerAddress === userAddress);
+  const proposer = proposal?.proposer?.toLowerCase?.() || null;
+  const isProposer = userAddress && proposer && userAddress === proposer;
+  const isCounterparty = Boolean(userAddress && proposer && userAddress !== proposer);
+
+  const normalizedMakerShareBps = Number(makerShareBps);
+  const normalizedTakerShareBps = 10000 - normalizedMakerShareBps;
+  const computedExpiryMinutes = expiryPreset === 'custom'
+    ? Number(customMinutes)
+    : (expiryPreset === '30m' ? 30 : expiryPreset === '2h' ? 120 : 24 * 60);
+  const computedExpiresAt = Math.floor(Date.now() / 1000) + Math.max(1, computedExpiryMinutes) * 60;
+  const expiresAt = Number(proposal?.expiresAt ?? proposal?.expires_at ?? 0);
+  const isExpired = expiresAt > 0 && nowTs >= expiresAt;
+
+  React.useEffect(() => {
+    if (!proposal || proposalState !== 'PROPOSED' || !expiresAt) return undefined;
+    const timer = setInterval(() => setNowTs(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [proposal, proposalState, expiresAt]);
+
+  const validateInput = React.useCallback(() => {
+    if (!Number.isInteger(normalizedMakerShareBps) || normalizedMakerShareBps < 0 || normalizedMakerShareBps > 10000) {
+      setValidationError(lang === 'TR' ? 'makerShareBps 0..10000 aralığında olmalı.' : 'makerShareBps must be in range 0..10000.');
+      return false;
+    }
+    if (!Number.isInteger(computedExpiryMinutes) || computedExpiryMinutes <= 0) {
+      setValidationError(lang === 'TR' ? 'Geçerli bir süre girin.' : 'Enter a valid expiry duration.');
+      return false;
+    }
+    setValidationError('');
+    return true;
+  }, [normalizedMakerShareBps, computedExpiryMinutes, lang]);
+
+  const loadPreview = React.useCallback(async (makerBpsOverride = normalizedMakerShareBps) => {
+    if (!activeTrade?.id) {
+      setPreviewError(lang === 'TR' ? 'Backend trade ID bulunamadı. Önizleme açılamadı.' : 'Missing backend trade ID. Preview unavailable.');
+      return false;
+    }
+    setPreviewLoading(true);
+    setPreviewError('');
+    try {
+      const res = await authenticatedFetch(buildSettlementPreviewUrl(activeTrade.id), {
+        method: 'POST',
+        body: JSON.stringify({ makerShareBps: makerBpsOverride }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || (lang === 'TR' ? 'Settlement önizleme alınamadı.' : 'Failed to fetch settlement preview.'));
+      }
+      setPreviewData(data?.preview || data || null);
+      return true;
+    } catch (err) {
+      setPreviewError(err?.message || (lang === 'TR' ? 'Önizleme hatası.' : 'Preview failed.'));
+      return false;
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [activeTrade?.id, authenticatedFetch, lang, normalizedMakerShareBps]);
+
+  const refreshTradesAfterTx = React.useCallback(async () => {
+    await fetchMyTrades();
+  }, [fetchMyTrades]);
+
+  const runTx = React.useCallback(async (fn, successMessage) => {
+    try {
+      setIsContractLoading(true);
+      await fn();
+      showToast(successMessage, 'success');
+      await refreshTradesAfterTx();
+    } catch (err) {
+      const msg = err?.shortMessage || err?.reason || err?.message || (lang === 'TR' ? 'Settlement işlemi başarısız.' : 'Settlement transaction failed.');
+      showToast(msg, 'error');
+    } finally {
+      setIsContractLoading(false);
+    }
+  }, [lang, refreshTradesAfterTx, setIsContractLoading, showToast]);
+
+  const onPreviewCreate = async () => {
+    if (!validateInput()) return;
+    setPreviewMode('create');
+    const ok = await loadPreview(normalizedMakerShareBps);
+    if (ok) setPreviewOpen(true);
+  };
+
+  const onConfirmCreate = async () => {
+    await runTx(
+      () => proposeSettlement(BigInt(activeTrade.onchainId), normalizedMakerShareBps, computedExpiresAt),
+      lang === 'TR' ? 'Settlement teklifi zincire gönderildi.' : 'Settlement proposal submitted on-chain.'
+    );
+    setPreviewOpen(false);
+  };
+
+  const onPreviewAccept = async () => {
+    const makerBps = Number(proposal?.makerShareBps ?? proposal?.maker_share_bps ?? 0);
+    setPreviewMode('accept');
+    const ok = await loadPreview(makerBps);
+    if (ok) setPreviewOpen(true);
+  };
+
+  if (!activeTrade) return null;
+
+  return (
+    <div className="mt-2 mb-2 bg-[#0c0c0e] border border-[#222] rounded-xl p-4">
+      <div className="mb-3">
+        <h3 className="text-sm font-bold text-white">{lang === 'TR' ? 'On-Chain Settlement' : 'On-Chain Settlement'}</h3>
+        <p className="text-[11px] text-slate-400">
+          {lang === 'TR'
+            ? 'Araf kimin haklı olduğuna karar vermez. Kararı sen ve karşı taraf on-chain olarak verirsiniz.'
+            : 'Araf does not decide who is right. You and the counterparty decide on-chain.'}
+        </p>
+      </div>
+
+      {!isActionableRoom && !isTerminalRoom && (
+        <p className="text-xs text-slate-500">{lang === 'TR' ? 'Settlement bu işlem durumunda aktif değil.' : 'Settlement is not active in this trade state.'}</p>
+      )}
+
+      {isTerminalRoom && !proposal && (
+        <p className="text-xs text-slate-500">{lang === 'TR' ? 'İşlem sonlandı. Settlement yalnız geçmiş bilgi olarak gösterilir.' : 'Trade is terminal. Settlement is shown only as history.'}</p>
+      )}
+
+      {isActionableRoom && !proposal && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-xs text-slate-300">
+              makerShareBps
+              <input
+                type="number"
+                min="0"
+                max="10000"
+                value={makerShareBps}
+                onChange={(e) => setMakerShareBps(e.target.value)}
+                className="mt-1 w-full bg-[#111113] border border-[#2a2a2e] rounded-lg px-3 py-2 text-sm text-white"
+              />
+            </label>
+            <label className="text-xs text-slate-300">
+              takerShareBps
+              <input disabled value={Number.isFinite(normalizedTakerShareBps) ? normalizedTakerShareBps : '—'} className="mt-1 w-full bg-[#0f0f12] border border-[#2a2a2e] rounded-lg px-3 py-2 text-sm text-slate-400" />
+            </label>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="10000"
+            value={Number.isFinite(normalizedMakerShareBps) ? normalizedMakerShareBps : 0}
+            onChange={(e) => setMakerShareBps(e.target.value)}
+            className="w-full"
+          />
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-xs text-slate-300">
+              {lang === 'TR' ? 'Süre' : 'Expiry'}
+              <select
+                value={expiryPreset}
+                onChange={(e) => setExpiryPreset(e.target.value)}
+                className="mt-1 w-full bg-[#111113] border border-[#2a2a2e] rounded-lg px-3 py-2 text-sm text-white"
+              >
+                <option value="30m">{lang === 'TR' ? '30 dakika' : '30 minutes'}</option>
+                <option value="2h">{lang === 'TR' ? '2 saat' : '2 hours'}</option>
+                <option value="24h">{lang === 'TR' ? '24 saat' : '24 hours'}</option>
+                <option value="custom">{lang === 'TR' ? 'Özel' : 'Custom'}</option>
+              </select>
+            </label>
+            {expiryPreset === 'custom' && (
+              <label className="text-xs text-slate-300">
+                {lang === 'TR' ? 'Özel dakika' : 'Custom minutes'}
+                <input
+                  type="number"
+                  min="1"
+                  value={customMinutes}
+                  onChange={(e) => setCustomMinutes(e.target.value)}
+                  className="mt-1 w-full bg-[#111113] border border-[#2a2a2e] rounded-lg px-3 py-2 text-sm text-white"
+                />
+              </label>
+            )}
+          </div>
+
+          {validationError && <p className="text-xs text-red-400">{validationError}</p>}
+
+          <div className="flex gap-2">
+            <button
+              onClick={onPreviewCreate}
+              disabled={isContractLoading}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition ${isContractLoading ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
+            >
+              {lang === 'TR' ? 'Önizleme' : 'Preview'}
+            </button>
+            <div className="text-[11px] text-slate-500 self-center">
+              {lang === 'TR'
+                ? 'Kararı sen ve karşı taraf verirsiniz.'
+                : 'You and the counterparty decide the split.'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {proposal && proposalState === 'PROPOSED' && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <p className="text-slate-400">{lang === 'TR' ? 'Proposer' : 'Proposer'}: <span className="text-white font-mono">{proposal?.proposer || '—'}</span></p>
+            <p className="text-slate-400">makerShareBps: <span className="text-white font-mono">{proposal?.makerShareBps ?? proposal?.maker_share_bps ?? '—'}</span></p>
+            <p className="text-slate-400">takerShareBps: <span className="text-white font-mono">{proposal?.takerShareBps ?? proposal?.taker_share_bps ?? '—'}</span></p>
+            <p className="text-slate-400">{lang === 'TR' ? 'Sona erme' : 'Expires'}: <span className="text-white font-mono">{safeDate(expiresAt)}</span></p>
+          </div>
+          <p className={`text-xs ${isExpired ? 'text-red-400' : 'text-slate-400'}`}>
+            {isExpired
+              ? (lang === 'TR' ? 'Teklif süresi doldu.' : 'Proposal is expired.')
+              : (lang === 'TR' ? `Kalan süre: ${Math.max(0, expiresAt - nowTs)} sn` : `Time left: ${Math.max(0, expiresAt - nowTs)} sec`)}
+          </p>
+
+          <div className="flex flex-wrap gap-2">
+            {isProposer && (
+              <button
+                onClick={() => runTx(() => withdrawSettlement(BigInt(activeTrade.onchainId)), lang === 'TR' ? 'Settlement teklifi geri çekildi.' : 'Settlement proposal withdrawn.')}
+                disabled={isContractLoading}
+                className="px-3 py-2 text-sm rounded-lg border border-orange-500/40 text-orange-400 hover:bg-orange-500 hover:text-white transition disabled:opacity-50"
+              >
+                {lang === 'TR' ? 'Geri Çek' : 'Withdraw'}
+              </button>
+            )}
+            {isCounterparty && (
+              <>
+                <button
+                  onClick={onPreviewAccept}
+                  disabled={isContractLoading}
+                  className="px-3 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 transition disabled:opacity-50"
+                >
+                  {lang === 'TR' ? 'Kabul Et (Önizleme)' : 'Accept (Preview)'}
+                </button>
+                <button
+                  onClick={() => runTx(() => rejectSettlement(BigInt(activeTrade.onchainId)), lang === 'TR' ? 'Settlement teklifi reddedildi.' : 'Settlement proposal rejected.')}
+                  disabled={isContractLoading}
+                  className="px-3 py-2 text-sm rounded-lg border border-red-500/40 text-red-400 hover:bg-red-500 hover:text-white transition disabled:opacity-50"
+                >
+                  {lang === 'TR' ? 'Reddet' : 'Reject'}
+                </button>
+              </>
+            )}
+            {isExpired && (
+              <button
+                onClick={() => runTx(() => expireSettlement(BigInt(activeTrade.onchainId)), lang === 'TR' ? 'Settlement teklifi süresi doldu olarak işaretlendi.' : 'Settlement proposal marked expired.')}
+                disabled={isContractLoading}
+                className="px-3 py-2 text-sm rounded-lg border border-yellow-500/40 text-yellow-400 hover:bg-yellow-500 hover:text-black transition disabled:opacity-50"
+              >
+                {lang === 'TR' ? 'Süresi Doldu Olarak İşaretle' : 'Mark as Expired'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {proposal && proposalState === 'FINALIZED' && (
+        <div className="space-y-2 text-xs">
+          <p className="text-emerald-400 font-bold">{lang === 'TR' ? 'Settlement Finalized' : 'Settlement Finalized'}</p>
+          <p className="text-slate-300">{lang === 'TR' ? 'Maker payout' : 'Maker payout'}: <span className="font-mono">{proposal?.makerPayout ?? proposal?.maker_payout ?? '—'}</span></p>
+          <p className="text-slate-300">{lang === 'TR' ? 'Taker payout' : 'Taker payout'}: <span className="font-mono">{proposal?.takerPayout ?? proposal?.taker_payout ?? '—'}</span></p>
+          <p className="text-slate-400">{lang === 'TR' ? 'Finalized at' : 'Finalized at'}: {safeDate(proposal?.finalizedAt ?? proposal?.finalized_at)}</p>
+          <p className="text-slate-400">txHash: <span className="font-mono text-white">{shortHash(proposal?.txHash ?? proposal?.tx_hash)}</span></p>
+        </div>
+      )}
+
+      {proposal && !['PROPOSED', 'FINALIZED'].includes(proposalState) && (
+        <p className="text-xs text-slate-400">
+          {lang === 'TR'
+            ? `Settlement geçmiş durumu: ${proposalState}`
+            : `Settlement historical state: ${proposalState}`}
+        </p>
+      )}
+
+      <SettlementPreviewModal
+        isOpen={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        lang={lang}
+        isLoading={isContractLoading || previewLoading}
+        error={previewError}
+        makerShareBps={previewMode === 'accept' ? (proposal?.makerShareBps ?? proposal?.maker_share_bps ?? '—') : normalizedMakerShareBps}
+        takerShareBps={previewMode === 'accept' ? (proposal?.takerShareBps ?? proposal?.taker_share_bps ?? '—') : normalizedTakerShareBps}
+        previewData={previewData}
+        onConfirm={previewMode === 'accept'
+          ? () => runTx(() => acceptSettlement(BigInt(activeTrade.onchainId)), lang === 'TR' ? 'Settlement kabul edildi ve işlem on-chain kapanacak.' : 'Settlement accepted; trade will close on-chain.')
+          : onConfirmCreate}
+        confirmLabel={previewMode === 'accept'
+          ? (lang === 'TR' ? 'Kabul Et ve On-Chain Gönder' : 'Accept and Submit On-Chain')
+          : (lang === 'TR' ? 'Teklifi On-Chain Gönder' : 'Submit Proposal On-Chain')}
+        disableConfirm={previewLoading || Boolean(previewError)}
+      />
+    </div>
+  );
+}

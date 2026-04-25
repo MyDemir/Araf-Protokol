@@ -1,6 +1,7 @@
 import React from 'react';
 import PIIDisplay from '../components/PIIDisplay';
 import ReferenceRateTicker from '../components/ReferenceRateTicker';
+import SettlementProposalCard, { normalizeSettlementState } from '../components/SettlementProposalCard';
 
 // [TR] App ana görünüm/render katmanı burada tutulur.
 // [EN] Main application view/render layer lives here.
@@ -270,6 +271,36 @@ export const buildAppViews = (ctx) => {
               <span className="flex items-center gap-2"><span className="text-sky-400">🕒</span>{lang === 'TR' ? 'Karşı Taraftan Yanıt Bekliyorum' : 'Waiting Counterparty'}</span>
               <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-200">{activeEscrowCounts?.settlement?.WAITING ?? 0}</span>
             </div>
+            {activeEscrows
+              .filter((escrow) => normalizeSettlementState(escrow?.rawTrade?.settlementProposal?.state) === 'PROPOSED')
+              .map((escrow) => {
+                const proposer = escrow?.rawTrade?.settlementProposal?.proposer?.toLowerCase?.() || null;
+                const viewer = address?.toLowerCase?.() || null;
+                const isWaiting = Boolean(proposer && viewer && proposer === viewer);
+                return (
+                  <div key={`settle-${escrow.onchainId}`} className="border border-[#2a2a2e] bg-[#0f1014] rounded-lg p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] font-mono text-emerald-400">#{escrow.onchainId}</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded border ${isWaiting ? 'text-sky-400 border-sky-500/30' : 'text-orange-400 border-orange-500/30'}`}>
+                        {isWaiting ? (lang === 'TR' ? 'Bekleniyor' : 'Waiting') : (lang === 'TR' ? 'Aksiyon Gerekli' : 'Action Required')}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setActiveTrade(escrow.rawTrade);
+                        setUserRole(escrow.role);
+                        setTradeState(escrow.state);
+                        setChargebackAccepted(escrow.rawTrade?.chargebackAcked === true);
+                        setCurrentView('tradeRoom');
+                        setSidebarOpen(false);
+                      }}
+                      className="w-full bg-[#1a1a1f] hover:bg-[#222] text-white text-[10px] font-bold py-1.5 rounded transition border border-[#333]"
+                    >
+                      {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
+                    </button>
+                  </div>
+                );
+              })}
           </div>
         </div>
 
@@ -677,6 +708,22 @@ export const buildAppViews = (ctx) => {
           )}
 
           <div className="space-y-6">
+            <SettlementProposalCard
+              activeTrade={activeTrade}
+              userRole={userRole}
+              address={address}
+              lang={lang}
+              authenticatedFetch={authenticatedFetch}
+              proposeSettlement={proposeSettlement}
+              acceptSettlement={acceptSettlement}
+              rejectSettlement={rejectSettlement}
+              withdrawSettlement={withdrawSettlement}
+              expireSettlement={expireSettlement}
+              fetchMyTrades={fetchMyTrades}
+              showToast={showToast}
+              isContractLoading={isContractLoading}
+              setIsContractLoading={setIsContractLoading}
+            />
             {/* LOCKED state aksiyon paneli */}
             {roomState === 'LOCKED' && (
               <div className="text-center py-6">
