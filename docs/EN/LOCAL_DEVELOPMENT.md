@@ -438,12 +438,12 @@ DEPLOYER_PRIVATE_KEY=0x<mainnet_deployer_private_key>
 TREASURY_ADDRESS=0x<gnosis_safe_address>
 BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/<API_KEY>
 BASESCAN_API_KEY=<basescan_api_key>
-MAINNET_USDT_ADDRESS=0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2
-MAINNET_USDC_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+BASE_MAINNET_USDT_ADDRESS=0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2
+BASE_MAINNET_USDC_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
 EOF
 
 # Set NODE_ENV to production so MockERC20 is NOT deployed
-# Note: Script hard-fails before completion if MAINNET_USDT_ADDRESS / MAINNET_USDC_ADDRESS are missing.
+# Note: Base Mainnet deploy requires BASE_MAINNET_USDT_ADDRESS / BASE_MAINNET_USDC_ADDRESS.
 NODE_ENV=production npx hardhat run scripts/deploy.js --network base
 
 # Verify
@@ -496,8 +496,8 @@ vercel --prod
 - [ ] Gnosis Safe multisig is configured (min 3/5)
 - [ ] AWS KMS is active and encrypted data key is tested
 - [ ] `NODE_ENV=production` — MockERC20 was not deployed ✅
-- [ ] `MAINNET_USDT_ADDRESS` and `MAINNET_USDC_ADDRESS` are set (mandatory)
-- [ ] You saw post-`setTokenConfig` on-chain checks in logs (`tokenConfigs(token).supported == true`)
+- [ ] `BASE_MAINNET_USDT_ADDRESS` and `BASE_MAINNET_USDC_ADDRESS` are set (required for Base Mainnet)
+- [ ] You saw post-`setTokenConfig` on-chain checks in logs (`getTokenConfig(token).supported == true`)
 - [ ] Contract verified on BaseScan
 - [ ] Ownership transferred to Gnosis Safe ✅
 - [ ] `pause()` / `unpause()` is operational from Gnosis Safe

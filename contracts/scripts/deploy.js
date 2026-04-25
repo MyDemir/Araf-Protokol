@@ -14,7 +14,6 @@
  *   - Public chain'de mock token kurulumunu yasaklama
  *   - Token desteğini zincir üstünde doğrulama
  *   - Ownership devrini ancak kurulum doğrulanınca yapma
- *   - ABI artifact'ını frontend'e senkronlama
  *   - Deployment manifest'i üretme
  *
  * Kullanım örnekleri:
@@ -105,17 +104,35 @@ function getDeployMode(chainId, networkName) {
   return "custom";
 }
 
-function resolveProductionTokenConfig() {
+function resolveProductionTokenConfig({ chainId, requireConfigured = false } = {}) {
   const isProduction = process.env.NODE_ENV === "production";
-  if (!isProduction) {
+  if (!isProduction && !requireConfigured) {
     return { isProduction, usdtAddress: null, usdcAddress: null };
   }
 
-  return {
-    isProduction,
-    usdtAddress: getRequiredEnvAddress("MAINNET_USDT_ADDRESS"),
-    usdcAddress: getRequiredEnvAddress("MAINNET_USDC_ADDRESS"),
-  };
+  const normalizedChainId = Number(chainId);
+  if (normalizedChainId === 8453) {
+    const usdtRaw = process.env.BASE_MAINNET_USDT_ADDRESS || process.env.MAINNET_USDT_ADDRESS;
+    const usdcRaw = process.env.BASE_MAINNET_USDC_ADDRESS || process.env.MAINNET_USDC_ADDRESS;
+    return {
+      isProduction,
+      usdtAddress: normalizeAddress("BASE_MAINNET_USDT_ADDRESS", usdtRaw),
+      usdcAddress: normalizeAddress("BASE_MAINNET_USDC_ADDRESS", usdcRaw),
+    };
+  }
+
+  if (normalizedChainId === 84532) {
+    if (process.env.MAINNET_USDT_ADDRESS || process.env.MAINNET_USDC_ADDRESS) {
+      throw new Error("❌ Base Sepolia deploy MAINNET_* alias kabul etmez. BASE_SEPOLIA_* env kullanın.");
+    }
+    return {
+      isProduction,
+      usdtAddress: getRequiredEnvAddress("BASE_SEPOLIA_USDT_ADDRESS"),
+      usdcAddress: getRequiredEnvAddress("BASE_SEPOLIA_USDC_ADDRESS"),
+    };
+  }
+
+  throw new Error(`❌ Production deploy için desteklenmeyen chainId: ${normalizedChainId}`);
 }
 
 function resolveFinalOwnerAddress({ deployMode, treasuryAddress }) {
@@ -215,17 +232,6 @@ async function setAndVerifyTokenConfig(escrow, tokenAddress, symbol, config) {
   };
 }
 
-async function syncAbiToFrontend() {
-  const artifact = await artifacts.readArtifact("ArafEscrow");
-  const abiDestDir = path.resolve(__dirname, "../../frontend/src/abi");
-  const abiDestPath = path.join(abiDestDir, "ArafEscrow.json");
-
-  ensureDir(abiDestDir);
-  fs.writeFileSync(abiDestPath, JSON.stringify(artifact.abi, null, 2));
-  console.log(`✅ ABI frontend'e yazıldı: ${abiDestPath}`);
-  return abiDestPath;
-}
-
 function updateFrontendEnvIfPresent(values) {
   const frontendRoot = path.resolve(__dirname, "../../frontend");
   const envPath = path.join(frontendRoot, ".env");
@@ -305,13 +311,15 @@ async function main() {
   let deployedMocks = [];
 
   if (isPublic) {
-    usdtAddress = getRequiredEnvAddress("MAINNET_USDT_ADDRESS");
-    usdcAddress = getRequiredEnvAddress("MAINNET_USDC_ADDRESS");
+    const tokenConfig = resolveProductionTokenConfig({ chainId, requireConfigured: true });
+    usdtAddress = tokenConfig.usdtAddress;
+    usdcAddress = tokenConfig.usdcAddress;
   } else {
     const useExternalTokens = ensureBooleanEnv("USE_EXTERNAL_TOKEN_ADDRESSES", false);
     if (useExternalTokens) {
-      usdtAddress = getRequiredEnvAddress("MAINNET_USDT_ADDRESS");
-      usdcAddress = getRequiredEnvAddress("MAINNET_USDC_ADDRESS");
+      const tokenConfig = resolveProductionTokenConfig({ chainId, requireConfigured: true });
+      usdtAddress = tokenConfig.usdtAddress;
+      usdcAddress = tokenConfig.usdcAddress;
       console.log("ℹ️ Local/custom deploy harici token adresleri ile devam ediyor.");
     } else {
       console.log("⏳ Mock token deploy başlatılıyor...");
@@ -386,7 +394,7 @@ async function main() {
     console.log("ℹ️ Ownership devri gerekmiyor; deployer zaten final owner değilse treasury ile eşleşiyor.");
   }
 
-  const abiPath = await syncAbiToFrontend();
+  const abiPath = artifacts.artifactPathSync("ArafEscrow");
   let frontendEnvPath = null;
   if (isLocal) {
     frontendEnvPath = updateFrontendEnvIfPresent({

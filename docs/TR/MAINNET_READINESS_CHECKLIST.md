@@ -25,14 +25,18 @@ Kritik not:
 - `WORKER_FINALITY_DEPTH` (önerilen production değeri: `6` veya üzeri)
 
 ### Token env stratejisi (backend + deploy uyumu)
-- `MAINNET_USDT_ADDRESS`
-- `MAINNET_USDC_ADDRESS`
+- Base Mainnet (`EXPECTED_CHAIN_ID=8453`) için:
+  - `BASE_MAINNET_USDT_ADDRESS`
+  - `BASE_MAINNET_USDC_ADDRESS`
+- Base Sepolia (`EXPECTED_CHAIN_ID=84532`) için:
+  - `BASE_SEPOLIA_USDT_ADDRESS`
+  - `BASE_SEPOLIA_USDC_ADDRESS`
 - `ARAF_TRACKED_TOKENS` (opsiyonel)
 
 Kural:
-- `ARAF_TRACKED_TOKENS` boşsa backend tracked seti deterministic olarak `MAINNET_USDT_ADDRESS` + `MAINNET_USDC_ADDRESS` üzerinden türetir.
+- `ARAF_TRACKED_TOKENS` boşsa backend tracked seti active chain'e göre deterministic olarak `BASE_MAINNET_*` veya `BASE_SEPOLIA_*` çiftinden türetilir.
 - Bu kaynaklar da boşsa production config load **fail-closed** olmalıdır.
-- Legacy alias (`USDT_ADDRESS` / `USDC_ADDRESS`) yalnız geriye uyum için kabul edilir; kanonik env önceliklidir.
+- Legacy alias (`MAINNET_USDT_ADDRESS` / `MAINNET_USDC_ADDRESS`) yalnız Base Mainnet için geriye uyumlu kabul edilir; Base Sepolia'da kullanılmaz.
 
 ### Deploy ownership güvenliği
 - `TREASURY_ADDRESS`
@@ -50,7 +54,7 @@ Kural:
 ## 2) Stabilization Doğrulama Adımları (Deploy gerektirmez)
 
 1. **Token config doğrulaması (kanonik getter)**
-   - `getTokenConfig(MAINNET_USDT_ADDRESS)` ve `getTokenConfig(MAINNET_USDC_ADDRESS)` çıktılarında:
+   - Active chain token adresleri için `getTokenConfig(address)` çıktılarında:
      - `supported=true`
      - `allowSellOrders/allowBuyOrders` beklenen policy ile uyumlu
      - `decimals` ve `tierMaxAmountsBaseUnit[4]` dolu

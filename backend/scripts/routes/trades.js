@@ -17,6 +17,7 @@ const { assertProviderExpectedChainOrThrow } = require("../services/expectedChai
 const CANCEL_VERIFY_ABI = [
   "function sigNonces(address,uint256) view returns (uint256)",
   "function domainSeparator() view returns (bytes32)",
+  "function getCurrentAmounts(uint256) view returns (uint256 currentCrypto, uint256 currentMakerBond, uint256 currentTakerBond, uint256 totalDecayed)",
 ];
 const CANCEL_TYPES = {
   CancelProposal: [
@@ -50,6 +51,33 @@ async function _getCancelVerifyContract() {
   });
   cancelVerifyContract = new ethers.Contract(contractAddress, CANCEL_VERIFY_ABI, cancelVerifyProvider);
   return { provider: cancelVerifyProvider, contract: cancelVerifyContract };
+}
+
+function _buildPreviewUnavailableError(message, rootCause = null) {
+  const err = new Error(message);
+  err.statusCode = 503;
+  err.code = "PREVIEW_UNAVAILABLE";
+  if (rootCause) err.cause = rootCause;
+  return err;
+}
+
+async function _getOnchainCurrentAmountsForPreview(onchainEscrowId) {
+  const verifier = await _getCancelVerifyContract();
+  if (!verifier) {
+    throw _buildPreviewUnavailableError("Settlement preview unavailable: RPC/contract config missing.");
+  }
+
+  try {
+    const { contract } = verifier;
+    const result = await contract.getCurrentAmounts(BigInt(onchainEscrowId));
+    const currentCrypto = BigInt(result.currentCrypto ?? result[0] ?? 0);
+    const currentMakerBond = BigInt(result.currentMakerBond ?? result[1] ?? 0);
+    const currentTakerBond = BigInt(result.currentTakerBond ?? result[2] ?? 0);
+    const totalDecayed = BigInt(result.totalDecayed ?? result[3] ?? 0);
+    return { currentCrypto, currentMakerBond, currentTakerBond, totalDecayed };
+  } catch (readErr) {
+    throw _buildPreviewUnavailableError("Settlement preview unavailable: on-chain current amounts read failed.", readErr);
+  }
 }
 
 async function _verifyCancelSignatureOrThrow({
@@ -465,7 +493,7 @@ router.post("/:id/settlement-proposal/preview", requireAuth, requireSessionWalle
     if (error) return res.status(400).json({ error: error.message });
 
     const trade = await Trade.findById(req.params.id)
-      .select("maker_address taker_address financials.crypto_amount financials.maker_bond financials.taker_bond")
+      .select("maker_address taker_address onchain_escrow_id status financials.crypto_amount financials.maker_bond financials.taker_bond")
       .lean();
     if (!trade) return res.status(404).json({ error: "İşlem bulunamadı." });
     if (trade.maker_address !== req.wallet && trade.taker_address !== req.wallet) {
@@ -475,10 +503,37 @@ router.post("/:id/settlement-proposal/preview", requireAuth, requireSessionWalle
     const makerShareBps = Number(value.makerShareBps);
     const takerShareBps = 10_000 - makerShareBps;
 
-    const cryptoAmount = BigInt(_toBigIntStringSafe(trade?.financials?.crypto_amount));
-    const makerBond = BigInt(_toBigIntStringSafe(trade?.financials?.maker_bond));
-    const takerBond = BigInt(_toBigIntStringSafe(trade?.financials?.taker_bond));
-    const pool = cryptoAmount + makerBond + takerBond;
+    const isChallenged = trade?.status === "CHALLENGED";
+    const onchainEscrowId = _parsePositiveOnchainId(trade?.onchain_escrow_id);
+
+    let poolSource = "db-raw-financials";
+    let decayedAmount = 0n;
+    let pool;
+
+    if (!onchainEscrowId && isChallenged) {
+      throw _buildPreviewUnavailableError("Settlement preview unavailable: challenged trade is missing a valid on-chain escrow id.");
+    }
+
+    if (onchainEscrowId) {
+      try {
+        const onchain = await _getOnchainCurrentAmountsForPreview(onchainEscrowId);
+        pool = onchain.currentCrypto + onchain.currentMakerBond + onchain.currentTakerBond;
+        decayedAmount = onchain.totalDecayed;
+        poolSource = "onchain-current-amounts";
+      } catch (onchainErr) {
+        if (isChallenged) {
+          throw onchainErr;
+        }
+      }
+    }
+
+    if (typeof pool === "undefined") {
+      const cryptoAmount = BigInt(_toBigIntStringSafe(trade?.financials?.crypto_amount));
+      const makerBond = BigInt(_toBigIntStringSafe(trade?.financials?.maker_bond));
+      const takerBond = BigInt(_toBigIntStringSafe(trade?.financials?.taker_bond));
+      pool = cryptoAmount + makerBond + takerBond;
+    }
+
     const makerPayout = (pool * BigInt(makerShareBps)) / 10_000n;
     const takerPayout = pool - makerPayout;
 
@@ -487,12 +542,22 @@ router.post("/:id/settlement-proposal/preview", requireAuth, requireSessionWalle
       nonAuthoritative: true,
       makerShareBps,
       takerShareBps,
+      poolSource,
       pool: pool.toString(),
       makerPayout: makerPayout.toString(),
       takerPayout: takerPayout.toString(),
+      decayedAmount: decayedAmount.toString(),
       warning: "Final outcome is determined only by the on-chain transaction accepted by both parties.",
     });
   } catch (err) {
+    if (err?.code === "PREVIEW_UNAVAILABLE") {
+      return res.status(err.statusCode || 503).json({
+        error: err.message,
+        code: err.code,
+        informationalOnly: true,
+        nonAuthoritative: true,
+      });
+    }
     next(err);
   }
 });
