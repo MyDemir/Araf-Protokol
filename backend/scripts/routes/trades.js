@@ -12,6 +12,7 @@ const Trade = require("../models/Trade");
 const User = require("../models/User");
 const logger = require("../utils/logger");
 const { buildBankProfileRisk, buildTradeHealthSignals } = require("./tradeRisk");
+const { assertProviderExpectedChainOrThrow } = require("../services/expectedChain");
 
 const CANCEL_VERIFY_ABI = [
   "function sigNonces(address,uint256) view returns (uint256)",
@@ -30,7 +31,7 @@ const CONTRACT_CANCEL_ALLOWED_STATUSES = new Set(["LOCKED", "PAID", "CHALLENGED"
 let cancelVerifyProvider = null;
 let cancelVerifyContract = null;
 
-function _getCancelVerifyContract() {
+async function _getCancelVerifyContract() {
   if (cancelVerifyContract && cancelVerifyProvider) {
     return { provider: cancelVerifyProvider, contract: cancelVerifyContract };
   }
@@ -42,6 +43,11 @@ function _getCancelVerifyContract() {
   }
 
   cancelVerifyProvider = new ethers.JsonRpcProvider(rpcUrl);
+  await assertProviderExpectedChainOrThrow(cancelVerifyProvider, {
+    rpcUrl,
+    rpcEnvName: "BASE_RPC_URL",
+    surface: "TradesCancelVerify",
+  });
   cancelVerifyContract = new ethers.Contract(contractAddress, CANCEL_VERIFY_ABI, cancelVerifyProvider);
   return { provider: cancelVerifyProvider, contract: cancelVerifyContract };
 }
@@ -58,7 +64,7 @@ async function _verifyCancelSignatureOrThrow({
     throw err;
   }
 
-  const verifier = _getCancelVerifyContract();
+  const verifier = await _getCancelVerifyContract();
   if (!verifier) {
     const err = new Error("Cancel signature doğrulaması için RPC/contract yapılandırması eksik.");
     err.statusCode = 503;
@@ -691,5 +697,10 @@ router.post("/:id/chargeback-ack", requireAuth, requireSessionWalletMatch, coord
     next(err);
   }
 });
+
+router.__resetCancelVerifier = () => {
+  cancelVerifyProvider = null;
+  cancelVerifyContract = null;
+};
 
 module.exports = router;

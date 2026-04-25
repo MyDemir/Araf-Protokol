@@ -9,6 +9,7 @@
 - `JWT_SECRET`
 - `TREASURY_ADDRESS`
 - `BASE_RPC_URL`
+- `EXPECTED_CHAIN_ID` (örn. Base Mainnet için `8453`)
 - `BASE_WS_RPC_URL` (önerilir)
 - `WORKER_START_BLOCK` veya `ARAF_DEPLOYMENT_BLOCK` (checkpoint yoksa production'da zorunlu)
 - `MAINNET_USDT_ADDRESS` ve `MAINNET_USDC_ADDRESS` (production deploy script için zorunlu)
@@ -20,6 +21,8 @@
 3. Redis checkpoint anahtarını (`worker:last_block`) seed/doğrula.
 4. `/health` (liveness) ve `/ready` (readiness) endpoint'lerini doğrula.
 5. Smoke trade çalıştırıp DB event senkronunu doğrula.
+6. Provider chain doğrulamasını kontrol et:
+   - `EXPECTED_CHAIN_ID=8453` iken RPC `84532/31337` dönerse backend fail-closed durmalıdır.
 
 ## Smoke Test Komutları
 - `cd backend && npm test -- --runInBand`

@@ -24,6 +24,7 @@ const { ethers } = require("ethers");
 const logger = require("../utils/logger");
 const { getRedisClient } = require("../config/redis");
 const { getPaymentRailRiskConfig } = require("../config/paymentRailRiskConfig");
+const { assertProviderExpectedChainOrThrow } = require("./expectedChain");
 
 const CONFIG_CACHE_KEY = "cache:protocol_config:v3";
 const CONFIG_CACHE_TTL = Number(process.env.CONFIG_CACHE_TTL_SECONDS || 3600);
@@ -119,6 +120,11 @@ async function loadProtocolConfig() {
   logger.info("[Config] V3 protokol parametreleri on-chain'den yükleniyor...");
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
+  await assertProviderExpectedChainOrThrow(provider, {
+    rpcUrl,
+    rpcEnvName: "BASE_RPC_URL",
+    surface: "ProtocolConfig",
+  });
   const contract = new ethers.Contract(contractAddress, CONFIG_ABI, provider);
 
   const [

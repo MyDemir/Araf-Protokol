@@ -25,6 +25,7 @@ describe("protocolConfig token config compatibility", () => {
   function loadServiceWith({ getTokenConfigImpl }) {
     jest.resetModules();
     process.env.BASE_RPC_URL = "http://localhost:8545";
+    process.env.EXPECTED_CHAIN_ID = "8453";
     process.env.ARAF_ESCROW_ADDRESS = escrowAddress;
     process.env.ARAF_TRACKED_TOKENS = tokenA;
 
@@ -51,7 +52,9 @@ describe("protocolConfig token config compatibility", () => {
     }));
     jest.doMock("ethers", () => ({
       ethers: {
-        JsonRpcProvider: jest.fn(),
+        JsonRpcProvider: jest.fn(() => ({
+          getNetwork: jest.fn().mockResolvedValue({ chainId: 8453n }),
+        })),
         Contract: contractCtor,
       },
     }));
@@ -125,5 +128,39 @@ describe("protocolConfig token config compatibility", () => {
       decimals: 6,
       tierMaxAmountsBaseUnit: ["150", "1500", "7500", "30000"],
     });
+  });
+
+  it("security_loadProtocolConfig_fails_closed_on_expected_chain_mismatch", async () => {
+    jest.resetModules();
+    process.env.BASE_RPC_URL = "http://localhost:8545";
+    process.env.EXPECTED_CHAIN_ID = "8453";
+    process.env.ARAF_ESCROW_ADDRESS = escrowAddress;
+
+    const redis = {
+      get: jest.fn().mockResolvedValue(null),
+      setEx: jest.fn().mockResolvedValue("OK"),
+      del: jest.fn().mockResolvedValue(1),
+    };
+
+    jest.doMock("../scripts/config/redis", () => ({
+      getRedisClient: () => redis,
+    }));
+    jest.doMock("../scripts/utils/logger", () => ({
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    }));
+    jest.doMock("ethers", () => ({
+      ethers: {
+        JsonRpcProvider: jest.fn(() => ({
+          getNetwork: jest.fn().mockResolvedValue({ chainId: 84532n }),
+        })),
+        Contract: jest.fn(),
+      },
+    }));
+
+    const service = require("../scripts/services/protocolConfig");
+    await expect(service.loadProtocolConfig()).rejects.toThrow(/Chain ID uyuşmazlığı/);
   });
 });

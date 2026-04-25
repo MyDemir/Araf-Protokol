@@ -34,6 +34,7 @@ const {
   updateCachedTokenConfig,
   refreshProtocolConfig,
 } = require("./protocolConfig");
+const { assertProviderExpectedChainOrThrow } = require("./expectedChain");
 
 const CHECKPOINT_KEY = "worker:last_block";
 const LAST_SAFE_BLOCK_KEY = "worker:last_safe_block";
@@ -382,6 +383,12 @@ class EventWorker {
       this.provider = new ethers.JsonRpcProvider(rpcUrl);
       if (isProduction) logger.warn("[Worker] HTTP RPC kullanılıyor. BASE_WS_RPC_URL önerilir.");
     }
+
+    await assertProviderExpectedChainOrThrow(this.provider, {
+      rpcUrl,
+      rpcEnvName: "BASE_RPC_URL",
+      surface: "EventWorker",
+    });
 
     this.contract = new ethers.Contract(contractAddress, ARAF_ABI, this.provider);
     logger.info(`[Worker] Kontrat izleniyor: ${contractAddress}`);
