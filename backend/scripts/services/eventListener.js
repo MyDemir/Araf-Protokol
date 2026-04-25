@@ -1496,10 +1496,11 @@ class EventWorker {
     const proposalState = "PROPOSED";
     const txHash = event?.transactionHash || null;
     const expiresAtDate = _toDateOrNull(expiresAt);
+    const tradeLookup = _buildIdentityLookup("onchain_escrow_id", tradeId);
 
-    await Trade.findOneAndUpdate(
+    const mirrored = await Trade.findOneAndUpdate(
       {
-        ..._buildIdentityLookup("onchain_escrow_id", tradeId),
+        ...tradeLookup,
         "settlement_proposal.state": { $ne: "FINALIZED" },
       },
       {
@@ -1511,11 +1512,25 @@ class EventWorker {
           "settlement_proposal.taker_share_bps": _toNum(takerShareBps),
           "settlement_proposal.proposed_at": proposedAt,
           "settlement_proposal.expires_at": expiresAtDate,
+          "settlement_proposal.expired_at": null,
+          "settlement_proposal.finalized_at": null,
           "settlement_proposal.tx_hash": txHash,
           "settlement_proposal.last_event_name": "SettlementProposed",
         },
-      }
+      },
+      { new: true }
     );
+
+    if (!mirrored) {
+      const existingTrade = await Trade.findOne(tradeLookup).select("settlement_proposal.state").lean();
+      if (!existingTrade) {
+        // [TR] Trade mirror yoksa worker standart retry/DLQ akışı için throw edilir.
+        // [EN] Throw to trigger standard retry/DLQ flow when trade mirror is missing.
+        throw new Error("SettlementProposed geldi ama trade mirror bulunamadı.");
+      }
+      if (existingTrade?.settlement_proposal?.state === "FINALIZED") return;
+      throw new Error("SettlementProposed mirror güncellemesi başarısız.");
+    }
   }
 
   async _onSettlementRejected(event) {
@@ -1558,6 +1573,7 @@ class EventWorker {
           "settlement_proposal.state": "WITHDRAWN",
           "settlement_proposal.tx_hash": txHash,
           "settlement_proposal.last_event_name": "SettlementWithdrawn",
+          "settlement_proposal.finalized_at": null,
         },
       }
     );
@@ -1577,7 +1593,10 @@ class EventWorker {
         $set: {
           "settlement_proposal.proposal_id": _toStr(proposalId),
           "settlement_proposal.state": "EXPIRED",
-          "settlement_proposal.expires_at": expiredAt,
+          // [TR] expires_at deadline alanıdır; event zamanı ayrı expired_at alanına yazılır.
+          // [EN] Keep expires_at as proposal deadline; store event time separately at expired_at.
+          "settlement_proposal.expired_at": expiredAt,
+          "settlement_proposal.finalized_at": null,
           "settlement_proposal.tx_hash": txHash,
           "settlement_proposal.last_event_name": "SettlementExpired",
         },
@@ -1597,6 +1616,7 @@ class EventWorker {
       const trade = await Trade.findOneAndUpdate(
         {
           ..._buildIdentityLookup("onchain_escrow_id", tradeIdNum),
+          status: { $ne: "RESOLVED" },
         },
         {
           $set: {
@@ -1616,6 +1636,21 @@ class EventWorker {
         },
         { new: true, session }
       );
+
+      if (!trade) {
+        const existingTrade = await Trade.findOne(_buildIdentityLookup("onchain_escrow_id", tradeIdNum))
+          .select("status")
+          .lean();
+        if (!existingTrade) {
+          throw new Error("SettlementFinalized geldi ama trade mirror bulunamadı.");
+        }
+        if (existingTrade.status === "RESOLVED") {
+          // [TR] Replay/idempotent durum: trade zaten terminal mirror'da, order stats tekrar düşülmez.
+          // [EN] Replay/idempotent case: trade already terminal; skip duplicate order-stats decrement.
+          await session.commitTransaction();
+          return;
+        }
+      }
 
       if (trade?.parent_order_id) {
         await Order.findOneAndUpdate(

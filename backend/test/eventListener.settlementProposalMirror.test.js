@@ -29,10 +29,11 @@ jest.mock("../scripts/models/Order", () => ({
 }));
 
 const mockTradeFindOneAndUpdate = jest.fn();
+const mockTradeFindOne = jest.fn();
 jest.mock("../scripts/models/Trade", () => ({
   findOneAndUpdate: (...args) => mockTradeFindOneAndUpdate(...args),
   updateOne: jest.fn().mockResolvedValue({}),
-  findOne: jest.fn(),
+  findOne: (...args) => mockTradeFindOne(...args),
 }));
 
 jest.mock("../scripts/models/User", () => ({
@@ -57,6 +58,12 @@ describe("eventListener settlement proposal mirror", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockTradeFindOneAndUpdate.mockResolvedValue({ parent_order_id: "7" });
+    mockTradeFindOne.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ status: "RESOLVED", settlement_proposal: { state: "FINALIZED" } }),
+      }),
+      lean: jest.fn().mockResolvedValue({ status: "RESOLVED", settlement_proposal: { state: "FINALIZED" } }),
+    });
     worker._getEventDate = jest.fn().mockResolvedValue(new Date("2026-04-25T00:00:00.000Z"));
   });
 
@@ -93,7 +100,48 @@ describe("eventListener settlement proposal mirror", () => {
     expect(update.$set["settlement_proposal.proposal_id"]).toBe("3");
     expect(update.$set["settlement_proposal.maker_share_bps"]).toBe(7000);
     expect(update.$set["settlement_proposal.taker_share_bps"]).toBe(3000);
+    expect(update.$set["settlement_proposal.expires_at"]).toEqual(new Date("2025-10-09T08:53:20.000Z"));
+    expect(update.$set["settlement_proposal.expired_at"]).toBeNull();
     expect(update.$set["settlement_proposal.tx_hash"]).toBe("0xproposal");
+  });
+
+  it("keeps proposal deadline in expires_at and writes event time to expired_at on SettlementExpired", async () => {
+    await worker._onSettlementExpired({
+      eventName: "SettlementExpired",
+      transactionHash: "0xexpired",
+      args: {
+        tradeId: 15n,
+        proposalId: 3n,
+      },
+    });
+
+    const [, update] = mockTradeFindOneAndUpdate.mock.calls[0];
+    expect(update.$set["settlement_proposal.state"]).toBe("EXPIRED");
+    expect(update.$set["settlement_proposal.expired_at"]).toEqual(new Date("2026-04-25T00:00:00.000Z"));
+    expect(update.$set["settlement_proposal.expires_at"]).toBeUndefined();
+  });
+
+  it("does not overwrite FINALIZED proposal mirror with rejected/withdrawn/expired transitions", async () => {
+    await worker._onSettlementRejected({
+      eventName: "SettlementRejected",
+      transactionHash: "0xrej",
+      args: { tradeId: 9n, proposalId: 2n, rejecter: "0x1111111111111111111111111111111111111111" },
+    });
+    await worker._onSettlementWithdrawn({
+      eventName: "SettlementWithdrawn",
+      transactionHash: "0xwd",
+      args: { tradeId: 9n, proposalId: 2n, proposer: "0x1111111111111111111111111111111111111111" },
+    });
+    await worker._onSettlementExpired({
+      eventName: "SettlementExpired",
+      transactionHash: "0xexp",
+      args: { tradeId: 9n, proposalId: 2n },
+    });
+
+    const filters = mockTradeFindOneAndUpdate.mock.calls.map(([filter]) => filter);
+    expect(filters[0]["settlement_proposal.state"]).toStrictEqual({ $ne: "FINALIZED" });
+    expect(filters[1]["settlement_proposal.state"]).toStrictEqual({ $ne: "FINALIZED" });
+    expect(filters[2]["settlement_proposal.state"]).toStrictEqual({ $ne: "FINALIZED" });
   });
 
   it("keeps trade status RESOLVED and marks settlement FINALIZED on SettlementFinalized", async () => {
@@ -118,5 +166,35 @@ describe("eventListener settlement proposal mirror", () => {
     expect(update.$set["settlement_proposal.tx_hash"]).toBe("0xfinalized");
     expect(mockOrderFindOneAndUpdate).toHaveBeenCalled();
     expect(mockSession.commitTransaction).toHaveBeenCalled();
+  });
+
+  it("security_settlement_finalized_replay_does_not_double_decrement_parent_order_stats", async () => {
+    mockTradeFindOneAndUpdate
+      .mockResolvedValueOnce({ parent_order_id: "7", status: "RESOLVED" })
+      .mockResolvedValueOnce(null);
+    mockTradeFindOne.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ status: "RESOLVED" }),
+      }),
+      lean: jest.fn().mockResolvedValue({ status: "RESOLVED" }),
+    });
+
+    const event = {
+      eventName: "SettlementFinalized",
+      transactionHash: "0xfinalized",
+      args: {
+        tradeId: 16n,
+        proposalId: 4n,
+        makerPayout: 700n,
+        takerPayout: 300n,
+        takerFee: 0n,
+        makerFee: 0n,
+      },
+    };
+
+    await worker._onSettlementFinalized(event);
+    await worker._onSettlementFinalized(event);
+
+    expect(mockOrderFindOneAndUpdate).toHaveBeenCalledTimes(1);
   });
 });

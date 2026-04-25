@@ -304,6 +304,7 @@ const tradeSchema = new mongoose.Schema(
       taker_share_bps: { type: Number, default: null, min: 0, max: 10000 },
       proposed_at: { type: Date, default: null },
       expires_at: { type: Date, default: null },
+      expired_at: { type: Date, default: null },
       finalized_at: { type: Date, default: null },
       maker_payout: { type: String, default: null },
       taker_payout: { type: String, default: null },
