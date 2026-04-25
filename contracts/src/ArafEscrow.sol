@@ -120,6 +120,15 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         CANCELED
     }
 
+    // [TR] Ödeme rail/jurisdiction operasyonel karmaşıklık sınıfı (davranış skoru değildir).
+    // [EN] Payment rail/jurisdiction operational complexity class (not a behavioral score).
+    enum PaymentRiskLevel {
+        LOW,
+        MEDIUM,
+        HIGH,
+        RESTRICTED
+    }
+
     // [TR] Faz-2 partial settlement teklif yaşam döngüsü.
     // [EN] Phase-2 partial settlement proposal lifecycle.
     enum SettlementProposalState {
@@ -145,6 +154,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint16  takerFeeBpsSnapshot;
         uint16  makerFeeBpsSnapshot;
         uint8   tier;
+        PaymentRiskLevel paymentRiskLevelSnapshot;
         TradeState state;
         uint256 lockedAt;
         uint256 paidAt;
@@ -173,6 +183,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint16  takerFeeBpsSnapshot;
         uint16  makerFeeBpsSnapshot;
         uint8   tier;
+        PaymentRiskLevel paymentRiskLevel;
         OrderState state;
         bytes32 orderRef;
     }
@@ -403,6 +414,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint256 totalAmount,
         uint256 minFillAmount,
         uint8 tier,
+        PaymentRiskLevel paymentRiskLevel,
         bytes32 orderRef
     );
 
@@ -412,6 +424,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         address indexed filler,
         uint256 fillAmount,
         uint256 remainingAmount,
+        PaymentRiskLevel paymentRiskLevelSnapshot,
         bytes32 childListingRef
     );
 
@@ -539,8 +552,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint256 _totalAmount,
         uint256 _minFillAmount,
         uint8   _tier,
-        bytes32 _orderRef
-    ) external nonReentrant whenNotPaused returns (uint256 orderId) {
+        bytes32 _orderRef,
+        PaymentRiskLevel _paymentRiskLevel
+    ) public nonReentrant whenNotPaused returns (uint256 orderId) {
         if (!_isTokenAllowedForSellOrder(_token)) revert TokenDirectionNotAllowed();
         if (_totalAmount == 0) revert ZeroAmount();
         if (_minFillAmount == 0 || _minFillAmount > _totalAmount) revert InvalidMinFill();
@@ -570,6 +584,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             takerFeeBpsSnapshot:        uint16(_getCurrentTakerFeeBps(_tier)),
             makerFeeBpsSnapshot:        uint16(_getCurrentMakerFeeBps(_tier)),
             tier:                       _tier,
+            paymentRiskLevel:           _paymentRiskLevel,
             state:                      OrderState.OPEN,
             orderRef:                   _orderRef
         });
@@ -584,8 +599,24 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             _totalAmount,
             _minFillAmount,
             _tier,
+            _paymentRiskLevel,
             _orderRef
         );
+    }
+
+
+    /**
+     * @notice Legacy createSellOrder imzası — geriye dönük uyumluluk için MEDIUM risk varsayımı.
+     * @notice Legacy createSellOrder signature — defaults to MEDIUM risk for backward compatibility.
+     */
+    function createSellOrder(
+        address _token,
+        uint256 _totalAmount,
+        uint256 _minFillAmount,
+        uint8   _tier,
+        bytes32 _orderRef
+    ) external returns (uint256 orderId) {
+        return createSellOrder(_token, _totalAmount, _minFillAmount, _tier, _orderRef, PaymentRiskLevel.MEDIUM);
     }
 
     /**
@@ -643,6 +674,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             takerFeeBpsSnapshot:    o.takerFeeBpsSnapshot,
             makerFeeBpsSnapshot:    o.makerFeeBpsSnapshot,
             tier:                   o.tier,
+            paymentRiskLevelSnapshot:o.paymentRiskLevel,
             state:                  TradeState.LOCKED,
             ipfsReceiptHash:        "",
             lockedAt:               block.timestamp,
@@ -658,7 +690,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         lastTradeAt[msg.sender] = block.timestamp;
 
-        emit OrderFilled(_orderId, tradeId, msg.sender, _fillAmount, o.remainingAmount, _childListingRef);
+        emit OrderFilled(_orderId, tradeId, msg.sender, _fillAmount, o.remainingAmount, o.paymentRiskLevel, _childListingRef);
 
         // [TR] V3 saf modelde child trade otoritesi OrderFilled + getTrade() kombinasyonudur.
         //      Legacy create/lock mirror event zinciri artık üretilmez.
@@ -706,8 +738,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint256 _totalAmount,
         uint256 _minFillAmount,
         uint8   _tier,
-        bytes32 _orderRef
-    ) external nonReentrant whenNotPaused returns (uint256 orderId) {
+        bytes32 _orderRef,
+        PaymentRiskLevel _paymentRiskLevel
+    ) public nonReentrant whenNotPaused returns (uint256 orderId) {
         if (!_isTokenAllowedForBuyOrder(_token)) revert TokenDirectionNotAllowed();
         if (_totalAmount == 0) revert ZeroAmount();
         if (_minFillAmount == 0 || _minFillAmount > _totalAmount) revert InvalidMinFill();
@@ -743,6 +776,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             takerFeeBpsSnapshot:        uint16(_getCurrentTakerFeeBps(_tier)),
             makerFeeBpsSnapshot:        uint16(_getCurrentMakerFeeBps(_tier)),
             tier:                       _tier,
+            paymentRiskLevel:           _paymentRiskLevel,
             state:                      OrderState.OPEN,
             orderRef:                   _orderRef
         });
@@ -759,8 +793,24 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             _totalAmount,
             _minFillAmount,
             _tier,
+            _paymentRiskLevel,
             _orderRef
         );
+    }
+
+
+    /**
+     * @notice Legacy createBuyOrder imzası — geriye dönük uyumluluk için MEDIUM risk varsayımı.
+     * @notice Legacy createBuyOrder signature — defaults to MEDIUM risk for backward compatibility.
+     */
+    function createBuyOrder(
+        address _token,
+        uint256 _totalAmount,
+        uint256 _minFillAmount,
+        uint8   _tier,
+        bytes32 _orderRef
+    ) external returns (uint256 orderId) {
+        return createBuyOrder(_token, _totalAmount, _minFillAmount, _tier, _orderRef, PaymentRiskLevel.MEDIUM);
     }
 
     /**
@@ -824,6 +874,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             takerFeeBpsSnapshot:    o.takerFeeBpsSnapshot,
             makerFeeBpsSnapshot:    o.makerFeeBpsSnapshot,
             tier:                   o.tier,
+            paymentRiskLevelSnapshot:o.paymentRiskLevel,
             state:                  TradeState.LOCKED,
             ipfsReceiptHash:        "",
             lockedAt:               block.timestamp,
@@ -839,7 +890,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         lastTradeAt[o.owner] = block.timestamp;
 
-        emit OrderFilled(_orderId, tradeId, msg.sender, _fillAmount, o.remainingAmount, _childListingRef);
+        emit OrderFilled(_orderId, tradeId, msg.sender, _fillAmount, o.remainingAmount, o.paymentRiskLevel, _childListingRef);
 
         // [TR] V3 saf modelde child trade otoritesi OrderFilled + getTrade() kombinasyonudur.
         //      Legacy create/lock mirror event zinciri artık üretilmez.

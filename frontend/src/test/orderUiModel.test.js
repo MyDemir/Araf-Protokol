@@ -239,4 +239,26 @@ describe('orderUiModel mapping', () => {
     expect(signal?.generic).toBe(false);
   });
 
+  it('prefers on-chain order payment risk level snapshot when available', () => {
+    const signal = deriveOrderPaymentRiskSignal({
+      order: { ...baseOrder, payment_risk_level: "HIGH" },
+      paymentRiskConfig: {},
+    });
+    expect(signal?.riskLevel).toBe('HIGH');
+    expect(signal?.source).toBe('onchain_snapshot');
+  });
+
+  it('prefers on-chain trade payment risk snapshot over config-derived rail lookup', () => {
+    const signal = deriveOrderPaymentRiskSignal({
+      order: {
+        ...baseOrder,
+        payment_risk_level_snapshot: "RESTRICTED",
+        payment_method: { rail: "TR_IBAN", country: "TR" },
+      },
+      paymentRiskConfig: { TR: { TR_IBAN: { riskLevel: "MEDIUM", enabled: true } } },
+    });
+    expect(signal?.riskLevel).toBe('RESTRICTED');
+    expect(signal?.source).toBe('onchain_snapshot');
+  });
+
 });

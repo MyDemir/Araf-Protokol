@@ -9,7 +9,7 @@ import { EnvWarningBanner, buildAppModals } from './app/AppModals';
 import { useAppSessionData } from './app/useAppSessionData';
 import AdminPanel from './AdminPanel';
 import { getInitialLang, getInitialTermsAccepted, APP_LANG_STORAGE_KEY } from './app/bootstrapState';
-import { resolveOrderActionFns, normalizeOrderSide, removeOrderByOnchainId } from './app/orderUiModel';
+import { resolveOrderActionFns, normalizeOrderSide, removeOrderByOnchainId, resolvePaymentRiskEntry } from './app/orderUiModel';
 import { buildApiUrl } from './app/apiConfig';
 
 // [TR] Uygulama başlangıcında kritik env değişkenlerini doğrula
@@ -1205,12 +1205,20 @@ const handleCreateOrder = async () => {
     const { createFn } = resolveOrderActionFns(normalizedSide, { fillBuyOrder, fillSellOrder, createBuyOrder, createSellOrder, cancelBuyOrder, cancelSellOrder });
     const createLabel = normalizedSide === 'BUY_CRYPTO' ? 'Buy' : 'Sell';
 
+    const canonicalPayoutProfile = canonicalizePayoutProfileDraft(payoutProfileDraft || {});
+    const selectedRiskEntry = resolvePaymentRiskEntry({
+      paymentRiskConfig: paymentRiskConfig || {},
+      rail: canonicalPayoutProfile?.rail,
+      country: canonicalPayoutProfile?.country,
+    });
+    const selectedPaymentRiskLevel = String(selectedRiskEntry?.riskLevel || 'MEDIUM').toUpperCase();
+
     setLoadingText(
       lang === 'TR'
         ? `Adım 2/2: ${createLabel} order oluşturuluyor...`
         : `Step 2/2: Creating ${createLabel.toLowerCase()} order...`
     );
-    await createFn(tokenAddress, cryptoAmountRaw, boundedMinFill, makerTier, orderRef);
+    await createFn(tokenAddress, cryptoAmountRaw, boundedMinFill, makerTier, orderRef, selectedPaymentRiskLevel);
 
     showToast(
       lang === 'TR'

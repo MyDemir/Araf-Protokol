@@ -167,6 +167,13 @@ const tradeSchema = new mongoose.Schema(
 
     tier: { type: Number, enum: [0, 1, 2, 3, 4], required: true, index: true },
 
+    payment_risk_level_snapshot: {
+      type: String,
+      enum: ["LOW", "MEDIUM", "HIGH", "RESTRICTED", null],
+      default: null,
+      index: true,
+    },
+
     timers: {
       created_at_onchain:    { type: Date, default: null },
       locked_at:             { type: Date, default: null },

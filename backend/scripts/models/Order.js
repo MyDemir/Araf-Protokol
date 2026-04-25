@@ -57,6 +57,13 @@ const orderSchema = new mongoose.Schema(
       index: true,
     },
 
+    payment_risk_level: {
+      type: String,
+      enum: ["LOW", "MEDIUM", "HIGH", "RESTRICTED", null],
+      default: null,
+      index: true,
+    },
+
     token_address: {
       type: String,
       required: true,
