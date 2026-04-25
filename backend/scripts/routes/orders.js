@@ -52,7 +52,7 @@ const SAFE_ORDER_TRADES_PROJECTION = [
   "taker_address",
   "status",
   "tier",
-  "payment_risk_level",
+  "payment_risk_level_snapshot",
   "token_address",
   "financials",
   "fee_snapshot",
