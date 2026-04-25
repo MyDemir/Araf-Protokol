@@ -346,8 +346,16 @@ class EventWorker {
 
   async _connect() {
     const isProduction = process.env.NODE_ENV === "production";
-    const rpcUrl = process.env.BASE_RPC_URL || (!isProduction ? "https://mainnet.base.org" : null);
+    const rpcUrl = process.env.BASE_RPC_URL || null;
     const contractAddress = process.env.ARAF_ESCROW_ADDRESS;
+    const isWorkerDisabled = String(process.env.WORKER_DISABLED || "").toLowerCase() === "true";
+
+    // [TR] Worker explicit olarak devre dışıysa bağlantı kurma.
+    // [EN] Do not establish provider/contract when worker is explicitly disabled.
+    if (isWorkerDisabled) {
+      logger.warn("[Worker] WORKER_DISABLED=true — event worker başlatılmadı.");
+      return;
+    }
 
     if (!contractAddress || contractAddress === "0x0000000000000000000000000000000000000000") {
       if (isProduction) {
@@ -359,7 +367,7 @@ class EventWorker {
     }
 
     if (!rpcUrl) {
-      throw new Error("[Worker] KRİTİK: BASE_RPC_URL production'da zorunludur.");
+      throw new Error("[Worker] KRİTİK: BASE_RPC_URL zorunludur (public mainnet fallback kapalı).");
     }
 
     const wsRpcUrl = process.env.BASE_WS_RPC_URL;

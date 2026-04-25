@@ -111,6 +111,8 @@ EOF
 cd backend && npm run dev
 ```
 
+> Security note: `BASE_RPC_URL` is now explicitly required; the worker no longer falls back to public mainnet (`https://mainnet.base.org`).
+
 ### Step 6 — Terminal 3: Frontend Configuration
 
 ```bash
@@ -447,6 +449,8 @@ NODE_ENV=production npx hardhat run scripts/deploy.js --network base
 # Verify
 npx hardhat verify --network base <ESCROW_ADDRESS> <GNOSIS_SAFE_ADDRESS>
 ```
+
+> Note: In `contracts/hardhat.config.js`, `BASE_RPC_URL` is required for `base` and `BASE_SEPOLIA_RPC_URL` is required for `base-sepolia`; no public RPC default fallback is configured.
 
 ### Step 4 — Backend: Production Secrets
 

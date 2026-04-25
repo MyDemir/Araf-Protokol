@@ -15,6 +15,10 @@
 - `SIWE_DOMAIN`
 - `SIWE_URI`
 
+Kritik not:
+- `BASE_RPC_URL` zorunludur; backend worker artık public `https://mainnet.base.org` fallback kullanmaz.
+- `ARAF_ESCROW_ADDRESS` tanımlı ve worker aktifken `BASE_RPC_URL` eksikse worker fail-closed davranır.
+
 ### Worker / replay güvenliği
 - `WORKER_START_BLOCK` **veya** `ARAF_DEPLOYMENT_BLOCK` (checkpoint yoksa production'da zorunlu)
 - `BASE_WS_RPC_URL` (önerilir; yoksa HTTP fallback gözlenmeli)

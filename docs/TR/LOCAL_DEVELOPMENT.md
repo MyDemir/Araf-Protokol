@@ -111,6 +111,8 @@ EOF
 cd backend && npm run dev
 ```
 
+> Güvenlik notu: `BASE_RPC_URL` artık explicit zorunludur; worker tarafında public mainnet fallback (`https://mainnet.base.org`) kullanılmaz.
+
 ### Adım 6 — Terminal 3: Frontend Konfigürasyonu
 
 ```bash
@@ -447,6 +449,8 @@ NODE_ENV=production npx hardhat run scripts/deploy.js --network base
 # Verify et
 npx hardhat verify --network base <ESCROW_ADDRESS> <GNOSIS_SAFE_ADDRESS>
 ```
+
+> Not: `contracts/hardhat.config.js` içinde `base` için `BASE_RPC_URL`, `base-sepolia` için `BASE_SEPOLIA_RPC_URL` explicit olarak gerekir; varsayılan public RPC fallback tanımlı değildir.
 
 ### Adım 4 — Backend: Üretim Secrets
 
