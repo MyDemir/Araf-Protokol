@@ -41,6 +41,7 @@ const {
 const User = require("../models/User");
 const Trade = require("../models/Trade");
 const logger = require("../utils/logger");
+const { SEPA_COUNTRY_ALLOWLIST } = require("../config/paymentRailRiskConfig");
 
 const COOKIE_OPTIONS_BASE = {
   httpOnly: true,
@@ -52,8 +53,6 @@ const COOKIE_OPTIONS_BASE = {
 };
 
 const ACTIVE_TRADE_STATUSES_FOR_BANK_PROFILE_LOCK = ["LOCKED", "PAID", "CHALLENGED"];
-const SEPA_COUNTRY_ALLOWLIST = new Set(["DE", "FR", "NL", "BE", "ES", "IT", "AT", "PT", "IE", "LU", "FI", "GR"]);
-
 function _getJwtCookieOptions() {
   return {
     ...COOKIE_OPTIONS_BASE,
