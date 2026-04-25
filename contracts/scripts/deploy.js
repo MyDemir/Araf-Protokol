@@ -118,6 +118,21 @@ function resolveProductionTokenConfig() {
   };
 }
 
+function resolveFinalOwnerAddress({ deployMode, treasuryAddress }) {
+  const isLocal = deployMode === "local";
+  const finalOwnerAddress = isLocal
+    ? getOptionalEnvAddress("FINAL_OWNER_ADDRESS", treasuryAddress)
+    : getRequiredEnvAddress("FINAL_OWNER_ADDRESS");
+
+  if (!isLocal && finalOwnerAddress === treasuryAddress) {
+    throw new Error(
+      "❌ FINAL_OWNER_ADDRESS ve TREASURY_ADDRESS public/custom deploy modunda aynı olamaz."
+    );
+  }
+
+  return finalOwnerAddress;
+}
+
 async function deployMockToken(name, symbol, decimals) {
   const hasMock = await artifactExists("MockERC20");
   if (!hasMock) {
@@ -279,7 +294,11 @@ async function main() {
   console.log("==================================================\n");
 
   const treasuryAddress = getRequiredEnvAddress("TREASURY_ADDRESS");
-  const finalOwnerAddress = getOptionalEnvAddress("FINAL_OWNER_ADDRESS", treasuryAddress);
+  const finalOwnerAddress = resolveFinalOwnerAddress({ deployMode, treasuryAddress });
+
+  if (isLocal && finalOwnerAddress === treasuryAddress) {
+    console.log("ℹ️ Local mod: FINAL_OWNER_ADDRESS tanımlı değil, güvenli varsayılan olarak treasury kullanıldı.");
+  }
 
   let usdtAddress;
   let usdcAddress;
@@ -432,6 +451,7 @@ module.exports = {
   main,
   getDeployMode,
   resolveProductionTokenConfig,
+  resolveFinalOwnerAddress,
   getTokenConfigSnapshot,
   setAndVerifyTokenConfig,
 };

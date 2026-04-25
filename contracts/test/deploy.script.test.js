@@ -1,6 +1,7 @@
 const { expect } = require("chai");
 const {
   resolveProductionTokenConfig,
+  resolveFinalOwnerAddress,
   getTokenConfigSnapshot,
   setAndVerifyTokenConfig,
 } = require("../scripts/deploy");
@@ -9,16 +10,19 @@ describe("deploy script config guards", function () {
   const OLD_NODE_ENV = process.env.NODE_ENV;
   const OLD_USDT = process.env.MAINNET_USDT_ADDRESS;
   const OLD_USDC = process.env.MAINNET_USDC_ADDRESS;
+  const OLD_FINAL_OWNER = process.env.FINAL_OWNER_ADDRESS;
 
   after(function () {
     process.env.NODE_ENV = OLD_NODE_ENV;
     process.env.MAINNET_USDT_ADDRESS = OLD_USDT;
     process.env.MAINNET_USDC_ADDRESS = OLD_USDC;
+    process.env.FINAL_OWNER_ADDRESS = OLD_FINAL_OWNER;
   });
 
   beforeEach(function () {
     delete process.env.MAINNET_USDT_ADDRESS;
     delete process.env.MAINNET_USDC_ADDRESS;
+    delete process.env.FINAL_OWNER_ADDRESS;
     process.env.NODE_ENV = "production";
   });
 
@@ -57,6 +61,42 @@ describe("deploy script config guards", function () {
     expect(cfg.isProduction).to.equal(false);
     expect(cfg.usdtAddress).to.equal(null);
     expect(cfg.usdcAddress).to.equal(null);
+  });
+
+  it("security_public_mode_reverts_when_final_owner_missing", function () {
+    expect(() =>
+      resolveFinalOwnerAddress({
+        deployMode: "public",
+        treasuryAddress: "0x1111111111111111111111111111111111111111",
+      })
+    ).to.throw(/FINAL_OWNER_ADDRESS/);
+  });
+
+  it("security_public_mode_accepts_valid_final_owner", function () {
+    process.env.FINAL_OWNER_ADDRESS = "0x2222222222222222222222222222222222222222";
+    const owner = resolveFinalOwnerAddress({
+      deployMode: "public",
+      treasuryAddress: "0x1111111111111111111111111111111111111111",
+    });
+    expect(owner).to.equal("0x2222222222222222222222222222222222222222");
+  });
+
+  it("security_public_mode_reverts_when_final_owner_equals_treasury", function () {
+    process.env.FINAL_OWNER_ADDRESS = "0x1111111111111111111111111111111111111111";
+    expect(() =>
+      resolveFinalOwnerAddress({
+        deployMode: "public",
+        treasuryAddress: "0x1111111111111111111111111111111111111111",
+      })
+    ).to.throw(/aynı olamaz/);
+  });
+
+  it("local_mode_can_fallback_final_owner_to_treasury", function () {
+    const owner = resolveFinalOwnerAddress({
+      deployMode: "local",
+      treasuryAddress: "0x1111111111111111111111111111111111111111",
+    });
+    expect(owner).to.equal("0x1111111111111111111111111111111111111111");
   });
 
   it("getTokenConfigSnapshot_reads_explicit_getTokenConfig_tier_limits", async function () {

@@ -8,6 +8,7 @@
 - `SIWE_URI`
 - `JWT_SECRET`
 - `TREASURY_ADDRESS`
+- `FINAL_OWNER_ADDRESS` (public/custom deploy için zorunlu, treasury ile aynı olmamalı)
 - `BASE_RPC_URL`
 - `EXPECTED_CHAIN_ID` (örn. Base Mainnet için `8453`)
 - `BASE_WS_RPC_URL` (önerilir)
