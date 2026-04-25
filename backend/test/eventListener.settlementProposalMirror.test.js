@@ -220,4 +220,40 @@ describe("eventListener settlement proposal mirror", () => {
     expect(update.$set.status).toBe("BURNED");
     expect(update.$set.resolution_type).toBe("BURNED");
   });
+
+  it("security_escrow_released_from_challenged_sets_disputed_resolution_by_mirrored_status_only", async () => {
+    mockTradeFindOne.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ status: "CHALLENGED" }),
+      }),
+      lean: jest.fn().mockResolvedValue({ status: "CHALLENGED" }),
+    });
+
+    await worker._onEscrowReleased({
+      eventName: "EscrowReleased",
+      args: { tradeId: 22n },
+    });
+
+    const [, update] = mockTradeFindOneAndUpdate.mock.calls[0];
+    expect(update.$set.status).toBe("RESOLVED");
+    expect(update.$set.resolution_type).toBe("DISPUTED_RESOLUTION");
+  });
+
+  it("security_escrow_released_from_non_challenged_keeps_unknown_resolution_type", async () => {
+    mockTradeFindOne.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ status: "PAID" }),
+      }),
+      lean: jest.fn().mockResolvedValue({ status: "PAID" }),
+    });
+
+    await worker._onEscrowReleased({
+      eventName: "EscrowReleased",
+      args: { tradeId: 23n },
+    });
+
+    const [, update] = mockTradeFindOneAndUpdate.mock.calls[0];
+    expect(update.$set.status).toBe("RESOLVED");
+    expect(update.$set.resolution_type).toBe("UNKNOWN");
+  });
 });

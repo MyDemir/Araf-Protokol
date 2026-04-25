@@ -362,23 +362,32 @@ router.get("/summary", async (req, res, next) => {
       unknownResolvedCount: 0,
     };
     try {
-      const resolutionCounts = await Promise.all(
-        RESOLUTION_ANALYTICS_TYPES.map((resolutionType) =>
+      const exactResolutionTypes = RESOLUTION_ANALYTICS_TYPES.filter((resolutionType) => resolutionType !== "UNKNOWN");
+      const exactResolutionCounts = await Promise.all(
+        exactResolutionTypes.map((resolutionType) =>
           Trade.countDocuments({
             resolution_type: resolutionType,
             status: { $in: TERMINAL_TRADE_STATUSES },
           })
         )
       );
+      const unknownResolvedCount = await Trade.countDocuments({
+        status: { $in: TERMINAL_TRADE_STATUSES },
+        $or: [
+          { resolution_type: "UNKNOWN" },
+          { resolution_type: null },
+          { resolution_type: { $exists: false } },
+        ],
+      });
 
       resolutionAnalytics = {
-        manualReleaseCount: Number(resolutionCounts[0]) || 0,
-        autoReleaseCount: Number(resolutionCounts[1]) || 0,
-        partialSettlementCount: Number(resolutionCounts[2]) || 0,
-        mutualCancelCount: Number(resolutionCounts[3]) || 0,
-        burnedCount: Number(resolutionCounts[4]) || 0,
-        disputedResolutionCount: Number(resolutionCounts[5]) || 0,
-        unknownResolvedCount: Number(resolutionCounts[6]) || 0,
+        manualReleaseCount: Number(exactResolutionCounts[0]) || 0,
+        autoReleaseCount: Number(exactResolutionCounts[1]) || 0,
+        partialSettlementCount: Number(exactResolutionCounts[2]) || 0,
+        mutualCancelCount: Number(exactResolutionCounts[3]) || 0,
+        burnedCount: Number(exactResolutionCounts[4]) || 0,
+        disputedResolutionCount: Number(exactResolutionCounts[5]) || 0,
+        unknownResolvedCount: Number(unknownResolvedCount) || 0,
       };
     } catch (err) {
       degraded.isDegraded = true;
