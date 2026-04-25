@@ -278,6 +278,18 @@ describe("ArafEscrow V3 reputation authority", () => {
     expect(rep.length).to.equal(16);
   });
 
+  it("security_getReputation_tuple_order_keeps_partialSettlementCount_before_riskPoints", async () => {
+    const { escrow, maker } = await loadFixture(deployFixture);
+    const rep = await escrow.getReputation(maker.address);
+
+    // [TR] ABI lock-step guard: index 12 partialSettlementCount, index 13 riskPoints olmalı.
+    // [EN] ABI lock-step guard: index 12 must be partialSettlementCount, index 13 riskPoints.
+    expect(rep[12]).to.equal(rep.partialSettlementCount);
+    expect(rep[13]).to.equal(rep.riskPoints);
+    expect(rep[14]).to.equal(rep.lastPositiveEventAt);
+    expect(rep[15]).to.equal(rep.lastNegativeEventAt);
+  });
+
   it("test_setCooldownConfig_accepts_maximum", async () => {
     const { escrow, owner } = await loadFixture(deployFixture);
     const maxCooldown = await escrow.MAX_TRADE_COOLDOWN();

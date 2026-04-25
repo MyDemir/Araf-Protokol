@@ -45,6 +45,8 @@ const ArafEscrowABI = parseAbi([
   'function decayReputation(address _wallet)',
 
   // View Fonksiyonları (App.jsx'te kullanılanlar) 
+  // [TR] getReputation tuple sırası contracts/src/ArafEscrow.sol ile birebir lock-step kalmalıdır.
+  // [EN] Keep getReputation tuple order in strict lock-step with contracts/src/ArafEscrow.sol.
   'function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier, uint256 manualReleaseCount, uint256 autoReleaseCount, uint256 mutualCancelCount, uint256 disputedResolvedCount, uint256 burnCount, uint256 disputeWinCount, uint256 disputeLossCount, uint256 partialSettlementCount, uint256 riskPoints, uint256 lastPositiveEventAt, uint256 lastNegativeEventAt)',
   'function antiSybilCheck(address _wallet) view returns (bool aged, bool funded, bool cooldownOk)',
   'function getCooldownRemaining(address _wallet) view returns (uint256)',

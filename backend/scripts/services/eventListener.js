@@ -82,6 +82,8 @@ const ARAF_ABI = [
   "event CancelProposed(uint256 indexed tradeId, address indexed proposer)",
   "event EscrowCanceled(uint256 indexed tradeId, uint256 makerRefund, uint256 takerRefund)",
   "event MakerPinged(uint256 indexed tradeId, address indexed pinger, uint256 timestamp)",
+  // [TR] ReputationUpdated arg sırası kontrat event imzasıyla birebir eşleşmelidir (index kayması mirror bozar).
+  // [EN] ReputationUpdated arg order must exactly match contract event signature (index drift breaks mirroring).
   "event ReputationUpdated(address indexed wallet, uint256 successful, uint256 failed, uint256 bannedUntil, uint8 effectiveTier, uint256 manualReleaseCount, uint256 autoReleaseCount, uint256 mutualCancelCount, uint256 disputedResolvedCount, uint256 burnCount, uint256 disputeWinCount, uint256 disputeLossCount, uint256 partialSettlementCount, uint256 riskPoints, uint256 lastPositiveEventAt, uint256 lastNegativeEventAt)",
   "event BleedingDecayed(uint256 indexed tradeId, uint256 decayedAmount, uint256 timestamp)",
   "event EscrowBurned(uint256 indexed tradeId, uint256 burnedAmount)",
@@ -98,6 +100,8 @@ const ARAF_ABI = [
   "event TokenConfigUpdated(address indexed token, bool supported, bool allowSellOrders, bool allowBuyOrders)",
   "function getTrade(uint256 _tradeId) view returns ((uint256 id,uint256 parentOrderId,address maker,address taker,address tokenAddress,uint256 cryptoAmount,uint256 makerBond,uint256 takerBond,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 state,uint256 lockedAt,uint256 paidAt,uint256 challengedAt,string ipfsReceiptHash,bool cancelProposedByMaker,bool cancelProposedByTaker,uint256 pingedAt,bool pingedByTaker,uint256 challengePingedAt,bool challengePingedByMaker))",
   "function getOrder(uint256 _orderId) view returns ((uint256 id,address owner,uint8 side,address tokenAddress,uint256 totalAmount,uint256 remainingAmount,uint256 minFillAmount,uint256 remainingMakerBondReserve,uint256 remainingTakerBondReserve,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 state,bytes32 orderRef))",
+  // [TR] getReputation getter tuple sırası frontend + contract ile lock-step kalmalıdır.
+  // [EN] Keep getReputation tuple order in lock-step with frontend + contract.
   "function getReputation(address _wallet) view returns (uint256 successful,uint256 failed,uint256 bannedUntil,uint256 consecutiveBans,uint8 effectiveTier,uint256 manualReleaseCount,uint256 autoReleaseCount,uint256 mutualCancelCount,uint256 disputedResolvedCount,uint256 burnCount,uint256 disputeWinCount,uint256 disputeLossCount,uint256 partialSettlementCount,uint256 riskPoints,uint256 lastPositiveEventAt,uint256 lastNegativeEventAt)",
 ];
 
