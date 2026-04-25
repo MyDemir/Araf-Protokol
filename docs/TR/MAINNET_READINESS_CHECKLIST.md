@@ -22,6 +22,7 @@ Kritik not:
 ### Worker / replay güvenliği
 - `WORKER_START_BLOCK` **veya** `ARAF_DEPLOYMENT_BLOCK` (checkpoint yoksa production'da zorunlu)
 - `BASE_WS_RPC_URL` (önerilir; yoksa HTTP fallback gözlenmeli)
+- `WORKER_FINALITY_DEPTH` (önerilen production değeri: `6` veya üzeri)
 
 ### Token env stratejisi (backend + deploy uyumu)
 - `MAINNET_USDT_ADDRESS`

@@ -134,6 +134,9 @@ async function getReadiness({ worker, provider } = {}) {
     ? worker._lastSafeCheckpointBlock
     : null;
   const livePollInProgress = Boolean(worker?._livePollInProgress);
+  const workerFinalityDepth = Number.isInteger(worker?._runtimeConfig?.WORKER_FINALITY_DEPTH)
+    ? worker._runtimeConfig.WORKER_FINALITY_DEPTH
+    : null;
 
   const workerStateHealthy =
     workerRunning &&
@@ -202,6 +205,7 @@ async function getReadiness({ worker, provider } = {}) {
       lagBlocks: workerLagBlocks,
       maxAllowedLagBlocks: MAX_WORKER_LAG_BLOCKS,
       livePollInProgress,
+      finalityDepth: workerFinalityDepth,
     },
 
     missingConfig,

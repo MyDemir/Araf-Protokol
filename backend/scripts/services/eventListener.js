@@ -60,6 +60,8 @@ function _getPositiveIntEnv(name, fallback) {
 
 const BLOCK_BATCH_SIZE = _getPositiveIntEnv("WORKER_BLOCK_BATCH_SIZE", 1_000);
 const CHECKPOINT_INTERVAL_BLOCKS = _getPositiveIntEnv("WORKER_CHECKPOINT_INTERVAL_BLOCKS", 50);
+const DEFAULT_WORKER_FINALITY_DEPTH = process.env.NODE_ENV === "production" ? 6 : 1;
+const WORKER_FINALITY_DEPTH = _getPositiveIntEnv("WORKER_FINALITY_DEPTH", DEFAULT_WORKER_FINALITY_DEPTH);
 const BLOCK_TIMESTAMP_CACHE_LIMIT = 2_048;
 
 const EVENT_NAMES = [
@@ -319,7 +321,7 @@ class EventWorker {
   }
 
   async start() {
-    logger.info("[Worker] V3 event listener başlatılıyor...");
+    logger.info(`[Worker] V3 event listener başlatılıyor... (finalityDepth=${WORKER_FINALITY_DEPTH})`);
     this.isRunning = true;
     await this._connect();
     await this._replayMissedEvents();
@@ -506,8 +508,10 @@ class EventWorker {
           this._lastLivePolledBlock = toBlock;
         }
 
-        const finalizedUpTo = blockNumber - 1;
-        await this._advanceSafeCheckpointFromAcks(finalizedUpTo);
+        const finalizedUpTo = this._computeFinalizedUpTo(blockNumber);
+        if (finalizedUpTo > this._lastSafeCheckpointBlock) {
+          await this._advanceSafeCheckpointFromAcks(finalizedUpTo);
+        }
 
         if (
           !this._replayInProgress &&
@@ -660,6 +664,11 @@ class EventWorker {
   _markBlockUnsafe(blockNumber) {
     const state = this._ensureBlockAckState(blockNumber);
     state.unsafe = true;
+  }
+
+  _computeFinalizedUpTo(blockNumber) {
+    if (!Number.isInteger(blockNumber)) return 0;
+    return blockNumber - WORKER_FINALITY_DEPTH;
   }
 
   async _advanceSafeCheckpointFromAcks(finalizedUpTo) {
@@ -1846,6 +1855,7 @@ const worker = new EventWorker();
 worker._runtimeConfig = {
   BLOCK_BATCH_SIZE,
   CHECKPOINT_INTERVAL_BLOCKS,
+  WORKER_FINALITY_DEPTH,
 };
 worker._getPositiveIntEnv = _getPositiveIntEnv;
 worker._inferCryptoAssetFromToken = _inferCryptoAssetFromToken;

@@ -30,9 +30,11 @@ describe("eventListener identity + env wiring", () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  function loadWorkerWithEnv(batchRaw, checkpointRaw) {
+  function loadWorkerWithEnv(batchRaw, checkpointRaw, finalityRaw = "", nodeEnv = "test") {
     process.env.WORKER_BLOCK_BATCH_SIZE = batchRaw;
     process.env.WORKER_CHECKPOINT_INTERVAL_BLOCKS = checkpointRaw;
+    process.env.WORKER_FINALITY_DEPTH = finalityRaw;
+    process.env.NODE_ENV = nodeEnv;
     return require("../scripts/services/eventListener");
   }
 
@@ -43,10 +45,13 @@ describe("eventListener identity + env wiring", () => {
       const worker = loadWorkerWithEnv(sample, sample);
       expect(worker._runtimeConfig.BLOCK_BATCH_SIZE).toBe(1000);
       expect(worker._runtimeConfig.CHECKPOINT_INTERVAL_BLOCKS).toBe(50);
+      expect(worker._runtimeConfig.WORKER_FINALITY_DEPTH).toBe(1);
       expect(Number.isInteger(worker._runtimeConfig.BLOCK_BATCH_SIZE)).toBe(true);
       expect(worker._runtimeConfig.BLOCK_BATCH_SIZE).toBeGreaterThan(0);
       expect(Number.isInteger(worker._runtimeConfig.CHECKPOINT_INTERVAL_BLOCKS)).toBe(true);
       expect(worker._runtimeConfig.CHECKPOINT_INTERVAL_BLOCKS).toBeGreaterThan(0);
+      expect(Number.isInteger(worker._runtimeConfig.WORKER_FINALITY_DEPTH)).toBe(true);
+      expect(worker._runtimeConfig.WORKER_FINALITY_DEPTH).toBeGreaterThan(0);
       jest.resetModules();
     }
   });
@@ -55,6 +60,16 @@ describe("eventListener identity + env wiring", () => {
     const worker = loadWorkerWithEnv("2048", "75");
     expect(worker._runtimeConfig.BLOCK_BATCH_SIZE).toBe(2048);
     expect(worker._runtimeConfig.CHECKPOINT_INTERVAL_BLOCKS).toBe(75);
+  });
+
+  it("accepts explicit WORKER_FINALITY_DEPTH when positive integer", () => {
+    const worker = loadWorkerWithEnv("1000", "50", "6");
+    expect(worker._runtimeConfig.WORKER_FINALITY_DEPTH).toBe(6);
+  });
+
+  it("uses production-safe default finality depth when env is invalid in production", () => {
+    const worker = loadWorkerWithEnv("", "", "invalid", "production");
+    expect(worker._runtimeConfig.WORKER_FINALITY_DEPTH).toBe(6);
   });
 
   it("stores identity fields as strings and keeps parent order zero as null", async () => {
