@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   mapReputationToSessionView,
   mapSettlementProposalFromApi,
   buildSettlementQuickCounts,
+  mapResolutionTypeLabel,
 } from '../app/useAppSessionData';
 
 describe('useAppSessionData V3 reputation mapping', () => {
@@ -90,5 +93,18 @@ describe('useAppSessionData V3 reputation mapping', () => {
       ACTION_REQUIRED: 1,
       WAITING: 1,
     });
+  });
+
+  it('maps terminal trade resolutionType labels with EN/TR copy and unknown fallback', () => {
+    expect(mapResolutionTypeLabel('PARTIAL_SETTLEMENT', 'EN')).toBe('Closed by agreed partial settlement');
+    expect(mapResolutionTypeLabel('BURNED', 'EN')).toBe('Closed by burn');
+    expect(mapResolutionTypeLabel('UNKNOWN', 'TR')).toBe('Kapandı; sonuç tipi bilinmiyor');
+    expect(mapResolutionTypeLabel(null, 'EN')).toBe('Closed; outcome type unavailable');
+  });
+
+  it('maps backend resolution_type into frontend resolutionType for terminal trade payloads', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/app/useAppSessionData.jsx'), 'utf8');
+    expect(source).toContain('resolutionType: t.resolution_type || null');
+    expect(source).toContain('resolutionType: trade?.resolution_type || null');
   });
 });

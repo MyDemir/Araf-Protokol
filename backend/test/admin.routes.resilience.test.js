@@ -84,6 +84,74 @@ describe("admin routes resilience + pagination semantics", () => {
     expect(adminReadLimiter).toHaveBeenCalled();
   });
 
+  it("summary_resolution_analytics_counts_are_computed_from_resolution_type_not_status_only", async () => {
+    const adminReadLimiter = jest.fn((_req, _res, next) => next());
+    let router;
+
+    jest.isolateModules(() => {
+      jest.doMock("../scripts/middleware/auth", () => ({
+        requireAuth: (_req, _res, next) => next(),
+        requireSessionWalletMatch: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../scripts/middleware/rateLimiter", () => ({ adminReadLimiter }));
+      jest.doMock("../scripts/services/health", () => ({
+        getReadiness: jest.fn().mockResolvedValue({ ok: true }),
+      }));
+      jest.doMock("../scripts/services/dlqProcessor", () => ({
+        getDlqMetrics: jest.fn(() => ({ retries: 0 })),
+      }));
+      jest.doMock("../scripts/config/redis", () => ({
+        getRedisClient: jest.fn(() => ({ lLen: jest.fn().mockResolvedValue(0) })),
+      }));
+      jest.doMock("../scripts/services/eventListener", () => ({ provider: null }));
+      jest.doMock("../scripts/models/HistoricalStat", () => ({
+        findOne: jest.fn(() => ({
+          sort: jest.fn(() => ({ lean: jest.fn().mockResolvedValue(null) })),
+        })),
+      }));
+
+      const resolutionCounts = {
+        MANUAL_RELEASE: 4,
+        AUTO_RELEASE: 3,
+        PARTIAL_SETTLEMENT: 2,
+        MUTUAL_CANCEL: 5,
+        BURNED: 1,
+        DISPUTED_RESOLUTION: 6,
+        UNKNOWN: 7,
+      };
+      jest.doMock("../scripts/models/Trade", () => ({
+        find: jest.fn(() => ({
+          select: jest.fn().mockReturnThis(),
+          limit: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockResolvedValue([]),
+        })),
+        countDocuments: jest.fn((filter = {}) => {
+          const resolutionType = filter?.resolution_type;
+          if (resolutionType && resolutionCounts[resolutionType] !== undefined) {
+            return Promise.resolve(resolutionCounts[resolutionType]);
+          }
+          return Promise.resolve(0);
+        }),
+      }));
+      jest.doMock("../scripts/models/User", () => ({ find: jest.fn() }));
+      jest.doMock("../scripts/models/Feedback", () => ({ find: jest.fn(), countDocuments: jest.fn() }));
+      router = require("../scripts/routes/admin");
+    });
+
+    const app = buildApp(router);
+    const res = await request(app).get("/api/admin/summary");
+    expect(res.status).toBe(200);
+    expect(res.body.resolutionAnalytics).toMatchObject({
+      manualReleaseCount: 4,
+      autoReleaseCount: 3,
+      partialSettlementCount: 2,
+      mutualCancelCount: 5,
+      burnedCount: 1,
+      disputedResolutionCount: 6,
+      unknownResolvedCount: 7,
+    });
+  });
+
   it("uses stable global totals for normal mode and explicit windowed scope for riskOnly", async () => {
     const adminReadLimiter = jest.fn((_req, _res, next) => next());
     const tradeRows = [

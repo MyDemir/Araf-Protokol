@@ -1,6 +1,7 @@
 import React from 'react';
 import { buildMakerPreview, getMakerModalCopy, mapOffchainHealthToUi, resolvePaymentRiskEntry } from './orderUiModel';
 import { TERMS_ACCEPTED_STORAGE_KEY } from './bootstrapState';
+import { mapResolutionTypeLabel } from './useAppSessionData';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
 
 // [TR] Eksik env değişkenleri için kapatılabilir uyarı şeridi.
@@ -832,7 +833,8 @@ export const buildAppModals = (ctx) => {
                   <div className="text-center text-slate-500 animate-pulse">{lang === 'TR' ? 'Geçmiş yükleniyor...' : 'Loading history...'}</div>
                 ) : tradeHistory.length > 0 ? (
                   tradeHistory.map(tx => {
-                    const isPartialSettlement = tx.status === 'RESOLVED' && tx?.settlement_proposal?.state === 'FINALIZED';
+                    const resolutionType = tx?.resolutionType || tx?.resolution_type || null;
+                    const isPartialSettlement = resolutionType === 'PARTIAL_SETTLEMENT';
                     const statusMap = {
                       RESOLVED: { text: isPartialSettlement ? (lang === 'TR' ? 'Uzlaşmalı Kapanış' : 'Partial settlement') : (lang === 'TR' ? 'Tamamlandı' : 'Resolved'), color: isPartialSettlement ? 'cyan' : 'emerald' },
                       CANCELED: { text: lang === 'TR' ? 'İptal Edildi' : 'Canceled', color: 'slate' },
@@ -849,6 +851,11 @@ export const buildAppModals = (ctx) => {
                           <p className="text-white font-medium mt-0.5 text-xs"><span className={`mr-1 ${isMaker ? 'text-red-400' : 'text-emerald-400'}`}>{isMaker ? '→' : '←'}</span> {formatTokenAmountFromRaw(tx.financials?.crypto_amount || '0', historyDecimals)} {historyAsset}</p>
                         </div>
                         <span className={`text-[10px] px-2 py-1 rounded font-bold text-${displayStatus.color}-400`}>{displayStatus.text}</span>
+                        {['RESOLVED', 'CANCELED', 'BURNED'].includes(tx.status) && (
+                          <p className="text-[10px] text-slate-400 mt-1 text-right">
+                            {mapResolutionTypeLabel(resolutionType, lang)}
+                          </p>
+                        )}
                       </div>
                     );
                   })

@@ -1294,6 +1294,11 @@ class EventWorker {
         {
           $set: {
             status: "RESOLVED",
+            // [TR] EscrowReleased event'i release yolunu (manual vs auto) tek başına ayırt etmiyor.
+            //      Backend heuristik yapmaz; outcome read-model alanını UNKNOWN olarak mirror eder.
+            // [EN] EscrowReleased alone does not safely distinguish manual vs auto release.
+            //      We do not infer heuristically; mirror as UNKNOWN.
+            resolution_type: "UNKNOWN",
             "timers.resolved_at": resolvedAt,
             "evidence.receipt_delete_at": new Date(resolvedAt.getTime() + 24 * 3600 * 1000),
           },
@@ -1362,6 +1367,7 @@ class EventWorker {
         {
           $set: {
             status: "CANCELED",
+            resolution_type: "MUTUAL_CANCEL",
             "timers.resolved_at": canceledAt,
             "evidence.receipt_delete_at": new Date(canceledAt.getTime() + 24 * 3600 * 1000),
           },
@@ -1408,6 +1414,7 @@ class EventWorker {
         {
           $set: {
             status: "BURNED",
+            resolution_type: "BURNED",
             "timers.resolved_at": burnedAt,
             "evidence.receipt_delete_at": new Date(burnedAt.getTime() + 30 * 24 * 3600 * 1000),
           },
@@ -1631,6 +1638,7 @@ class EventWorker {
         {
           $set: {
             status: "RESOLVED",
+            resolution_type: "PARTIAL_SETTLEMENT",
             "timers.resolved_at": finalizedAt,
             "settlement_proposal.proposal_id": _toStr(proposalId),
             "settlement_proposal.state": "FINALIZED",

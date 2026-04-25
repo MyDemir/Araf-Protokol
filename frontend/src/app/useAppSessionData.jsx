@@ -103,6 +103,37 @@ export function mapReputationToSessionView(repData, firstTradeAt = 0n) {
   };
 }
 
+export function mapResolutionTypeLabel(resolutionType, lang = "EN") {
+  const labels = {
+    PARTIAL_SETTLEMENT: {
+      EN: "Closed by agreed partial settlement",
+      TR: "Uzlaşmalı partial settlement ile kapandı",
+    },
+    MANUAL_RELEASE: {
+      EN: "Closed by manual release",
+      TR: "Manuel release ile kapandı",
+    },
+    AUTO_RELEASE: {
+      EN: "Closed by auto-release",
+      TR: "Auto-release ile kapandı",
+    },
+    MUTUAL_CANCEL: {
+      EN: "Closed by mutual cancel",
+      TR: "Karşılıklı iptal ile kapandı",
+    },
+    BURNED: {
+      EN: "Closed by burn",
+      TR: "Burn ile kapandı",
+    },
+    UNKNOWN: {
+      EN: "Closed; outcome type unavailable",
+      TR: "Kapandı; sonuç tipi bilinmiyor",
+    },
+  };
+  const key = labels[resolutionType] ? resolutionType : "UNKNOWN";
+  return labels[key][lang === "TR" ? "TR" : "EN"];
+}
+
 export function useAppSessionData({
   address,
   isConnected,
@@ -380,6 +411,7 @@ export function useAppSessionData({
             pingedAt: t.timers?.pinged_at,
             challengePingedAt: t.timers?.challenge_pinged_at,
             challengedAt: t.timers?.challenged_at,
+            resolutionType: t.resolution_type || null,
             onchainId: t.onchain_escrow_id,
             settlementProposal: mapSettlementProposalFromApi(t.settlement_proposal),
             amount: `${formatTokenAmountFromRaw(cryptoAmtRaw, tokenDecimals)} ${cryptoAsset}`,
@@ -402,6 +434,7 @@ export function useAppSessionData({
               pingedAt: t.timers?.pinged_at,
               challengePingedAt: t.timers?.challenge_pinged_at,
               challengedAt: t.timers?.challenged_at,
+              resolutionType: t.resolution_type || null,
               cancelProposedBy: t.cancel_proposal?.proposed_by,
               chargebackAcked: t.chargeback_ack?.acknowledged === true,
               settlementProposal: mapSettlementProposalFromApi(t.settlement_proposal),
@@ -437,6 +470,7 @@ export function useAppSessionData({
             pingedAt: updated.timers?.pinged_at ?? prev.pingedAt,
             challengePingedAt: updated.timers?.challenge_pinged_at ?? prev.challengePingedAt,
             challengedAt: updated.timers?.challenged_at ?? prev.challengedAt,
+            resolutionType: updated.resolution_type ?? prev.resolutionType ?? null,
             cancelProposedBy: updated.cancel_proposal?.proposed_by ?? prev.cancelProposedBy,
             chargebackAcked: updated.chargeback_ack?.acknowledged === true,
             settlementProposal: mapSettlementProposalFromApi(updated.settlement_proposal) ?? prev.settlementProposal ?? null,
@@ -810,7 +844,12 @@ export function useAppSessionData({
         if (!res.ok) throw new Error('History fetch failed');
         const data = await res.json();
         if (data.trades) {
-          setTradeHistory(data.trades);
+          setTradeHistory(
+            data.trades.map((trade) => ({
+              ...trade,
+              resolutionType: trade?.resolution_type || null,
+            }))
+          );
           setTradeHistoryTotal(data.total);
           setTradeHistoryPage(data.page);
           setTradeHistoryLimit(data.limit);

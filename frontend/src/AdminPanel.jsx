@@ -1,5 +1,6 @@
 import React from 'react';
 import { buildApiUrl } from './app/apiConfig';
+import { mapResolutionTypeLabel } from './app/useAppSessionData';
 
 const TAB_OVERVIEW = 'overview';
 const TAB_SYNC = 'sync';
@@ -804,7 +805,14 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
                           <td className="px-3 py-2 text-slate-300 font-mono">{row.parent_order_id || '—'}</td>
                           <td className="px-3 py-2 text-slate-300 font-mono">{shortenWallet(row.maker_address)}</td>
                           <td className="px-3 py-2 text-slate-300 font-mono">{shortenWallet(row.taker_address)}</td>
-                          <td className="px-3 py-2"><span className={`px-2 py-1 rounded text-xs ${row.status === 'CHALLENGED' ? 'bg-red-900/40 text-red-300 border border-red-700/40' : 'bg-[#1a1a1f] text-slate-200 border border-[#333]'}`}>{row.status || '—'}</span></td>
+                          <td className="px-3 py-2">
+                            <div className="flex flex-col gap-1 items-start">
+                              <span className={`px-2 py-1 rounded text-xs ${row.status === 'CHALLENGED' ? 'bg-red-900/40 text-red-300 border border-red-700/40' : 'bg-[#1a1a1f] text-slate-200 border border-[#333]'}`}>{row.status || '—'}</span>
+                              {['RESOLVED', 'CANCELED', 'BURNED'].includes(row.status) && (
+                                <span className="text-[10px] text-slate-400">{mapResolutionTypeLabel(row?.resolution_type, lang)}</span>
+                              )}
+                            </div>
+                          </td>
                           <td className="px-3 py-2 text-white">{row.tier ?? '—'}</td>
                           <td className="px-3 py-2 text-slate-300">{row.trade_origin || '—'}</td>
                           <td className="px-3 py-2 text-slate-300 font-mono">{row.token_address ? shortenWallet(row.token_address) : '—'}</td>
@@ -1004,7 +1012,14 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
                     <tr key={`${row?.proposal_id}-${row?.trade_id}`} className="border-b border-[#1c1c1f]">
                       <td className="px-3 py-2 text-emerald-300 font-mono">{row?.proposal_id || '—'}</td>
                       <td className="px-3 py-2 text-slate-300 font-mono">{row?.onchain_escrow_id || '—'}</td>
-                      <td className="px-3 py-2 text-slate-200">{row?.status || '—'} / {row?.state || '—'}</td>
+                      <td className="px-3 py-2 text-slate-200">
+                        <div className="flex flex-col gap-1 items-start">
+                          <span>{row?.status || '—'} / {row?.state || '—'}</span>
+                          {['RESOLVED', 'CANCELED', 'BURNED'].includes(row?.status) && (
+                            <span className="text-[10px] text-slate-400">{mapResolutionTypeLabel(row?.resolution_type, lang)}</span>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-3 py-2 text-slate-300 font-mono">{shortenWallet(row?.maker_address)}</td>
                       <td className="px-3 py-2 text-slate-300 font-mono">{shortenWallet(row?.taker_address)}</td>
                       <td className="px-3 py-2 text-slate-300 font-mono">{shortenWallet(row?.proposed_by)}</td>
