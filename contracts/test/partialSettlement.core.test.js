@@ -71,15 +71,25 @@ describe("ArafEscrow partial settlement core", () => {
     }
     await time.increase(7 * 24 * 3600 + 1);
 
-    return { escrow, mockUSDT, owner, maker, taker, outsider };
+    return { escrow, mockUSDT, owner, treasury, maker, taker, outsider };
   }
 
-  async function openLockedTrade({ escrow, maker, taker, token, label }) {
-    const orderTx = await escrow.connect(maker).createSellOrder(token, TRADE_AMOUNT, MIN_FILL, 0, makeRef(`${label}-order`));
+  async function openLockedTrade({ escrow, maker, taker, token, label, tier = 0 }) {
+    const orderTx = await escrow.connect(maker).createSellOrder(token, TRADE_AMOUNT, MIN_FILL, tier, makeRef(`${label}-order`));
     const orderArgs = await firstEventArgs(await orderTx.wait(), escrow.interface, "OrderCreated");
     const fillTx = await escrow.connect(taker).fillSellOrder(orderArgs.orderId, TRADE_AMOUNT, makeRef(`${label}-child`));
     const fillArgs = await firstEventArgs(await fillTx.wait(), escrow.interface, "OrderFilled");
     return fillArgs.tradeId;
+  }
+
+  async function openChallengedTrade({ escrow, maker, taker, token, label }) {
+    const tradeId = await openLockedTrade({ escrow, maker, taker, token, label });
+    await escrow.connect(taker).reportPayment(tradeId, `Qm-${label}`);
+    await time.increase(24 * 3600 + 1);
+    await escrow.connect(maker).pingTakerForChallenge(tradeId);
+    await time.increase(24 * 3600 + 1);
+    await escrow.connect(maker).challengeTrade(tradeId);
+    return tradeId;
   }
 
   it("maker proposal accepted by taker distributes settlement pool by split bps", async () => {
@@ -297,5 +307,98 @@ describe("ArafEscrow partial settlement core", () => {
       .to.be.revertedWithCustomError(escrow, "NotTradeParty");
     await expect(escrow.connect(owner).withdrawSettlement(tradeId))
       .to.be.revertedWithCustomError(escrow, "OnlySettlementProposer");
+  });
+
+  it("security_challenged_settlement_transfers_decayed_amount_to_treasury", async () => {
+    const { escrow, mockUSDT, treasury, maker, taker } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeId = await openChallengedTrade({ escrow, maker, taker, token, label: "challenged-decay" });
+
+    await time.increase(145 * 3600);
+    const now = await time.latest();
+    await escrow.connect(maker).proposeSettlement(tradeId, 6500, now + 3600);
+
+    const treasuryBefore = await mockUSDT.balanceOf(treasury.address);
+    const makerBefore = await mockUSDT.balanceOf(maker.address);
+    const takerBefore = await mockUSDT.balanceOf(taker.address);
+
+    const acceptTx = await escrow.connect(taker).acceptSettlement(tradeId);
+    const acceptReceipt = await acceptTx.wait();
+    const decayedEvent = await firstEventArgs(acceptReceipt, escrow.interface, "BleedingDecayed");
+    const finalizedEvent = await firstEventArgs(acceptReceipt, escrow.interface, "SettlementFinalized");
+    const eventDecayed = decayedEvent.decayedAmount;
+    const eventMakerPayout = finalizedEvent.makerPayout;
+    const eventTakerPayout = finalizedEvent.takerPayout;
+
+    const treasuryAfter = await mockUSDT.balanceOf(treasury.address);
+    const makerAfter = await mockUSDT.balanceOf(maker.address);
+    const takerAfter = await mockUSDT.balanceOf(taker.address);
+
+    expect(eventDecayed).to.be.gt(0n);
+    expect(treasuryAfter - treasuryBefore).to.equal(eventDecayed);
+    expect(makerAfter - makerBefore).to.equal(eventMakerPayout);
+    expect(takerAfter - takerBefore).to.equal(eventTakerPayout);
+  });
+
+  it("security_settlement_split_uses_current_pool_and_conserves_raw_locked_pool", async () => {
+    const { escrow, mockUSDT, treasury, maker, taker } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeId = await openChallengedTrade({ escrow, maker, taker, token, label: "challenged-conservation" });
+    const trade = await escrow.getTrade(tradeId);
+    const rawPool = trade.cryptoAmount + trade.makerBond + trade.takerBond;
+
+    await time.increase(145 * 3600);
+    const now = await time.latest();
+    await escrow.connect(taker).proposeSettlement(tradeId, 3333, now + 3600);
+
+    const treasuryBefore = await mockUSDT.balanceOf(treasury.address);
+    const makerBefore = await mockUSDT.balanceOf(maker.address);
+    const takerBefore = await mockUSDT.balanceOf(taker.address);
+    const acceptTx = await escrow.connect(maker).acceptSettlement(tradeId);
+    const acceptReceipt = await acceptTx.wait();
+    const decayedEvent = await firstEventArgs(acceptReceipt, escrow.interface, "BleedingDecayed");
+    const finalizedEvent = await firstEventArgs(acceptReceipt, escrow.interface, "SettlementFinalized");
+    const treasuryAfter = await mockUSDT.balanceOf(treasury.address);
+    const makerAfter = await mockUSDT.balanceOf(maker.address);
+    const takerAfter = await mockUSDT.balanceOf(taker.address);
+
+    const makerDelta = makerAfter - makerBefore;
+    const takerDelta = takerAfter - takerBefore;
+    const treasuryDelta = treasuryAfter - treasuryBefore;
+    const eventDecayed = decayedEvent.decayedAmount;
+    const eventMakerPayout = finalizedEvent.makerPayout;
+    const eventTakerPayout = finalizedEvent.takerPayout;
+
+    expect(makerDelta).to.equal(eventMakerPayout);
+    expect(takerDelta).to.equal(eventTakerPayout);
+    expect(treasuryDelta).to.equal(eventDecayed);
+    expect(makerDelta + takerDelta + eventDecayed).to.equal(rawPool);
+    expect(makerDelta + takerDelta + treasuryDelta).to.equal(rawPool);
+  });
+
+  it("settlement_on_paid_trade_keeps_pre_decay_raw_pool_behavior", async () => {
+    const { escrow, mockUSDT, maker, taker } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeId = await openLockedTrade({ escrow, maker, taker, token, label: "paid-no-decay" });
+    await escrow.connect(taker).reportPayment(tradeId, "Qm-paid-no-decay");
+
+    const trade = await escrow.getTrade(tradeId);
+    const rawPool = trade.cryptoAmount + trade.makerBond + trade.takerBond;
+    const makerExpected = (rawPool * 4500n) / 10_000n;
+    const takerExpected = rawPool - makerExpected;
+
+    const now = await time.latest();
+    await escrow.connect(maker).proposeSettlement(tradeId, 4500, now + 3600);
+
+    const makerBefore = await mockUSDT.balanceOf(maker.address);
+    const takerBefore = await mockUSDT.balanceOf(taker.address);
+    await expect(escrow.connect(taker).acceptSettlement(tradeId))
+      .to.emit(escrow, "SettlementFinalized")
+      .withArgs(tradeId, 1, makerExpected, takerExpected, 0, 0);
+    const makerAfter = await mockUSDT.balanceOf(maker.address);
+    const takerAfter = await mockUSDT.balanceOf(taker.address);
+
+    expect(makerAfter - makerBefore).to.equal(makerExpected);
+    expect(takerAfter - takerBefore).to.equal(takerExpected);
   });
 });
