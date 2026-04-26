@@ -46,6 +46,15 @@ describe("tokenEnv chain-aware resolver", () => {
     ]);
   });
 
+  it("fails fast when BASE_MAINNET_USDT_ADDRESS is zero address in production", () => {
+    process.env.EXPECTED_CHAIN_ID = "8453";
+    process.env.BASE_MAINNET_USDT_ADDRESS = "0x0000000000000000000000000000000000000000";
+    process.env.BASE_MAINNET_USDC_ADDRESS = "0x2222222222222222222222222222222222222222";
+    const { resolveTrackedTokensOrThrow } = loadService();
+
+    expect(() => resolveTrackedTokensOrThrow({ isProduction: true })).toThrow(/BASE_MAINNET_USDT_ADDRESS/);
+  });
+
   it("derives tracked tokens from BASE_SEPOLIA_* on expected chain 84532", () => {
     process.env.EXPECTED_CHAIN_ID = "84532";
     process.env.BASE_SEPOLIA_USDT_ADDRESS = "0x3333333333333333333333333333333333333333";
@@ -92,6 +101,25 @@ describe("tokenEnv chain-aware resolver", () => {
     const { inferCryptoAssetFromTokenAddress } = loadService();
 
     expect(() => inferCryptoAssetFromTokenAddress("0x1111111111111111111111111111111111111111")).toThrow(/EXPECTED_CHAIN_ID/);
+  });
+
+  it("fails fast in production when ARAF_TRACKED_TOKENS contains zero address only", () => {
+    process.env.EXPECTED_CHAIN_ID = "8453";
+    process.env.ARAF_TRACKED_TOKENS = "0x0000000000000000000000000000000000000000";
+    const { resolveTrackedTokensOrThrow } = loadService();
+
+    expect(() => resolveTrackedTokensOrThrow({ isProduction: true })).toThrow(/ARAF_TRACKED_TOKENS/);
+  });
+
+  it("fails fast in production when ARAF_TRACKED_TOKENS mixes valid and zero addresses", () => {
+    process.env.EXPECTED_CHAIN_ID = "8453";
+    process.env.ARAF_TRACKED_TOKENS = [
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "0x0000000000000000000000000000000000000000",
+    ].join(",");
+    const { resolveTrackedTokensOrThrow } = loadService();
+
+    expect(() => resolveTrackedTokensOrThrow({ isProduction: true })).toThrow(/zero address/);
   });
 
   it("prefers explicit ARAF_TRACKED_TOKENS over env-derived chain token set", () => {

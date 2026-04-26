@@ -5,6 +5,7 @@ const logger = require("../utils/logger");
 const warnedLegacyEnvKeys = new Set();
 const BASE_MAINNET_CHAIN_ID = 8453;
 const BASE_SEPOLIA_CHAIN_ID = 84532;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 function _isProductionRuntime(isProductionHint) {
   if (typeof isProductionHint === "boolean") return isProductionHint;
@@ -24,7 +25,9 @@ function _warnLegacyEnvOnce(envName, canonicalName, symbol, surface) {
 function _normalizedAddressOrNull(raw) {
   const value = String(raw || "").trim();
   if (!/^0x[a-fA-F0-9]{40}$/.test(value)) return null;
-  return value.toLowerCase();
+  const normalized = value.toLowerCase();
+  if (normalized === ZERO_ADDRESS) return null;
+  return normalized;
 }
 
 function _resolveActiveChainId({ expectedChainId = null, isProduction = false, surface }) {
@@ -131,17 +134,57 @@ function inferCryptoAssetFromTokenAddress(tokenAddress, { surface = "TokenInfer"
 
 function resolveTrackedTokensOrThrow({ isProduction, surface = "ProtocolConfig", expectedChainId = null }) {
   const rawTracked = String(process.env.ARAF_TRACKED_TOKENS || "");
-  const explicit = rawTracked
-    .split(",")
-    .map((v) => _normalizedAddressOrNull(v))
-    .filter(Boolean);
+  const rawEntries = rawTracked.split(",").map((v) => String(v || "").trim());
+  const explicit = [];
+  const explicitInvalid = [];
+  const explicitZero = [];
+  for (const entry of rawEntries) {
+    if (!entry) continue;
+    const normalized = _normalizedAddressOrNull(entry);
+    if (normalized) {
+      explicit.push(normalized);
+      continue;
+    }
+    if (entry.toLowerCase() === ZERO_ADDRESS) explicitZero.push(entry);
+    else explicitInvalid.push(entry);
+  }
+
+  if (isProduction && (explicitInvalid.length > 0 || explicitZero.length > 0)) {
+    const reason = explicitZero.length > 0
+      ? "zero address içeremez"
+      : "geçersiz adres içeriyor";
+    const err = new Error(
+      `[TokenEnv][${surface}] ARAF_TRACKED_TOKENS ${reason}. ` +
+      `Geçerli EVM adresleri girin (zero address yasak).`
+    );
+    err.code = "CONFIG_UNAVAILABLE";
+    throw err;
+  }
 
   let tokens = explicit;
   if (tokens.length === 0) {
+    const chainId = _resolveActiveChainId({ expectedChainId, isProduction, surface });
     const derived = [
       _resolveSymbolAddress("USDT", { surface, expectedChainId, isProduction }),
       _resolveSymbolAddress("USDC", { surface, expectedChainId, isProduction }),
     ].filter(Boolean);
+
+    if (isProduction && chainId === BASE_MAINNET_CHAIN_ID && derived.length < 2) {
+      const err = new Error(
+        `[TokenEnv][${surface}] Base Mainnet için BASE_MAINNET_USDT_ADDRESS ve BASE_MAINNET_USDC_ADDRESS zorunludur ` +
+        `(zero address kabul edilmez).`
+      );
+      err.code = "CONFIG_UNAVAILABLE";
+      throw err;
+    }
+    if (isProduction && chainId === BASE_SEPOLIA_CHAIN_ID && derived.length < 2) {
+      const err = new Error(
+        `[TokenEnv][${surface}] Base Sepolia için BASE_SEPOLIA_USDT_ADDRESS ve BASE_SEPOLIA_USDC_ADDRESS zorunludur ` +
+        `(zero address kabul edilmez).`
+      );
+      err.code = "CONFIG_UNAVAILABLE";
+      throw err;
+    }
     tokens = derived;
   }
 
