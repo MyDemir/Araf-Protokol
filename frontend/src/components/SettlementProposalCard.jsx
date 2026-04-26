@@ -2,14 +2,14 @@ import React from 'react';
 import { buildSettlementPreviewUrl } from '../app/apiConfig';
 import SettlementPreviewModal from './SettlementPreviewModal';
 
-const ACTIVE_ROOM_STATES = ['LOCKED', 'PAID', 'CHALLENGED'];
+const ACTIVE_ROOM_STATES = ['CHALLENGED'];
 const TERMINAL_ROOM_STATES = ['RESOLVED', 'CANCELED', 'BURNED'];
 const MIN_CUSTOM_EXPIRY_MINUTES = 10;
 const MAX_CUSTOM_EXPIRY_MINUTES = 7 * 24 * 60;
 const SETTLEMENT_STATE_BY_INDEX = ['NONE', 'PROPOSED', 'REJECTED', 'WITHDRAWN', 'EXPIRED', 'FINALIZED'];
 export const SETTLEMENT_NEUTRALITY_COPY = {
-  TR: 'Araf kimin haklı olduğuna karar vermez; iki tarafın imzasıyla kontrollü settlement sağlar.',
-  EN: 'Araf does not decide who is right; it enables counterparty-signed settlement.',
+  TR: 'Araf kimin haklı olduğuna karar vermez; settlement yalnız CHALLENGED dispute fazında iki taraf imzasıyla mümkündür.',
+  EN: 'Araf does not decide who is right; settlement is available only in the CHALLENGED dispute phase with both parties’ signatures.',
 };
 
 export function normalizeSettlementState(rawState) {
@@ -98,8 +98,8 @@ export default function SettlementProposalCard({
   const expiresAt = toUnixSeconds(proposal?.expiresAt ?? proposal?.expires_at ?? 0);
   const isExpired = expiresAt > 0 && nowTs >= expiresAt;
   const isProposedState = proposalState === 'PROPOSED';
-  // [TR] Aksiyon butonları yalnız aktif trade durumlarında görünür.
-  // [EN] Action buttons must remain available only in actionable trade states.
+  // [TR] Canonical kural: settlement aksiyonları yalnız CHALLENGED dispute safhasında görünür.
+  // [EN] Canonical rule: settlement actions render only in CHALLENGED dispute phase.
   const showActionableProposedControls = proposalIsRenderable && isProposedState && isActionableRoom;
   const showTerminalProposedHistory = proposalIsRenderable && isProposedState && isTerminalRoom;
 
@@ -215,7 +215,11 @@ export default function SettlementProposalCard({
       </div>
 
       {!isActionableRoom && !isTerminalRoom && (
-        <p className="text-xs text-slate-500">{lang === 'TR' ? 'Settlement bu işlem durumunda aktif değil.' : 'Settlement is not active in this trade state.'}</p>
+        <p className="text-xs text-slate-500">
+          {lang === 'TR'
+            ? 'Settlement yalnız CHALLENGED dispute safhasında kullanılabilir (LOCKED/PAID durumlarında kapalıdır).'
+            : 'Settlement is available only during CHALLENGED disputes (disabled in LOCKED/PAID states).'}
+        </p>
       )}
 
       {isTerminalRoom && !proposalIsRenderable && (

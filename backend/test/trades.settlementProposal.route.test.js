@@ -80,18 +80,13 @@ describe("trades settlement proposal read-model routes", () => {
     });
   });
 
-  it("POST /api/trades/:id/settlement-proposal/preview returns BigInt-safe informational preview", async () => {
+  it("POST /api/trades/:id/settlement-proposal/preview returns 409 unless trade is CHALLENGED", async () => {
     const tradeDoc = {
       _id: "507f1f77bcf86cd799439012",
       maker_address: "0x1111111111111111111111111111111111111111",
       taker_address: "0x2222222222222222222222222222222222222222",
       status: "LOCKED",
       onchain_escrow_id: "77",
-      financials: {
-        crypto_amount: "1000000",
-        maker_bond: "200000",
-        taker_bond: "300000",
-      },
     };
 
     const Trade = {
@@ -148,31 +143,24 @@ describe("trades settlement proposal read-model routes", () => {
       .post("/api/trades/507f1f77bcf86cd799439012/settlement-proposal/preview")
       .send({ makerShareBps: 7000 });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(409);
     expect(res.body).toMatchObject({
+      code: "SETTLEMENT_ONLY_CHALLENGED",
       informationalOnly: true,
       nonAuthoritative: true,
-      makerShareBps: 7000,
-      takerShareBps: 3000,
-      poolSource: "db-raw-financials",
-      pool: "1500000",
-      makerPayout: "1050000",
-      takerPayout: "450000",
-      decayedAmount: "0",
     });
   });
 
-  it("POST preview uses on-chain current amounts for challenged trades", async () => {
+  it("POST preview uses challenged on-chain amounts and fee snapshots for net payouts", async () => {
     const tradeDoc = {
       _id: "507f1f77bcf86cd799439014",
       maker_address: "0x1111111111111111111111111111111111111111",
       taker_address: "0x2222222222222222222222222222222222222222",
       status: "CHALLENGED",
       onchain_escrow_id: "88",
-      financials: {
-        crypto_amount: "1000000",
-        maker_bond: "200000",
-        taker_bond: "300000",
+      fee_snapshot: {
+        maker_fee_bps: 200,
+        taker_fee_bps: 300,
       },
     };
     const Trade = {
@@ -252,9 +240,14 @@ describe("trades settlement proposal read-model routes", () => {
     expect(res.body).toMatchObject({
       poolSource: "onchain-current-amounts",
       pool: "1400000",
-      makerPayout: "980000",
-      takerPayout: "420000",
+      grossMaker: "980000",
+      grossTaker: "420000",
+      makerFee: "19600",
+      takerFee: "12600",
+      makerPayout: "960400",
+      takerPayout: "407400",
       decayedAmount: "100000",
+      treasuryAmount: "132200",
     });
   });
 
@@ -265,11 +258,6 @@ describe("trades settlement proposal read-model routes", () => {
       taker_address: "0x2222222222222222222222222222222222222222",
       status: "CHALLENGED",
       onchain_escrow_id: "99",
-      financials: {
-        crypto_amount: "1000000",
-        maker_bond: "200000",
-        taker_bond: "300000",
-      },
     };
     const Trade = {
       findById: jest.fn().mockReturnValue({

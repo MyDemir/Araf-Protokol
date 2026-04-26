@@ -501,7 +501,7 @@ router.post("/:id/settlement-proposal/preview", requireAuth, requireSessionWalle
     if (error) return res.status(400).json({ error: error.message });
 
     const trade = await Trade.findById(req.params.id)
-      .select("maker_address taker_address onchain_escrow_id status financials.crypto_amount financials.maker_bond financials.taker_bond")
+      .select("maker_address taker_address onchain_escrow_id status fee_snapshot.taker_fee_bps fee_snapshot.maker_fee_bps")
       .lean();
     if (!trade) return res.status(404).json({ error: "İşlem bulunamadı." });
     if (trade.maker_address !== req.wallet && trade.taker_address !== req.wallet) {
@@ -510,51 +510,51 @@ router.post("/:id/settlement-proposal/preview", requireAuth, requireSessionWalle
 
     const makerShareBps = Number(value.makerShareBps);
     const takerShareBps = 10_000 - makerShareBps;
+    // [TR] Canonical kural: settlement yalnız CHALLENGED dispute safhasında preview'lenebilir.
+    // [EN] Canonical rule: settlement preview is allowed only during CHALLENGED disputes.
+    if (trade?.status !== "CHALLENGED") {
+      return res.status(409).json({
+        error: "Settlement preview is only available in CHALLENGED state.",
+        code: "SETTLEMENT_ONLY_CHALLENGED",
+        informationalOnly: true,
+        nonAuthoritative: true,
+      });
+    }
 
-    const isChallenged = trade?.status === "CHALLENGED";
     const onchainEscrowId = _parsePositiveOnchainId(trade?.onchain_escrow_id);
-
-    let poolSource = "db-raw-financials";
-    let decayedAmount = 0n;
-    let pool;
-
-    if (!onchainEscrowId && isChallenged) {
+    if (!onchainEscrowId) {
       throw _buildPreviewUnavailableError("Settlement preview unavailable: challenged trade is missing a valid on-chain escrow id.");
     }
 
-    if (onchainEscrowId) {
-      try {
-        const onchain = await _getOnchainCurrentAmountsForPreview(onchainEscrowId);
-        pool = onchain.currentCrypto + onchain.currentMakerBond + onchain.currentTakerBond;
-        decayedAmount = onchain.totalDecayed;
-        poolSource = "onchain-current-amounts";
-      } catch (onchainErr) {
-        if (isChallenged) {
-          throw onchainErr;
-        }
-      }
-    }
+    const onchain = await _getOnchainCurrentAmountsForPreview(onchainEscrowId);
+    const pool = onchain.currentCrypto + onchain.currentMakerBond + onchain.currentTakerBond;
+    const decayedAmount = onchain.totalDecayed;
+    const makerFeeBps = _parseBpsOrNull(trade?.fee_snapshot?.maker_fee_bps) ?? 0;
+    const takerFeeBps = _parseBpsOrNull(trade?.fee_snapshot?.taker_fee_bps) ?? 0;
 
-    if (typeof pool === "undefined") {
-      const cryptoAmount = BigInt(_toBigIntStringSafe(trade?.financials?.crypto_amount));
-      const makerBond = BigInt(_toBigIntStringSafe(trade?.financials?.maker_bond));
-      const takerBond = BigInt(_toBigIntStringSafe(trade?.financials?.taker_bond));
-      pool = cryptoAmount + makerBond + takerBond;
-    }
-
-    const makerPayout = (pool * BigInt(makerShareBps)) / 10_000n;
-    const takerPayout = pool - makerPayout;
+    const grossMaker = (pool * BigInt(makerShareBps)) / 10_000n;
+    const grossTaker = pool - grossMaker;
+    const makerFee = (grossMaker * BigInt(makerFeeBps)) / 10_000n;
+    const takerFee = (grossTaker * BigInt(takerFeeBps)) / 10_000n;
+    const makerPayout = grossMaker - makerFee;
+    const takerPayout = grossTaker - takerFee;
+    const treasuryAmount = decayedAmount + makerFee + takerFee;
 
     return res.json({
       informationalOnly: true,
       nonAuthoritative: true,
       makerShareBps,
       takerShareBps,
-      poolSource,
+      poolSource: "onchain-current-amounts",
       pool: pool.toString(),
+      grossMaker: grossMaker.toString(),
+      grossTaker: grossTaker.toString(),
+      makerFee: makerFee.toString(),
+      takerFee: takerFee.toString(),
       makerPayout: makerPayout.toString(),
       takerPayout: takerPayout.toString(),
       decayedAmount: decayedAmount.toString(),
+      treasuryAmount: treasuryAmount.toString(),
       warning: "Final outcome is determined only by the on-chain transaction accepted by both parties.",
     });
   } catch (err) {
