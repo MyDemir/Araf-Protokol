@@ -43,19 +43,28 @@ jest.mock('../scripts/routes/tradeRisk', () => ({
   buildBankProfileRisk: () => ({ level: 'LOW' }),
 }));
 
+const mockAssertProviderExpectedChainOrThrow = jest.fn().mockResolvedValue();
+jest.mock('../scripts/services/expectedChain', () => ({
+  assertProviderExpectedChainOrThrow: (...args) => mockAssertProviderExpectedChainOrThrow(...args),
+}));
+
 const mockSigNonces = jest.fn().mockResolvedValue(0n);
 const mockVerifyTypedData = jest.fn().mockReturnValue('0x1111111111111111111111111111111111111111');
 const mockHashDomain = jest.fn().mockReturnValue('0x' + 'aa'.repeat(32));
+const mockContractCtor = jest.fn(function (address) {
+  return {
+    _address: address,
+    sigNonces: mockSigNonces,
+    domainSeparator: jest.fn().mockResolvedValue('0x' + 'aa'.repeat(32)),
+  };
+});
 
 jest.mock('ethers', () => ({
   ethers: {
     JsonRpcProvider: jest.fn(() => ({
       getNetwork: jest.fn().mockResolvedValue({ chainId: 84532n }),
     })),
-    Contract: jest.fn(() => ({
-      sigNonces: mockSigNonces,
-      domainSeparator: jest.fn().mockResolvedValue('0x' + 'aa'.repeat(32)),
-    })),
+    Contract: mockContractCtor,
     verifyTypedData: (...args) => mockVerifyTypedData(...args),
     TypedDataEncoder: { hashDomain: (...args) => mockHashDomain(...args) },
   },
@@ -69,6 +78,8 @@ describe('POST /api/trades/propose-cancel signature verification', () => {
     mockSigNonces.mockClear();
     mockVerifyTypedData.mockClear();
     mockHashDomain.mockClear();
+    mockContractCtor.mockClear();
+    mockAssertProviderExpectedChainOrThrow.mockClear();
     mockRoomReadLimiter.mockClear();
     mockCoordinationWriteLimiter.mockClear();
     router.__resetCancelVerifier?.();
@@ -82,12 +93,12 @@ describe('POST /api/trades/propose-cancel signature verification', () => {
     return app;
   };
 
-  const sendRequest = (app) => request(app)
+  const sendRequest = (app, deadline = Math.floor(Date.now() / 1000) + 3600) => request(app)
     .post('/api/trades/propose-cancel')
     .send({
       tradeId: '507f1f77bcf86cd799439011',
       signature: '0x' + '11'.repeat(65),
-      deadline: Math.floor(Date.now() / 1000) + 3600,
+      deadline,
     });
 
   it('accepts valid EIP-712 signature recovery match', async () => {
@@ -137,8 +148,53 @@ describe('POST /api/trades/propose-cancel signature verification', () => {
     expect(mockVerifyTypedData).not.toHaveBeenCalled();
   });
 
+  it('security_rejects_second_signature_when_cancel_deadline_differs_even_by_30_seconds', async () => {
+    const base = Math.floor(Date.now() / 1000) + 3600;
+    mockTradeDoc.cancel_proposal.deadline = new Date((base - 30) * 1000);
+
+    const res = await sendRequest(buildApp(), base);
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('CANCEL_DEADLINE_MISMATCH');
+    expect(mockTradeDoc.cancel_proposal.maker_signed).not.toBe(true);
+    expect(mockTradeDoc.cancel_proposal.taker_signed).not.toBe(true);
+  });
+
+  it('security_accepts_second_signature_when_cancel_deadline_matches_exactly', async () => {
+    const base = Math.floor(Date.now() / 1000) + 3600;
+    mockTradeDoc.cancel_proposal.deadline = new Date(base * 1000);
+
+    const res = await sendRequest(buildApp(), base);
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+  });
+
+  it('security_rebuilds_cancel_verifier_when_runtime_config_changes', async () => {
+    const app = buildApp();
+    await sendRequest(app);
+    const afterFirst = mockContractCtor.mock.calls.length;
+
+    process.env.ARAF_ESCROW_ADDRESS = '0x' + '33'.repeat(20);
+    await sendRequest(app);
+
+    const recent = mockContractCtor.mock.calls.slice(afterFirst - 1, afterFirst + 1);
+    expect(recent[0][0]).toBe('0x' + '22'.repeat(20));
+    expect(recent[1][0]).toBe('0x' + '33'.repeat(20));
+  });
+
+  it('security_reset_cancel_verifier_clears_provider_contract_and_cache_key', async () => {
+    await sendRequest(buildApp());
+    expect(router.__getCancelVerifierCacheKey()).toBeTruthy();
+
+    router.__resetCancelVerifier();
+
+    expect(router.__getCancelVerifierCacheKey()).toBeNull();
+  });
+
   it('fails_closed_when_provider_chain_does_not_match_expected_chain_id', async () => {
-    process.env.EXPECTED_CHAIN_ID = '8453'; // mock provider 84532 döndürüyor
+    process.env.EXPECTED_CHAIN_ID = '8453';
+    mockAssertProviderExpectedChainOrThrow.mockRejectedValueOnce(new Error('Chain ID uyuşmazlığı'));
     const res = await sendRequest(buildApp());
 
     expect(res.status).toBeGreaterThanOrEqual(500);

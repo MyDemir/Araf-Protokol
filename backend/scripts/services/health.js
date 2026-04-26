@@ -18,6 +18,47 @@ function _parseMaxWorkerLag(rawValue) {
 
 const MAX_WORKER_LAG_BLOCKS = _parseMaxWorkerLag(process.env.WORKER_MAX_LAG_BLOCKS);
 
+function _collectProductionCorsConfigDiagnostics(rawAllowedOrigins) {
+  const diagnostics = [];
+  const raw = String(rawAllowedOrigins ?? "").trim();
+
+  if (!raw) {
+    diagnostics.push("ALLOWED_ORIGINS");
+    return diagnostics;
+  }
+
+  const allowedOrigins = raw
+    .split(",")
+    .map((o) => o.trim())
+    .filter((o) => o.length > 0);
+
+  if (allowedOrigins.length === 0) diagnostics.push("ALLOWED_ORIGINS");
+  if (allowedOrigins.includes("*")) diagnostics.push("ALLOWED_ORIGINS_WILDCARD_NOT_ALLOWED");
+  if (allowedOrigins.length === 1 && allowedOrigins[0] === "http://localhost:5173") {
+    diagnostics.push("ALLOWED_ORIGINS_LOCALHOST_FALLBACK_NOT_ALLOWED");
+  }
+
+  for (const origin of allowedOrigins) {
+    let parsed;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      diagnostics.push(`ALLOWED_ORIGINS_INVALID_URL:${origin}`);
+      continue;
+    }
+
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      diagnostics.push(`ALLOWED_ORIGINS_INVALID_PROTOCOL:${origin}`);
+    }
+
+    if ((parsed.pathname && parsed.pathname !== "/") || parsed.search || parsed.hash) {
+      diagnostics.push(`ALLOWED_ORIGINS_MUST_BE_ORIGIN_ONLY:${origin}`);
+    }
+  }
+
+  return diagnostics;
+}
+
 async function getReadiness({ worker, provider } = {}) {
   const isProduction = process.env.NODE_ENV === "production";
   const mongoReady = mongoose.connection.readyState === 1;
@@ -58,7 +99,7 @@ async function getReadiness({ worker, provider } = {}) {
   ];
 
   if (isProduction) {
-    requiredConfig.push("SIWE_URI", "ARAF_ESCROW_ADDRESS", "BASE_RPC_URL");
+    requiredConfig.push("SIWE_URI", "ARAF_ESCROW_ADDRESS", "BASE_RPC_URL", "ALLOWED_ORIGINS");
   }
 
   const missingConfig = requiredConfig.filter((key) => !process.env[key]);
@@ -93,6 +134,10 @@ async function getReadiness({ worker, provider } = {}) {
     } catch {
       missingConfig.push("SIWE_URI_INVALID");
     }
+  }
+
+  if (isProduction) {
+    missingConfig.push(..._collectProductionCorsConfigDiagnostics(process.env.ALLOWED_ORIGINS));
   }
 
   let replayBootstrapReady = true;
