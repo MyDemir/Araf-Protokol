@@ -159,6 +159,7 @@ Settlement outcome tarafında backend **non-authoritative** kalır:
 
 ### Partial settlement semantiği
 - **Nedir:** tek bir child trade için tarafların anlaşmalı split payout akışıdır.
+- **Canonical kural:** split settlement **normal close path değildir**; yalnız `CHALLENGED` dispute state’inde açılabilir/kabul edilebilir.
 - **Lifecycle:** `NONE -> PROPOSED -> REJECTED/WITHDRAWN/EXPIRED/FINALIZED`.
 - **Teklifi kim oluşturabilir:** yalnız o trade’in iki tarafından biri (`maker` veya `taker`).
 - **Kabul/red kimde:** aktif teklifi yalnız **karşı taraf** kabul veya reddedebilir.
@@ -166,7 +167,7 @@ Settlement outcome tarafında backend **non-authoritative** kalır:
 - **Expire kim tetikler:** deadline geçince expire çağrısını herkes tetikleyebilir; doğrulama yine kontrattadır.
 
 ### Settlement akışında backend rolü
-- bilgilendirme amaçlı preview (`POST /api/trades/:id/settlement-proposal/preview`)
+- yalnız bilgilendirme amaçlı preview (`POST /api/trades/:id/settlement-proposal/preview`)
 - kontrat event mirror
 - query/UX için read-model projection
 - operasyonel audit/observability (admin read-only analytics dahil)
@@ -209,7 +210,8 @@ Trade’e bağlı partial-settlement mirror payload döner (yalnız trade tarafl
 Read-model amaçlıdır; authoritative değildir.
 
 ### `POST /api/trades/:id/settlement-proposal/preview`
-Mirror trade tutarlarından bilgilendirme amaçlı split preview hesaplar.
+Yalnız `CHALLENGED` trade için bilgilendirme amaçlı split preview hesaplar; `LOCKED/PAID` için `409 SETTLEMENT_ONLY_CHALLENGED` döner.
+Preview sonucu **non-authoritative**’dir; nihai ekonomik sonuç yalnız on-chain kabul tx’inde kontrat tarafından belirlenir.
 
 İstek:
 ```json
@@ -220,7 +222,10 @@ Yanıt alanları:
 - `informationalOnly: true`
 - `nonAuthoritative: true`
 - `makerShareBps`, `takerShareBps`
-- `pool`, `makerPayout`, `takerPayout` (BigInt-safe string)
+- `pool`, `grossMaker`, `grossTaker` (BigInt-safe string)
+- `makerFee`, `takerFee`, `makerPayout`, `takerPayout` (BigInt-safe string)
+- `decayedAmount`, `treasuryAmount` (BigInt-safe string)
+- fee semantiği: decay sonrası current havuz split edilir; fee snapshot’ları gross maker/taker payout üzerinden uygulanır
 - nihai sonucun yalnız on-chain kabul edilen tx ile belirlendiğini söyleyen uyarı
 
 ---

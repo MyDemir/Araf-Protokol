@@ -68,3 +68,13 @@ flowchart TD
 - **Frontend is guardrail/orchestration:** it steers users into valid paths and clear timing windows, but cannot override contract outcomes.
 - **Oracle-free by design:** the protocol does not prove off-chain fiat truth; it prices delay and conflict so unresolved trades become economically costly.
 - **Chargeback and off-chain ambiguity remain real:** V3 does not eliminate fiat-layer reversibility risk; it contains it through explicit lifecycle boundaries and deterministic on-chain settlement mechanics.
+
+---
+
+## Split settlement canon (dispute-only path)
+
+- Split/partial settlement is **not** a normal close path after `PAID`.
+- It is available only once trade state is `CHALLENGED`.
+- Backend settlement preview is informational-only and non-authoritative.
+- Final settlement economics are determined by on-chain acceptance execution.
+- During settlement finalization, decay is accounted first and protocol fees are charged on gross maker/taker split payouts; parties receive net payouts.
