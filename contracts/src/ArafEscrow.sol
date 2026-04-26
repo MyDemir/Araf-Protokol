@@ -67,6 +67,7 @@ error SettlementProposalExpired();
 error SettlementProposalNotExpired();
 error InvalidSettlementDeadline();
 error SettlementAlreadyFinalized();
+error RevenueHookFailed();
 
 // [TR] V3 Order katmanı için yeni özel hatalar
 // [EN] New custom errors for the V3 Order layer
@@ -85,6 +86,15 @@ error InvalidDecimals();
 error CooldownTooHigh();
 error DecayTooHigh();
 error BanTooHigh();
+
+interface IArafRevenueReceiver {
+    function onArafRevenue(
+        address token,
+        uint256 amount,
+        uint8 kind,
+        uint256 tradeId
+    ) external;
+}
 
 contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     using SafeERC20 for IERC20;
@@ -138,6 +148,28 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         WITHDRAWN,
         EXPIRED,
         FINALIZED
+    }
+
+    // [TR] Reward/read-model için terminal outcome sınıflandırması (authority kontratta).
+    // [EN] Terminal outcome classification for reward/read-model surfaces (contract-authoritative).
+    enum TerminalOutcome {
+        NONE,
+        CLEAN_RELEASE,
+        AUTO_RELEASE,
+        MUTUAL_CANCEL,
+        PARTIAL_SETTLEMENT,
+        DISPUTED_RELEASE,
+        BURNED
+    }
+
+    // [TR] Treasury'ye aktarılan protokol gelirinin semantik sınıfları.
+    // [EN] Semantic classes for protocol revenue transferred to treasury.
+    enum RevenueKind {
+        MANUAL_RELEASE_FEE,
+        AUTO_RELEASE_FEE_OR_PENALTY,
+        PARTIAL_SETTLEMENT_FEE,
+        DISPUTED_RELEASE_FEE,
+        BURN_RESIDUAL
     }
 
     struct Trade {
@@ -219,6 +251,33 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint64 proposedAt;
         uint64 expiresAt;
         SettlementProposalState state;
+    }
+
+    // [TR] Terminalized trade için minimal fee/outcome snapshot.
+    // [EN] Minimal fee/outcome snapshot for terminalized trades.
+    struct TerminalTradeSnapshot {
+        TerminalOutcome outcome;
+        uint256 takerFeePaid;
+        uint256 makerFeePaid;
+        uint256 terminalAt;
+    }
+
+    struct RewardableTradeView {
+        uint256 tradeId;
+        uint256 parentOrderId;
+        address maker;
+        address taker;
+        address token;
+        uint256 stableNotional;
+        uint256 takerFeePaid;
+        uint256 makerFeePaid;
+        uint8 tier;
+        TerminalOutcome outcome;
+        uint256 lockedAt;
+        uint256 paidAt;
+        uint256 terminalAt;
+        bool hadChallenge;
+        bool isOrderChild;
     }
 
     // [TR] Kontratın tek otorite olduğu terminal semantik sınıfları.
@@ -337,6 +396,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     mapping(uint256 => Trade) public trades;
     mapping(uint256 => Order) public orders;
     mapping(uint256 => SettlementProposal) public settlementProposalsByTrade;
+    mapping(uint256 => TerminalTradeSnapshot) internal terminalTradeSnapshots;
     mapping(uint256 => uint256) public settlementProposalNonceByTrade;
     mapping(address => Reputation) public reputation;
 
@@ -474,6 +534,13 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint256 takerPayout,
         uint256 takerFee,
         uint256 makerFee
+    );
+    event ProtocolRevenueSent(
+        address indexed token,
+        uint256 amount,
+        RevenueKind indexed kind,
+        uint256 indexed tradeId,
+        address treasury
     );
 
     // ═══════════════════════════════════════════════════
@@ -974,7 +1041,12 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         t.state = TradeState.RESOLVED;
 
         if (decayed > 0) {
-            IERC20(t.tokenAddress).safeTransfer(treasury, decayed);
+            _sendProtocolRevenue(
+                t.tokenAddress,
+                decayed,
+                makerOpenedDispute ? RevenueKind.DISPUTED_RELEASE_FEE : RevenueKind.MANUAL_RELEASE_FEE,
+                _tradeId
+            );
             emit BleedingDecayed(_tradeId, decayed, block.timestamp);
         }
 
@@ -987,7 +1059,12 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         IERC20(t.tokenAddress).safeTransfer(t.taker, takerReceives);
         if (takerFee + actualMakerFee > 0) {
-            IERC20(t.tokenAddress).safeTransfer(treasury, takerFee + actualMakerFee);
+            _sendProtocolRevenue(
+                t.tokenAddress,
+                takerFee + actualMakerFee,
+                makerOpenedDispute ? RevenueKind.DISPUTED_RELEASE_FEE : RevenueKind.MANUAL_RELEASE_FEE,
+                _tradeId
+            );
         }
         if (makerBondAfterFee > 0) {
             IERC20(t.tokenAddress).safeTransfer(t.maker, makerBondAfterFee);
@@ -1000,8 +1077,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
             // [TR] CHALLENGED→RESOLVED yolu maker'ın challenge iddiasının başarısızlığı olarak sınıflanır.
             // [EN] CHALLENGED→RESOLVED path is classified as maker challenge-loss semantics.
             _recordDisputeResolution(t.maker, t.taker, false);
+            _recordTerminalOutcome(_tradeId, TerminalOutcome.DISPUTED_RELEASE, takerFee, actualMakerFee);
         } else {
             _recordManualRelease(t.maker, t.taker);
+            _recordTerminalOutcome(_tradeId, TerminalOutcome.CLEAN_RELEASE, takerFee, actualMakerFee);
         }
 
         emit EscrowReleased(_tradeId, t.maker, t.taker, takerFee, actualMakerFee);
@@ -1120,9 +1199,10 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         t.state = TradeState.BURNED;
 
         if (totalBurn > 0) {
-            IERC20(t.tokenAddress).safeTransfer(treasury, totalBurn);
+            _sendProtocolRevenue(t.tokenAddress, totalBurn, RevenueKind.BURN_RESIDUAL, _tradeId);
         }
 
+        _recordTerminalOutcome(_tradeId, TerminalOutcome.BURNED, 0, 0);
         _recordBurn(t.maker, t.taker);
 
         emit EscrowBurned(_tradeId, totalBurn);
@@ -1172,7 +1252,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         t.state = TradeState.RESOLVED;
 
         if (decayed > 0) {
-            IERC20(t.tokenAddress).safeTransfer(treasury, decayed);
+            _sendProtocolRevenue(t.tokenAddress, decayed, RevenueKind.AUTO_RELEASE_FEE_OR_PENALTY, _tradeId);
             emit BleedingDecayed(_tradeId, decayed, block.timestamp);
         }
 
@@ -1185,8 +1265,11 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         IERC20(t.tokenAddress).safeTransfer(t.taker, currentCrypto);
         if (makerReceives > 0) IERC20(t.tokenAddress).safeTransfer(t.maker, makerReceives);
         if (takerReceivesBond > 0) IERC20(t.tokenAddress).safeTransfer(t.taker, takerReceivesBond);
-        if (totalPenalty > 0) IERC20(t.tokenAddress).safeTransfer(treasury, totalPenalty);
+        if (totalPenalty > 0) {
+            _sendProtocolRevenue(t.tokenAddress, totalPenalty, RevenueKind.AUTO_RELEASE_FEE_OR_PENALTY, _tradeId);
+        }
 
+        _recordTerminalOutcome(_tradeId, TerminalOutcome.AUTO_RELEASE, takerPenalty, makerPenalty);
         _recordAutoRelease(t.maker, t.taker);
 
         // Event payload order must stay aligned with EscrowReleased(takerFee, makerFee)
@@ -1352,11 +1435,14 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (decayed > 0) {
             emit BleedingDecayed(_tradeId, decayed, block.timestamp);
         }
-        if (treasuryAmount > 0) IERC20(t.tokenAddress).safeTransfer(treasury, treasuryAmount);
+        if (treasuryAmount > 0) {
+            _sendProtocolRevenue(t.tokenAddress, treasuryAmount, RevenueKind.PARTIAL_SETTLEMENT_FEE, _tradeId);
+        }
 
         if (makerPayout > 0) IERC20(t.tokenAddress).safeTransfer(t.maker, makerPayout);
         if (takerPayout > 0) IERC20(t.tokenAddress).safeTransfer(t.taker, takerPayout);
 
+        _recordTerminalOutcome(_tradeId, TerminalOutcome.PARTIAL_SETTLEMENT, takerFee, makerFee);
         _recordPartialSettlement(t.maker, t.taker);
 
         emit SettlementFinalized(_tradeId, sp.id, makerPayout, takerPayout, takerFee, makerFee);
@@ -1378,7 +1464,12 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         t.state = TradeState.CANCELED;
 
         if (decayed > 0) {
-            IERC20(t.tokenAddress).safeTransfer(treasury, decayed);
+            _sendProtocolRevenue(
+                t.tokenAddress,
+                decayed,
+                currentState == TradeState.CHALLENGED ? RevenueKind.DISPUTED_RELEASE_FEE : RevenueKind.MANUAL_RELEASE_FEE,
+                _tradeId
+            );
             emit BleedingDecayed(_tradeId, decayed, block.timestamp);
         }
 
@@ -1393,27 +1484,41 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint256 totalFeeToTreasury = 0;
         uint256 makerRefund;
         uint256 takerRefund;
+        uint256 actualMakerFeePaid;
+        uint256 actualTakerFeePaid;
 
         if (currentMakerBond >= makerFee) {
             makerRefund = currentCrypto + (currentMakerBond - makerFee);
             totalFeeToTreasury += makerFee;
+            actualMakerFeePaid = makerFee;
         } else {
             makerRefund = currentCrypto;
             totalFeeToTreasury += currentMakerBond;
+            actualMakerFeePaid = currentMakerBond;
         }
 
         if (currentTakerBond >= takerFee) {
             takerRefund = currentTakerBond - takerFee;
             totalFeeToTreasury += takerFee;
+            actualTakerFeePaid = takerFee;
         } else {
             takerRefund = 0;
             totalFeeToTreasury += currentTakerBond;
+            actualTakerFeePaid = currentTakerBond;
         }
 
-        if (totalFeeToTreasury > 0) IERC20(t.tokenAddress).safeTransfer(treasury, totalFeeToTreasury);
+        if (totalFeeToTreasury > 0) {
+            _sendProtocolRevenue(
+                t.tokenAddress,
+                totalFeeToTreasury,
+                currentState == TradeState.CHALLENGED ? RevenueKind.DISPUTED_RELEASE_FEE : RevenueKind.MANUAL_RELEASE_FEE,
+                _tradeId
+            );
+        }
         if (makerRefund > 0) IERC20(t.tokenAddress).safeTransfer(t.maker, makerRefund);
         if (takerRefund > 0) IERC20(t.tokenAddress).safeTransfer(t.taker, takerRefund);
 
+        _recordTerminalOutcome(_tradeId, TerminalOutcome.MUTUAL_CANCEL, actualTakerFeePaid, actualMakerFeePaid);
         _recordMutualCancel(t.maker, t.taker);
 
         emit EscrowCanceled(_tradeId, makerRefund, takerRefund);
@@ -1464,6 +1569,51 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         currentCrypto = t.cryptoAmount - cryptoDecayed;
         totalDecayed  = makerBondDecayed + takerBondDecayed + cryptoDecayed;
+    }
+
+    /**
+     * @notice Protokol gelirini treasury'ye gönderir ve sınıfını yayınlar.
+     * @dev    Transferden sonra treasury kontrat ise revenue hook tetiklenir.
+     *         Hook revert ederse tüm işlem RevenueHookFailed ile geri alınır.
+     */
+    function _sendProtocolRevenue(
+        address _token,
+        uint256 _amount,
+        RevenueKind _kind,
+        uint256 _tradeId
+    ) internal {
+        if (_amount == 0) return;
+
+        IERC20(_token).safeTransfer(treasury, _amount);
+
+        if (treasury.code.length > 0) {
+            try IArafRevenueReceiver(treasury).onArafRevenue(_token, _amount, uint8(_kind), _tradeId) {
+                // no-op
+            } catch {
+                revert RevenueHookFailed();
+            }
+        }
+
+        emit ProtocolRevenueSent(_token, _amount, _kind, _tradeId, treasury);
+    }
+
+    /**
+     * @notice Terminal outcome + fee snapshot bilgisini trade bazında sabitler.
+     * @dev    Aynı trade için yalnız ilk terminal kayıt geçerlidir (set-once).
+     */
+    function _recordTerminalOutcome(
+        uint256 _tradeId,
+        TerminalOutcome _outcome,
+        uint256 _takerFeePaid,
+        uint256 _makerFeePaid
+    ) internal {
+        TerminalTradeSnapshot storage snapshot = terminalTradeSnapshots[_tradeId];
+        if (snapshot.terminalAt != 0) return;
+
+        snapshot.outcome = _outcome;
+        snapshot.takerFeePaid = _takerFeePaid;
+        snapshot.makerFeePaid = _makerFeePaid;
+        snapshot.terminalAt = block.timestamp;
     }
 
     /**
@@ -1858,6 +2008,33 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      */
     function getTrade(uint256 _tradeId) external view returns (Trade memory) {
         return trades[_tradeId];
+    }
+
+    /**
+     * @notice Reward motoru için trade'in contract-authoritative terminal görünümünü döndürür.
+     * @dev    Backend/admin kaynaklarından türetilmez; yalnız kontrat state/snapshot'larından beslenir.
+     */
+    function getRewardableTrade(uint256 _tradeId) external view returns (RewardableTradeView memory) {
+        Trade storage t = trades[_tradeId];
+        TerminalTradeSnapshot storage terminalSnapshot = terminalTradeSnapshots[_tradeId];
+
+        return RewardableTradeView({
+            tradeId: t.id,
+            parentOrderId: t.parentOrderId,
+            maker: t.maker,
+            taker: t.taker,
+            token: t.tokenAddress,
+            stableNotional: t.cryptoAmount,
+            takerFeePaid: terminalSnapshot.takerFeePaid,
+            makerFeePaid: terminalSnapshot.makerFeePaid,
+            tier: t.tier,
+            outcome: terminalSnapshot.outcome,
+            lockedAt: t.lockedAt,
+            paidAt: t.paidAt,
+            terminalAt: terminalSnapshot.terminalAt,
+            hadChallenge: t.challengedAt != 0,
+            isOrderChild: t.parentOrderId != 0
+        });
     }
 
     /**
