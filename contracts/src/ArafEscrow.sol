@@ -160,6 +160,18 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         BURN_RESIDUAL
     }
 
+    // [TR] Reward katmanı için terminal outcome semantik sınıfları.
+    // [EN] Terminal outcome semantic classes for the future rewards layer.
+    enum TerminalOutcome {
+        NONE,
+        CLEAN_RELEASE,
+        AUTO_RELEASE,
+        MUTUAL_CANCEL,
+        PARTIAL_SETTLEMENT,
+        DISPUTED_RELEASE,
+        BURNED
+    }
+
     struct Trade {
         uint256 id;
         // [TR] V3'te her child trade bir parent order fill'inden doğar; bu alan artık nullable semantik taşımaz.
@@ -239,6 +251,33 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint64 proposedAt;
         uint64 expiresAt;
         SettlementProposalState state;
+    }
+
+    // [TR] Trade terminalize olduğunda tek seferlik outcome/fee snapshot.
+    // [EN] One-time outcome/fee snapshot recorded when trade terminalizes.
+    struct TerminalTradeSnapshot {
+        TerminalOutcome outcome;
+        uint256 terminalAt;
+        uint256 takerFeePaid;
+        uint256 makerFeePaid;
+    }
+
+    struct RewardableTradeView {
+        uint256 tradeId;
+        uint256 parentOrderId;
+        address maker;
+        address taker;
+        address token;
+        uint256 stableNotional;
+        uint256 takerFeePaid;
+        uint256 makerFeePaid;
+        uint8 tier;
+        TerminalOutcome outcome;
+        uint256 lockedAt;
+        uint256 paidAt;
+        uint256 terminalAt;
+        bool hadChallenge;
+        bool isOrderChild;
     }
 
     // [TR] Kontratın tek otorite olduğu terminal semantik sınıfları.
@@ -358,6 +397,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     mapping(uint256 => Order) public orders;
     mapping(uint256 => SettlementProposal) public settlementProposalsByTrade;
     mapping(uint256 => uint256) public settlementProposalNonceByTrade;
+    mapping(uint256 => TerminalTradeSnapshot) public terminalTradeSnapshots;
     mapping(address => Reputation) public reputation;
 
     mapping(address => uint256) public walletRegisteredAt;
@@ -1040,6 +1080,12 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         } else {
             _recordManualRelease(t.maker, t.taker);
         }
+        _recordTerminalTradeSnapshot(
+            _tradeId,
+            makerOpenedDispute ? TerminalOutcome.DISPUTED_RELEASE : TerminalOutcome.CLEAN_RELEASE,
+            takerFee,
+            actualMakerFee
+        );
 
         emit EscrowReleased(_tradeId, t.maker, t.taker, takerFee, actualMakerFee);
     }
@@ -1161,6 +1207,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         }
 
         _recordBurn(t.maker, t.taker);
+        _recordTerminalTradeSnapshot(_tradeId, TerminalOutcome.BURNED, 0, 0);
 
         emit EscrowBurned(_tradeId, totalBurn);
     }
@@ -1227,6 +1274,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         }
 
         _recordAutoRelease(t.maker, t.taker);
+        _recordTerminalTradeSnapshot(_tradeId, TerminalOutcome.AUTO_RELEASE, takerPenalty, makerPenalty);
 
         // Event payload order must stay aligned with EscrowReleased(takerFee, makerFee)
         // so off-chain listeners book penalties to the correct party.
@@ -1399,6 +1447,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (takerPayout > 0) IERC20(t.tokenAddress).safeTransfer(t.taker, takerPayout);
 
         _recordPartialSettlement(t.maker, t.taker);
+        _recordTerminalTradeSnapshot(_tradeId, TerminalOutcome.PARTIAL_SETTLEMENT, takerFee, makerFee);
 
         emit SettlementFinalized(_tradeId, sp.id, makerPayout, takerPayout, takerFee, makerFee);
     }
@@ -1439,21 +1488,27 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint256 totalFeeToTreasury = 0;
         uint256 makerRefund;
         uint256 takerRefund;
+        uint256 makerFeePaid;
+        uint256 takerFeePaid;
 
         if (currentMakerBond >= makerFee) {
             makerRefund = currentCrypto + (currentMakerBond - makerFee);
             totalFeeToTreasury += makerFee;
+            makerFeePaid = makerFee;
         } else {
             makerRefund = currentCrypto;
             totalFeeToTreasury += currentMakerBond;
+            makerFeePaid = currentMakerBond;
         }
 
         if (currentTakerBond >= takerFee) {
             takerRefund = currentTakerBond - takerFee;
             totalFeeToTreasury += takerFee;
+            takerFeePaid = takerFee;
         } else {
             takerRefund = 0;
             totalFeeToTreasury += currentTakerBond;
+            takerFeePaid = currentTakerBond;
         }
 
         if (totalFeeToTreasury > 0) {
@@ -1468,6 +1523,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (takerRefund > 0) IERC20(t.tokenAddress).safeTransfer(t.taker, takerRefund);
 
         _recordMutualCancel(t.maker, t.taker);
+        _recordTerminalTradeSnapshot(_tradeId, TerminalOutcome.MUTUAL_CANCEL, takerFeePaid, makerFeePaid);
 
         emit EscrowCanceled(_tradeId, makerRefund, takerRefund);
     }
@@ -1543,6 +1599,25 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         }
 
         emit ProtocolRevenueSent(_token, _amount, _kind, _tradeId, treasury);
+    }
+
+    /**
+     * @notice Trade terminalize olduğunda rewardable outcome snapshot'unu tek sefer kaydeder.
+     * @dev    terminalAt bir kez yazılır; yeniden terminalize edilmeye karşı idempotent kalır.
+     */
+    function _recordTerminalTradeSnapshot(
+        uint256 _tradeId,
+        TerminalOutcome _outcome,
+        uint256 _takerFeePaid,
+        uint256 _makerFeePaid
+    ) internal {
+        TerminalTradeSnapshot storage terminal = terminalTradeSnapshots[_tradeId];
+        if (terminal.terminalAt != 0) return;
+
+        terminal.outcome = _outcome;
+        terminal.terminalAt = block.timestamp;
+        terminal.takerFeePaid = _takerFeePaid;
+        terminal.makerFeePaid = _makerFeePaid;
     }
 
     /**
@@ -1937,6 +2012,39 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      */
     function getTrade(uint256 _tradeId) external view returns (Trade memory) {
         return trades[_tradeId];
+    }
+
+    /**
+     * @notice Reward katmanının kullanacağı terminal trade görünümünü döndürür.
+     *         Bu getter yalnız kontrat-authoritative read-model verisini sağlar.
+     * @notice Returns the terminal trade view consumed by the future rewards layer.
+     *         This getter provides contract-authoritative read-only data.
+     */
+    function getRewardableTrade(uint256 _tradeId)
+        external
+        view
+        returns (RewardableTradeView memory)
+    {
+        Trade storage t = trades[_tradeId];
+        TerminalTradeSnapshot storage terminal = terminalTradeSnapshots[_tradeId];
+
+        return RewardableTradeView({
+            tradeId: _tradeId,
+            parentOrderId: t.parentOrderId,
+            maker: t.maker,
+            taker: t.taker,
+            token: t.tokenAddress,
+            stableNotional: t.cryptoAmount,
+            takerFeePaid: terminal.takerFeePaid,
+            makerFeePaid: terminal.makerFeePaid,
+            tier: t.tier,
+            outcome: terminal.outcome,
+            lockedAt: t.lockedAt,
+            paidAt: t.paidAt,
+            terminalAt: terminal.terminalAt,
+            hadChallenge: t.challengedAt != 0,
+            isOrderChild: t.parentOrderId != 0
+        });
     }
 
     /**
