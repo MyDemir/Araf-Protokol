@@ -71,6 +71,24 @@ describe("eventListener RPC env fail-closed behavior", () => {
     expect(mockContractCtor).not.toHaveBeenCalled();
   });
 
+  it("security_connect_disabled_clears_stale_provider_contract_and_listener_flags", async () => {
+    process.env.WORKER_DISABLED = "true";
+    const worker = require("../scripts/services/eventListener");
+
+    const staleProvider = { removeAllListeners: jest.fn() };
+    worker.provider = staleProvider;
+    worker.contract = {};
+    worker._listenersAttached = true;
+
+    await expect(worker._connect()).resolves.toEqual({ disabled: true });
+
+    expect(staleProvider.removeAllListeners).toHaveBeenCalled();
+    expect(worker.provider).toBeNull();
+    expect(worker.contract).toBeNull();
+    expect(worker._listenersAttached).toBe(false);
+    expect(worker._state).toBe("disabled");
+  });
+
   it("security_start_worker_disabled_does_not_report_active_or_attach_listeners", async () => {
     process.env.WORKER_DISABLED = "true";
     const worker = require("../scripts/services/eventListener");
@@ -93,6 +111,25 @@ describe("eventListener RPC env fail-closed behavior", () => {
     await expect(worker._connect()).resolves.toBeUndefined();
     expect(mockJsonRpcProvider).not.toHaveBeenCalled();
     expect(mockContractCtor).not.toHaveBeenCalled();
+  });
+
+  it("security_connect_dry_run_clears_stale_provider_contract_and_listener_flags", async () => {
+    delete process.env.ARAF_ESCROW_ADDRESS;
+    const worker = require("../scripts/services/eventListener");
+
+    const staleProvider = { removeAllListeners: jest.fn() };
+    worker.provider = staleProvider;
+    worker.contract = {};
+    worker._listenersAttached = true;
+
+    await expect(worker._connect()).resolves.toBeUndefined();
+
+    expect(staleProvider.removeAllListeners).toHaveBeenCalled();
+    expect(worker.provider).toBeNull();
+    expect(worker.contract).toBeNull();
+    expect(worker._listenersAttached).toBe(false);
+    expect(worker._state).toBe("dry-run");
+    expect(mockJsonRpcProvider).not.toHaveBeenCalled();
   });
 });
 

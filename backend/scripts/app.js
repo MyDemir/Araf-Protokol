@@ -364,7 +364,11 @@ async function bootstrap() {
     await loadProtocolConfig();
 
     await worker.start();
-    logger.info("Event Listener aktif: V3 Order + Child Trade topology izleniyor.");
+    if (worker.isRunning) {
+      logger.info("Event Listener aktif: V3 Order + Child Trade topology izleniyor.");
+    } else {
+      logger.warn(`[Worker] Event Listener aktif değil. state=${worker._state || "unknown"}`);
+    }
 
     // [TR] DLQ monitörü — her 60 saniyede başarısız event'leri kontrol eder
     // [EN] DLQ monitor — checks failed events every 60 seconds

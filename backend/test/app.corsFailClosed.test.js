@@ -38,5 +38,13 @@ describe("app production CORS fail-closed", () => {
     expectBootToExitWithEnv({ NODE_ENV: "production", ALLOWED_ORIGINS: "https://example.com?x=1" });
   });
 
+  it("security_source_guards_active_worker_log_with_worker_isRunning_check", () => {
+    const fs = require("fs");
+    const appSource = fs.readFileSync(require.resolve("../scripts/app"), "utf8");
+
+    expect(appSource).toContain("if (worker.isRunning)");
+    expect(appSource).toContain("Event Listener aktif: V3 Order + Child Trade topology izleniyor.");
+    expect(appSource).toContain("Event Listener aktif değil. state=");
+  });
 
 });

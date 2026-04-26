@@ -358,6 +358,20 @@ class EventWorker {
     this._state = nextState;
   }
 
+  _resetConnectionState() {
+    if (this.provider?.removeAllListeners) {
+      try {
+        this.provider.removeAllListeners();
+      } catch (err) {
+        logger.warn(`[Worker] removeAllListeners cleanup başarısız: ${err.message}`);
+      }
+    }
+
+    this.provider = null;
+    this.contract = null;
+    this._listenersAttached = false;
+  }
+
   async _connect() {
     const isProduction = process.env.NODE_ENV === "production";
     const rpcUrl = process.env.BASE_RPC_URL || null;
@@ -367,6 +381,8 @@ class EventWorker {
     // [TR] Worker explicit olarak devre dışıysa bağlantı kurma.
     // [EN] Do not establish provider/contract when worker is explicitly disabled.
     if (isWorkerDisabled) {
+      this._resetConnectionState();
+      this.isRunning = false;
       this._setState("disabled", "WORKER_DISABLED=true");
       logger.warn("[Worker] WORKER_DISABLED=true — event worker başlatılmadı.");
       return { disabled: true };
@@ -377,6 +393,9 @@ class EventWorker {
         logger.error("[Worker] KRİTİK: ARAF_ESCROW_ADDRESS tanımlı değil. Durduruluyor.");
         process.exit(1);
       }
+      this._resetConnectionState();
+      this.isRunning = false;
+      this._setState("dry-run", "kontrat adresi tanımlı değil");
       logger.warn("[Worker] Kontrat adresi yok — Worker kuru çalışma modunda (development).");
       return;
     }
