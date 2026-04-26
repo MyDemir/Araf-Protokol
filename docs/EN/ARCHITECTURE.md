@@ -137,7 +137,7 @@ This yields a Web2.5 model: on-chain authority + off-chain operational accelerat
 - Backend does not hold user-fund custody authority.
 - Backend cannot fabricate release/challenge/cancel outcomes against contract rules.
 - Backend strength lies in coordination, observability, and secure PII boundaries.
-- Araf does not decide who is right; it enables counterparty-signed settlement.
+- Araf does not decide who is right; split settlement is a dispute-only tool and is available only in `CHALLENGED`.
 
 ---
 
@@ -733,6 +733,7 @@ erDiagram
 - `chargeback_ack.{acknowledged, acknowledged_by, acknowledged_at, ip_hash}`
 - `settlement_proposal` mirrors party-signed partial-settlement lifecycle:
   - `NONE -> PROPOSED -> REJECTED/WITHDRAWN/EXPIRED/FINALIZED`
+  - split settlement is **not** a normal close path; proposal/acceptance are valid only in `CHALLENGED`
   - proposer is one trade party; accept/reject requires counterparty action
   - backend stores mirror/audit context only; contract remains settlement authority
 
@@ -770,7 +771,10 @@ The V3 backend surface does not manufacture authority; routes apply projection, 
 - cancel-signature coordination
 - chargeback-ack audit surface
 - settlement-proposal preview + mirror reads are informational and non-authoritative
+- preview availability is `CHALLENGED`-only; non-challenged requests are rejected
 - backend role: preview, event mirror, read-model, audit/observability
+- final settlement economics are on-chain; backend cannot finalize outcomes
+- in settlement finalization, fees apply to gross maker/taker split payouts after decay
 - backend cannot: determine outcome, override release/cancel/burn/payout, write reputation authority, or transfer funds
 
 ### 14.2.1 Payment risk boundary

@@ -18,9 +18,9 @@ describe('SettlementProposalCard state normalization safety', () => {
 
   it('exposes explicit non-authoritative settlement copy for TR and EN', () => {
     expect(SETTLEMENT_NEUTRALITY_COPY.TR).toContain('kimin haklı olduğuna karar vermez');
-    expect(SETTLEMENT_NEUTRALITY_COPY.TR).toContain('iki tarafın imzasıyla');
+    expect(SETTLEMENT_NEUTRALITY_COPY.TR).toContain('CHALLENGED dispute fazında');
     expect(SETTLEMENT_NEUTRALITY_COPY.EN).toContain('does not decide who is right');
-    expect(SETTLEMENT_NEUTRALITY_COPY.EN).toContain('counterparty-signed settlement');
+    expect(SETTLEMENT_NEUTRALITY_COPY.EN).toContain('CHALLENGED dispute phase');
   });
 
   it('parses settlement expiry from unix, ms, and ISO formats safely', () => {
@@ -51,7 +51,7 @@ describe('SettlementProposalCard state normalization safety', () => {
       activeTrade: {
         id: 'db-id',
         onchainId: '7',
-        state: 'LOCKED',
+        state: 'CHALLENGED',
         makerFull: '0x1111111111111111111111111111111111111111',
         takerFull: '0x2222222222222222222222222222222222222222',
         settlementProposal: {
@@ -86,7 +86,7 @@ describe('SettlementProposalCard state normalization safety', () => {
       activeTrade: {
         id: 'db-id',
         onchainId: '7',
-        state: 'LOCKED',
+        state: 'CHALLENGED',
         makerFull: '0x1111111111111111111111111111111111111111',
         takerFull: '0x2222222222222222222222222222222222222222',
         settlementProposal: {
@@ -161,7 +161,7 @@ describe('SettlementProposalCard state normalization safety', () => {
       activeTrade: {
         id: 'db-id',
         onchainId: '7',
-        state: 'LOCKED',
+        state: 'CHALLENGED',
         makerFull: '0x1111111111111111111111111111111111111111',
         takerFull: '0x2222222222222222222222222222222222222222',
         settlementProposal: null,
@@ -193,7 +193,7 @@ describe('SettlementProposalCard state normalization safety', () => {
       activeTrade: {
         id: null,
         onchainId: null,
-        state: 'LOCKED',
+        state: 'CHALLENGED',
         rawTrade: {
           maker_address: '0x1111111111111111111111111111111111111111',
           taker_address: '0x2222222222222222222222222222222222222222',
@@ -218,5 +218,55 @@ describe('SettlementProposalCard state normalization safety', () => {
     expect(scope.getByText(/Settlement preview is unavailable until backend trade record is ready/i)).toBeInTheDocument();
     expect(scope.getByText(/Missing on-chain trade ID/i)).toBeInTheDocument();
     expect(scope.getByRole('button', { name: /Preview/i })).toBeDisabled();
+  });
+
+  it('security_settlement_controls_hidden_in_locked_and_paid_with_challenged_only_copy', () => {
+    const commonProps = {
+      userRole: 'maker',
+      address: '0x1111111111111111111111111111111111111111',
+      lang: 'EN',
+      authenticatedFetch: vi.fn(),
+      proposeSettlement: vi.fn(),
+      acceptSettlement: vi.fn(),
+      rejectSettlement: vi.fn(),
+      withdrawSettlement: vi.fn(),
+      expireSettlement: vi.fn(),
+      fetchMyTrades: vi.fn(),
+      showToast: vi.fn(),
+      isContractLoading: false,
+      setIsContractLoading: vi.fn(),
+    };
+
+    const lockedView = render(React.createElement(SettlementProposalCard, {
+      ...commonProps,
+      activeTrade: {
+        id: 'db-id',
+        onchainId: '7',
+        state: 'LOCKED',
+        makerFull: '0x1111111111111111111111111111111111111111',
+        takerFull: '0x2222222222222222222222222222222222222222',
+        settlementProposal: null,
+      },
+    }));
+    let scope = within(lockedView.container);
+    expect(scope.getByText(/available only during CHALLENGED disputes/i)).toBeInTheDocument();
+    expect(scope.queryByRole('button', { name: /Preview/i })).toBeNull();
+
+    lockedView.unmount();
+
+    const paidView = render(React.createElement(SettlementProposalCard, {
+      ...commonProps,
+      activeTrade: {
+        id: 'db-id-2',
+        onchainId: '8',
+        state: 'PAID',
+        makerFull: '0x1111111111111111111111111111111111111111',
+        takerFull: '0x2222222222222222222222222222222222222222',
+        settlementProposal: null,
+      },
+    }));
+    scope = within(paidView.container);
+    expect(scope.getByText(/available only during CHALLENGED disputes/i)).toBeInTheDocument();
+    expect(scope.queryByRole('button', { name: /Preview/i })).toBeNull();
   });
 });

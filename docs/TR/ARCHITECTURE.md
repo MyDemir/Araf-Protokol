@@ -134,7 +134,7 @@ graph TB
 - Backend kullanıcı fonlarını hareket ettiren custody anahtarı taşımaz.
 - Backend, kontrat adına release/challenge/cancel sonucu “uyduramaz”.
 - Backend’in güçlü olduğu yer: session/policy/PII access boundary ve operasyonel görünürlük.
-- Araf kimin haklı olduğuna karar vermez; iki tarafın imzasıyla kontrollü settlement sağlar.
+- Araf kimin haklı olduğuna karar vermez; split settlement normal kapanış yolu değildir ve yalnız `CHALLENGED` dispute safhasında kullanılabilir.
 
 ---
 
@@ -730,6 +730,7 @@ erDiagram
 - `chargeback_ack.{acknowledged, acknowledged_by, acknowledged_at, ip_hash}`
 - `settlement_proposal` taraf-imzalı partial-settlement lifecycle mirror’ını taşır:
   - `NONE -> PROPOSED -> REJECTED/WITHDRAWN/EXPIRED/FINALIZED`
+  - split settlement **normal close path değildir**; proposal/accept yalnız `CHALLENGED` state’inde geçerlidir
   - proposer trade taraflarından biridir; accept/reject yalnız karşı tarafla tamamlanır
   - backend yalnız mirror/audit tutar; settlement authority kontratta kalır
 
@@ -767,7 +768,10 @@ V3 backend yüzeyi authority üretmez; route’lar projection, coordination ve g
 - cancel signature coordination
 - chargeback ack audit surface
 - settlement-proposal preview + mirror read yüzeyi bilgilendirme/non-authoritative amaçlıdır
+- preview yalnız `CHALLENGED` trade için açıktır; non-challenged istekler reddedilir
 - backend rolü: preview, event mirror, read-model, audit/observability
+- nihai settlement ekonomisi on-chain belirlenir; backend outcome finalize edemez
+- settlement finalization’da fee, decay sonrası gross maker/taker split payout üzerinden uygulanır
 - backend’in rolü olmayanlar: outcome belirleme, release/cancel/burn/payout override, reputation authority yazma, fon transferi
 
 ### 14.2.1 Payment risk sınırı
