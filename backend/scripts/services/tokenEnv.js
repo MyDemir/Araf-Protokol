@@ -117,7 +117,9 @@ function _resolveSymbolAddress(symbol, { surface, expectedChainId = null, isProd
 function inferCryptoAssetFromTokenAddress(tokenAddress, { surface = "TokenInfer", expectedChainId = null } = {}) {
   const normalizedToken = _normalizedAddressOrNull(tokenAddress);
   if (!normalizedToken) return null;
-  const isProduction = _isProductionRuntime(false);
+  // [TR] Production tespiti runtime env'den gelmeli; false sabitlemesi fail-open yaratır.
+  // [EN] Production mode must come from runtime env; hardcoding false causes fail-open.
+  const isProduction = _isProductionRuntime();
 
   const usdt = _resolveSymbolAddress("USDT", { surface, expectedChainId, isProduction });
   const usdc = _resolveSymbolAddress("USDC", { surface, expectedChainId, isProduction });

@@ -78,6 +78,22 @@ describe("tokenEnv chain-aware resolver", () => {
     expect(inferCryptoAssetFromTokenAddress("0x4444444444444444444444444444444444444444")).toBe("USDC");
   });
 
+  it("fails closed in production when infer path sees Base Sepolia + MAINNET_* alias", () => {
+    process.env.EXPECTED_CHAIN_ID = "84532";
+    process.env.MAINNET_USDT_ADDRESS = "0x5555555555555555555555555555555555555555";
+    const { inferCryptoAssetFromTokenAddress } = loadService();
+
+    expect(() => inferCryptoAssetFromTokenAddress("0x5555555555555555555555555555555555555555")).toThrow(/Base Sepolia/);
+  });
+
+  it("fails closed in production infer path when EXPECTED_CHAIN_ID is missing", () => {
+    delete process.env.EXPECTED_CHAIN_ID;
+    process.env.BASE_MAINNET_USDT_ADDRESS = "0x1111111111111111111111111111111111111111";
+    const { inferCryptoAssetFromTokenAddress } = loadService();
+
+    expect(() => inferCryptoAssetFromTokenAddress("0x1111111111111111111111111111111111111111")).toThrow(/EXPECTED_CHAIN_ID/);
+  });
+
   it("prefers explicit ARAF_TRACKED_TOKENS over env-derived chain token set", () => {
     process.env.EXPECTED_CHAIN_ID = "8453";
     process.env.ARAF_TRACKED_TOKENS = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
