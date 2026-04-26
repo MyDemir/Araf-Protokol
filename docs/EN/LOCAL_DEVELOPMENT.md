@@ -444,6 +444,8 @@ EOF
 
 # Set NODE_ENV to production so MockERC20 is NOT deployed
 # Note: Base Mainnet deploy requires BASE_MAINNET_USDT_ADDRESS / BASE_MAINNET_USDC_ADDRESS.
+# Note: Base Sepolia deploy requires BASE_SEPOLIA_USDT_ADDRESS / BASE_SEPOLIA_USDC_ADDRESS.
+# Note: MAINNET_* aliases are legacy for Base Mainnet only and must not be used for Base Sepolia.
 NODE_ENV=production npx hardhat run scripts/deploy.js --network base
 
 # Verify
@@ -451,6 +453,18 @@ npx hardhat verify --network base <ESCROW_ADDRESS> <GNOSIS_SAFE_ADDRESS>
 ```
 
 > Note: In `contracts/hardhat.config.js`, `BASE_RPC_URL` is required for `base` and `BASE_SEPOLIA_RPC_URL` is required for `base-sepolia`; no public RPC default fallback is configured.
+
+#### Local/custom + external token addresses (optional)
+
+If you want external token addresses instead of mock tokens with `USE_EXTERNAL_TOKEN_ADDRESSES=true`:
+
+```bash
+EXTERNAL_USDT_ADDRESS=0x<external_usdt>
+EXTERNAL_USDC_ADDRESS=0x<external_usdc>
+USE_EXTERNAL_TOKEN_ADDRESSES=true npx hardhat run scripts/deploy.js --network localhost
+```
+
+This path uses `EXTERNAL_*` only on local/custom chains; Base Sepolia/public paths continue to use chain-aware `BASE_*` envs.
 
 ### Step 4 — Backend: Production Secrets
 

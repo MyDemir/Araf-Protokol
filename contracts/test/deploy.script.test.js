@@ -1,6 +1,9 @@
 const { expect } = require("chai");
+const fs = require("fs");
+const path = require("path");
 const {
   resolveProductionTokenConfig,
+  resolveExternalTokenConfig,
   resolveFinalOwnerAddress,
   getTokenConfigSnapshot,
   setAndVerifyTokenConfig,
@@ -14,6 +17,8 @@ describe("deploy script config guards", function () {
   const OLD_BASE_MAINNET_USDC = process.env.BASE_MAINNET_USDC_ADDRESS;
   const OLD_BASE_SEPOLIA_USDT = process.env.BASE_SEPOLIA_USDT_ADDRESS;
   const OLD_BASE_SEPOLIA_USDC = process.env.BASE_SEPOLIA_USDC_ADDRESS;
+  const OLD_EXTERNAL_USDT = process.env.EXTERNAL_USDT_ADDRESS;
+  const OLD_EXTERNAL_USDC = process.env.EXTERNAL_USDC_ADDRESS;
   const OLD_FINAL_OWNER = process.env.FINAL_OWNER_ADDRESS;
 
   after(function () {
@@ -24,6 +29,8 @@ describe("deploy script config guards", function () {
     process.env.BASE_MAINNET_USDC_ADDRESS = OLD_BASE_MAINNET_USDC;
     process.env.BASE_SEPOLIA_USDT_ADDRESS = OLD_BASE_SEPOLIA_USDT;
     process.env.BASE_SEPOLIA_USDC_ADDRESS = OLD_BASE_SEPOLIA_USDC;
+    process.env.EXTERNAL_USDT_ADDRESS = OLD_EXTERNAL_USDT;
+    process.env.EXTERNAL_USDC_ADDRESS = OLD_EXTERNAL_USDC;
     process.env.FINAL_OWNER_ADDRESS = OLD_FINAL_OWNER;
   });
 
@@ -34,6 +41,8 @@ describe("deploy script config guards", function () {
     delete process.env.BASE_MAINNET_USDC_ADDRESS;
     delete process.env.BASE_SEPOLIA_USDT_ADDRESS;
     delete process.env.BASE_SEPOLIA_USDC_ADDRESS;
+    delete process.env.EXTERNAL_USDT_ADDRESS;
+    delete process.env.EXTERNAL_USDC_ADDRESS;
     delete process.env.FINAL_OWNER_ADDRESS;
     process.env.NODE_ENV = "production";
   });
@@ -95,6 +104,20 @@ describe("deploy script config guards", function () {
     expect(cfg.isProduction).to.equal(false);
     expect(cfg.usdtAddress).to.equal(null);
     expect(cfg.usdcAddress).to.equal(null);
+  });
+
+  it("local/custom external token path accepts EXTERNAL_* env vars", function () {
+    process.env.EXTERNAL_USDT_ADDRESS = "0x5555555555555555555555555555555555555555";
+    process.env.EXTERNAL_USDC_ADDRESS = "0x6666666666666666666666666666666666666666";
+    const cfg = resolveExternalTokenConfig();
+    expect(cfg.usdtAddress).to.equal("0x5555555555555555555555555555555555555555");
+    expect(cfg.usdcAddress).to.equal("0x6666666666666666666666666666666666666666");
+  });
+
+  it("local/custom external token path fails fast on invalid/zero EXTERNAL_* env vars", function () {
+    process.env.EXTERNAL_USDT_ADDRESS = "0x0000000000000000000000000000000000000000";
+    process.env.EXTERNAL_USDC_ADDRESS = "0x6666666666666666666666666666666666666666";
+    expect(() => resolveExternalTokenConfig()).to.throw(/EXTERNAL_USDT_ADDRESS/);
   });
 
   it("security_public_mode_reverts_when_final_owner_missing", function () {
@@ -192,5 +215,12 @@ describe("deploy script config guards", function () {
     await expect(
       setAndVerifyTokenConfig(fakeEscrow, "0x1111111111111111111111111111111111111111", "USDT", config)
     ).to.be.rejectedWith(/doğrulaması başarısız/);
+  });
+
+  it("security_deploy_source_does_not_reintroduce_frontend_abi_generation_or_artifactPathSync", function () {
+    const source = fs.readFileSync(path.resolve(__dirname, "../scripts/deploy.js"), "utf8");
+    expect(source).not.to.contain("syncAbiToFrontend");
+    expect(source).not.to.contain("frontend/src/abi");
+    expect(source).not.to.contain("artifactPathSync");
   });
 });

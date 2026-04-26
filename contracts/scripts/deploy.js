@@ -135,6 +135,13 @@ function resolveProductionTokenConfig({ chainId, requireConfigured = false } = {
   throw new Error(`❌ Production deploy için desteklenmeyen chainId: ${normalizedChainId}`);
 }
 
+function resolveExternalTokenConfig() {
+  return {
+    usdtAddress: getRequiredEnvAddress("EXTERNAL_USDT_ADDRESS"),
+    usdcAddress: getRequiredEnvAddress("EXTERNAL_USDC_ADDRESS"),
+  };
+}
+
 function resolveFinalOwnerAddress({ deployMode, treasuryAddress }) {
   const isLocal = deployMode === "local";
   const finalOwnerAddress = isLocal
@@ -317,10 +324,13 @@ async function main() {
   } else {
     const useExternalTokens = ensureBooleanEnv("USE_EXTERNAL_TOKEN_ADDRESSES", false);
     if (useExternalTokens) {
-      const tokenConfig = resolveProductionTokenConfig({ chainId, requireConfigured: true });
+      const isBaseChain = Number(chainId) === 8453 || Number(chainId) === 84532;
+      const tokenConfig = isBaseChain
+        ? resolveProductionTokenConfig({ chainId, requireConfigured: true })
+        : resolveExternalTokenConfig();
       usdtAddress = tokenConfig.usdtAddress;
       usdcAddress = tokenConfig.usdcAddress;
-      console.log("ℹ️ Local/custom deploy harici token adresleri ile devam ediyor.");
+      console.log("ℹ️ Local/custom deploy harici token adresleri ile devam ediyor (EXTERNAL_* veya chain-aware BASE_*).");
     } else {
       console.log("⏳ Mock token deploy başlatılıyor...");
       const [usdt, usdc] = await Promise.all([
@@ -394,7 +404,7 @@ async function main() {
     console.log("ℹ️ Ownership devri gerekmiyor; deployer zaten final owner değilse treasury ile eşleşiyor.");
   }
 
-  const abiPath = artifacts.artifactPathSync("ArafEscrow");
+  const artifact = await artifacts.readArtifact("ArafEscrow");
   let frontendEnvPath = null;
   if (isLocal) {
     frontendEnvPath = updateFrontendEnvIfPresent({
@@ -420,7 +430,9 @@ async function main() {
     finalOwnerAddress,
     deployer: deployer.address,
     deployTxHash: deployTx ? deployTx.hash : null,
-    abiPath,
+    artifactName: artifact.contractName || "ArafEscrow",
+    abiIncluded: false,
+    abiPath: null,
     frontendEnvPath,
     tokens: tokenResults,
     deployedMocks,
@@ -459,6 +471,7 @@ module.exports = {
   main,
   getDeployMode,
   resolveProductionTokenConfig,
+  resolveExternalTokenConfig,
   resolveFinalOwnerAddress,
   getTokenConfigSnapshot,
   setAndVerifyTokenConfig,

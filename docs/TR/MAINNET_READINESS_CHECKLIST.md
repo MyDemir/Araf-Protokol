@@ -37,6 +37,7 @@ Kural:
 - `ARAF_TRACKED_TOKENS` boşsa backend tracked seti active chain'e göre deterministic olarak `BASE_MAINNET_*` veya `BASE_SEPOLIA_*` çiftinden türetilir.
 - Bu kaynaklar da boşsa production config load **fail-closed** olmalıdır.
 - Legacy alias (`MAINNET_USDT_ADDRESS` / `MAINNET_USDC_ADDRESS`) yalnız Base Mainnet için geriye uyumlu kabul edilir; Base Sepolia'da kullanılmaz.
+- Local/custom deploy'da `USE_EXTERNAL_TOKEN_ADDRESSES=true` seçilecekse `EXTERNAL_USDT_ADDRESS` ve `EXTERNAL_USDC_ADDRESS` kullanılır.
 
 ### Deploy ownership güvenliği
 - `TREASURY_ADDRESS`
