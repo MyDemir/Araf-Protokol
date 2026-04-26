@@ -1210,6 +1210,8 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint64 _expiresAt
     ) external nonReentrant {
         Trade storage t = trades[_tradeId];
+        // [TR] Split/partial settlement yalnız aktif uyuşmazlık (CHALLENGED) safhasında mümkündür.
+        // [EN] Split/partial settlement is only possible during an active dispute (CHALLENGED).
         if (!_isSettlementAllowedTradeState(t.state)) revert SettlementNotAllowedInState();
         if (msg.sender != t.maker && msg.sender != t.taker) revert NotTradeParty();
 
@@ -1302,42 +1304,46 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         Trade storage t = trades[_tradeId];
         SettlementProposal storage sp = settlementProposalsByTrade[_tradeId];
 
+        if (!_isSettlementAllowedTradeState(t.state)) revert SettlementNotAllowedInState();
         if (sp.state == SettlementProposalState.FINALIZED) revert SettlementAlreadyFinalized();
         _expireSettlementProposalIfNeeded(_tradeId, sp);
         if (sp.state == SettlementProposalState.EXPIRED) revert SettlementProposalExpired();
         if (sp.state != SettlementProposalState.PROPOSED) revert NoActiveSettlementProposal();
-        if (!_isSettlementAllowedTradeState(t.state)) revert SettlementNotAllowedInState();
         if (msg.sender != t.maker && msg.sender != t.taker) revert NotTradeParty();
         if (msg.sender == sp.proposer) revert OnlySettlementCounterparty();
         if (uint256(sp.makerShareBps) + uint256(sp.takerShareBps) != BPS_DENOMINATOR) revert InvalidSettlementSplit();
 
-        // [TR] Settlement havuzu, release/cancel yollarıyla aynı bleeding gerçekliğini izler.
-        //      CHALLENGED durumda geçmiş süreye göre eriyen kısım treasury'ye aktarılır.
-        // [EN] Settlement pool follows the same bleeding reality as release/cancel flows.
-        //      In CHALLENGED, the elapsed-time decay is moved to treasury first.
+        // [TR] Settlement matematiği kabul anındaki current (post-decay) değerlerle hesaplanır.
+        //      Önce decayed tutar treasury'ye alınır, kalan current havuz split edilir.
+        // [EN] Settlement math is computed on acceptance-time current (post-decay) amounts.
+        //      Decay is sent to treasury first, then the remaining current pool is split.
         (uint256 currentCrypto, uint256 currentMakerBond, uint256 currentTakerBond, uint256 decayed) =
             _calculateCurrentAmounts(_tradeId);
 
         uint256 settlementPool = currentCrypto + currentMakerBond + currentTakerBond;
-        uint256 makerPayout = (settlementPool * sp.makerShareBps) / BPS_DENOMINATOR;
-        uint256 takerPayout = settlementPool - makerPayout;
+        uint256 makerGrossPayout = (settlementPool * sp.makerShareBps) / BPS_DENOMINATOR;
+        uint256 takerGrossPayout = settlementPool - makerGrossPayout;
 
-        // [TR] Fee snapshot modeli release/autoRelease yolunda principal ağırlıklıdır.
-        //      Partial settlement'te principal+bond tek havuz split edildiği için belirsiz
-        //     /çifte kesinti riski oluşturmamak adına MVP'de fee=0 uygulanır.
-        // [EN] Fee snapshots are principal-oriented on release/autoRelease paths.
-        //      Since partial settlement splits a unified principal+bond pool, MVP keeps fee=0
-        //      to avoid semantic ambiguity and accidental double-charging.
-        uint256 takerFee = 0;
-        uint256 makerFee = 0;
+        // [TR] Fee snapshot'ları gross settlement payout üzerinden uygulanır.
+        //      Event'te net payout + gerçek fee değerleri yayınlanır.
+        // [EN] Fee snapshots are applied on gross settlement payouts.
+        //      Event emits net payout values plus actual fee amounts.
+        uint256 makerFee = (makerGrossPayout * t.makerFeeBpsSnapshot) / BPS_DENOMINATOR;
+        uint256 takerFee = (takerGrossPayout * t.takerFeeBpsSnapshot) / BPS_DENOMINATOR;
+        uint256 makerPayout = makerGrossPayout - makerFee;
+        uint256 takerPayout = takerGrossPayout - takerFee;
 
         sp.state = SettlementProposalState.FINALIZED;
         t.state = TradeState.RESOLVED;
 
+        uint256 treasuryAmount = decayed + makerFee + takerFee;
+
+        // [TR] CEI korunur: state güncellendi, ardından dış transferler yapılır.
+        // [EN] CEI preserved: state is updated before external transfers.
         if (decayed > 0) {
-            IERC20(t.tokenAddress).safeTransfer(treasury, decayed);
             emit BleedingDecayed(_tradeId, decayed, block.timestamp);
         }
+        if (treasuryAmount > 0) IERC20(t.tokenAddress).safeTransfer(treasury, treasuryAmount);
 
         if (makerPayout > 0) IERC20(t.tokenAddress).safeTransfer(t.maker, makerPayout);
         if (takerPayout > 0) IERC20(t.tokenAddress).safeTransfer(t.taker, takerPayout);
@@ -2183,7 +2189,7 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
     }
 
     function _isSettlementAllowedTradeState(TradeState _state) internal pure returns (bool) {
-        return _state == TradeState.LOCKED || _state == TradeState.PAID || _state == TradeState.CHALLENGED;
+        return _state == TradeState.CHALLENGED;
     }
 
     function _expireSettlementProposalIfNeeded(
