@@ -438,12 +438,14 @@ DEPLOYER_PRIVATE_KEY=0x<mainnet_deployer_private_key>
 TREASURY_ADDRESS=0x<gnosis_safe_address>
 BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/<API_KEY>
 BASESCAN_API_KEY=<basescan_api_key>
-MAINNET_USDT_ADDRESS=0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2
-MAINNET_USDC_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+BASE_MAINNET_USDT_ADDRESS=0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2
+BASE_MAINNET_USDC_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
 EOF
 
 # NODE_ENV production set et ki MockERC20 deploy edilmesin
-# Not: MAINNET_USDT_ADDRESS / MAINNET_USDC_ADDRESS eksikse script deploy tamamlanmadan hard fail eder.
+# Not: Base Mainnet deploy için BASE_MAINNET_USDT_ADDRESS / BASE_MAINNET_USDC_ADDRESS zorunludur.
+# Not: Base Sepolia deploy için BASE_SEPOLIA_USDT_ADDRESS / BASE_SEPOLIA_USDC_ADDRESS zorunludur.
+# Not: MAINNET_* alias yalnız Base Mainnet için legacy amaçlıdır; Base Sepolia'da kullanılmamalıdır.
 NODE_ENV=production npx hardhat run scripts/deploy.js --network base
 
 # Verify et
@@ -451,6 +453,18 @@ npx hardhat verify --network base <ESCROW_ADDRESS> <GNOSIS_SAFE_ADDRESS>
 ```
 
 > Not: `contracts/hardhat.config.js` içinde `base` için `BASE_RPC_URL`, `base-sepolia` için `BASE_SEPOLIA_RPC_URL` explicit olarak gerekir; varsayılan public RPC fallback tanımlı değildir.
+
+#### Local/custom + external token adresleri (opsiyonel)
+
+`USE_EXTERNAL_TOKEN_ADDRESSES=true` ile mock token yerine harici token kullanmak istersen:
+
+```bash
+EXTERNAL_USDT_ADDRESS=0x<external_usdt>
+EXTERNAL_USDC_ADDRESS=0x<external_usdc>
+USE_EXTERNAL_TOKEN_ADDRESSES=true npx hardhat run scripts/deploy.js --network localhost
+```
+
+Bu yol yalnız local/custom chain'lerde `EXTERNAL_*` env'lerini kullanır; Base Sepolia/Public path'i chain-aware `BASE_*` env'leriyle çalışır.
 
 ### Adım 4 — Backend: Üretim Secrets
 
@@ -496,8 +510,8 @@ vercel --prod
 - [ ] Gnosis Safe multisig yapılandırılmış (min 3/5)
 - [ ] AWS KMS aktif ve şifreli data key test edilmiş
 - [ ] `NODE_ENV=production` — MockERC20 deploy edilmedi ✅
-- [ ] `MAINNET_USDT_ADDRESS` ve `MAINNET_USDC_ADDRESS` set edildi (zorunlu)
-- [ ] `setTokenConfig` sonrası on-chain doğrulama çıktılarını logda gördün (`tokenConfigs(token).supported == true`)
+- [ ] `BASE_MAINNET_USDT_ADDRESS` ve `BASE_MAINNET_USDC_ADDRESS` set edildi (Base Mainnet için zorunlu)
+- [ ] `setTokenConfig` sonrası on-chain doğrulama çıktılarını logda gördün (`getTokenConfig(token).supported == true`)
 - [ ] Kontrat verified on BaseScan
 - [ ] Ownership Gnosis Safe'e devredildi ✅
 - [ ] `pause()` / `unpause()` Gnosis Safe'ten çalışıyor

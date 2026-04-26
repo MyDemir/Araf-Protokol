@@ -440,7 +440,7 @@ This section separates immutable parameters from runtime surfaces that the owner
 
 ### 9.4 Toolchain / deployment assumptions
 - Deploy flow starts with `constructor(treasury)` and token direction config.
-- Post-deploy token-direction policy should be verified on-chain via `tokenConfigs(token)`.
+- Post-deploy token-direction policy should be verified on-chain via `getTokenConfig(token)`.
 - Production guidance assumes owner governance key is managed by multisig to reduce key risk.
 
 ---
