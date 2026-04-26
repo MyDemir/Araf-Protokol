@@ -499,7 +499,7 @@ class EventWorker {
 
     if (finalizedToBlock <= 0) return;
 
-    const fromBlock = this._resolveReplayStartBlock(savedBlock, finalizedToBlock);
+    const fromBlock = this._resolveReplayStartBlock(savedBlock, currentHead);
 
     if (fromBlock > finalizedToBlock) return;
 

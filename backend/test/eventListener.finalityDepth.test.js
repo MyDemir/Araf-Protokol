@@ -76,6 +76,22 @@ describe("eventListener finality depth safe-checkpoint behavior", () => {
     await expect(worker._replayMissedEvents()).rejects.toThrow("Geçersiz checkpoint değeri");
   });
 
+  it("security_replay_allows_configured_start_above_finalized_head_and_defers_replay", async () => {
+    process.env.WORKER_FINALITY_DEPTH = "6";
+    process.env.WORKER_START_BLOCK = "98";
+    const worker = require("../scripts/services/eventListener");
+
+    mockRedis.get
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    worker.provider = { getBlockNumber: jest.fn().mockResolvedValue(100) };
+    worker.contract = { queryFilter: jest.fn().mockResolvedValue([]) };
+
+    await expect(worker._replayMissedEvents()).resolves.toBeUndefined();
+    expect(worker.contract.queryFilter).not.toHaveBeenCalled();
+    expect(mockRedis.set).not.toHaveBeenCalled();
+  });
+
   it("security_startup_live_poll_starts_from_last_safe_checkpoint_not_head", async () => {
     const worker = require("../scripts/services/eventListener");
 
