@@ -322,10 +322,22 @@ class EventWorker {
 
   async start() {
     logger.info(`[Worker] V3 event listener başlatılıyor... (finalityDepth=${WORKER_FINALITY_DEPTH})`);
+
+    const connectResult = await this._connect();
+    if (connectResult?.disabled) {
+      this.isRunning = false;
+      return;
+    }
+
+    if (!this.contract) {
+      this.isRunning = false;
+      this._setState("dry-run", "provider/contract hazır değil");
+      return;
+    }
+
     this.isRunning = true;
-    await this._connect();
     await this._replayMissedEvents();
-    if (this.provider) this._lastLivePolledBlock = await this.provider.getBlockNumber();
+    this._lastLivePolledBlock = this._lastSafeCheckpointBlock;
     this._attachLiveListeners();
     logger.info("[Worker] V3 event listener aktif.");
   }
@@ -355,8 +367,9 @@ class EventWorker {
     // [TR] Worker explicit olarak devre dışıysa bağlantı kurma.
     // [EN] Do not establish provider/contract when worker is explicitly disabled.
     if (isWorkerDisabled) {
+      this._setState("disabled", "WORKER_DISABLED=true");
       logger.warn("[Worker] WORKER_DISABLED=true — event worker başlatılmadı.");
-      return;
+      return { disabled: true };
     }
 
     if (!contractAddress || contractAddress === "0x0000000000000000000000000000000000000000") {
@@ -449,15 +462,32 @@ class EventWorker {
 
     const redis = getRedisClient();
     const savedBlock = await redis.get(LAST_SAFE_BLOCK_KEY) ?? await redis.get(CHECKPOINT_KEY);
-    const toBlock = await this.provider.getBlockNumber();
-    const fromBlock = this._resolveReplayStartBlock(savedBlock, toBlock);
+    const currentHead = await this.provider.getBlockNumber();
+    const finalizedToBlock = this._computeFinalizedUpTo(currentHead);
 
-    if (fromBlock > toBlock) return;
+    if (savedBlock !== null && savedBlock !== undefined) {
+      const checkpoint = Number(savedBlock);
+      if (!Number.isInteger(checkpoint) || checkpoint < 0) {
+        throw new Error(`[Worker] Geçersiz checkpoint değeri: ${savedBlock}`);
+      }
+      if (checkpoint > currentHead) {
+        throw new Error(
+          `[Worker] Checkpoint current block'u aşıyor: checkpoint=${checkpoint} current=${currentHead}`
+        );
+      }
+      this._lastSafeCheckpointBlock = checkpoint;
+    }
 
-    this._setState("replaying", `replay aralığı: ${fromBlock}-${toBlock}`);
+    if (finalizedToBlock <= 0) return;
 
-    for (let from = fromBlock; from <= toBlock; from += BLOCK_BATCH_SIZE) {
-      const to = Math.min(from + BLOCK_BATCH_SIZE - 1, toBlock);
+    const fromBlock = this._resolveReplayStartBlock(savedBlock, finalizedToBlock);
+
+    if (fromBlock > finalizedToBlock) return;
+
+    this._setState("replaying", `replay aralığı: ${fromBlock}-${finalizedToBlock}`);
+
+    for (let from = fromBlock; from <= finalizedToBlock; from += BLOCK_BATCH_SIZE) {
+      const to = Math.min(from + BLOCK_BATCH_SIZE - 1, finalizedToBlock);
       const allEvents = [];
 
       for (const eventName of EVENT_NAMES) {
@@ -614,12 +644,6 @@ class EventWorker {
       if (!Number.isInteger(checkpoint) || checkpoint < 0) {
         throw new Error(`[Worker] Geçersiz checkpoint değeri: ${savedBlock}`);
       }
-      if (checkpoint > currentBlock) {
-        throw new Error(
-          `[Worker] Checkpoint current block'u aşıyor: checkpoint=${checkpoint} current=${currentBlock}`
-        );
-      }
-
       return checkpoint + 1;
     }
 
@@ -713,7 +737,7 @@ class EventWorker {
       await this._connect();
       await this._replayMissedEvents();
 
-      if (this.provider) this._lastLivePolledBlock = await this.provider.getBlockNumber();
+      this._lastLivePolledBlock = this._lastSafeCheckpointBlock;
       if (this.contract) this._attachLiveListeners();
     })();
 

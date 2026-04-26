@@ -117,6 +117,26 @@ const allowedOrigins = (rawAllowedOrigins || "http://localhost:5173")
   .map((o) => o.trim())
   .filter((o) => o.length > 0);
 
+function _validateProductionCorsOriginOrThrow(origin) {
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    logger.error(`[GÜVENLİK] Geçersiz CORS origin: "${origin}" — URL parse edilemedi.`);
+    process.exit(1);
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    logger.error(`[GÜVENLİK] Geçersiz CORS origin: "${origin}" — yalnız http/https kabul edilir.`);
+    process.exit(1);
+  }
+
+  if ((parsed.pathname && parsed.pathname !== "/") || parsed.search || parsed.hash) {
+    logger.error(`[GÜVENLİK] Geçersiz CORS origin: "${origin}" — path/query/hash içeremez.`);
+    process.exit(1);
+  }
+}
+
 // [TR] Production'da CORS wildcard ve boş origin engellenir
 // [EN] CORS wildcard and empty origins blocked in production
 if (process.env.NODE_ENV === "production") {
@@ -140,10 +160,7 @@ if (process.env.NODE_ENV === "production") {
     process.exit(1);
   }
   for (const origin of allowedOrigins) {
-    if (!origin.startsWith("http://") && !origin.startsWith("https://")) {
-      logger.error(`[GÜVENLİK] Geçersiz CORS origin: "${origin}" — http:// veya https:// ile başlamalı.`);
-      process.exit(1);
-    }
+    _validateProductionCorsOriginOrThrow(origin);
   }
   logger.info(`[CORS] İzin verilen origin'ler: ${allowedOrigins.join(", ")}`);
 }

@@ -31,15 +31,22 @@ const CONTRACT_CANCEL_ALLOWED_STATUSES = new Set(["LOCKED", "PAID", "CHALLENGED"
 
 let cancelVerifyProvider = null;
 let cancelVerifyContract = null;
+let cancelVerifyCacheKey = null;
 
 async function _getCancelVerifyContract() {
-  if (cancelVerifyContract && cancelVerifyProvider) {
+  const rpcUrl = process.env.BASE_RPC_URL;
+  const contractAddress = process.env.ARAF_ESCROW_ADDRESS;
+  const expectedChainId = process.env.EXPECTED_CHAIN_ID || "";
+  const cacheKey = `${rpcUrl || ""}|${contractAddress || ""}|${expectedChainId}`;
+
+  if (cancelVerifyContract && cancelVerifyProvider && cancelVerifyCacheKey === cacheKey) {
     return { provider: cancelVerifyProvider, contract: cancelVerifyContract };
   }
 
-  const rpcUrl = process.env.BASE_RPC_URL;
-  const contractAddress = process.env.ARAF_ESCROW_ADDRESS;
   if (!rpcUrl || !contractAddress || contractAddress === "0x0000000000000000000000000000000000000000") {
+    cancelVerifyProvider = null;
+    cancelVerifyContract = null;
+    cancelVerifyCacheKey = null;
     return null;
   }
 
@@ -50,6 +57,7 @@ async function _getCancelVerifyContract() {
     surface: "TradesCancelVerify",
   });
   cancelVerifyContract = new ethers.Contract(contractAddress, CANCEL_VERIFY_ABI, cancelVerifyProvider);
+  cancelVerifyCacheKey = cacheKey;
   return { provider: cancelVerifyProvider, contract: cancelVerifyContract };
 }
 
@@ -648,12 +656,13 @@ router.post("/propose-cancel", requireAuth, requireSessionWalletMatch, coordinat
     const existingDeadline = trade.cancel_proposal.deadline;
     if (existingDeadline) {
       const existingTs = Math.floor(new Date(existingDeadline).getTime() / 1000);
-      if (Math.abs(existingTs - value.deadline) > 60) {
+      if (existingTs !== value.deadline) {
         logger.warn(
           `[Trades] Deadline manipülasyon denemesi: mevcut=${existingTs} gelen=${value.deadline} wallet=${req.wallet}`
         );
         return res.status(400).json({
           error: "Deadline mevcut teklifle uyuşmuyor. Manipülasyon girişimi tespit edildi.",
+          code: "CANCEL_DEADLINE_MISMATCH",
         });
       }
     } else {
@@ -766,6 +775,9 @@ router.post("/:id/chargeback-ack", requireAuth, requireSessionWalletMatch, coord
 router.__resetCancelVerifier = () => {
   cancelVerifyProvider = null;
   cancelVerifyContract = null;
+  cancelVerifyCacheKey = null;
 };
+
+router.__getCancelVerifierCacheKey = () => cancelVerifyCacheKey;
 
 module.exports = router;

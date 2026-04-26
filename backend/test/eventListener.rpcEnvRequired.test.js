@@ -66,9 +66,24 @@ describe("eventListener RPC env fail-closed behavior", () => {
     process.env.WORKER_DISABLED = "true";
     const worker = require("../scripts/services/eventListener");
 
-    await expect(worker._connect()).resolves.toBeUndefined();
+    await expect(worker._connect()).resolves.toEqual({ disabled: true });
     expect(mockJsonRpcProvider).not.toHaveBeenCalled();
     expect(mockContractCtor).not.toHaveBeenCalled();
+  });
+
+  it("security_start_worker_disabled_does_not_report_active_or_attach_listeners", async () => {
+    process.env.WORKER_DISABLED = "true";
+    const worker = require("../scripts/services/eventListener");
+
+    worker._replayMissedEvents = jest.fn();
+    worker._attachLiveListeners = jest.fn();
+
+    await worker.start();
+
+    expect(worker.isRunning).toBe(false);
+    expect(worker._state).toBe("disabled");
+    expect(worker._replayMissedEvents).not.toHaveBeenCalled();
+    expect(worker._attachLiveListeners).not.toHaveBeenCalled();
   });
 
   it("does not fail when contract address is absent (dry-run mode)", async () => {
