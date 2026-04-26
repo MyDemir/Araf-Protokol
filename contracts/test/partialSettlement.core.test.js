@@ -412,6 +412,92 @@ describe("ArafEscrow partial settlement core", () => {
     expect(makerDelta + takerDelta + treasuryDelta).to.equal(rawPool);
   });
 
+  it("security_active_settlement_proposal_becomes_non_actionable_after_mutual_cancel_terminalization", async () => {
+    const { escrow, mockUSDT, maker, taker } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeId = await openChallengedTrade({ escrow, maker, taker, token, label: "cancel-terminal-non-actionable" });
+    const now = await time.latest();
+
+    await escrow.connect(maker).proposeSettlement(tradeId, 6200, now + 7200);
+
+    const deadline = (await time.latest()) + 3600;
+    const makerSig = await cancelSig({ escrow, signer: maker, tradeId, deadline });
+    const takerSig = await cancelSig({ escrow, signer: taker, tradeId, deadline });
+    await escrow.connect(maker).proposeOrApproveCancel(tradeId, deadline, makerSig);
+    await escrow.connect(taker).proposeOrApproveCancel(tradeId, deadline, takerSig);
+
+    expect((await escrow.getTrade(tradeId)).state).to.equal(5); // CANCELED
+    expect((await escrow.getSettlementProposal(tradeId)).state).to.equal(1); // PROPOSED (frozen)
+
+    await expect(escrow.connect(taker).rejectSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
+    await expect(escrow.connect(maker).withdrawSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
+    await expect(escrow.connect(maker).expireSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
+  });
+
+  it("security_active_settlement_proposal_becomes_non_actionable_after_burn_terminalization", async () => {
+    const { escrow, mockUSDT, maker, taker } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeId = await openChallengedTrade({ escrow, maker, taker, token, label: "burn-terminal-non-actionable" });
+    const now = await time.latest();
+
+    await escrow.connect(maker).proposeSettlement(tradeId, 5100, now + 7200);
+    await time.increase(241 * 3600);
+    await escrow.burnExpired(tradeId);
+
+    expect((await escrow.getTrade(tradeId)).state).to.equal(6); // BURNED
+    expect((await escrow.getSettlementProposal(tradeId)).state).to.equal(1); // PROPOSED (frozen)
+
+    await expect(escrow.connect(taker).rejectSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
+    await expect(escrow.connect(maker).withdrawSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
+    await expect(escrow.connect(maker).expireSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
+  });
+
+  it("security_settlement_actions_revert_after_release_terminalization", async () => {
+    const { escrow, mockUSDT, maker, taker } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeId = await openLockedTrade({ escrow, maker, taker, token, label: "release-terminal-settlement-guard" });
+
+    await escrow.connect(taker).reportPayment(tradeId, "QmReleaseTerminal");
+    await escrow.connect(maker).releaseFunds(tradeId);
+    expect((await escrow.getTrade(tradeId)).state).to.equal(4); // RESOLVED
+
+    await expect(escrow.connect(taker).acceptSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
+    await expect(escrow.connect(taker).rejectSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
+    await expect(escrow.connect(maker).withdrawSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
+    await expect(escrow.connect(maker).expireSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
+  });
+
+  it("security_settlement_actions_revert_after_settlement_terminalization", async () => {
+    const { escrow, mockUSDT, maker, taker } = await loadFixture(deployFixture);
+    const token = await mockUSDT.getAddress();
+    const tradeId = await openChallengedTrade({ escrow, maker, taker, token, label: "settlement-terminal-guard" });
+    const now = await time.latest();
+
+    await escrow.connect(maker).proposeSettlement(tradeId, 5000, now + 3600);
+    await escrow.connect(taker).acceptSettlement(tradeId);
+    expect((await escrow.getTrade(tradeId)).state).to.equal(4); // RESOLVED
+    expect((await escrow.getSettlementProposal(tradeId)).state).to.equal(5); // FINALIZED
+
+    await expect(escrow.connect(taker).acceptSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
+    await expect(escrow.connect(taker).rejectSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
+    await expect(escrow.connect(maker).withdrawSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
+    await expect(escrow.connect(maker).expireSettlement(tradeId))
+      .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
+  });
+
   it("acceptSettlement reverts in PAID state even with active proposal", async () => {
     const { escrow, mockUSDT, maker, taker } = await loadFixture(deployFixture);
     const token = await mockUSDT.getAddress();

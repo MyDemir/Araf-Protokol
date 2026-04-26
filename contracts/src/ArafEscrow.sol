@@ -1252,6 +1252,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         Trade storage t = trades[_tradeId];
         SettlementProposal storage sp = settlementProposalsByTrade[_tradeId];
 
+        // [TR] Settlement lifecycle mutasyonları yalnız CHALLENGED safhasında yapılabilir.
+        // [EN] Settlement lifecycle mutations are allowed only during CHALLENGED phase.
+        if (!_isSettlementAllowedTradeState(t.state)) revert SettlementNotAllowedInState();
         if (sp.state == SettlementProposalState.FINALIZED) revert SettlementAlreadyFinalized();
         _expireSettlementProposalIfNeeded(_tradeId, sp);
         if (sp.state == SettlementProposalState.EXPIRED) revert SettlementProposalExpired();
@@ -1268,8 +1271,12 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      * @notice Proposal owner withdraws an active settlement proposal.
      */
     function withdrawSettlement(uint256 _tradeId) external nonReentrant {
+        Trade storage t = trades[_tradeId];
         SettlementProposal storage sp = settlementProposalsByTrade[_tradeId];
 
+        // [TR] Terminalized trade üzerinde settlement proposal mutate edilemez.
+        // [EN] Settlement proposal cannot be mutated once trade is terminalized.
+        if (!_isSettlementAllowedTradeState(t.state)) revert SettlementNotAllowedInState();
         if (sp.state == SettlementProposalState.FINALIZED) revert SettlementAlreadyFinalized();
         _expireSettlementProposalIfNeeded(_tradeId, sp);
         if (sp.state == SettlementProposalState.EXPIRED) revert SettlementProposalExpired();
@@ -1285,7 +1292,9 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
      * @notice Anyone can expire a settlement proposal once its deadline passes.
      */
     function expireSettlement(uint256 _tradeId) external nonReentrant {
+        Trade storage t = trades[_tradeId];
         SettlementProposal storage sp = settlementProposalsByTrade[_tradeId];
+        if (!_isSettlementAllowedTradeState(t.state)) revert SettlementNotAllowedInState();
         if (sp.state == SettlementProposalState.FINALIZED) revert SettlementAlreadyFinalized();
         if (sp.state != SettlementProposalState.PROPOSED) revert NoActiveSettlementProposal();
         if (block.timestamp <= sp.expiresAt) revert SettlementProposalNotExpired();
