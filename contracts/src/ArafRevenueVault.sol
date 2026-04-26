@@ -22,6 +22,8 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
     error InsufficientTreasuryReserve();
     error UnauthorizedRewards();
     error ZeroAmount();
+    error ProductPoolDisabled();
+    error ExactInMismatch();
 
     uint256 public constant BPS = 10_000;
     uint256 public constant MIN_REWARD_BPS = 4_000;
@@ -36,6 +38,17 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
     mapping(address => uint256) public rewardReserve;
     mapping(address => uint256) public treasuryReserve;
     mapping(address => uint256) public totalEscrowRevenue;
+    mapping(address => uint256) public totalExternalFunding;
+    mapping(uint256 => mapping(address => uint256)) public externalFundingByEpoch;
+
+    struct ProductPool {
+        bool enabled;
+        bytes32 productId;
+        string metadataURI;
+    }
+
+    mapping(bytes32 => ProductPool) public productPools;
+    mapping(uint256 => mapping(bytes32 => mapping(address => uint256))) public productFundingByEpoch;
 
     event EscrowRevenueReceived(
         address indexed token,
@@ -50,6 +63,22 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
     event SupportedTokenUpdated(address indexed token, bool supported);
     event RewardsUpdated(address indexed rewards);
     event FinalTreasuryUpdated(address indexed finalTreasury);
+    event ExternalRewardFunded(
+        address indexed funder,
+        address indexed token,
+        uint256 amount,
+        uint256 indexed targetEpoch,
+        bytes32 fundingRef
+    );
+    event ProductPoolUpdated(bytes32 indexed productId, bool enabled, string metadataURI);
+    event ProductRewardFunded(
+        address indexed funder,
+        bytes32 indexed productId,
+        address indexed token,
+        uint256 amount,
+        uint256 targetEpoch,
+        bytes32 fundingRef
+    );
 
     modifier onlyEscrow() {
         if (msg.sender != escrow) revert OnlyEscrow();
@@ -87,6 +116,19 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
         emit SupportedTokenUpdated(_token, _supported);
     }
 
+    function setProductPool(
+        bytes32 productId,
+        bool enabled,
+        string calldata metadataURI
+    ) external onlyOwner {
+        productPools[productId] = ProductPool({
+            enabled: enabled,
+            productId: productId,
+            metadataURI: metadataURI
+        });
+        emit ProductPoolUpdated(productId, enabled, metadataURI);
+    }
+
     /**
      * @notice Escrow hook'u: escrow zaten token transferini tamamladıktan sonra çağrılır.
      * @dev    Konservatif muhasebe: reserve toplamı + amount, mevcut bakiyeyi aşarsa revert eder.
@@ -112,6 +154,56 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
         totalEscrowRevenue[token] += amount;
 
         emit EscrowRevenueReceived(token, amount, rewardShare, treasuryShare, kind, tradeId);
+    }
+
+    /**
+     * @notice Global reward havuzuna sponsor/funder katkısı.
+     * @dev    Recipients/weights seçimi yoktur; yalnız epoch-token bazlı funding muhasebesi tutar.
+     */
+    function fundGlobalRewards(
+        address token,
+        uint256 amount,
+        uint256 targetEpoch,
+        bytes32 fundingRef
+    ) external nonReentrant whenNotPaused {
+        if (!supportedToken[token]) revert UnsupportedRewardToken();
+        if (amount == 0) revert ZeroAmount();
+
+        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        uint256 balanceAfter = IERC20(token).balanceOf(address(this));
+        if (balanceAfter - balanceBefore != amount) revert ExactInMismatch();
+
+        externalFundingByEpoch[targetEpoch][token] += amount;
+        totalExternalFunding[token] += amount;
+
+        emit ExternalRewardFunded(msg.sender, token, amount, targetEpoch, fundingRef);
+    }
+
+    /**
+     * @notice Product/campaign metadata havuzuna sponsor/funder katkısı.
+     * @dev    MVP'de eligibility üretmez; yalnız funding bucket + analytics verisidir.
+     */
+    function fundProductRewards(
+        bytes32 productId,
+        address token,
+        uint256 amount,
+        uint256 targetEpoch,
+        bytes32 fundingRef
+    ) external nonReentrant whenNotPaused {
+        if (!productPools[productId].enabled) revert ProductPoolDisabled();
+        if (!supportedToken[token]) revert UnsupportedRewardToken();
+        if (amount == 0) revert ZeroAmount();
+
+        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        uint256 balanceAfter = IERC20(token).balanceOf(address(this));
+        if (balanceAfter - balanceBefore != amount) revert ExactInMismatch();
+
+        productFundingByEpoch[targetEpoch][productId][token] += amount;
+        totalExternalFunding[token] += amount;
+
+        emit ProductRewardFunded(msg.sender, productId, token, amount, targetEpoch, fundingRef);
     }
 
     function withdrawTreasuryShare(

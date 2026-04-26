@@ -162,4 +162,141 @@ describe("ArafRevenueVault", function () {
     const balance = await token.balanceOf(await vault.getAddress());
     expect(balance).to.equal(rewardReserve + treasuryReserve);
   });
+
+  it("test_fundGlobalRewards_reverts_unsupported_token", async function () {
+    const { vault, stranger } = await loadFixture(deployFixture);
+    const MockERC20 = await ethers.getContractFactory("MockERC20");
+    const unsupported = await MockERC20.deploy("Unsupported", "UNS", DECIMALS);
+    await unsupported.mint(stranger.address, AMOUNT);
+    await unsupported.connect(stranger).approve(await vault.getAddress(), AMOUNT);
+
+    await expect(
+      vault.connect(stranger).fundGlobalRewards(await unsupported.getAddress(), AMOUNT, 1, ethers.id("fund-unsupported"))
+    ).to.be.revertedWithCustomError(vault, "UnsupportedRewardToken");
+  });
+
+  it("test_fundGlobalRewards_reverts_zero_amount", async function () {
+    const { vault, token, stranger } = await loadFixture(deployFixture);
+    await token.connect(stranger).approve(await vault.getAddress(), AMOUNT);
+    await expect(
+      vault.connect(stranger).fundGlobalRewards(await token.getAddress(), 0, 1, ethers.id("fund-zero"))
+    ).to.be.revertedWithCustomError(vault, "ZeroAmount");
+  });
+
+  it("test_fundGlobalRewards_exact_in_transfer", async function () {
+    const { vault, token, stranger } = await loadFixture(deployFixture);
+    const tokenAddr = await token.getAddress();
+    await token.mint(stranger.address, AMOUNT);
+    await token.connect(stranger).approve(await vault.getAddress(), AMOUNT);
+
+    const before = await token.balanceOf(await vault.getAddress());
+    await expect(vault.connect(stranger).fundGlobalRewards(tokenAddr, AMOUNT, 7, ethers.id("fund-exact-in")))
+      .to.emit(vault, "ExternalRewardFunded");
+    const after = await token.balanceOf(await vault.getAddress());
+    expect(after - before).to.equal(AMOUNT);
+  });
+
+  it("test_fundGlobalRewards_reverts_fee_on_transfer_token", async function () {
+    const { vault, owner, stranger } = await loadFixture(deployFixture);
+    const FeeToken = await ethers.getContractFactory("MockFeeOnTransferERC20");
+    const feeToken = await FeeToken.deploy("Fee Token", "FEE", DECIMALS, 100, owner.address);
+    await vault.connect(owner).setSupportedToken(await feeToken.getAddress(), true);
+
+    await feeToken.mint(stranger.address, AMOUNT);
+    await feeToken.connect(stranger).approve(await vault.getAddress(), AMOUNT);
+
+    await expect(
+      vault.connect(stranger).fundGlobalRewards(await feeToken.getAddress(), AMOUNT, 5, ethers.id("fund-fee-token"))
+    ).to.be.revertedWithCustomError(vault, "ExactInMismatch");
+  });
+
+  it("test_fundGlobalRewards_adds_to_epoch", async function () {
+    const { vault, token, stranger } = await loadFixture(deployFixture);
+    const tokenAddr = await token.getAddress();
+    await token.mint(stranger.address, AMOUNT);
+    await token.connect(stranger).approve(await vault.getAddress(), AMOUNT);
+
+    await vault.connect(stranger).fundGlobalRewards(tokenAddr, AMOUNT, 9, ethers.id("fund-epoch"));
+    expect(await vault.externalFundingByEpoch(9, tokenAddr)).to.equal(AMOUNT);
+  });
+
+  it("test_fundGlobalRewards_increments_totalExternalFunding", async function () {
+    const { vault, token, stranger } = await loadFixture(deployFixture);
+    const tokenAddr = await token.getAddress();
+    const amount1 = ethers.parseUnits("25", DECIMALS);
+    const amount2 = ethers.parseUnits("40", DECIMALS);
+    await token.mint(stranger.address, amount1 + amount2);
+    await token.connect(stranger).approve(await vault.getAddress(), amount1 + amount2);
+
+    await vault.connect(stranger).fundGlobalRewards(tokenAddr, amount1, 1, ethers.id("fund-total-1"));
+    await vault.connect(stranger).fundGlobalRewards(tokenAddr, amount2, 2, ethers.id("fund-total-2"));
+    expect(await vault.totalExternalFunding(tokenAddr)).to.equal(amount1 + amount2);
+  });
+
+  it("test_setProductPool_onlyOwner", async function () {
+    const { vault, owner, stranger } = await loadFixture(deployFixture);
+    const productId = ethers.id("product-A");
+    await expect(
+      vault.connect(stranger).setProductPool(productId, true, "ipfs://product/A")
+    ).to.be.revertedWithCustomError(vault, "OwnableUnauthorizedAccount");
+
+    await expect(vault.connect(owner).setProductPool(productId, true, "ipfs://product/A"))
+      .to.emit(vault, "ProductPoolUpdated")
+      .withArgs(productId, true, "ipfs://product/A");
+  });
+
+  it("test_fundProductRewards_reverts_disabled_product", async function () {
+    const { vault, token, stranger } = await loadFixture(deployFixture);
+    const productId = ethers.id("product-disabled");
+    await token.mint(stranger.address, AMOUNT);
+    await token.connect(stranger).approve(await vault.getAddress(), AMOUNT);
+    await expect(
+      vault.connect(stranger).fundProductRewards(
+        productId,
+        await token.getAddress(),
+        AMOUNT,
+        1,
+        ethers.id("product-fund-disabled")
+      )
+    ).to.be.revertedWithCustomError(vault, "ProductPoolDisabled");
+  });
+
+  it("test_fundProductRewards_adds_to_product_epoch", async function () {
+    const { vault, token, owner, stranger } = await loadFixture(deployFixture);
+    const productId = ethers.id("product-enabled");
+    const tokenAddr = await token.getAddress();
+    await vault.connect(owner).setProductPool(productId, true, "ipfs://product/enabled");
+    await token.mint(stranger.address, AMOUNT);
+    await token.connect(stranger).approve(await vault.getAddress(), AMOUNT);
+
+    await expect(
+      vault.connect(stranger).fundProductRewards(productId, tokenAddr, AMOUNT, 12, ethers.id("product-fund"))
+    ).to.emit(vault, "ProductRewardFunded");
+    expect(await vault.productFundingByEpoch(12, productId, tokenAddr)).to.equal(AMOUNT);
+  });
+
+  it("test_product_funding_does_not_choose_user_or_weight", async function () {
+    const { vault } = await loadFixture(deployFixture);
+    expect(vault.interface.getFunction("userWeight")).to.equal(null);
+    expect(vault.interface.getFunction("totalWeight")).to.equal(null);
+    expect(vault.interface.getFunction("setUserWeight")).to.equal(null);
+    expect(vault.interface.getFunction("setMultiplier")).to.equal(null);
+  });
+
+  it("test_pause_blocks_external_funding", async function () {
+    const { vault, token, owner, stranger } = await loadFixture(deployFixture);
+    const productId = ethers.id("product-pause");
+    await vault.connect(owner).setProductPool(productId, true, "ipfs://product/pause");
+    await token.mint(stranger.address, AMOUNT * 2n);
+    await token.connect(stranger).approve(await vault.getAddress(), AMOUNT * 2n);
+    await vault.connect(owner).pause();
+
+    await expect(
+      vault.connect(stranger).fundGlobalRewards(await token.getAddress(), AMOUNT, 1, ethers.id("pause-global"))
+    ).to.be.revertedWithCustomError(vault, "EnforcedPause");
+
+    await expect(
+      vault.connect(stranger).fundProductRewards(productId, await token.getAddress(), AMOUNT, 1, ethers.id("pause-product"))
+    ).to.be.revertedWithCustomError(vault, "EnforcedPause");
+  });
 });
