@@ -24,6 +24,8 @@ const { ethers } = require("ethers");
 const logger = require("../utils/logger");
 const { getRedisClient } = require("../config/redis");
 const { getPaymentRailRiskConfig } = require("../config/paymentRailRiskConfig");
+const { assertProviderExpectedChainOrThrow } = require("./expectedChain");
+const { resolveTrackedTokensOrThrow } = require("./tokenEnv");
 
 const CONFIG_CACHE_KEY = "cache:protocol_config:v3";
 const CONFIG_CACHE_TTL = Number(process.env.CONFIG_CACHE_TTL_SECONDS || 3600);
@@ -55,16 +57,6 @@ function _isConfigLoaded(cfg) {
     cfg.cooldownConfig &&
     cfg.tokenMap
   );
-}
-
-function _getTrackedTokens() {
-  const raw = process.env.ARAF_TRACKED_TOKENS || "";
-  return raw
-    .split(",")
-    .map((v) => v.trim())
-    .filter(Boolean)
-    .filter((v) => /^0x[a-fA-F0-9]{40}$/.test(v))
-    .map((v) => v.toLowerCase());
 }
 
 function _bondEntry(makerBps, takerBps) {
@@ -119,6 +111,11 @@ async function loadProtocolConfig() {
   logger.info("[Config] V3 protokol parametreleri on-chain'den yükleniyor...");
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
+  await assertProviderExpectedChainOrThrow(provider, {
+    rpcUrl,
+    rpcEnvName: "BASE_RPC_URL",
+    surface: "ProtocolConfig",
+  });
   const contract = new ethers.Contract(contractAddress, CONFIG_ABI, provider);
 
   const [
@@ -135,7 +132,10 @@ async function loadProtocolConfig() {
     contract.getCooldownConfig(),
   ]);
 
-  const trackedTokens = _getTrackedTokens();
+  const trackedTokens = resolveTrackedTokensOrThrow({
+    isProduction: process.env.NODE_ENV === "production",
+    surface: "ProtocolConfig",
+  });
   const tokenMap = {};
 
   for (const token of trackedTokens) {

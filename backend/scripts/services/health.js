@@ -3,6 +3,7 @@
 
 const mongoose = require("mongoose");
 const { isReady: isRedisReady, getRedisClient } = require("../config/redis");
+const { EXPECTED_CHAIN_ENV, resolveExpectedChainIdOrThrow } = require("./expectedChain");
 
 const CHECKPOINT_KEY = "worker:last_block";
 const LAST_SAFE_BLOCK_KEY = "worker:last_safe_block";
@@ -30,17 +31,23 @@ async function getReadiness({ worker, provider } = {}) {
 
   let providerReady = false;
   let currentBlock = null;
+  let providerChainId = null;
+  let expectedChainId = null;
+  let chainIdReady = false;
 
   try {
     if (provider) {
       currentBlock = await provider.getBlockNumber();
       providerReady = Number.isInteger(currentBlock);
+      const network = await provider.getNetwork();
+      providerChainId = Number(network?.chainId);
     } else {
       providerReady = Boolean(worker?.provider);
     }
   } catch {
     providerReady = false;
     currentBlock = null;
+    providerChainId = null;
   }
 
   const requiredConfig = [
@@ -55,6 +62,20 @@ async function getReadiness({ worker, provider } = {}) {
   }
 
   const missingConfig = requiredConfig.filter((key) => !process.env[key]);
+
+  try {
+    expectedChainId = resolveExpectedChainIdOrThrow({
+      isProduction,
+      rpcUrl: process.env.BASE_RPC_URL,
+      surface: "HealthReadiness",
+    });
+    chainIdReady =
+      expectedChainId === null ||
+      (Number.isInteger(providerChainId) && providerChainId === expectedChainId);
+  } catch (_err) {
+    chainIdReady = false;
+    missingConfig.push(EXPECTED_CHAIN_ENV);
+  }
 
   // [TR] SIWE config drift'i production readiness'te açıkça görünmeli.
   // [EN] SIWE config drift should be visible in production readiness.
@@ -113,6 +134,9 @@ async function getReadiness({ worker, provider } = {}) {
     ? worker._lastSafeCheckpointBlock
     : null;
   const livePollInProgress = Boolean(worker?._livePollInProgress);
+  const workerFinalityDepth = Number.isInteger(worker?._runtimeConfig?.WORKER_FINALITY_DEPTH)
+    ? worker._runtimeConfig.WORKER_FINALITY_DEPTH
+    : null;
 
   const workerStateHealthy =
     workerRunning &&
@@ -150,6 +174,7 @@ async function getReadiness({ worker, provider } = {}) {
       mongoReady &&
       redisReady &&
       providerReady &&
+      chainIdReady &&
       configReady &&
       replayBootstrapReady &&
       workerReady,
@@ -158,6 +183,7 @@ async function getReadiness({ worker, provider } = {}) {
       mongo: mongoReady,
       redis: redisReady,
       provider: providerReady,
+      chainId: chainIdReady,
       config: configReady,
       replayBootstrap: replayBootstrapReady,
       worker: workerReady,
@@ -172,11 +198,14 @@ async function getReadiness({ worker, provider } = {}) {
     worker: {
       state: workerState,
       currentBlock,
+      expectedChainId,
+      providerChainId,
       lastSeenBlock,
       lastSafeBlock,
       lagBlocks: workerLagBlocks,
       maxAllowedLagBlocks: MAX_WORKER_LAG_BLOCKS,
       livePollInProgress,
+      finalityDepth: workerFinalityDepth,
     },
 
     missingConfig,

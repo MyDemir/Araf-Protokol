@@ -30,9 +30,11 @@ describe("eventListener identity + env wiring", () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  function loadWorkerWithEnv(batchRaw, checkpointRaw) {
+  function loadWorkerWithEnv(batchRaw, checkpointRaw, finalityRaw = "", nodeEnv = "test") {
     process.env.WORKER_BLOCK_BATCH_SIZE = batchRaw;
     process.env.WORKER_CHECKPOINT_INTERVAL_BLOCKS = checkpointRaw;
+    process.env.WORKER_FINALITY_DEPTH = finalityRaw;
+    process.env.NODE_ENV = nodeEnv;
     return require("../scripts/services/eventListener");
   }
 
@@ -43,10 +45,13 @@ describe("eventListener identity + env wiring", () => {
       const worker = loadWorkerWithEnv(sample, sample);
       expect(worker._runtimeConfig.BLOCK_BATCH_SIZE).toBe(1000);
       expect(worker._runtimeConfig.CHECKPOINT_INTERVAL_BLOCKS).toBe(50);
+      expect(worker._runtimeConfig.WORKER_FINALITY_DEPTH).toBe(1);
       expect(Number.isInteger(worker._runtimeConfig.BLOCK_BATCH_SIZE)).toBe(true);
       expect(worker._runtimeConfig.BLOCK_BATCH_SIZE).toBeGreaterThan(0);
       expect(Number.isInteger(worker._runtimeConfig.CHECKPOINT_INTERVAL_BLOCKS)).toBe(true);
       expect(worker._runtimeConfig.CHECKPOINT_INTERVAL_BLOCKS).toBeGreaterThan(0);
+      expect(Number.isInteger(worker._runtimeConfig.WORKER_FINALITY_DEPTH)).toBe(true);
+      expect(worker._runtimeConfig.WORKER_FINALITY_DEPTH).toBeGreaterThan(0);
       jest.resetModules();
     }
   });
@@ -55,6 +60,16 @@ describe("eventListener identity + env wiring", () => {
     const worker = loadWorkerWithEnv("2048", "75");
     expect(worker._runtimeConfig.BLOCK_BATCH_SIZE).toBe(2048);
     expect(worker._runtimeConfig.CHECKPOINT_INTERVAL_BLOCKS).toBe(75);
+  });
+
+  it("accepts explicit WORKER_FINALITY_DEPTH when positive integer", () => {
+    const worker = loadWorkerWithEnv("1000", "50", "6");
+    expect(worker._runtimeConfig.WORKER_FINALITY_DEPTH).toBe(6);
+  });
+
+  it("uses production-safe default finality depth when env is invalid in production", () => {
+    const worker = loadWorkerWithEnv("", "", "invalid", "production");
+    expect(worker._runtimeConfig.WORKER_FINALITY_DEPTH).toBe(6);
   });
 
   it("stores identity fields as strings and keeps parent order zero as null", async () => {
@@ -113,5 +128,24 @@ describe("eventListener identity + env wiring", () => {
 
     const [filter] = mockOrderFindOneAndUpdate.mock.calls[0];
     expect(filter.onchain_order_id).toBe("42");
+  });
+
+  it("security_inferCryptoAssetFromToken_prefers_canonical_mainnet_env", () => {
+    process.env.MAINNET_USDT_ADDRESS = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    process.env.USDT_ADDRESS = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; // legacy farklı olsa da canonical öncelikli
+
+    const worker = loadWorkerWithEnv("", "");
+    expect(worker._inferCryptoAssetFromToken("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).toBe("USDT");
+    expect(worker._inferCryptoAssetFromToken("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")).toBe(null);
+  });
+
+  it("security_inferCryptoAssetFromToken_supports_legacy_env_with_warning", () => {
+    delete process.env.MAINNET_USDC_ADDRESS;
+    process.env.USDC_ADDRESS = "0xcccccccccccccccccccccccccccccccccccccccc";
+
+    const worker = loadWorkerWithEnv("", "");
+    const mockLogger = require("../scripts/utils/logger");
+    expect(worker._inferCryptoAssetFromToken("0xcccccccccccccccccccccccccccccccccccccccc")).toBe("USDC");
+    expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringMatching(/Legacy env USDC_ADDRESS kullanılıyor/));
   });
 });

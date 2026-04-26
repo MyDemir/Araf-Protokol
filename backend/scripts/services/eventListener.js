@@ -34,6 +34,8 @@ const {
   updateCachedTokenConfig,
   refreshProtocolConfig,
 } = require("./protocolConfig");
+const { assertProviderExpectedChainOrThrow } = require("./expectedChain");
+const { inferCryptoAssetFromTokenAddress } = require("./tokenEnv");
 
 const CHECKPOINT_KEY = "worker:last_block";
 const LAST_SAFE_BLOCK_KEY = "worker:last_safe_block";
@@ -58,6 +60,8 @@ function _getPositiveIntEnv(name, fallback) {
 
 const BLOCK_BATCH_SIZE = _getPositiveIntEnv("WORKER_BLOCK_BATCH_SIZE", 1_000);
 const CHECKPOINT_INTERVAL_BLOCKS = _getPositiveIntEnv("WORKER_CHECKPOINT_INTERVAL_BLOCKS", 50);
+const DEFAULT_WORKER_FINALITY_DEPTH = process.env.NODE_ENV === "production" ? 6 : 1;
+const WORKER_FINALITY_DEPTH = _getPositiveIntEnv("WORKER_FINALITY_DEPTH", DEFAULT_WORKER_FINALITY_DEPTH);
 const BLOCK_TIMESTAMP_CACHE_LIMIT = 2_048;
 
 const EVENT_NAMES = [
@@ -252,15 +256,7 @@ function _toDateOrNull(unixSeconds) {
 }
 
 function _inferCryptoAssetFromToken(tokenAddress) {
-  const addr = (tokenAddress || "").toLowerCase();
-  if (!addr) return null;
-
-  const usdt = (process.env.USDT_ADDRESS || "").toLowerCase();
-  const usdc = (process.env.USDC_ADDRESS || "").toLowerCase();
-
-  if (usdt && addr === usdt) return "USDT";
-  if (usdc && addr === usdc) return "USDC";
-  return null;
+  return inferCryptoAssetFromTokenAddress(tokenAddress, { surface: "EventWorker" });
 }
 
 const TRADE_STATE_ORDER = {
@@ -325,7 +321,7 @@ class EventWorker {
   }
 
   async start() {
-    logger.info("[Worker] V3 event listener başlatılıyor...");
+    logger.info(`[Worker] V3 event listener başlatılıyor... (finalityDepth=${WORKER_FINALITY_DEPTH})`);
     this.isRunning = true;
     await this._connect();
     await this._replayMissedEvents();
@@ -352,8 +348,16 @@ class EventWorker {
 
   async _connect() {
     const isProduction = process.env.NODE_ENV === "production";
-    const rpcUrl = process.env.BASE_RPC_URL || (!isProduction ? "https://mainnet.base.org" : null);
+    const rpcUrl = process.env.BASE_RPC_URL || null;
     const contractAddress = process.env.ARAF_ESCROW_ADDRESS;
+    const isWorkerDisabled = String(process.env.WORKER_DISABLED || "").toLowerCase() === "true";
+
+    // [TR] Worker explicit olarak devre dışıysa bağlantı kurma.
+    // [EN] Do not establish provider/contract when worker is explicitly disabled.
+    if (isWorkerDisabled) {
+      logger.warn("[Worker] WORKER_DISABLED=true — event worker başlatılmadı.");
+      return;
+    }
 
     if (!contractAddress || contractAddress === "0x0000000000000000000000000000000000000000") {
       if (isProduction) {
@@ -365,7 +369,7 @@ class EventWorker {
     }
 
     if (!rpcUrl) {
-      throw new Error("[Worker] KRİTİK: BASE_RPC_URL production'da zorunludur.");
+      throw new Error("[Worker] KRİTİK: BASE_RPC_URL zorunludur (public mainnet fallback kapalı).");
     }
 
     const wsRpcUrl = process.env.BASE_WS_RPC_URL;
@@ -382,6 +386,12 @@ class EventWorker {
       this.provider = new ethers.JsonRpcProvider(rpcUrl);
       if (isProduction) logger.warn("[Worker] HTTP RPC kullanılıyor. BASE_WS_RPC_URL önerilir.");
     }
+
+    await assertProviderExpectedChainOrThrow(this.provider, {
+      rpcUrl,
+      rpcEnvName: "BASE_RPC_URL",
+      surface: "EventWorker",
+    });
 
     this.contract = new ethers.Contract(contractAddress, ARAF_ABI, this.provider);
     logger.info(`[Worker] Kontrat izleniyor: ${contractAddress}`);
@@ -498,8 +508,10 @@ class EventWorker {
           this._lastLivePolledBlock = toBlock;
         }
 
-        const finalizedUpTo = blockNumber - 1;
-        await this._advanceSafeCheckpointFromAcks(finalizedUpTo);
+        const finalizedUpTo = this._computeFinalizedUpTo(blockNumber);
+        if (finalizedUpTo > this._lastSafeCheckpointBlock) {
+          await this._advanceSafeCheckpointFromAcks(finalizedUpTo);
+        }
 
         if (
           !this._replayInProgress &&
@@ -652,6 +664,11 @@ class EventWorker {
   _markBlockUnsafe(blockNumber) {
     const state = this._ensureBlockAckState(blockNumber);
     state.unsafe = true;
+  }
+
+  _computeFinalizedUpTo(blockNumber) {
+    if (!Number.isInteger(blockNumber)) return 0;
+    return blockNumber - WORKER_FINALITY_DEPTH;
   }
 
   async _advanceSafeCheckpointFromAcks(finalizedUpTo) {
@@ -1838,8 +1855,10 @@ const worker = new EventWorker();
 worker._runtimeConfig = {
   BLOCK_BATCH_SIZE,
   CHECKPOINT_INTERVAL_BLOCKS,
+  WORKER_FINALITY_DEPTH,
 };
 worker._getPositiveIntEnv = _getPositiveIntEnv;
+worker._inferCryptoAssetFromToken = _inferCryptoAssetFromToken;
 
 worker.buildSyntheticEventFromDLQEntry = function buildSyntheticEventFromDLQEntry(entry) {
   const mappedArgs = { ...(entry.namedArgs || {}) };

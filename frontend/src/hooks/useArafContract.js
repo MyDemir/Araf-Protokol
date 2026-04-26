@@ -1,8 +1,8 @@
 /**
  * useArafContract — Kontrat Etkileşim Hook'u
  *
- * ABI, deploy scripti tarafından otomatik oluşturulan
- * frontend/src/abi/ArafEscrow.json'dan okunur.
+ * ABI, runtime'da generated JSON artifact'e bağlı değildir;
+ * main branch yaklaşımıyla inline minimal parseAbi tanımı kullanılır.
  *
  * Desteklenen işlemler:
  * - registerWallet
@@ -19,55 +19,45 @@ import { useCallback } from 'react';
 import { usePublicClient, useWalletClient, useChainId } from 'wagmi';
 import { parseAbi, getAddress, decodeEventLog } from 'viem';
 import { resolveClientErrorLogUrl } from '../app/apiConfig';
+import { getSupportedChainsMap, isMintTokenEnabled } from '../app/chainPolicy';
 
 const ArafEscrowABI = parseAbi([
-  // --- Write Fonksiyonları (App.jsx'te kullanılanlar) ---
   'function registerWallet()',
-  'function createSellOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef, uint8 _paymentRiskLevel) returns (uint256)',
-  'function fillSellOrder(uint256 _orderId, uint256 _fillAmount, bytes32 _childListingRef) returns (uint256)',
+  'function createSellOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef, uint8 _paymentRiskLevel) returns (uint256 orderId)',
+  'function createSellOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef) returns (uint256 orderId)',
+  'function fillSellOrder(uint256 _orderId, uint256 _fillAmount, bytes32 _childListingRef) returns (uint256 tradeId)',
   'function cancelSellOrder(uint256 _orderId)',
-  'function createBuyOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef, uint8 _paymentRiskLevel) returns (uint256)',
-  'function fillBuyOrder(uint256 _orderId, uint256 _fillAmount, bytes32 _childListingRef) returns (uint256)',
+  'function createBuyOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef) returns (uint256 orderId)',
+  'function createBuyOrder(address _token, uint256 _totalAmount, uint256 _minFillAmount, uint8 _tier, bytes32 _orderRef, uint8 _paymentRiskLevel) returns (uint256 orderId)',
+  'function fillBuyOrder(uint256 _orderId, uint256 _fillAmount, bytes32 _childListingRef) returns (uint256 tradeId)',
   'function cancelBuyOrder(uint256 _orderId)',
-  'function reportPayment(uint256 _tradeId, string calldata _ipfsHash)',
+  'function reportPayment(uint256 _tradeId, string _ipfsHash)',
   'function releaseFunds(uint256 _tradeId)',
   'function challengeTrade(uint256 _tradeId)',
   'function autoRelease(uint256 _tradeId)',
   'function burnExpired(uint256 _tradeId)',
-  'function proposeOrApproveCancel(uint256 _tradeId, uint256 _deadline, bytes calldata _sig)',
+  'function proposeOrApproveCancel(uint256 _tradeId, uint256 _deadline, bytes _sig)',
   'function proposeSettlement(uint256 _tradeId, uint16 _makerShareBps, uint64 _expiresAt)',
   'function rejectSettlement(uint256 _tradeId)',
   'function withdrawSettlement(uint256 _tradeId)',
   'function expireSettlement(uint256 _tradeId)',
   'function acceptSettlement(uint256 _tradeId)',
   'function pingMaker(uint256 _tradeId)',
-  'function pingTakerForChallenge(uint256 _tradeId)', // Gelecekteki kullanım için eklenebilir
+  'function pingTakerForChallenge(uint256 _tradeId)',
   'function decayReputation(address _wallet)',
-
-  // View Fonksiyonları (App.jsx'te kullanılanlar) 
-  // [TR] getReputation tuple sırası contracts/src/ArafEscrow.sol ile birebir lock-step kalmalıdır.
-  // [EN] Keep getReputation tuple order in strict lock-step with contracts/src/ArafEscrow.sol.
   'function getReputation(address _wallet) view returns (uint256 successful, uint256 failed, uint256 bannedUntil, uint256 consecutiveBans, uint8 effectiveTier, uint256 manualReleaseCount, uint256 autoReleaseCount, uint256 mutualCancelCount, uint256 disputedResolvedCount, uint256 burnCount, uint256 disputeWinCount, uint256 disputeLossCount, uint256 partialSettlementCount, uint256 riskPoints, uint256 lastPositiveEventAt, uint256 lastNegativeEventAt)',
   'function antiSybilCheck(address _wallet) view returns (bool aged, bool funded, bool cooldownOk)',
   'function getCooldownRemaining(address _wallet) view returns (uint256)',
-  'function walletRegisteredAt(address _wallet) view returns (uint256)',
+  'function walletRegisteredAt(address) view returns (uint256)',
   'function getFeeConfig() view returns (uint256 currentTakerFeeBps, uint256 currentMakerFeeBps)',
-  // [TR] firstSuccessfulTradeAt artık ayrı kontrat fonksiyonundan okunur
   'function getFirstSuccessfulTradeAt(address _wallet) view returns (uint256)',
   'function getTrade(uint256 _tradeId) view returns ((uint256 id, uint256 parentOrderId, address maker, address taker, address tokenAddress, uint256 cryptoAmount, uint256 makerBond, uint256 takerBond, uint16 takerFeeBpsSnapshot, uint16 makerFeeBpsSnapshot, uint8 tier, uint8 paymentRiskLevelSnapshot, uint8 state, uint256 lockedAt, uint256 paidAt, uint256 challengedAt, string ipfsReceiptHash, bool cancelProposedByMaker, bool cancelProposedByTaker, uint256 pingedAt, bool pingedByTaker, uint256 challengePingedAt, bool challengePingedByMaker))',
   'function getSettlementProposal(uint256 _tradeId) view returns ((uint256 id, uint256 tradeId, address proposer, uint16 makerShareBps, uint16 takerShareBps, uint64 proposedAt, uint64 expiresAt, uint8 state))',
   'function getOrder(uint256 _orderId) view returns ((uint256 id, address owner, uint8 side, address tokenAddress, uint256 totalAmount, uint256 remainingAmount, uint256 minFillAmount, uint256 remainingMakerBondReserve, uint256 remainingTakerBondReserve, uint16 takerFeeBpsSnapshot, uint16 makerFeeBpsSnapshot, uint8 tier, uint8 paymentRiskLevel, uint8 state, bytes32 orderRef))',
-
-  // --- EIP-712 için Gerekli View Fonksiyonları ---
   'function sigNonces(address, uint256) view returns (uint256)',
   'function domainSeparator() view returns (bytes32)',
-  'function getCurrentAmounts(uint256 _tradeId) view returns (uint256 cryptoRemaining, uint256 makerBondRemaining, uint256 takerBondRemaining, uint256 totalDecayed)',
+  'function getCurrentAmounts(uint256 _tradeId) view returns (uint256 currentCrypto, uint256 currentMakerBond, uint256 currentTakerBond, uint256 totalDecayed)',
   'function paused() view returns (bool)',
-
-  // [TR] fillSellOrder/fillBuyOrder sonrası tradeId authority'si yalnız OrderFilled event'indedir.
-  //      decodeEventLog() bu event ABI'si olmadan tradeId üretemez ve null döner.
-  // [EN] Post fillSellOrder/fillBuyOrder, tradeId authority is only in OrderFilled.
-  //      Without this event ABI decodeEventLog() cannot extract tradeId and returns null.
   'event OrderCreated(uint256 indexed orderId, address indexed owner, uint8 side, address token, uint256 totalAmount, uint256 minFillAmount, uint8 tier, uint8 paymentRiskLevel, bytes32 orderRef)',
   'event OrderFilled(uint256 indexed orderId, uint256 indexed tradeId, address indexed filler, uint256 fillAmount, uint256 remainingAmount, uint8 paymentRiskLevelSnapshot, bytes32 childListingRef)',
 ]);
@@ -177,13 +167,6 @@ export function normalizeTokenDecimalsOrThrow(rawDecimals) {
 }
 
 
-// Desteklenen chain ID'ler — Base Mainnet ve Base Sepolia
-const SUPPORTED_CHAINS = {
-  8453:  "Base Mainnet",
-  84532: "Base Sepolia",
-  31337: "Hardhat Local", // Yerel test ağı da listeye eklendi
-};
-
 //Kontrat adresi geçerlilik kontrolü — hem write hem read fonksiyonları için
 const _isValidAddress = ESCROW_ADDRESS && ESCROW_ADDRESS !== "0x0000000000000000000000000000000000000000";
 
@@ -191,6 +174,7 @@ export function useArafContract() {
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
   const chainId = useChainId();
+  const supportedChains = getSupportedChainsMap();
 
   /**
    * [TR] Receipt içinden hedef event'i decode eder.
@@ -222,15 +206,15 @@ export function useArafContract() {
    * @throws {Error} Desteklenmeyen ağ algılandığında
    */
   const _validateChain = useCallback(() => {
-    if (!SUPPORTED_CHAINS[chainId]) {
-      const supportedNames = Object.values(SUPPORTED_CHAINS).join(" veya ");
+    if (!supportedChains[chainId]) {
+      const supportedNames = Object.values(supportedChains).join(" veya ");
       throw new Error(
         `Yanlış ağ! Cüzdanınız şu an Chain ID ${chainId} üzerinde. ` +
         `Araf Protocol sadece ${supportedNames} üzerinde çalışır. ` +
         `Lütfen cüzdanınızdan ağı değiştirin.`
       );
     }
-  }, [chainId]);
+  }, [chainId, supportedChains]);
 
   /**
    * @dev Temel kontrat çağrısı yardımcisi ve Her işlem öncesi chain ID doğrulanır.
@@ -466,6 +450,9 @@ export function useArafContract() {
    */
   const mintToken = useCallback(async (tokenAddress) => {
     if (!walletClient) throw new Error("İşlem için aktif wallet client bulunamadı. Cüzdan bağlantınızı ve oturum imzanızı kontrol edin.");
+    if (!isMintTokenEnabled()) {
+      throw new Error("Production ortamında test faucet (mint) devre dışıdır. Lütfen Base Mainnet üzerinde gerçek token kullanın.");
+    }
     _validateChain();
     
     try {

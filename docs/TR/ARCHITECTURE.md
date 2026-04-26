@@ -437,7 +437,7 @@ Bu bölüm immutable parametreler ile runtime’da owner tarafından değiştiri
 
 ### 9.4 Toolchain / deployment assumptions
 - Kontrat deploy akışı `constructor(treasury)` + token direction config ile başlar.
-- Deploy sonrası token yön politikası zincir üstünde `tokenConfigs(token)` ile doğrulanmalıdır.
+- Deploy sonrası token yön politikası zincir üstünde `getTokenConfig(token)` ile doğrulanmalıdır.
 - Production rehberinde owner key’in multisig altında tutulması governance risk azaltımı için varsayımdır.
 
 ---

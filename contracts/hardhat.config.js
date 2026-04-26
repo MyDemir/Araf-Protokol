@@ -1,8 +1,35 @@
 require("@nomicfoundation/hardhat-toolbox");
 require("dotenv").config();
+const { extendEnvironment } = require("hardhat/config");
+
+/**
+ * [TR] Hardhat config validation aşamasında tüm network URL'leri parse edildiği için
+ *      eksik env durumunda doğrudan throw etmek diğer networkleri de bozar.
+ *      Bu yüzden config için geçerli bir placeholder döneriz; gerçek fail-closed kontrolü
+ *      yalnız seçilen network için runtime'da yapılır.
+ * [EN] Hardhat validates/parses all network URLs on config load. Throwing there would
+ *      break unrelated networks. We use a safe placeholder in config and enforce
+ *      fail-closed RPC env checks at runtime for the selected network only.
+ */
+function getRpcUrlOrPlaceholder(envName) {
+  return process.env[envName] || "http://127.0.0.1:8545";
+}
+
+function assertRequiredRpcEnvForNetwork(networkName) {
+  if (networkName === "base" && !process.env.BASE_RPC_URL) {
+    throw new Error("[Hardhat] base ağı için BASE_RPC_URL zorunludur. Public RPC fallback kaldırıldı.");
+  }
+  if (networkName === "base-sepolia" && !process.env.BASE_SEPOLIA_RPC_URL) {
+    throw new Error("[Hardhat] base-sepolia ağı için BASE_SEPOLIA_RPC_URL zorunludur. Public RPC fallback kaldırıldı.");
+  }
+}
+
+extendEnvironment((hre) => {
+  assertRequiredRpcEnvForNetwork(hre.network.name);
+});
 
 /** @type import('hardhat/config').HardhatUserConfig */
-module.exports = {
+const config = {
   solidity: {
     version: "0.8.24", // OpenZeppelin v5 uyumu için yukseltildi
     settings: {
@@ -27,7 +54,7 @@ module.exports = {
     },
     // public tesnet
     "base-sepolia": {
-      url: process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org",
+      url: getRpcUrlOrPlaceholder("BASE_SEPOLIA_RPC_URL"),
       accounts: process.env.DEPLOYER_PRIVATE_KEY
         ? [process.env.DEPLOYER_PRIVATE_KEY]
         : [],
@@ -35,7 +62,7 @@ module.exports = {
     },
     // Base Mainnet Ayarları
     base: {
-      url: process.env.BASE_RPC_URL || "https://mainnet.base.org",
+      url: getRpcUrlOrPlaceholder("BASE_RPC_URL"),
       accounts: process.env.DEPLOYER_PRIVATE_KEY
         ? [process.env.DEPLOYER_PRIVATE_KEY]
         : [],
@@ -77,4 +104,10 @@ module.exports = {
     cache:     "./cache",
     artifacts: "./artifacts",
   },
+};
+
+module.exports = config;
+module.exports.__private = {
+  assertRequiredRpcEnvForNetwork,
+  getRpcUrlOrPlaceholder,
 };

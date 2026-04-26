@@ -10,17 +10,15 @@ import { useAppSessionData } from './app/useAppSessionData';
 import AdminPanel from './AdminPanel';
 import { getInitialLang, getInitialTermsAccepted, APP_LANG_STORAGE_KEY } from './app/bootstrapState';
 import { resolveOrderActionFns, normalizeOrderSide, removeOrderByOnchainId, resolvePaymentRiskEntry } from './app/orderUiModel';
-import { buildApiUrl } from './app/apiConfig';
+import { buildApiUrl, resolveApiPolicyDiagnostics } from './app/apiConfig';
+import { getSupportedChainsMap, isMintTokenEnabled, isSupportedChainId } from './app/chainPolicy';
+import { resolveValidatedFillAmountRaw } from './app/fillAmountPolicy';
 
 // [TR] Uygulama başlangıcında kritik env değişkenlerini doğrula
 // [EN] Validate critical env variables on app start
 const ENV_ERRORS = [];
-if (!import.meta.env.VITE_API_URL && import.meta.env.PROD) {
-  ENV_ERRORS.push('VITE_API_URL tanımlı değil — yalnızca aynı origin /api proxy (frontend/vercel.json) varsa çağrılar çalışır');
-}
-if (import.meta.env.PROD && /^https?:\/\//i.test((import.meta.env.VITE_API_URL || '').trim())) {
-  ENV_ERRORS.push('Production policy: external VITE_API_URL kapalı. Aynı origin /api proxy kullanın.');
-}
+const { errors: API_POLICY_ERRORS } = resolveApiPolicyDiagnostics(import.meta.env);
+ENV_ERRORS.push(...API_POLICY_ERRORS);
 if (!import.meta.env.VITE_ESCROW_ADDRESS ||
     import.meta.env.VITE_ESCROW_ADDRESS === '0x0000000000000000000000000000000000000000') {
   ENV_ERRORS.push('VITE_ESCROW_ADDRESS tanımlı değil veya sıfır adres — kontrat işlemleri çalışmayacak');
@@ -180,6 +178,9 @@ function App() {
   const { signMessageAsync } = useSignMessage();
   const chainId = useChainId();
   const publicClient = usePublicClient();
+  const supportedChains = getSupportedChainsMap();
+  const isFaucetEnabled = isMintTokenEnabled();
+  const isSupportedChain = isSupportedChainId(chainId);
 
   React.useEffect(() => {
     setConnectedWallet(address?.toLowerCase?.() || null);
@@ -488,6 +489,11 @@ function App() {
       return;
     }
     try {
+      if (!isFaucetEnabled) {
+        throw new Error(lang === 'TR'
+          ? 'Production ortamında test faucet devre dışıdır.'
+          : 'Test faucet is disabled in production.');
+      }
       setIsContractLoading(true);
       setLoadingText(lang === 'TR' ? `${tokenName} alınıyor...` : `Minting ${tokenName}...`);
       const tokenAddr = SUPPORTED_TOKEN_ADDRESSES[tokenName];
@@ -566,20 +572,20 @@ function App() {
       );
       return;
     }
-    // [TR] Minimal partial-fill altyapısı: order nesnesi fillAmountRaw sağlarsa kullan,
-    //      yoksa mevcut davranışla remaining amount doldur.
-    // [EN] Minimal partial-fill support: use order.fillAmountRaw if provided, else fill remaining.
-    let fillAmountRaw = remainingAmountRaw;
-    if (order.fillAmountRaw !== undefined && order.fillAmountRaw !== null && order.fillAmountRaw !== '') {
-      try {
-        const requested = BigInt(order.fillAmountRaw);
-        if (requested > 0n && requested <= remainingAmountRaw) {
-          fillAmountRaw = requested;
-        }
-      } catch (_) {
-        // Geçersiz partial miktarda fail-closed yerine remaining fallback.
-      }
-    }
+    const orderMinFill = onchainOrder
+      ? (typeof onchainOrder.minFillAmount !== 'undefined' ? onchainOrder.minFillAmount : onchainOrder[6])
+      : 0n;
+
+    // [TR] Partial-fill input parse/guard fail-closed:
+    //      geçersiz değerlerde sessiz remaining fallback YOK.
+    // [EN] Partial-fill parse/guard is fail-closed:
+    //      no silent fallback to remaining on invalid input.
+    const fillAmountRaw = resolveValidatedFillAmountRaw({
+      fillAmountRaw: order.fillAmountRaw,
+      remainingAmountRaw,
+      minFillAmountRaw: BigInt(orderMinFill || 0n),
+      lang,
+    });
 
     const side = normalizeOrderSide(String(order.side || '').toUpperCase());
     if (side === 'UNKNOWN') {
@@ -1418,6 +1424,8 @@ const handleCreateOrder = async () => {
     paymentRiskConfig,
     handleStartTrade,
     handleMint,
+    isFaucetEnabled,
+    isSupportedChainId,
     handleOpenMakerModal,
     activeEscrowCounts,
     setShowProfileModal,
@@ -1599,9 +1607,13 @@ const handleCreateOrder = async () => {
         </div>
       )}
 
-      {isConnected && ![8453, 84532, 31337].includes(chainId) && (
+      {isConnected && !isSupportedChain && (
         <div className="absolute top-0 left-0 right-0 z-[80] bg-red-950/95 backdrop-blur border-b border-red-800 px-6 py-2 flex justify-center items-center shadow-xl">
-          <span className="text-sm font-bold text-red-200">⚠️ {lang === 'TR' ? 'Yanlış Ağ! Lütfen cüzdanınızdan Base Sepolia ağına geçin.' : 'Wrong Network! Please switch to Base Sepolia in your wallet.'}</span>
+          <span className="text-sm font-bold text-red-200">
+            ⚠️ {lang === 'TR'
+              ? `Yanlış Ağ! Lütfen ${Object.values(supportedChains).join(' / ')} ağına geçin.`
+              : `Wrong Network! Please switch to ${Object.values(supportedChains).join(' / ')}.`}
+          </span>
         </div>
       )}
 

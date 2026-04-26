@@ -1311,7 +1311,14 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         if (msg.sender == sp.proposer) revert OnlySettlementCounterparty();
         if (uint256(sp.makerShareBps) + uint256(sp.takerShareBps) != BPS_DENOMINATOR) revert InvalidSettlementSplit();
 
-        uint256 settlementPool = t.cryptoAmount + t.makerBond + t.takerBond;
+        // [TR] Settlement havuzu, release/cancel yollarıyla aynı bleeding gerçekliğini izler.
+        //      CHALLENGED durumda geçmiş süreye göre eriyen kısım treasury'ye aktarılır.
+        // [EN] Settlement pool follows the same bleeding reality as release/cancel flows.
+        //      In CHALLENGED, the elapsed-time decay is moved to treasury first.
+        (uint256 currentCrypto, uint256 currentMakerBond, uint256 currentTakerBond, uint256 decayed) =
+            _calculateCurrentAmounts(_tradeId);
+
+        uint256 settlementPool = currentCrypto + currentMakerBond + currentTakerBond;
         uint256 makerPayout = (settlementPool * sp.makerShareBps) / BPS_DENOMINATOR;
         uint256 takerPayout = settlementPool - makerPayout;
 
@@ -1326,6 +1333,11 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
 
         sp.state = SettlementProposalState.FINALIZED;
         t.state = TradeState.RESOLVED;
+
+        if (decayed > 0) {
+            IERC20(t.tokenAddress).safeTransfer(treasury, decayed);
+            emit BleedingDecayed(_tradeId, decayed, block.timestamp);
+        }
 
         if (makerPayout > 0) IERC20(t.tokenAddress).safeTransfer(t.maker, makerPayout);
         if (takerPayout > 0) IERC20(t.tokenAddress).safeTransfer(t.taker, takerPayout);

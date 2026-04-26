@@ -1,34 +1,104 @@
-# Mainnet Hazırlık Checklist'i (Stabilization)
+# Mainnet Hazırlık Checklist'i (Stabilization / Runbook)
 
-## Zorunlu Ortam Değişkenleri
+> Amaç: Bu doküman **mainnet deploy zorunluluğu** getirmez; production/staging güvenlik doğrulaması için kullanılır.
+
+## 1) Zorunlu Ortam Değişkenleri (Production fail-closed)
+
+### Backend core
 - `MONGODB_URI`
 - `REDIS_URL`
+- `JWT_SECRET`
+- `ALLOWED_ORIGINS` (production'da wildcard değil, açık origin listesi)
 - `ARAF_ESCROW_ADDRESS`
+- `BASE_RPC_URL`
+- `EXPECTED_CHAIN_ID` (kanonik chain env; Base Mainnet için `8453`)
 - `SIWE_DOMAIN`
 - `SIWE_URI`
-- `JWT_SECRET`
+
+Kritik not:
+- `BASE_RPC_URL` zorunludur; backend worker artık public `https://mainnet.base.org` fallback kullanmaz.
+- `ARAF_ESCROW_ADDRESS` tanımlı ve worker aktifken `BASE_RPC_URL` eksikse worker fail-closed davranır.
+
+### Worker / replay güvenliği
+- `WORKER_START_BLOCK` **veya** `ARAF_DEPLOYMENT_BLOCK` (checkpoint yoksa production'da zorunlu)
+- `BASE_WS_RPC_URL` (önerilir; yoksa HTTP fallback gözlenmeli)
+- `WORKER_FINALITY_DEPTH` (önerilen production değeri: `6` veya üzeri)
+
+### Token env stratejisi (backend + deploy uyumu)
+- Base Mainnet (`EXPECTED_CHAIN_ID=8453`) için:
+  - `BASE_MAINNET_USDT_ADDRESS`
+  - `BASE_MAINNET_USDC_ADDRESS`
+- Base Sepolia (`EXPECTED_CHAIN_ID=84532`) için:
+  - `BASE_SEPOLIA_USDT_ADDRESS`
+  - `BASE_SEPOLIA_USDC_ADDRESS`
+- `ARAF_TRACKED_TOKENS` (opsiyonel)
+
+Kural:
+- `ARAF_TRACKED_TOKENS` boşsa backend tracked seti active chain'e göre deterministic olarak `BASE_MAINNET_*` veya `BASE_SEPOLIA_*` çiftinden türetilir.
+- Bu kaynaklar da boşsa production config load **fail-closed** olmalıdır.
+- Legacy alias (`MAINNET_USDT_ADDRESS` / `MAINNET_USDC_ADDRESS`) yalnız Base Mainnet için geriye uyumlu kabul edilir; Base Sepolia'da kullanılmaz.
+- Local/custom deploy'da `USE_EXTERNAL_TOKEN_ADDRESSES=true` seçilecekse `EXTERNAL_USDT_ADDRESS` ve `EXTERNAL_USDC_ADDRESS` kullanılır.
+
+### Deploy ownership güvenliği
 - `TREASURY_ADDRESS`
-- `BASE_RPC_URL`
-- `BASE_WS_RPC_URL` (önerilir)
-- `WORKER_START_BLOCK` veya `ARAF_DEPLOYMENT_BLOCK` (checkpoint yoksa production'da zorunlu)
-- `MAINNET_USDT_ADDRESS` ve `MAINNET_USDC_ADDRESS` (production deploy script için zorunlu)
-- `RELAYER_PRIVATE_KEY` (sadece automation job açıksa)
+- `FINAL_OWNER_ADDRESS` (public/custom deploy için zorunlu, `TREASURY_ADDRESS` ile aynı olamaz)
 
-## Deploy Sonrası Zorunlu Admin Adımları
-1. `tokenConfigs(MAINNET_USDT_ADDRESS).supported` ve `tokenConfigs(MAINNET_USDC_ADDRESS).supported` değerlerini `true` doğrula.
-2. Ownership devrini doğrula (`owner()` kontrolü).
-3. Redis checkpoint anahtarını (`worker:last_block`) seed/doğrula.
-4. `/health` (liveness) ve `/ready` (readiness) endpoint'lerini doğrula.
-5. Smoke trade çalıştırıp DB event senkronunu doğrula.
+### KMS / encryption
+- `KMS_PROVIDER`
+- `KMS_PROVIDER=env` production'da kullanılmamalı.
+- KMS seçimine göre ilgili env'ler:
+  - AWS: `AWS_KMS_KEY_ARN`, `AWS_ENCRYPTED_DATA_KEY`, `AWS_REGION`
+  - Vault: `VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_KEY_NAME`
 
-## Smoke Test Komutları
+---
+
+## 2) Stabilization Doğrulama Adımları (Deploy gerektirmez)
+
+1. **Token config doğrulaması (kanonik getter)**
+   - Active chain token adresleri için `getTokenConfig(address)` çıktılarında:
+     - `supported=true`
+     - `allowSellOrders/allowBuyOrders` beklenen policy ile uyumlu
+     - `decimals` ve `tierMaxAmountsBaseUnit[4]` dolu
+
+2. **Ownership doğrulaması**
+   - `owner()` adresi `FINAL_OWNER_ADDRESS` ile eşleşmeli.
+   - Public/custom modda `owner == treasury` olmamalı.
+
+3. **Chain fail-closed doğrulaması**
+   - `EXPECTED_CHAIN_ID=8453` iken RPC farklı chain (`84532` / `31337`) dönerse:
+     - worker/protocol-config/cancel-signature yüzeyleri çalışmamalı.
+
+4. **Worker checkpoint + finality doğrulaması**
+   - Redis checkpoint anahtarları (`worker:last_block`, `worker:last_safe_block`) mevcut ve ileri yönde güncelleniyor olmalı.
+   - Replay sonrası lag kabul edilebilir aralıkta olmalı.
+
+5. **Health / readiness doğrulaması**
+   - `/health` liveness: process ayakta.
+   - `/ready` readiness: mongo/redis/provider/config/chainId/worker kontrolleri `ok=true` verebilmeli.
+
+6. **Frontend production policy doğrulaması**
+   - Production chain policy yalnız Base Mainnet (`8453`).
+   - Test faucet/mint UI ve hook çağrıları production yüzeyinde kapalı.
+   - API çağrıları same-origin `/api` rewrite policy ile uyumlu (harici `VITE_API_URL` policy dışı kullanılmamalı).
+
+---
+
+## 3) Smoke Test Komutları (local/staging)
+
 - `cd backend && npm test -- --runInBand`
 - `cd contracts && npm test -- --grep "deploy script"`
+- `cd frontend && npm test`
+- `cd frontend && npm run build`
 - `curl -s http://localhost:4000/health`
 - `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:4000/ready`
 
-## Rollback Notları
+> Not: Bu smoke seti stabilization amaçlıdır; tek başına deploy onayı değildir.
+
+---
+
+## 4) Rollback Notları
+
 1. Önce backend worker süreçlerini durdur.
-2. Önceki backend sürümünü geri alıp yeniden başlat.
+2. Önceki backend/frontend sürümünü geri alıp yeniden başlat.
 3. Checkpoint'i sadece en son güvenli işlenmiş bloğa geri al (asla ileri alma).
 4. Trafiği açmadan readiness ve smoke kontrollerini tekrar çalıştır.

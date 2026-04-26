@@ -67,13 +67,14 @@ function makeStore(prefix) {
 }
 
 /**
- * Genel endpoint'ler için Redis yoksa limiter geçici olarak devre dışı kalır.
- * Bu tercih public/read ağırlıklı yüzeylerde erişilebilirliği korur.
+ * Legacy skip helper.
+ * [TR] Yeni public limiter'lar process-local fallback kullandığı için fail-open kullanılmaz.
+ * [EN] New public limiters use process-local fallback; fail-open is not used there.
  */
 function makeSkipFn() {
   return () => {
     if (!isReady()) {
-      logger.warn("[RateLimit] Redis erişilemez — rate limiting geçici olarak devre dışı (fail-open).");
+      logger.warn("[RateLimit] Redis erişilemez — skip path çağrıldı.");
       return true;
     }
     return false;
@@ -398,12 +399,11 @@ const nonceLimiter = makeSensitiveLimiter({
 
 // ─── Market Read Surface — Public Okuma ─────────────────────────────────────
 // 1 dakikada 100 istek — IP bazlı
-const marketReadLimiter = rateLimit({
+const marketReadRedisLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 100,
   keyGenerator: (req) => req.ip,
   store: makeStore("market-read"),
-  skip: makeSkipFn(),
   handler: (req, res) => {
     onLimitReached(req);
     res.status(429).json({ error: "Çok fazla istek. Yavaşlayın." });
@@ -412,21 +412,50 @@ const marketReadLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const marketReadInMemoryLimiter = makeInMemoryLimiter({
+  label: "MARKET-READ",
+  windowMs: 60 * 1000,
+  max: 100,
+  keyGenerator: (req) => req.ip,
+  errorMessage: () => ({
+    error: "Çok fazla istek. Yavaşlayın.",
+  }),
+});
+
+const marketReadLimiter = makeSensitiveLimiter({
+  label: "MARKET-READ",
+  redisLimiter: marketReadRedisLimiter,
+  inMemoryLimiter: marketReadInMemoryLimiter,
+});
+
 // ─── Stats Read Surface — Public/Lightweight Telemetry ─────────────────────
-// [TR] Public stats yüzeyi availability odaklıdır; Redis down olduğunda fail-open kalabilir.
-// [EN] Public stats surface is availability-first and may remain fail-open on Redis degradation.
-const statsReadLimiter = rateLimit({
+const statsReadRedisLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
   keyGenerator: (req) => req.ip,
   store: makeStore("stats-read"),
-  skip: makeSkipFn(),
   handler: (req, res) => {
     onLimitReached(req);
     res.status(429).json({ error: "Stats isteği limiti aşıldı. Lütfen kısa bir süre sonra tekrar deneyin." });
   },
   standardHeaders: true,
   legacyHeaders: false,
+});
+
+const statsReadInMemoryLimiter = makeInMemoryLimiter({
+  label: "STATS-READ",
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => req.ip,
+  errorMessage: () => ({
+    error: "Stats isteği limiti aşıldı. Lütfen kısa bir süre sonra tekrar deneyin.",
+  }),
+});
+
+const statsReadLimiter = makeSensitiveLimiter({
+  label: "STATS-READ",
+  redisLimiter: statsReadRedisLimiter,
+  inMemoryLimiter: statsReadInMemoryLimiter,
 });
 
 // ─── Orders Write Surface — Parent Order Oluşturma / Güncelleme ─────────────
@@ -555,20 +584,33 @@ const adminReadLimiterWithFallback = makeSensitiveLimiter({
 });
 
 // ─── Client Error Log Surface — Public Write (Telemetry) ───────────────────
-// [TR] Client crash log endpoint'i public telemetry yüzeyidir; erişilebilirlik önceliklidir.
-// [EN] Client crash logging is a public telemetry surface and remains availability-first.
-const clientLogLimiter = rateLimit({
+const clientLogRedisLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
   keyGenerator: (req) => req.ip,
   store: makeStore("client-log"),
-  skip: makeSkipFn(),
   handler: (req, res) => {
     onLimitReached(req);
     res.status(429).json({ error: "Client log limiti aşıldı. Lütfen daha sonra tekrar deneyin." });
   },
   standardHeaders: true,
   legacyHeaders: false,
+});
+
+const clientLogInMemoryLimiter = makeInMemoryLimiter({
+  label: "CLIENT-LOG",
+  windowMs: 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.ip,
+  errorMessage: () => ({
+    error: "Client log limiti aşıldı. Lütfen daha sonra tekrar deneyin.",
+  }),
+});
+
+const clientLogLimiter = makeSensitiveLimiter({
+  label: "CLIENT-LOG",
+  redisLimiter: clientLogRedisLimiter,
+  inMemoryLimiter: clientLogInMemoryLimiter,
 });
 
 // ─── Feedback — Spam Engeli ───────────────────────────────────────────────────

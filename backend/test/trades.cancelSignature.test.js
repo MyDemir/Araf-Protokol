@@ -2,6 +2,7 @@ const express = require('express');
 const request = require('supertest');
 
 process.env.BASE_RPC_URL = 'http://localhost:8545';
+process.env.EXPECTED_CHAIN_ID = '84532';
 process.env.ARAF_ESCROW_ADDRESS = '0x' + '22'.repeat(20);
 const mockRoomReadLimiter = jest.fn((_req, _res, next) => next());
 const mockCoordinationWriteLimiter = jest.fn((_req, _res, next) => next());
@@ -70,6 +71,8 @@ describe('POST /api/trades/propose-cancel signature verification', () => {
     mockHashDomain.mockClear();
     mockRoomReadLimiter.mockClear();
     mockCoordinationWriteLimiter.mockClear();
+    router.__resetCancelVerifier?.();
+    process.env.EXPECTED_CHAIN_ID = '84532';
   });
 
   const buildApp = () => {
@@ -131,6 +134,15 @@ describe('POST /api/trades/propose-cancel signature verification', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('CANCEL_STATE_NOT_ALLOWED');
+    expect(mockVerifyTypedData).not.toHaveBeenCalled();
+  });
+
+  it('fails_closed_when_provider_chain_does_not_match_expected_chain_id', async () => {
+    process.env.EXPECTED_CHAIN_ID = '8453'; // mock provider 84532 döndürüyor
+    const res = await sendRequest(buildApp());
+
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(`${JSON.stringify(res.body)} ${res.text}`).toMatch(/Chain ID uyuşmazlığı/);
     expect(mockVerifyTypedData).not.toHaveBeenCalled();
   });
 });

@@ -22,11 +22,27 @@ describe("protocolConfig token config compatibility", () => {
     }),
   });
 
-  function loadServiceWith({ getTokenConfigImpl }) {
+  function loadServiceWith({
+    getTokenConfigImpl,
+    trackedTokens = tokenA,
+    mainnetUsdt = null,
+    mainnetUsdc = null,
+    legacyUsdt = null,
+    legacyUsdc = null,
+  }) {
     jest.resetModules();
     process.env.BASE_RPC_URL = "http://localhost:8545";
+    process.env.EXPECTED_CHAIN_ID = "8453";
     process.env.ARAF_ESCROW_ADDRESS = escrowAddress;
-    process.env.ARAF_TRACKED_TOKENS = tokenA;
+    process.env.ARAF_TRACKED_TOKENS = trackedTokens;
+    if (mainnetUsdt) process.env.MAINNET_USDT_ADDRESS = mainnetUsdt;
+    else delete process.env.MAINNET_USDT_ADDRESS;
+    if (mainnetUsdc) process.env.MAINNET_USDC_ADDRESS = mainnetUsdc;
+    else delete process.env.MAINNET_USDC_ADDRESS;
+    if (legacyUsdt) process.env.USDT_ADDRESS = legacyUsdt;
+    else delete process.env.USDT_ADDRESS;
+    if (legacyUsdc) process.env.USDC_ADDRESS = legacyUsdc;
+    else delete process.env.USDC_ADDRESS;
 
     const redis = {
       get: jest.fn().mockResolvedValue(null),
@@ -51,7 +67,9 @@ describe("protocolConfig token config compatibility", () => {
     }));
     jest.doMock("ethers", () => ({
       ethers: {
-        JsonRpcProvider: jest.fn(),
+        JsonRpcProvider: jest.fn(() => ({
+          getNetwork: jest.fn().mockResolvedValue({ chainId: 8453n }),
+        })),
         Contract: contractCtor,
       },
     }));
@@ -125,5 +143,77 @@ describe("protocolConfig token config compatibility", () => {
       decimals: 6,
       tierMaxAmountsBaseUnit: ["150", "1500", "7500", "30000"],
     });
+  });
+
+  it("security_loadProtocolConfig_fails_closed_on_expected_chain_mismatch", async () => {
+    jest.resetModules();
+    process.env.BASE_RPC_URL = "http://localhost:8545";
+    process.env.EXPECTED_CHAIN_ID = "8453";
+    process.env.ARAF_ESCROW_ADDRESS = escrowAddress;
+
+    const redis = {
+      get: jest.fn().mockResolvedValue(null),
+      setEx: jest.fn().mockResolvedValue("OK"),
+      del: jest.fn().mockResolvedValue(1),
+    };
+
+    jest.doMock("../scripts/config/redis", () => ({
+      getRedisClient: () => redis,
+    }));
+    jest.doMock("../scripts/utils/logger", () => ({
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    }));
+    jest.doMock("ethers", () => ({
+      ethers: {
+        JsonRpcProvider: jest.fn(() => ({
+          getNetwork: jest.fn().mockResolvedValue({ chainId: 84532n }),
+        })),
+        Contract: jest.fn(),
+      },
+    }));
+
+    const service = require("../scripts/services/protocolConfig");
+    await expect(service.loadProtocolConfig()).rejects.toThrow(/Chain ID uyuşmazlığı/);
+  });
+
+  it("security_derives_tracked_tokens_from_mainnet_env_when_ARAF_TRACKED_TOKENS_empty", async () => {
+    const mainnetUsdt = "0x3333333333333333333333333333333333333333";
+    const mainnetUsdc = "0x4444444444444444444444444444444444444444";
+    const { service, methods } = loadServiceWith({
+      trackedTokens: "",
+      mainnetUsdt,
+      mainnetUsdc,
+      getTokenConfigImpl: async () => ({
+        supported: true,
+        allowSellOrders: true,
+        allowBuyOrders: true,
+        decimals: 6,
+        tierMaxAmountsBaseUnit: [150n, 1500n, 7500n, 30000n],
+      }),
+    });
+
+    const cfg = await service.loadProtocolConfig();
+    expect(methods.getTokenConfig).toHaveBeenCalledWith(mainnetUsdt);
+    expect(methods.getTokenConfig).toHaveBeenCalledWith(mainnetUsdc);
+    expect(cfg.tokenMap[mainnetUsdt]).toBeDefined();
+    expect(cfg.tokenMap[mainnetUsdc]).toBeDefined();
+  });
+
+  it("security_production_fails_when_all_token_envs_empty", async () => {
+    process.env.NODE_ENV = "production";
+    const { service } = loadServiceWith({
+      trackedTokens: "",
+      getTokenConfigImpl: async () => ({
+        supported: true,
+        allowSellOrders: true,
+        allowBuyOrders: true,
+        decimals: 6,
+        tierMaxAmountsBaseUnit: [150n, 1500n, 7500n, 30000n],
+      }),
+    });
+    await expect(service.loadProtocolConfig()).rejects.toThrow(/tracked token seti boş/);
   });
 });

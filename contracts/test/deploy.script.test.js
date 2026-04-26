@@ -1,62 +1,159 @@
 const { expect } = require("chai");
+const fs = require("fs");
+const path = require("path");
 const {
   resolveProductionTokenConfig,
+  resolveExternalTokenConfig,
+  resolveFinalOwnerAddress,
   getTokenConfigSnapshot,
   setAndVerifyTokenConfig,
 } = require("../scripts/deploy");
 
 describe("deploy script config guards", function () {
   const OLD_NODE_ENV = process.env.NODE_ENV;
-  const OLD_USDT = process.env.MAINNET_USDT_ADDRESS;
-  const OLD_USDC = process.env.MAINNET_USDC_ADDRESS;
+  const OLD_MAINNET_USDT = process.env.MAINNET_USDT_ADDRESS;
+  const OLD_MAINNET_USDC = process.env.MAINNET_USDC_ADDRESS;
+  const OLD_BASE_MAINNET_USDT = process.env.BASE_MAINNET_USDT_ADDRESS;
+  const OLD_BASE_MAINNET_USDC = process.env.BASE_MAINNET_USDC_ADDRESS;
+  const OLD_BASE_SEPOLIA_USDT = process.env.BASE_SEPOLIA_USDT_ADDRESS;
+  const OLD_BASE_SEPOLIA_USDC = process.env.BASE_SEPOLIA_USDC_ADDRESS;
+  const OLD_EXTERNAL_USDT = process.env.EXTERNAL_USDT_ADDRESS;
+  const OLD_EXTERNAL_USDC = process.env.EXTERNAL_USDC_ADDRESS;
+  const OLD_FINAL_OWNER = process.env.FINAL_OWNER_ADDRESS;
 
   after(function () {
     process.env.NODE_ENV = OLD_NODE_ENV;
-    process.env.MAINNET_USDT_ADDRESS = OLD_USDT;
-    process.env.MAINNET_USDC_ADDRESS = OLD_USDC;
+    process.env.MAINNET_USDT_ADDRESS = OLD_MAINNET_USDT;
+    process.env.MAINNET_USDC_ADDRESS = OLD_MAINNET_USDC;
+    process.env.BASE_MAINNET_USDT_ADDRESS = OLD_BASE_MAINNET_USDT;
+    process.env.BASE_MAINNET_USDC_ADDRESS = OLD_BASE_MAINNET_USDC;
+    process.env.BASE_SEPOLIA_USDT_ADDRESS = OLD_BASE_SEPOLIA_USDT;
+    process.env.BASE_SEPOLIA_USDC_ADDRESS = OLD_BASE_SEPOLIA_USDC;
+    process.env.EXTERNAL_USDT_ADDRESS = OLD_EXTERNAL_USDT;
+    process.env.EXTERNAL_USDC_ADDRESS = OLD_EXTERNAL_USDC;
+    process.env.FINAL_OWNER_ADDRESS = OLD_FINAL_OWNER;
   });
 
   beforeEach(function () {
     delete process.env.MAINNET_USDT_ADDRESS;
     delete process.env.MAINNET_USDC_ADDRESS;
+    delete process.env.BASE_MAINNET_USDT_ADDRESS;
+    delete process.env.BASE_MAINNET_USDC_ADDRESS;
+    delete process.env.BASE_SEPOLIA_USDT_ADDRESS;
+    delete process.env.BASE_SEPOLIA_USDC_ADDRESS;
+    delete process.env.EXTERNAL_USDT_ADDRESS;
+    delete process.env.EXTERNAL_USDC_ADDRESS;
+    delete process.env.FINAL_OWNER_ADDRESS;
     process.env.NODE_ENV = "production";
   });
 
-  it("fails fast when production token env vars are missing", function () {
-    expect(() => resolveProductionTokenConfig()).to.throw(/MAINNET_USDT_ADDRESS/);
+  it("fails fast when base-mainnet token env vars are missing", function () {
+    expect(() => resolveProductionTokenConfig({ chainId: 8453 })).to.throw(/BASE_MAINNET_USDT_ADDRESS/);
   });
 
-  it("accepts valid production token env vars", function () {
-    process.env.MAINNET_USDT_ADDRESS = "0x1111111111111111111111111111111111111111";
-    process.env.MAINNET_USDC_ADDRESS = "0x2222222222222222222222222222222222222222";
+  it("accepts BASE_MAINNET_* env vars on chain 8453", function () {
+    process.env.BASE_MAINNET_USDT_ADDRESS = "0x1111111111111111111111111111111111111111";
+    process.env.BASE_MAINNET_USDC_ADDRESS = "0x2222222222222222222222222222222222222222";
 
-    const cfg = resolveProductionTokenConfig();
+    const cfg = resolveProductionTokenConfig({ chainId: 8453 });
     expect(cfg.isProduction).to.equal(true);
     expect(cfg.usdtAddress).to.equal("0x1111111111111111111111111111111111111111");
     expect(cfg.usdcAddress).to.equal("0x2222222222222222222222222222222222222222");
   });
 
-  it("fails fast when production token env vars are zero addresses", function () {
-    process.env.MAINNET_USDT_ADDRESS = "0x0000000000000000000000000000000000000000";
+  it("accepts MAINNET_* alias only for base-mainnet", function () {
+    process.env.MAINNET_USDT_ADDRESS = "0x1111111111111111111111111111111111111111";
     process.env.MAINNET_USDC_ADDRESS = "0x2222222222222222222222222222222222222222";
-
-    expect(() => resolveProductionTokenConfig()).to.throw(/MAINNET_USDT_ADDRESS/);
+    const cfg = resolveProductionTokenConfig({ chainId: 8453 });
+    expect(cfg.usdtAddress).to.equal("0x1111111111111111111111111111111111111111");
+    expect(cfg.usdcAddress).to.equal("0x2222222222222222222222222222222222222222");
   });
 
-  it("fails fast when production token env vars are invalid addresses", function () {
-    process.env.MAINNET_USDT_ADDRESS = "not-an-address";
+  it("fails fast when base-sepolia uses MAINNET_* alias env vars", function () {
+    process.env.MAINNET_USDT_ADDRESS = "0x1111111111111111111111111111111111111111";
     process.env.MAINNET_USDC_ADDRESS = "0x2222222222222222222222222222222222222222";
+    process.env.BASE_SEPOLIA_USDT_ADDRESS = "0x3333333333333333333333333333333333333333";
+    process.env.BASE_SEPOLIA_USDC_ADDRESS = "0x4444444444444444444444444444444444444444";
+    expect(() => resolveProductionTokenConfig({ chainId: 84532 })).to.throw(/MAINNET_\*/);
+  });
 
-    expect(() => resolveProductionTokenConfig()).to.throw();
+  it("accepts BASE_SEPOLIA_* env vars on chain 84532", function () {
+    process.env.BASE_SEPOLIA_USDT_ADDRESS = "0x3333333333333333333333333333333333333333";
+    process.env.BASE_SEPOLIA_USDC_ADDRESS = "0x4444444444444444444444444444444444444444";
+    const cfg = resolveProductionTokenConfig({ chainId: 84532 });
+    expect(cfg.usdtAddress).to.equal("0x3333333333333333333333333333333333333333");
+    expect(cfg.usdcAddress).to.equal("0x4444444444444444444444444444444444444444");
+  });
+
+  it("fails fast when token env vars are zero addresses", function () {
+    process.env.BASE_MAINNET_USDT_ADDRESS = "0x0000000000000000000000000000000000000000";
+    process.env.BASE_MAINNET_USDC_ADDRESS = "0x2222222222222222222222222222222222222222";
+    expect(() => resolveProductionTokenConfig({ chainId: 8453 })).to.throw(/BASE_MAINNET_USDT_ADDRESS/);
+  });
+
+  it("fails fast when token env vars are invalid addresses", function () {
+    process.env.BASE_MAINNET_USDT_ADDRESS = "not-an-address";
+    process.env.BASE_MAINNET_USDC_ADDRESS = "0x2222222222222222222222222222222222222222";
+    expect(() => resolveProductionTokenConfig({ chainId: 8453 })).to.throw();
   });
 
   it("is mock-friendly in non-production mode", function () {
     process.env.NODE_ENV = "test";
 
-    const cfg = resolveProductionTokenConfig();
+    const cfg = resolveProductionTokenConfig({ chainId: 8453 });
     expect(cfg.isProduction).to.equal(false);
     expect(cfg.usdtAddress).to.equal(null);
     expect(cfg.usdcAddress).to.equal(null);
+  });
+
+  it("local/custom external token path accepts EXTERNAL_* env vars", function () {
+    process.env.EXTERNAL_USDT_ADDRESS = "0x5555555555555555555555555555555555555555";
+    process.env.EXTERNAL_USDC_ADDRESS = "0x6666666666666666666666666666666666666666";
+    const cfg = resolveExternalTokenConfig();
+    expect(cfg.usdtAddress).to.equal("0x5555555555555555555555555555555555555555");
+    expect(cfg.usdcAddress).to.equal("0x6666666666666666666666666666666666666666");
+  });
+
+  it("local/custom external token path fails fast on invalid/zero EXTERNAL_* env vars", function () {
+    process.env.EXTERNAL_USDT_ADDRESS = "0x0000000000000000000000000000000000000000";
+    process.env.EXTERNAL_USDC_ADDRESS = "0x6666666666666666666666666666666666666666";
+    expect(() => resolveExternalTokenConfig()).to.throw(/EXTERNAL_USDT_ADDRESS/);
+  });
+
+  it("security_public_mode_reverts_when_final_owner_missing", function () {
+    expect(() =>
+      resolveFinalOwnerAddress({
+        deployMode: "public",
+        treasuryAddress: "0x1111111111111111111111111111111111111111",
+      })
+    ).to.throw(/FINAL_OWNER_ADDRESS/);
+  });
+
+  it("security_public_mode_accepts_valid_final_owner", function () {
+    process.env.FINAL_OWNER_ADDRESS = "0x2222222222222222222222222222222222222222";
+    const owner = resolveFinalOwnerAddress({
+      deployMode: "public",
+      treasuryAddress: "0x1111111111111111111111111111111111111111",
+    });
+    expect(owner).to.equal("0x2222222222222222222222222222222222222222");
+  });
+
+  it("security_public_mode_reverts_when_final_owner_equals_treasury", function () {
+    process.env.FINAL_OWNER_ADDRESS = "0x1111111111111111111111111111111111111111";
+    expect(() =>
+      resolveFinalOwnerAddress({
+        deployMode: "public",
+        treasuryAddress: "0x1111111111111111111111111111111111111111",
+      })
+    ).to.throw(/aynı olamaz/);
+  });
+
+  it("local_mode_can_fallback_final_owner_to_treasury", function () {
+    const owner = resolveFinalOwnerAddress({
+      deployMode: "local",
+      treasuryAddress: "0x1111111111111111111111111111111111111111",
+    });
+    expect(owner).to.equal("0x1111111111111111111111111111111111111111");
   });
 
   it("getTokenConfigSnapshot_reads_explicit_getTokenConfig_tier_limits", async function () {
@@ -118,5 +215,12 @@ describe("deploy script config guards", function () {
     await expect(
       setAndVerifyTokenConfig(fakeEscrow, "0x1111111111111111111111111111111111111111", "USDT", config)
     ).to.be.rejectedWith(/doğrulaması başarısız/);
+  });
+
+  it("security_deploy_source_does_not_reintroduce_frontend_abi_generation_or_artifactPathSync", function () {
+    const source = fs.readFileSync(path.resolve(__dirname, "../scripts/deploy.js"), "utf8");
+    expect(source).not.to.contain("syncAbiToFrontend");
+    expect(source).not.to.contain("frontend/src/abi");
+    expect(source).not.to.contain("artifactPathSync");
   });
 });

@@ -40,6 +40,8 @@ const baseCtx = {
   SUPPORTED_TOKEN_ADDRESSES: { USDT: '0x1', USDC: '0x2' },
   handleStartTrade: vi.fn(),
   handleMint: vi.fn(),
+  isFaucetEnabled: true,
+  isSupportedChainId: () => true,
   handleOpenMakerModal: vi.fn(),
   activeEscrowCounts: { LOCKED: 0, PAID: 0, CHALLENGED: 0 },
   setShowProfileModal: vi.fn(),
@@ -100,6 +102,17 @@ const baseCtx = {
 };
 
 describe('AppViews market side-aware rendering', () => {
+  it('security_prod_mode_hides_test_faucet_buttons', () => {
+    const views = buildAppViews({
+      ...baseCtx,
+      isFaucetEnabled: false,
+    });
+
+    render(<div>{views.renderMarket()}</div>);
+    expect(screen.queryByText(/Get Test USDT|Test USDT Al/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Get Test USDC|Test USDC Al/i)).not.toBeInTheDocument();
+  });
+
   it('keeps admin entry reachable for authenticated users even when VITE_ADMIN_WALLETS is empty', () => {
     const previous = import.meta.env.VITE_ADMIN_WALLETS;
     import.meta.env.VITE_ADMIN_WALLETS = '';
