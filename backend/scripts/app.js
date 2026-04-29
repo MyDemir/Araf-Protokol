@@ -485,6 +485,7 @@ async function bootstrap() {
     const receiptRoutes = require("./routes/receipts");
     const adminRoutes = require("./routes/admin");
     const referenceRatesRoutes = require("./routes/referenceRates");
+    const rewardsRoutes = require("./routes/rewards");
 
     // [TR] Log rotası en üstte tanımlanır
     app.use("/api/logs", logRoutes);
@@ -498,6 +499,7 @@ async function bootstrap() {
     app.use("/api/receipts", receiptRoutes);
     app.use("/api/admin", adminRoutes);
     app.use("/api/reference-rates", referenceRatesRoutes);
+    app.use("/api/rewards", rewardsRoutes);
 
     app.get("/health", (_req, res) => res.json(getLiveness()));
 

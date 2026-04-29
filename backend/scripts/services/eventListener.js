@@ -27,6 +27,10 @@ const { getRedisClient } = require("../config/redis");
 const Trade = require("../models/Trade");
 const Order = require("../models/Order");
 const User = require("../models/User");
+const RevenueEvent = require("../models/RevenueEvent");
+const RewardFunding = require("../models/RewardFunding");
+const RewardEpoch = require("../models/RewardEpoch");
+const RewardClaim = require("../models/RewardClaim");
 const logger = require("../utils/logger");
 const {
   updateCachedFeeConfig,
@@ -74,6 +78,9 @@ const EVENT_NAMES = [
   "SettlementProposed", "SettlementRejected", "SettlementWithdrawn", "SettlementExpired", "SettlementFinalized",
   "OrderCreated", "OrderFilled", "OrderCanceled",
   "FeeConfigUpdated", "CooldownConfigUpdated", "TokenConfigUpdated",
+  "ProtocolRevenueSent",
+  "EscrowRevenueReceived", "ExternalRewardFunded", "ProductRewardFunded",
+  "EpochRewardAllocated", "TradeOutcomeRecorded", "RewardClaimed",
 ];
 
 const ARAF_ABI = [
@@ -102,6 +109,13 @@ const ARAF_ABI = [
   "event FeeConfigUpdated(uint256 takerFeeBps, uint256 makerFeeBps)",
   "event CooldownConfigUpdated(uint256 tier0TradeCooldown, uint256 tier1TradeCooldown)",
   "event TokenConfigUpdated(address indexed token, bool supported, bool allowSellOrders, bool allowBuyOrders)",
+  "event ProtocolRevenueSent(address indexed token, uint256 amount, uint8 indexed kind, uint256 indexed tradeId, address treasury)",
+  "event EscrowRevenueReceived(address indexed token, uint256 amount, uint256 rewardShare, uint256 treasuryShare, uint8 kind, uint256 tradeId)",
+  "event ExternalRewardFunded(address indexed funder, address indexed token, uint256 amount, uint256 indexed targetEpoch, bytes32 fundingRef)",
+  "event ProductRewardFunded(address indexed funder, bytes32 indexed productId, address indexed token, uint256 amount, uint256 targetEpoch, bytes32 fundingRef)",
+  "event EpochRewardAllocated(uint256 indexed epoch, address indexed token, uint256 amount)",
+  "event TradeOutcomeRecorded(uint256 indexed tradeId, uint256 indexed epoch, address indexed maker, address taker, uint256 makerWeight, uint256 takerWeight, uint8 outcome)",
+  "event RewardClaimed(uint256 indexed epoch, address indexed user, address indexed token, uint256 amount, uint256 userWeight, uint256 totalWeight)",
   "function getTrade(uint256 _tradeId) view returns ((uint256 id,uint256 parentOrderId,address maker,address taker,address tokenAddress,uint256 cryptoAmount,uint256 makerBond,uint256 takerBond,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 paymentRiskLevelSnapshot,uint8 state,uint256 lockedAt,uint256 paidAt,uint256 challengedAt,string ipfsReceiptHash,bool cancelProposedByMaker,bool cancelProposedByTaker,uint256 pingedAt,bool pingedByTaker,uint256 challengePingedAt,bool challengePingedByMaker))",
   "function getOrder(uint256 _orderId) view returns ((uint256 id,address owner,uint8 side,address tokenAddress,uint256 totalAmount,uint256 remainingAmount,uint256 minFillAmount,uint256 remainingMakerBondReserve,uint256 remainingTakerBondReserve,uint16 takerFeeBpsSnapshot,uint16 makerFeeBpsSnapshot,uint8 tier,uint8 paymentRiskLevel,uint8 state,bytes32 orderRef))",
   // [TR] getReputation getter tuple sırası frontend + contract ile lock-step kalmalıdır.
@@ -154,6 +168,13 @@ const EVENT_ARG_KEYS = {
   FeeConfigUpdated: ["takerFeeBps", "makerFeeBps"],
   CooldownConfigUpdated: ["tier0TradeCooldown", "tier1TradeCooldown"],
   TokenConfigUpdated: ["token", "supported", "allowSellOrders", "allowBuyOrders"],
+  ProtocolRevenueSent: ["token", "amount", "kind", "tradeId", "treasury"],
+  EscrowRevenueReceived: ["token", "amount", "rewardShare", "treasuryShare", "kind", "tradeId"],
+  ExternalRewardFunded: ["funder", "token", "amount", "targetEpoch", "fundingRef"],
+  ProductRewardFunded: ["funder", "productId", "token", "amount", "targetEpoch", "fundingRef"],
+  EpochRewardAllocated: ["epoch", "token", "amount"],
+  TradeOutcomeRecorded: ["tradeId", "epoch", "maker", "taker", "makerWeight", "takerWeight", "outcome"],
+  RewardClaimed: ["epoch", "user", "token", "amount", "userWeight", "totalWeight"],
 };
 
 function _toNum(v) {
@@ -1078,6 +1099,13 @@ class EventWorker {
       FeeConfigUpdated: this._onFeeConfigUpdated.bind(this),
       CooldownConfigUpdated: this._onCooldownConfigUpdated.bind(this),
       TokenConfigUpdated: this._onTokenConfigUpdated.bind(this),
+      ProtocolRevenueSent: this._onProtocolRevenueSent.bind(this),
+      EscrowRevenueReceived: this._onEscrowRevenueReceived.bind(this),
+      ExternalRewardFunded: this._onExternalRewardFunded.bind(this),
+      ProductRewardFunded: this._onProductRewardFunded.bind(this),
+      EpochRewardAllocated: this._onEpochRewardAllocated.bind(this),
+      TradeOutcomeRecorded: this._onTradeOutcomeRecorded.bind(this),
+      RewardClaimed: this._onRewardClaimed.bind(this),
     };
 
     const handler = handlers[event.eventName];
@@ -1763,6 +1791,133 @@ class EventWorker {
     } finally {
       await session.endSession();
     }
+  }
+
+  async _onProtocolRevenueSent(event) {
+    const { token, amount, kind, tradeId } = event.args;
+    await RevenueEvent.findOneAndUpdate(
+      { tx_hash: event.transactionHash, log_index: Number(event.logIndex) },
+      {
+        $setOnInsert: {
+          tx_hash: event.transactionHash,
+          block_number: Number(event.blockNumber || 0),
+          log_index: Number(event.logIndex || 0),
+          token: token?.toLowerCase?.() || null,
+          amount: _toStr(amount),
+          kind: _toNum(kind),
+          trade_id: _toStr(tradeId),
+          source: "ESCROW_REVENUE",
+          created_at_onchain: await this._getEventDate(event),
+        },
+      },
+      { upsert: true }
+    );
+  }
+
+  async _onEscrowRevenueReceived(event) {
+    const { token, amount, rewardShare, treasuryShare, kind, tradeId } = event.args;
+    await RevenueEvent.findOneAndUpdate(
+      { tx_hash: event.transactionHash, log_index: Number(event.logIndex) },
+      {
+        $setOnInsert: {
+          tx_hash: event.transactionHash,
+          block_number: Number(event.blockNumber || 0),
+          log_index: Number(event.logIndex || 0),
+          token: token?.toLowerCase?.() || null,
+          amount: _toStr(amount),
+          reward_share: _toStr(rewardShare),
+          treasury_share: _toStr(treasuryShare),
+          kind: _toNum(kind),
+          trade_id: _toStr(tradeId),
+          source: "ESCROW_REVENUE",
+          created_at_onchain: await this._getEventDate(event),
+        },
+      },
+      { upsert: true }
+    );
+  }
+
+  async _onExternalRewardFunded(event) {
+    const { funder, token, amount, targetEpoch, fundingRef } = event.args;
+    await RewardFunding.findOneAndUpdate(
+      { tx_hash: event.transactionHash, log_index: Number(event.logIndex) },
+      { $setOnInsert: {
+        tx_hash: event.transactionHash,
+        block_number: Number(event.blockNumber || 0),
+        log_index: Number(event.logIndex || 0),
+        funder: funder?.toLowerCase?.() || null,
+        token: token?.toLowerCase?.() || null,
+        amount: _toStr(amount),
+        target_epoch: _toStr(targetEpoch),
+        product_id: null,
+        funding_ref: _toStr(fundingRef),
+        type: "GLOBAL",
+      } },
+      { upsert: true }
+    );
+  }
+
+  async _onProductRewardFunded(event) {
+    const { funder, productId, token, amount, targetEpoch, fundingRef } = event.args;
+    await RewardFunding.findOneAndUpdate(
+      { tx_hash: event.transactionHash, log_index: Number(event.logIndex) },
+      { $setOnInsert: {
+        tx_hash: event.transactionHash,
+        block_number: Number(event.blockNumber || 0),
+        log_index: Number(event.logIndex || 0),
+        funder: funder?.toLowerCase?.() || null,
+        token: token?.toLowerCase?.() || null,
+        amount: _toStr(amount),
+        target_epoch: _toStr(targetEpoch),
+        product_id: _toStr(productId),
+        funding_ref: _toStr(fundingRef),
+        type: "PRODUCT",
+      } },
+      { upsert: true }
+    );
+  }
+
+  async _onEpochRewardAllocated(event) {
+    const { epoch, token, amount } = event.args;
+    await RewardEpoch.findOneAndUpdate(
+      { epoch: _toStr(epoch), token: token?.toLowerCase?.() || null },
+      {
+        $set: {
+          epoch_pool: _toStr(amount),
+          indexed_at: await this._getEventDate(event),
+        },
+        $setOnInsert: {
+          status: "OPEN",
+          total_weight: null,
+        },
+      },
+      { upsert: true }
+    );
+  }
+
+  async _onTradeOutcomeRecorded(event) {
+    const { epoch, maker, taker, makerWeight, takerWeight } = event.args;
+    void epoch; void maker; void taker; void makerWeight; void takerWeight;
+    // Read-model only: canonical weights are on-chain and NOT persisted as authority.
+  }
+
+  async _onRewardClaimed(event) {
+    const { epoch, user, token, amount, userWeight, totalWeight } = event.args;
+    await RewardClaim.findOneAndUpdate(
+      { tx_hash: event.transactionHash, log_index: Number(event.logIndex) },
+      { $setOnInsert: {
+        tx_hash: event.transactionHash,
+        block_number: Number(event.blockNumber || 0),
+        log_index: Number(event.logIndex || 0),
+        epoch: _toStr(epoch),
+        user: user?.toLowerCase?.() || null,
+        token: token?.toLowerCase?.() || null,
+        amount: _toStr(amount),
+        user_weight: _toStr(userWeight),
+        total_weight: _toStr(totalWeight),
+      } },
+      { upsert: true }
+    );
   }
 
   async _onMakerPinged(event) {
