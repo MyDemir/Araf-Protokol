@@ -24,6 +24,7 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
     error ZeroAmount();
     error ProductPoolDisabled();
     error ExactInMismatch();
+    error InsufficientRewardReserve();
 
     uint256 public constant BPS = 10_000;
     uint256 public constant MIN_REWARD_BPS = 4_000;
@@ -228,6 +229,50 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
         treasuryReserve[token] -= amount;
         IERC20(token).safeTransfer(finalTreasury, amount);
         emit TreasuryShareWithdrawn(token, finalTreasury, amount);
+    }
+
+    /**
+     * @notice Rewards kontratına epoch allocation için reward reserve'den token transfer eder.
+     * @dev    Sadece kayıtlı rewards kontratı çağırabilir; owner doğrudan reward reserve çekemez.
+     */
+    function transferRewardAllocation(address token, uint256 amount)
+        external
+        nonReentrant
+        whenNotPaused
+    {
+        if (msg.sender != rewards) revert UnauthorizedRewards();
+        if (amount == 0) revert ZeroAmount();
+        if (rewardReserve[token] < amount) revert InsufficientRewardReserve();
+
+        rewardReserve[token] -= amount;
+        IERC20(token).safeTransfer(rewards, amount);
+    }
+
+    /**
+     * @notice Epoch allocation transfer: önce epoch external funding, kalan varsa reward reserve'den karşılar.
+     * @dev    Sadece rewards kontratı çağırabilir.
+     */
+    function transferEpochAllocation(
+        uint256 epoch,
+        address token,
+        uint256 amount
+    ) external nonReentrant whenNotPaused {
+        if (msg.sender != rewards) revert UnauthorizedRewards();
+        if (amount == 0) revert ZeroAmount();
+
+        uint256 fromExternal = externalFundingByEpoch[epoch][token];
+        if (fromExternal > amount) fromExternal = amount;
+        if (fromExternal > 0) {
+            externalFundingByEpoch[epoch][token] -= fromExternal;
+        }
+
+        uint256 remaining = amount - fromExternal;
+        if (remaining > 0) {
+            if (rewardReserve[token] < remaining) revert InsufficientRewardReserve();
+            rewardReserve[token] -= remaining;
+        }
+
+        IERC20(token).safeTransfer(rewards, amount);
     }
 
     function pause() external onlyOwner { _pause(); }

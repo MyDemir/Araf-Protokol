@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./ArafRevenueVault.sol";
 
 interface IArafEscrowRewardView {
@@ -46,6 +47,13 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
     error NonTerminalOutcome();
     error DirectEscrowNotRewardable();
     error TierZeroNotRewardable();
+    error NotAllocationSource();
+    error EpochNotEnded();
+    error ClaimDelayActive();
+    error ZeroTotalWeight();
+    error ZeroUserWeight();
+    error AlreadyClaimed();
+    error ZeroAmount();
 
     uint256 public constant BPS = 10_000;
     uint256 public constant SCALE = 100_000_000; // outcomeBps(1e4) * tierBps(1e4)
@@ -73,6 +81,8 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
     mapping(uint256 => mapping(address => uint256)) public userWeight;
     mapping(uint256 => mapping(address => mapping(address => bool))) public claimed;
     mapping(uint256 => bool) public recordedTrade;
+    mapping(uint256 => mapping(address => uint256)) public epochRewardPool;
+    mapping(uint256 => mapping(address => bool)) public epochTokenAllocated;
 
     event TradeOutcomeRecorded(
         uint256 indexed tradeId,
@@ -82,6 +92,15 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
         uint256 makerWeight,
         uint256 takerWeight,
         IArafEscrowRewardView.TerminalOutcome outcome
+    );
+    event EpochRewardAllocated(uint256 indexed epoch, address indexed token, uint256 amount);
+    event RewardClaimed(
+        uint256 indexed epoch,
+        address indexed user,
+        address indexed token,
+        uint256 amount,
+        uint256 userWeight,
+        uint256 totalWeight
     );
 
     constructor(address _escrow, address _revenueVault, address _owner) Ownable(_owner) {
@@ -119,6 +138,50 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
 
         recordedTrade[tradeId] = true;
         emit TradeOutcomeRecorded(tradeId, epoch, t.maker, t.taker, makerW, takerW, t.outcome);
+    }
+
+    /**
+     * @notice Epoch havuzuna reward reserve'den tahsis ekler.
+     * @dev    Fon kaynağı revenueVault'tur; owner yalnız allocation tetikler.
+     */
+    function allocateEpochRewards(uint256 epoch, address token, uint256 amount)
+        external
+        onlyOwner
+        nonReentrant
+        whenNotPaused
+    {
+        if (amount == 0) revert ZeroAmount();
+        revenueVault.transferEpochAllocation(epoch, token, amount);
+        epochRewardPool[epoch][token] += amount;
+        epochTokenAllocated[epoch][token] = true;
+        emit EpochRewardAllocated(epoch, token, amount);
+    }
+
+    function claim(uint256 epoch, address token) external nonReentrant whenNotPaused {
+        uint256 epochEnd = (epoch + 1) * epochDuration;
+        if (block.timestamp < epochEnd) revert EpochNotEnded();
+        if (block.timestamp < epochEnd + claimDelay) revert ClaimDelayActive();
+
+        uint256 tWeight = totalWeight[epoch];
+        if (tWeight == 0) revert ZeroTotalWeight();
+        uint256 uWeight = userWeight[epoch][msg.sender];
+        if (uWeight == 0) revert ZeroUserWeight();
+        if (claimed[epoch][msg.sender][token]) revert AlreadyClaimed();
+
+        uint256 amount = (epochRewardPool[epoch][token] * uWeight) / tWeight;
+        claimed[epoch][msg.sender][token] = true;
+        IERC20(token).transfer(msg.sender, amount);
+
+        emit RewardClaimed(epoch, msg.sender, token, amount, uWeight, tWeight);
+    }
+
+    function claimable(uint256 epoch, address user, address token) external view returns (uint256) {
+        if (claimed[epoch][user][token]) return 0;
+        uint256 tWeight = totalWeight[epoch];
+        if (tWeight == 0) return 0;
+        uint256 uWeight = userWeight[epoch][user];
+        if (uWeight == 0) return 0;
+        return (epochRewardPool[epoch][token] * uWeight) / tWeight;
     }
 
     function pause() external onlyOwner { _pause(); }
