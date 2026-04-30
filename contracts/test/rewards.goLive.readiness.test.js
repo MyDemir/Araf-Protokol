@@ -99,5 +99,11 @@ describe('rewards go-live readiness hardening', function () {
     expect(envExample).to.contain('CONFIRM_CONFIGURE_REWARDS=false');
     expect(envExample).to.contain('CONFIRM_TREASURY_SWITCH=false');
     expect(envExample).to.contain('EXPECTED_CURRENT_TREASURY_ADDRESS=');
+    expect(envExample).to.contain('BASE_MAINNET_USDT_ADDRESS=');
+    expect(envExample).to.contain('BASE_MAINNET_USDC_ADDRESS=');
+    expect(envExample).to.contain('BASE_SEPOLIA_USDT_ADDRESS=');
+    expect(envExample).to.contain('BASE_SEPOLIA_USDC_ADDRESS=');
+    expect(envExample).to.contain('CONFIRM_PUBLIC_SMOKE=');
+    expect(envExample).to.contain('CONFIRM_FRESH_ESCROW_DEPLOY=');
   });
 });
