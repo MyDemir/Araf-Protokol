@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./ArafRevenueVault.sol";
 
 interface IArafEscrowRewardView {
@@ -43,6 +44,7 @@ interface IArafEscrowRewardView {
 }
 
 contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
+    using SafeERC20 for IERC20;
     error AlreadyRecorded();
     error NonTerminalOutcome();
     error DirectEscrowNotRewardable();
@@ -54,6 +56,10 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
     error ZeroUserWeight();
     error AlreadyClaimed();
     error ZeroAmount();
+    error EpochTokenNotFinalized();
+    error EpochTokenAlreadyFinalized();
+    error EpochTokenFinalized();
+    error InvalidRecipient();
 
     uint256 public constant BPS = 10_000;
     uint256 public constant SCALE = 100_000_000; // outcomeBps(1e4) * tierBps(1e4)
@@ -83,6 +89,7 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
     mapping(uint256 => bool) public recordedTrade;
     mapping(uint256 => mapping(address => uint256)) public epochRewardPool;
     mapping(uint256 => mapping(address => bool)) public epochTokenAllocated;
+    mapping(uint256 => mapping(address => bool)) public epochTokenFinalized;
 
     event TradeOutcomeRecorded(
         uint256 indexed tradeId,
@@ -94,6 +101,7 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
         IArafEscrowRewardView.TerminalOutcome outcome
     );
     event EpochRewardAllocated(uint256 indexed epoch, address indexed token, uint256 amount);
+    event EpochTokenFinalizedEvent(uint256 indexed epoch, address indexed token);
     event RewardClaimed(
         uint256 indexed epoch,
         address indexed user,
@@ -104,8 +112,13 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
     );
 
     constructor(address _escrow, address _revenueVault, address _owner) Ownable(_owner) {
+        if (_escrow == address(0) || _revenueVault == address(0)) revert InvalidRecipient();
         escrow = IArafEscrowRewardView(_escrow);
         revenueVault = ArafRevenueVault(_revenueVault);
+    }
+
+    function currentEpoch() external view returns (uint256) {
+        return block.timestamp / epochDuration;
     }
 
     /**
@@ -151,6 +164,7 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
         whenNotPaused
     {
         if (amount == 0) revert ZeroAmount();
+        if (epochTokenFinalized[epoch][token]) revert EpochTokenFinalized();
         revenueVault.transferEpochAllocation(epoch, token, amount);
         epochRewardPool[epoch][token] += amount;
         epochTokenAllocated[epoch][token] = true;
@@ -158,6 +172,7 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
     }
 
     function claim(uint256 epoch, address token) external nonReentrant whenNotPaused {
+        if (!epochTokenFinalized[epoch][token]) revert EpochTokenNotFinalized();
         uint256 epochEnd = (epoch + 1) * epochDuration;
         if (block.timestamp < epochEnd) revert EpochNotEnded();
         if (block.timestamp < epochEnd + claimDelay) revert ClaimDelayActive();
@@ -169,10 +184,19 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
         if (claimed[epoch][msg.sender][token]) revert AlreadyClaimed();
 
         uint256 amount = (epochRewardPool[epoch][token] * uWeight) / tWeight;
+        if (amount == 0) revert ZeroAmount();
         claimed[epoch][msg.sender][token] = true;
-        IERC20(token).transfer(msg.sender, amount);
+        IERC20(token).safeTransfer(msg.sender, amount);
 
         emit RewardClaimed(epoch, msg.sender, token, amount, uWeight, tWeight);
+    }
+
+    function finalizeEpochToken(uint256 epoch, address token) external onlyOwner {
+        if (epochTokenFinalized[epoch][token]) revert EpochTokenAlreadyFinalized();
+        uint256 epochEnd = (epoch + 1) * epochDuration;
+        if (block.timestamp < epochEnd) revert EpochNotEnded();
+        epochTokenFinalized[epoch][token] = true;
+        emit EpochTokenFinalizedEvent(epoch, token);
     }
 
     function claimable(uint256 epoch, address user, address token) external view returns (uint256) {

@@ -31,6 +31,7 @@ const RevenueEvent = require("../models/RevenueEvent");
 const RewardFunding = require("../models/RewardFunding");
 const RewardEpoch = require("../models/RewardEpoch");
 const RewardClaim = require("../models/RewardClaim");
+const RewardEpochAllocationEvent = require("../models/RewardEpochAllocationEvent");
 const logger = require("../utils/logger");
 const {
   updateCachedFeeConfig,
@@ -1879,11 +1880,24 @@ class EventWorker {
 
   async _onEpochRewardAllocated(event) {
     const { epoch, token, amount } = event.args;
+    const tx_hash = event.transactionHash;
+    const log_index = Number(event.logIndex || 0);
+    const insertResult = await RewardEpochAllocationEvent.findOneAndUpdate(
+      { tx_hash, log_index },
+      { $setOnInsert: { tx_hash, log_index, epoch: _toStr(epoch), token: token?.toLowerCase?.() || null, amount: _toStr(amount) } },
+      { upsert: true, new: false, rawResult: true }
+    );
+    if (insertResult?.lastErrorObject?.updatedExisting) return;
+
+    const key = { epoch: _toStr(epoch), token: token?.toLowerCase?.() || null };
+    const existing = await RewardEpoch.findOne(key).lean();
+    const prev = BigInt(existing?.epoch_pool || "0");
+    const next = (prev + BigInt(_toStr(amount))).toString();
     await RewardEpoch.findOneAndUpdate(
-      { epoch: _toStr(epoch), token: token?.toLowerCase?.() || null },
+      key,
       {
         $set: {
-          epoch_pool: _toStr(amount),
+          epoch_pool: next,
           indexed_at: await this._getEventDate(event),
         },
         $setOnInsert: {

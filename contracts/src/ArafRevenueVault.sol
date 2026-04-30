@@ -25,6 +25,7 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
     error ProductPoolDisabled();
     error ExactInMismatch();
     error InsufficientRewardReserve();
+    error RevenueLiabilityMismatch();
 
     uint256 public constant BPS = 10_000;
     uint256 public constant MIN_REWARD_BPS = 4_000;
@@ -145,7 +146,7 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
 
         uint256 currentLiability = rewardReserve[token] + treasuryReserve[token];
         uint256 balanceAfterTransfer = IERC20(token).balanceOf(address(this));
-        if (balanceAfterTransfer < currentLiability + amount) revert ZeroAmount();
+        if (balanceAfterTransfer < currentLiability + amount) revert RevenueLiabilityMismatch();
 
         uint256 rewardShare = (amount * rewardBps) / BPS;
         uint256 treasuryShare = amount - rewardShare;

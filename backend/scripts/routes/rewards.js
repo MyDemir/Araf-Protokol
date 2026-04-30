@@ -12,7 +12,7 @@ router.get("/epochs/current", async (_req, res, next) => {
   try {
     const nowEpoch = Math.floor(Date.now() / 1000 / (7 * 24 * 3600));
     const rows = await RewardEpoch.find({ epoch: String(nowEpoch) }).lean();
-    return res.json({ epoch: String(nowEpoch), rows });
+    return res.json({ epoch: String(nowEpoch), rows, source: "WALL_CLOCK_ESTIMATE_NOT_AUTHORITY" });
   } catch (err) { return next(err); }
 });
 

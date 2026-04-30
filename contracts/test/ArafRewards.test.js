@@ -294,8 +294,11 @@ describe("ArafRewards global epoch weight accounting", function () {
     const { rewards, token, maker } = await loadFixture(deployFixture);
     const now = (await ethers.provider.getBlock("latest")).timestamp;
     const currentEpoch = Math.floor(now / (7 * 24 * 3600));
-    await expect(rewards.connect(maker).claim(currentEpoch, await token.getAddress()))
-      .to.be.revertedWithCustomError(rewards, "EpochNotEnded");
+    await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
+    await ethers.provider.send("evm_mine", []);
+    await rewards.finalizeEpochToken(currentEpoch, await token.getAddress());
+    await expect(rewards.connect(maker).claim(currentEpoch + 1, await token.getAddress()))
+      .to.be.revertedWithCustomError(rewards, "EpochTokenNotFinalized");
   });
 
   it("test_claim_reverts_before_claimDelay", async function () {
@@ -316,14 +319,16 @@ describe("ArafRewards global epoch weight accounting", function () {
     const currentBlock = await ethers.provider.getBlock("latest");
     await ethers.provider.send("evm_increaseTime", [Math.max(1, epochEndPlusOne - Number(currentBlock.timestamp))]);
     await ethers.provider.send("evm_mine", []);
+    await rewards.connect(owner).finalizeEpochToken(currentEpoch, await token.getAddress());
     await expect(rewards.connect(maker).claim(currentEpoch, await token.getAddress()))
       .to.be.revertedWithCustomError(rewards, "ClaimDelayActive");
   });
 
   it("test_claim_reverts_zero_totalWeight", async function () {
-    const { rewards, token, maker } = await loadFixture(deployFixture);
+    const { rewards, token, maker, owner } = await loadFixture(deployFixture);
     await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
     await ethers.provider.send("evm_mine", []);
+    await rewards.connect(owner).finalizeEpochToken(0, await token.getAddress());
     await expect(rewards.connect(maker).claim(0, await token.getAddress()))
       .to.be.revertedWithCustomError(rewards, "ZeroTotalWeight");
   });
@@ -336,6 +341,9 @@ describe("ArafRewards global epoch weight accounting", function () {
     await token.mint(await vault.getAddress(), NOTIONAL);
     await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 1002);
     await rewards.connect(owner).allocateEpochRewards(0, await token.getAddress(), (NOTIONAL * 4000n) / 10000n);
+    await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
+    await ethers.provider.send("evm_mine", []);
+    await rewards.connect(owner).finalizeEpochToken(0, await token.getAddress());
     await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
     await ethers.provider.send("evm_mine", []);
     await expect(rewards.connect(other).claim(0, await token.getAddress()))
@@ -351,6 +359,9 @@ describe("ArafRewards global epoch weight accounting", function () {
     await token.mint(await vault.getAddress(), NOTIONAL);
     await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 1003);
     await rewards.connect(owner).allocateEpochRewards(0, await token.getAddress(), alloc);
+    await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
+    await ethers.provider.send("evm_mine", []);
+    await rewards.connect(owner).finalizeEpochToken(0, await token.getAddress());
     await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
     await ethers.provider.send("evm_mine", []);
     await rewards.connect(maker).claim(0, await token.getAddress());
@@ -371,6 +382,9 @@ describe("ArafRewards global epoch weight accounting", function () {
     await vault.connect(owner).onArafRevenue(await token.getAddress(), ethers.parseUnits("1000", DECIMALS), 0, 1004);
     const alloc = (ethers.parseUnits("1000", DECIMALS) * 4000n) / 10000n;
     await rewards.connect(owner).allocateEpochRewards(0, await token.getAddress(), alloc);
+    await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
+    await ethers.provider.send("evm_mine", []);
+    await rewards.connect(owner).finalizeEpochToken(0, await token.getAddress());
 
     await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
     await ethers.provider.send("evm_mine", []);
@@ -394,6 +408,9 @@ describe("ArafRewards global epoch weight accounting", function () {
     await rewards.connect(owner).allocateEpochRewards(0, await token.getAddress(), (NOTIONAL * 4000n) / 10000n);
     await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
     await ethers.provider.send("evm_mine", []);
+    await rewards.connect(owner).finalizeEpochToken(0, await token.getAddress());
+    await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
+    await ethers.provider.send("evm_mine", []);
     const before = await token.balanceOf(maker.address);
     await rewards.connect(maker).claim(0, await token.getAddress());
     const after = await token.balanceOf(maker.address);
@@ -410,6 +427,9 @@ describe("ArafRewards global epoch weight accounting", function () {
     await rewards.connect(owner).allocateEpochRewards(0, await token.getAddress(), (NOTIONAL * 4000n) / 10000n);
     await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
     await ethers.provider.send("evm_mine", []);
+    await rewards.connect(owner).finalizeEpochToken(0, await token.getAddress());
+    await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
+    await ethers.provider.send("evm_mine", []);
     await rewards.connect(maker).claim(0, await token.getAddress());
     expect(await rewards.claimed(0, maker.address, await token.getAddress())).to.equal(true);
   });
@@ -422,6 +442,9 @@ describe("ArafRewards global epoch weight accounting", function () {
     await token.mint(await vault.getAddress(), NOTIONAL);
     await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 1007);
     await rewards.connect(owner).allocateEpochRewards(0, await token.getAddress(), (NOTIONAL * 4000n) / 10000n);
+    await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
+    await ethers.provider.send("evm_mine", []);
+    await rewards.connect(owner).finalizeEpochToken(0, await token.getAddress());
     await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
     await ethers.provider.send("evm_mine", []);
     const expected = await rewards.claimable(0, maker.address, await token.getAddress());
@@ -466,6 +489,9 @@ describe("ArafRewards global epoch weight accounting", function () {
     await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 3000);
     const alloc = (NOTIONAL * 4000n) / 10000n;
     await rewards.connect(owner).allocateEpochRewards(0, await token.getAddress(), alloc);
+    await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
+    await ethers.provider.send("evm_mine", []);
+    await rewards.connect(owner).finalizeEpochToken(0, await token.getAddress());
     await ethers.provider.send("evm_increaseTime", [9 * 24 * 3600]);
     await ethers.provider.send("evm_mine", []);
     await rewards.connect(maker).claim(0, await token.getAddress());
