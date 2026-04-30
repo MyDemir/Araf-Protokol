@@ -102,3 +102,10 @@ Kural:
 2. Önceki backend/frontend sürümünü geri alıp yeniden başlat.
 3. Checkpoint'i sadece en son güvenli işlenmiş bloğa geri al (asla ileri alma).
 4. Trafiği açmadan readiness ve smoke kontrollerini tekrar çalıştır.
+
+
+## Rewards rollout split-brain guard
+- `ARAF_REVENUE_VAULT_ADDRESS`
+- `ARAF_REWARDS_ADDRESS`
+- `FINAL_TREASURY_ADDRESS`
+- Deploy tamamlandıktan sonra treasury switch (`ArafEscrow.setTreasury`) ayrı adım olarak yapılmalıdır.

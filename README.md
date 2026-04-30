@@ -89,3 +89,7 @@ Listing-first / `createEscrow` / `lockEscrow` anlatısı artık **kanonik mimari
 
 ---
 *Araf Protocol — “The system does not judge. It makes dishonesty expensive.”*
+
+
+### Rewards rollout
+See `docs/TR/REWARDS_ROLLOUT.md` and `docs/EN/REWARDS_ROLLOUT.md` for staged rollout and safety gates.
