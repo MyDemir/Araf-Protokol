@@ -1,7 +1,7 @@
 {
   "name": "araf-contracts",
   "version": "2.0.0",
-  "description": "Araf Protocol Smart Contracts \u2014 Base L2",
+  "description": "Araf Protocol Smart Contracts — Base L2",
   "private": true,
   "scripts": {
     "compile": "hardhat compile",
@@ -14,7 +14,8 @@
     "deploy:rewards:base-sepolia": "hardhat run scripts/deployRewards.js --network base-sepolia",
     "verify:rewards": "hardhat run scripts/verifyRewardsDeployment.js --network base-sepolia",
     "configure:rewards": "hardhat run scripts/configureRewards.js --network base-sepolia",
-    "smoke:rewards": "hardhat run scripts/smokeRewards.js --network hardhat"
+    "smoke:rewards": "hardhat run scripts/smokeRewards.js --network hardhat",
+    "switch:rewards:treasury": "hardhat run scripts/switchRewardsTreasury.js --network base-sepolia"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",

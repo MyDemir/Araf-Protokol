@@ -35,6 +35,15 @@ async function exportAbi(contractNames) {
   }
 }
 
+function assertManifestOverwriteSafety(existingManifest, nextManifest, env = process.env) {
+  if (!existingManifest) return;
+  const critical = ['escrow', 'vault', 'rewards', 'finalTreasury'];
+  const changed = critical.filter((k) => existingManifest[k] && nextManifest[k] && existingManifest[k] !== nextManifest[k]);
+  if (changed.length && env.CONFIRM_OVERWRITE_REWARDS_MANIFEST !== 'yes') {
+    throw new Error(`Refusing to overwrite rewards manifest critical addresses: ${changed.join(', ')}. Set CONFIRM_OVERWRITE_REWARDS_MANIFEST=yes`);
+  }
+}
+
 async function main() {
   const [deployer] = await ethers.getSigners();
   const net = await ethers.provider.getNetwork();
@@ -100,7 +109,14 @@ async function main() {
 
   const depDir = path.resolve(__dirname, '../deployments');
   ensureDir(depDir);
-  fs.writeFileSync(path.join(depDir, `${network.name}-rewards.json`), JSON.stringify(manifest, null, 2));
+  const manifestPath = path.join(depDir, `${network.name}-rewards.json`);
+  if (fs.existsSync(manifestPath)) {
+    const existing = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    // [TR] Kritik deployment adreslerinin sessizce ezilmesini engeller.
+    // [EN] Prevent silent overwrite of critical deployment addresses.
+    assertManifestOverwriteSafety(existing, manifest, process.env);
+  }
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   await exportAbi(['ArafEscrow', 'ArafRevenueVault', 'ArafRewards']);
   console.log('Rewards deployment complete', manifest);
 }
@@ -109,4 +125,4 @@ if (require.main === module) {
   main().catch((e) => { console.error(e); process.exit(1); });
 }
 
-module.exports = { isLocalNetwork, resolvePublicTokens };
+module.exports = { isLocalNetwork, resolvePublicTokens, assertManifestOverwriteSafety };
