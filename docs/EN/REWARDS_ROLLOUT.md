@@ -43,3 +43,15 @@ This document defines a **safe staged rollout** for Proof of Peace Rewards.
 - No hardcoded production addresses.
 - Treasury switch is a separate step from deployment.
 - Oracle-free dispute model and settlement authority stay on-chain.
+
+## Pre-Go-Live Verification
+- Vault contract address must be verified from deployment manifest/config.
+- Rewards contract address must be verified from deployment manifest/config.
+- Supported token set must be USDT/USDC.
+- `rewardBps` must start at 4000.
+- Backend/frontend remain read-only / mirror-only.
+- Backend/frontend do not define reward eligibility, weights, outcomes, recipients, or claimable authority.
+- Treasury switch is not part of deployment.
+- Treasury switch is a separate explicit post-verification operation.
+- No production address is hardcoded.
+- Smoke and verify commands must pass before treasury switch.

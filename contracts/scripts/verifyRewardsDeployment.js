@@ -5,20 +5,34 @@ const path = require('path');
 
 const fail = (m) => { console.error(`❌ ${m}`); process.exitCode = 1; };
 const ok = (m) => console.log(`✅ ${m}`);
-const addr = (v) => (v ? ethers.getAddress(v) : null);
+const ZERO = '0x0000000000000000000000000000000000000000';
+// [TR] Readiness doğrulamasında zero-address kabul edilmez.
+// [EN] Zero addresses are rejected during readiness verification.
+const addr = (v, n) => {
+  if (!v) throw new Error(`${n} missing`);
+  const normalized = ethers.getAddress(v);
+  if (normalized === ZERO) throw new Error(`${n} zero address`);
+  return normalized;
+};
 
 function readManifest() {
   const p = path.resolve(__dirname, `../deployments/${network.name}-rewards.json`);
   return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : {};
 }
 
+function resolveAddressesFromEnvOrManifest(env, manifest) {
+  return {
+    escrowAddress: addr(env.ARAF_ESCROW_ADDRESS || manifest.escrow, 'ARAF_ESCROW_ADDRESS'),
+    vaultAddress: addr(env.ARAF_REVENUE_VAULT_ADDRESS || manifest.vault, 'ARAF_REVENUE_VAULT_ADDRESS'),
+    rewardsAddress: addr(env.ARAF_REWARDS_ADDRESS || manifest.rewards, 'ARAF_REWARDS_ADDRESS'),
+    usdt: addr(env.USDT_ADDRESS || manifest.usdt, 'USDT_ADDRESS'),
+    usdc: addr(env.USDC_ADDRESS || manifest.usdc, 'USDC_ADDRESS')
+  };
+}
+
 async function main() {
   const m = readManifest();
-  const escrowAddress = addr(process.env.ARAF_ESCROW_ADDRESS || m.escrow);
-  const vaultAddress = addr(process.env.ARAF_REVENUE_VAULT_ADDRESS || m.vault);
-  const rewardsAddress = addr(process.env.ARAF_REWARDS_ADDRESS || m.rewards);
-  const usdt = addr(process.env.USDT_ADDRESS || m.usdt);
-  const usdc = addr(process.env.USDC_ADDRESS || m.usdc);
+  const { escrowAddress, vaultAddress, rewardsAddress, usdt, usdc } = resolveAddressesFromEnvOrManifest(process.env, m);
 
   const vault = await ethers.getContractAt('ArafRevenueVault', vaultAddress);
   const rewards = await ethers.getContractAt('ArafRewards', rewardsAddress);
@@ -42,3 +56,5 @@ async function main() {
 }
 
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });
+
+module.exports = { readManifest, resolveAddressesFromEnvOrManifest };

@@ -53,3 +53,15 @@ Bu doküman, Proof of Peace Rewards açılışını **güvenli ve aşamalı** bi
 - `rewardBps == 4000` başlangıcı doğrulandı.
 - Backend/frontend yalnız read-only/mirror rolünde kaldı.
 - Treasury switch henüz yapılmadı (ayrı adım).
+
+## Go-Live Öncesi Doğrulama
+- Vault kontrat adresi deployment manifest/config üzerinden doğrulanmalıdır.
+- Rewards kontrat adresi deployment manifest/config üzerinden doğrulanmalıdır.
+- Supported token seti USDT/USDC olmalıdır.
+- `rewardBps` başlangıcı 4000 olmalıdır.
+- Backend/frontend read-only / mirror-only kalmalıdır.
+- Backend/frontend reward eligibility, weight, outcome, recipient veya claimable authority tanımlamamalıdır.
+- Treasury switch deployment sürecinin parçası değildir.
+- Treasury switch doğrulama sonrası ayrı ve açık bir operasyon olarak yürütülmelidir.
+- Production adresleri hardcode edilmemelidir.
+- Treasury switch öncesi smoke ve verify komutları başarılı olmalıdır.

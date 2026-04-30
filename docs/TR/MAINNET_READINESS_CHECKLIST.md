@@ -116,3 +116,15 @@ Aşağıdaki sıra **bozulmamalıdır**:
 2. Önceki backend/frontend sürümünü geri alıp yeniden başlat.
 3. Checkpoint'i sadece en son güvenli işlenmiş bloğa geri al (asla ileri alma).
 4. Trafiği açmadan readiness ve smoke kontrollerini tekrar çalıştır.
+
+## Go-Live Öncesi Doğrulama
+- Vault kontrat adresi deployment manifest/config üzerinden doğrulanmalıdır.
+- Rewards kontrat adresi deployment manifest/config üzerinden doğrulanmalıdır.
+- Supported token seti USDT/USDC olmalıdır.
+- `rewardBps` başlangıcı 4000 olmalıdır.
+- Backend/frontend read-only / mirror-only kalmalıdır.
+- Backend/frontend reward eligibility, weight, outcome, recipient veya claimable authority tanımlamamalıdır.
+- Treasury switch deployment sürecinin parçası değildir.
+- Treasury switch doğrulama sonrası ayrı ve açık bir operasyon olarak yürütülmelidir.
+- Production adresleri hardcode edilmemelidir.
+- Treasury switch öncesi smoke ve verify komutları başarılı olmalıdır.
