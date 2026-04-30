@@ -17,4 +17,11 @@ describe('frontend rewards authority regression', () => {
       expect(src.length).toBeGreaterThan(0);
     }
   });
+
+  it('frontend env example preserves VITE_API_URL because apiConfig uses it', () => {
+    const apiConfigSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/app/apiConfig.js'), 'utf8');
+    const envExample = fs.readFileSync(path.resolve(process.cwd(), '.env.example'), 'utf8');
+    expect(apiConfigSrc).toContain('VITE_API_URL');
+    expect(envExample).toContain('VITE_API_URL=');
+  });
 });

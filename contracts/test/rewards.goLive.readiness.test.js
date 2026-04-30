@@ -86,4 +86,18 @@ describe('rewards go-live readiness hardening', function () {
     expect(() => verify.resolveAddressesFromEnvOrManifest({}, { ...A, usdt: undefined })).to.throw(/USDT_ADDRESS missing/);
     expect(() => verify.resolveAddressesFromEnvOrManifest({}, { ...A, usdc: undefined })).to.throw(/USDC_ADDRESS missing/);
   });
+
+  it('contracts env example uses canonical script-consumed variable names', function () {
+    const envExample = fs.readFileSync(path.resolve(__dirname, '../.env.example'), 'utf8');
+    expect(envExample).to.contain('ARAF_ESCROW_ADDRESS=');
+    expect(envExample).to.contain('ARAF_REVENUE_VAULT_ADDRESS=');
+    expect(envExample).to.contain('ARAF_REWARDS_ADDRESS=');
+    expect(envExample).to.contain('FINAL_TREASURY_ADDRESS=');
+    expect(envExample).to.contain('USDT_ADDRESS=');
+    expect(envExample).to.contain('USDC_ADDRESS=');
+    expect(envExample).to.contain('REWARD_BPS=4000');
+    expect(envExample).to.contain('CONFIRM_CONFIGURE_REWARDS=false');
+    expect(envExample).to.contain('CONFIRM_TREASURY_SWITCH=false');
+    expect(envExample).to.contain('EXPECTED_CURRENT_TREASURY_ADDRESS=');
+  });
 });
