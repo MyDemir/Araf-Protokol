@@ -1,20 +1,25 @@
 {
   "name": "araf-contracts",
   "version": "2.0.0",
-  "description": "Araf Protocol Smart Contracts — Base L2",
+  "description": "Araf Protocol Smart Contracts \u2014 Base L2",
   "private": true,
   "scripts": {
-    "compile":  "hardhat compile",
-    "test":     "hardhat test",
+    "compile": "hardhat compile",
+    "test": "hardhat test",
     "coverage": "hardhat coverage",
     "deploy:base-sepolia": "hardhat run scripts/deploy.js --network base-sepolia",
-    "deploy:base":         "hardhat run scripts/deploy.js --network base",
-    "verify":   "hardhat verify --network base-sepolia"
+    "deploy:base": "hardhat run scripts/deploy.js --network base",
+    "verify": "hardhat verify --network base-sepolia",
+    "deploy:rewards:local": "hardhat run scripts/deployRewards.js --network hardhat",
+    "deploy:rewards:base-sepolia": "hardhat run scripts/deployRewards.js --network base-sepolia",
+    "verify:rewards": "hardhat run scripts/verifyRewardsDeployment.js --network base-sepolia",
+    "configure:rewards": "hardhat run scripts/configureRewards.js --network base-sepolia",
+    "smoke:rewards": "hardhat run scripts/smokeRewards.js --network hardhat"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",
     "hardhat": "^2.22.0",
-    "dotenv":  "^16.4.0"
+    "dotenv": "^16.4.0"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.0.2"
