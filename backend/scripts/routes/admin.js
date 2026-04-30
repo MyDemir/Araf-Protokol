@@ -13,6 +13,10 @@ const Trade = require("../models/Trade");
 const User = require("../models/User");
 const Feedback = require("../models/Feedback");
 const HistoricalStat = require("../models/HistoricalStat");
+const RevenueEvent = require("../models/RevenueEvent");
+const RewardEpoch = require("../models/RewardEpoch");
+const RewardFunding = require("../models/RewardFunding");
+const RewardClaim = require("../models/RewardClaim");
 const { buildBankProfileRisk, buildTradeHealthSignals } = require("./tradeRisk");
 
 const router = express.Router();
@@ -201,6 +205,24 @@ function _toProposalAgeSeconds(proposedAt, now = new Date()) {
 // [EN] Entire admin surface is read-only observability and always gated by auth chain.
 router.use(requireAuth, requireSessionWalletMatch, requireAdminWallet);
 router.use(adminReadLimiter);
+
+router.get("/revenue", async (_req, res, next) => {
+  try {
+    const rows = await RevenueEvent.find().sort({ block_number: -1, log_index: -1 }).limit(500).lean();
+    return res.json({ rows });
+  } catch (err) { return next(err); }
+});
+
+router.get("/rewards/health", async (_req, res, next) => {
+  try {
+    const [epochs, funding, claims] = await Promise.all([
+      RewardEpoch.countDocuments(),
+      RewardFunding.countDocuments(),
+      RewardClaim.countDocuments(),
+    ]);
+    return res.json({ mirror_only: true, counts: { epochs, funding, claims } });
+  } catch (err) { return next(err); }
+});
 
 router.get("/summary", async (req, res, next) => {
   try {
