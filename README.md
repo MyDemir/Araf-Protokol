@@ -77,6 +77,23 @@ Listing-first / `createEscrow` / `lockEscrow` anlatısı artık **kanonik mimari
 
 ---
 
+
+## 🎁 Proof of Peace Rewards (Concise)
+- Rewards are **not trade cashback**.
+- Eligibility is generated only from **ArafEscrow terminal outcomes**.
+- Backend is mirror-only; admin/sponsor cannot choose recipients.
+- `paymentRiskLevel` is not a reward multiplier.
+- MVP zero-weight outcomes: auto-release, burn, mutual cancel, disputed release.
+- MVP Tier 0 is not reward eligible.
+- `rewardBps` starts at 4000 and is bounded to 4000–7000.
+
+Rollout docs:
+- TR: [docs/TR/REWARDS_ROLLOUT.md](./docs/TR/REWARDS_ROLLOUT.md)
+- EN: [docs/EN/REWARDS_ROLLOUT.md](./docs/EN/REWARDS_ROLLOUT.md)
+- Mainnet checklist (TR): [docs/TR/MAINNET_READINESS_CHECKLIST.md](./docs/TR/MAINNET_READINESS_CHECKLIST.md)
+
+---
+
 ## 📖 Documentation
 - Canonical Architecture:
   - [docs/EN/ARCHITECTURE.md](./docs/EN/ARCHITECTURE.md)

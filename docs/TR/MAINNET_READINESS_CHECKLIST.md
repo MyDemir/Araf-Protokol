@@ -24,20 +24,16 @@ Kritik not:
 - `BASE_WS_RPC_URL` (önerilir; yoksa HTTP fallback gözlenmeli)
 - `WORKER_FINALITY_DEPTH` (önerilen production değeri: `6` veya üzeri)
 
-### Token env stratejisi (backend + deploy uyumu)
-- Base Mainnet (`EXPECTED_CHAIN_ID=8453`) için:
+### Rewards rollout env (backend/frontend + contracts uyumu)
+- `ARAF_REVENUE_VAULT_ADDRESS`
+- `ARAF_REWARDS_ADDRESS`
+- `FINAL_TREASURY_ADDRESS`
+- Base Mainnet token env:
   - `BASE_MAINNET_USDT_ADDRESS`
   - `BASE_MAINNET_USDC_ADDRESS`
-- Base Sepolia (`EXPECTED_CHAIN_ID=84532`) için:
+- Base Sepolia token env:
   - `BASE_SEPOLIA_USDT_ADDRESS`
   - `BASE_SEPOLIA_USDC_ADDRESS`
-- `ARAF_TRACKED_TOKENS` (opsiyonel)
-
-Kural:
-- `ARAF_TRACKED_TOKENS` boşsa backend tracked seti active chain'e göre deterministic olarak `BASE_MAINNET_*` veya `BASE_SEPOLIA_*` çiftinden türetilir.
-- Bu kaynaklar da boşsa production config load **fail-closed** olmalıdır.
-- Legacy alias (`MAINNET_USDT_ADDRESS` / `MAINNET_USDC_ADDRESS`) yalnız Base Mainnet için geriye uyumlu kabul edilir; Base Sepolia'da kullanılmaz.
-- Local/custom deploy'da `USE_EXTERNAL_TOKEN_ADDRESSES=true` seçilecekse `EXTERNAL_USDT_ADDRESS` ve `EXTERNAL_USDC_ADDRESS` kullanılır.
 
 ### Deploy ownership güvenliği
 - `TREASURY_ADDRESS`
@@ -52,51 +48,69 @@ Kural:
 
 ---
 
-## 2) Stabilization Doğrulama Adımları (Deploy gerektirmez)
+## 2) Proof of Peace Rewards — Final Go-Live Sırası (zorunlu sıra)
 
-1. **Token config doğrulaması (kanonik getter)**
-   - Active chain token adresleri için `getTokenConfig(address)` çıktılarında:
-     - `supported=true`
-     - `allowSellOrders/allowBuyOrders` beklenen policy ile uyumlu
-     - `decimals` ve `tierMaxAmountsBaseUnit[4]` dolu
+Aşağıdaki sıra **bozulmamalıdır**:
 
-2. **Ownership doğrulaması**
-   - `owner()` adresi `FINAL_OWNER_ADDRESS` ile eşleşmeli.
-   - Public/custom modda `owner == treasury` olmamalı.
+1. **Contracts deployed**
+   - ArafEscrow (var olan deployment veya ayrı migration)
+   - ArafRevenueVault
+   - ArafRewards
+2. **Vault/Rewards configured**
+   - `vault.rewards == ArafRewards`
+   - USDT/USDC `supportedToken=true`
+   - `rewardBps == 4000` başlangıç doğrulaması
+3. **Backend/frontend env updated**
+   - Kontrat adresleri ve chain-aware token env'leri güncellendi
+   - Backend mirror-only, frontend authority-free davranışı doğrulandı
+4. **Smoke verified**
+   - Local/staging smoke senaryoları geçti
+   - Public chain'de yalnız kontrollü doğrulama komutları çalıştırıldı
+5. **Yalnız bundan sonra** `ArafEscrow.treasury -> ArafRevenueVault` switch
+   - Ayrı change window
+   - `EXPECTED_CURRENT_TREASURY_ADDRESS` ile guard zorunlu
 
-3. **Chain fail-closed doğrulaması**
-   - `EXPECTED_CHAIN_ID=8453` iken RPC farklı chain (`84532` / `31337`) dönerse:
-     - worker/protocol-config/cancel-signature yüzeyleri çalışmamalı.
-
-4. **Worker checkpoint + finality doğrulaması**
-   - Redis checkpoint anahtarları (`worker:last_block`, `worker:last_safe_block`) mevcut ve ileri yönde güncelleniyor olmalı.
-   - Replay sonrası lag kabul edilebilir aralıkta olmalı.
-
-5. **Health / readiness doğrulaması**
-   - `/health` liveness: process ayakta.
-   - `/ready` readiness: mongo/redis/provider/config/chainId/worker kontrolleri `ok=true` verebilmeli.
-
-6. **Frontend production policy doğrulaması**
-   - Production chain policy yalnız Base Mainnet (`8453`).
-   - Test faucet/mint UI ve hook çağrıları production yüzeyinde kapalı.
-   - API çağrıları same-origin `/api` rewrite policy ile uyumlu (harici `VITE_API_URL` policy dışı kullanılmamalı).
+> Kritik: Treasury switch deployment ile aynı adımda yapılmamalıdır.
 
 ---
 
-## 3) Smoke Test Komutları (local/staging)
+## 3) Rewards Model Doğrulama Maddeleri
+
+- Rewards, **trade cashback değildir**.
+- Eligibility yalnız **ArafEscrow terminal outcome** verisinden üretilir.
+- Backend yalnız mirror/read-model katmanıdır; recipient seçemez.
+- Admin recipient seçemez.
+- Sponsor/funder recipient seçemez.
+- `paymentRiskLevel` reward multiplier değildir.
+- MVP'de auto-release / burn / mutual cancel / disputed release zero-weight'tir.
+- MVP'de Tier 0 reward eligibility dışıdır.
+- `rewardBps` yalnız 4000–7000 aralığındadır (başlangıç 4000).
+
+---
+
+## 4) Stabilization Doğrulama Adımları (Deploy gerektirmez)
+
+1. **Token config doğrulaması (kanonik getter)**
+2. **Ownership doğrulaması**
+3. **Chain fail-closed doğrulaması**
+4. **Worker checkpoint + finality doğrulaması**
+5. **Health / readiness doğrulaması**
+6. **Frontend production policy doğrulaması**
+
+---
+
+## 5) Smoke Test Komutları (local/staging)
 
 - `cd backend && npm test -- --runInBand`
-- `cd contracts && npm test -- --grep "deploy script"`
+- `cd contracts && npm test -- --grep "deploy script|rewards"`
 - `cd frontend && npm test`
 - `cd frontend && npm run build`
 - `curl -s http://localhost:4000/health`
 - `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:4000/ready`
 
-> Not: Bu smoke seti stabilization amaçlıdır; tek başına deploy onayı değildir.
-
 ---
 
-## 4) Rollback Notları
+## 6) Rollback Notları
 
 1. Önce backend worker süreçlerini durdur.
 2. Önceki backend/frontend sürümünü geri alıp yeniden başlat.
