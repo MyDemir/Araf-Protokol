@@ -106,6 +106,8 @@ Rollout docs:
 - Canonical Architecture:
   - [docs/EN/ARCHITECTURE.md](./docs/EN/ARCHITECTURE.md)
   - [docs/TR/ARCHITECTURE.md](./docs/TR/ARCHITECTURE.md)
+  - [docs/EN/ARCHITECTURE_INCENTIVES.md](./docs/EN/ARCHITECTURE_INCENTIVES.md)
+  - [docs/TR/ARCHITECTURE_INCENTIVES.md](./docs/TR/ARCHITECTURE_INCENTIVES.md)
 - API Reference:
   - [docs/EN/API.md](./docs/EN/API.md)
   - [docs/TR/API.md](./docs/TR/API.md)
