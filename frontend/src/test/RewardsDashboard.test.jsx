@@ -22,6 +22,12 @@ describe('RewardsDashboard', () => {
     render(<RewardsDashboard wallet="0xabc" currentEpoch={12} claimableAmount={0n} />);
     expect(screen.getByRole('button', { name: /claim/i }).hasAttribute('disabled')).toBe(true);
   });
+  it('shows unavailable state instead of zero on read error/wrong chain', () => {
+    render(<RewardsDashboard wallet="0xabc" currentEpoch={12} claimableAmount={0n} claimableState="error" claimableError="rpc_down" />);
+    expect(screen.getByText(/claimable unavailable/i)).toBeTruthy();
+    render(<RewardsDashboard wallet="0xabc" currentEpoch={12} claimableAmount={0n} claimableState="blocked" />);
+    expect(screen.getByText(/unavailable on current network/i)).toBeTruthy();
+  });
 
   it('click claim invokes handler', () => {
     const onClaim = vi.fn();

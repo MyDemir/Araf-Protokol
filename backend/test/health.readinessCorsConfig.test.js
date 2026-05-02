@@ -76,4 +76,25 @@ describe("health readiness production ALLOWED_ORIGINS diagnostics", () => {
     expect(readiness.missingConfig.find((item) => String(item).startsWith("ALLOWED_ORIGINS_"))).toBeUndefined();
     expect(readiness.checks.config).toBe(true);
   });
+
+  it("security_runtime_contract_ready_uses_503_on_unready_state", async () => {
+    delete process.env.ALLOWED_ORIGINS;
+    const { getReadiness } = require("../scripts/services/health");
+    const readiness = await getReadiness({ worker, provider });
+
+    const statusCode = readiness.ok ? 200 : 503;
+    expect(readiness.ok).toBe(false);
+    expect(statusCode).toBe(503);
+  });
+
+  it("security_docs_reference_ready_for_readiness_not_health", async () => {
+    const fs = require("fs");
+    const en = fs.readFileSync(require("path").resolve(process.cwd(), "../docs/EN/LOCAL_DEVELOPMENT.md"), "utf8");
+    const tr = fs.readFileSync(require("path").resolve(process.cwd(), "../docs/TR/LOCAL_DEVELOPMENT.md"), "utf8");
+
+    expect(en).toContain("/ready");
+    expect(en).toContain("liveness");
+    expect(tr).toContain("/ready");
+    expect(tr).toContain("liveness");
+  });
 });

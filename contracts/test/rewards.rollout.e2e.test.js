@@ -56,6 +56,7 @@ describe('Proof of Peace Rewards rollout safety e2e', function () {
     await setTrade(mockEscrow, 1, maker.address, taker.address, OUTCOME.CLEAN_RELEASE, terminalAt);
     await rewards.recordTradeOutcome(1);
 
+    await vault.connect(escrowSigner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 1);
     await token.mint(await vault.getAddress(), NOTIONAL);
     await vault.connect(escrowSigner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 1);
 
@@ -81,6 +82,7 @@ describe('Proof of Peace Rewards rollout safety e2e', function () {
     await setTrade(mockEscrow, 2, maker.address, taker.address, OUTCOME.AUTO_RELEASE, terminalAt);
     await rewards.recordTradeOutcome(2);
 
+    await vault.connect(escrowSigner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 1, 2);
     await token.mint(await vault.getAddress(), NOTIONAL);
     await vault.connect(escrowSigner).onArafRevenue(await token.getAddress(), NOTIONAL, 1, 2);
     const allocation = (NOTIONAL * 4000n) / 10000n;
@@ -118,6 +120,7 @@ describe('Proof of Peace Rewards rollout safety e2e', function () {
 
   it('end_to_end_admin_cannot_drain_reward_reserve', async function () {
     const { owner, escrowSigner, outsider, token, vault } = await loadFixture(fixture);
+    await vault.connect(escrowSigner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 77);
     await token.mint(await vault.getAddress(), NOTIONAL);
     await vault.connect(escrowSigner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 77);
     const rewardReserve = await vault.rewardReserve(await token.getAddress());

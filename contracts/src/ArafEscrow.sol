@@ -88,6 +88,13 @@ error DecayTooHigh();
 error BanTooHigh();
 
 interface IArafRevenueReceiver {
+    function noteEscrowRevenueIntent(
+        address token,
+        uint256 amount,
+        uint8 kind,
+        uint256 tradeId
+    ) external;
+
     function onArafRevenue(
         address token,
         uint256 amount,
@@ -1583,6 +1590,16 @@ contract ArafEscrow is ReentrancyGuard, EIP712, Ownable, Pausable {
         uint256 _tradeId
     ) internal {
         if (_amount == 0) return;
+
+        // [TR] Treasury vault destekliyorsa same-path exact-in doğrulaması için niyet kaydı bırakılır.
+        // [EN] If treasury vault supports it, register intent for same-path exact-in verification.
+        if (treasury.code.length > 0) {
+            try IArafRevenueReceiver(treasury).noteEscrowRevenueIntent(_token, _amount, uint8(_kind), _tradeId) {
+                // no-op
+            } catch {
+                // Backward compatibility: legacy treasury receivers may not implement intent hook.
+            }
+        }
 
         IERC20(_token).safeTransfer(treasury, _amount);
 

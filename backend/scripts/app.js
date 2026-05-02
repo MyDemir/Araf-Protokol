@@ -236,9 +236,10 @@ async function bootstrap() {
     jobLocks[jobKey] = true;
     try {
       const result = await jobFn();
-      if (didScheduledJobSucceed(result) && typeof onSuccess === "function") {
+      const isSuccess = didScheduledJobSucceed(result);
+      if (isSuccess && typeof onSuccess === "function") {
         onSuccess();
-      } else if (!didScheduledJobSucceed(result)) {
+      } else if (!isSuccess) {
         logger.warn(`[Scheduler] ${jobKey} completed with unsuccessful result contract.`);
       }
     } catch (err) {

@@ -166,6 +166,38 @@ export function normalizeTokenDecimalsOrThrow(rawDecimals) {
   return normalized;
 }
 
+/**
+ * [TR] OrderFilled eventini escrow adresi + beklenen orderId ile sıkı filtreler.
+ * [EN] Strictly filters OrderFilled by escrow address + expected orderId.
+ */
+export function extractOrderFilledArgs(receipt, expectedOrderId, escrowAddress = ESCROW_ADDRESS) {
+  if (!receipt?.logs?.length || !escrowAddress) return null;
+
+  const normalizedEscrow = getAddress(escrowAddress);
+  const expected = BigInt(expectedOrderId);
+
+  for (const log of receipt.logs) {
+    try {
+      if (!log?.address || getAddress(log.address) !== normalizedEscrow) continue;
+
+      const decoded = decodeEventLog({
+        abi: ArafEscrowABI,
+        data: log.data,
+        topics: log.topics,
+        strict: false,
+      });
+
+      if (decoded?.eventName !== 'OrderFilled') continue;
+      if (BigInt(decoded?.args?.orderId ?? -1) !== expected) continue;
+      return decoded.args || null;
+    } catch (_) {
+      // malformed/unrelated log
+    }
+  }
+
+  return null;
+}
+
 
 //Kontrat adresi geçerlilik kontrolü — hem write hem read fonksiyonları için
 const _isValidAddress = ESCROW_ADDRESS && ESCROW_ADDRESS !== "0x0000000000000000000000000000000000000000";
@@ -175,32 +207,6 @@ export function useArafContract() {
   const { data: walletClient } = useWalletClient();
   const chainId = useChainId();
   const supportedChains = getSupportedChainsMap();
-
-  /**
-   * [TR] Receipt içinden hedef event'i decode eder.
-   *      Frontend contract kararını üretmez; yalnız on-chain event'ten kimlik çıkarır.
-   * [EN] Decodes a target event from receipt logs.
-   */
-  const extractEventArgs = useCallback((receipt, targetEventName) => {
-    if (!receipt?.logs?.length) return null;
-
-    for (const log of receipt.logs) {
-      try {
-        const decoded = decodeEventLog({
-          abi: ArafEscrowABI,
-          data: log.data,
-          topics: log.topics,
-          strict: false,
-        });
-        if (decoded?.eventName === targetEventName) {
-          return decoded.args || null;
-        }
-      } catch (_) {
-        // log bu ABI event'i değilse devam
-      }
-    }
-    return null;
-  }, []);
 
   /*
    * @throws {Error} Desteklenmeyen ağ algılandığında
@@ -302,13 +308,13 @@ export function useArafContract() {
   const fillSellOrder = useCallback(
     async (orderId, fillAmount, childListingRef) => {
       const receipt = await writeContract("fillSellOrder", [orderId, fillAmount, childListingRef]);
-      const args = extractEventArgs(receipt, "OrderFilled");
+      const args = extractOrderFilledArgs(receipt, orderId, ESCROW_ADDRESS);
       return {
         receipt,
         tradeId: args?.tradeId ? BigInt(args.tradeId) : null,
       };
     },
-    [writeContract, extractEventArgs]
+    [writeContract]
   );
 
   const cancelSellOrder = useCallback(
@@ -325,13 +331,13 @@ export function useArafContract() {
   const fillBuyOrder = useCallback(
     async (orderId, fillAmount, childListingRef) => {
       const receipt = await writeContract("fillBuyOrder", [orderId, fillAmount, childListingRef]);
-      const args = extractEventArgs(receipt, "OrderFilled");
+      const args = extractOrderFilledArgs(receipt, orderId, ESCROW_ADDRESS);
       return {
         receipt,
         tradeId: args?.tradeId ? BigInt(args.tradeId) : null,
       };
     },
-    [writeContract, extractEventArgs]
+    [writeContract]
   );
 
   const cancelBuyOrder = useCallback(

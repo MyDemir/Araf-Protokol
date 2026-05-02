@@ -85,10 +85,24 @@ async function connectRedis() {
     return connectPromise;
   }
 
-  const url = process.env.REDIS_URL || "redis://127.0.0.1:6379";
+  const isProduction = process.env.NODE_ENV === "production";
+  const rawUrl = process.env.REDIS_URL;
+  if (isProduction && !rawUrl) {
+    throw new Error("[Redis][SEC] Production'da REDIS_URL zorunludur (localhost fallback yasak).");
+  }
+  const url = rawUrl || "redis://127.0.0.1:6379";
 
   // ALT-03 Fix: TLS desteği — rediss:// prefix'i veya REDIS_TLS=true
   const useTLS = url.startsWith("rediss://") || process.env.REDIS_TLS === "true";
+  const skipVerify = process.env.REDIS_TLS_SKIP_VERIFY === "true";
+
+  if (isProduction && skipVerify) {
+    throw new Error("[Redis][SEC] Production'da REDIS_TLS_SKIP_VERIFY=true kullanılamaz.");
+  }
+
+  if (isProduction && !useTLS) {
+    throw new Error("[Redis][SEC] Production'da Redis TLS zorunludur (rediss:// veya REDIS_TLS=true).");
+  }
 
   const clientOptions = { url };
 
@@ -97,7 +111,7 @@ async function connectRedis() {
       tls: true,
       // [TR] REDIS_TLS_SKIP_VERIFY sadece self-signed sertifikaları olan
       // geliştirme ortamları için. PRODUCTION'DA KULLANMAYIN.
-      rejectUnauthorized: process.env.REDIS_TLS_SKIP_VERIFY !== "true",
+      rejectUnauthorized: isProduction ? true : !skipVerify,
     };
     logger.info("[Redis] TLS modu aktif.");
   }

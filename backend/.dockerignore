@@ -3,6 +3,8 @@ npm-debug.log*
 .env
 .env.local
 .env.*.local
+.env*
+!.env.example
 Dockerfile
 .dockerignore
 .git

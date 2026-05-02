@@ -26,6 +26,8 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
     error ExactInMismatch();
     error InsufficientRewardReserve();
     error RevenueLiabilityMismatch();
+    error MissingRevenueIntent();
+    error RevenueAmountMismatch();
 
     uint256 public constant BPS = 10_000;
     uint256 public constant MIN_REWARD_BPS = 4_000;
@@ -51,6 +53,8 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
 
     mapping(bytes32 => ProductPool) public productPools;
     mapping(uint256 => mapping(bytes32 => mapping(address => uint256))) public productFundingByEpoch;
+    mapping(bytes32 => uint256) private pendingRevenueBalanceBefore;
+    mapping(bytes32 => uint256) private pendingRevenueAmount;
 
     event EscrowRevenueReceived(
         address indexed token,
@@ -81,6 +85,7 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
         uint256 targetEpoch,
         bytes32 fundingRef
     );
+    event EscrowRevenueIntent(address indexed token, uint256 amount, uint8 kind, uint256 tradeId);
 
     modifier onlyEscrow() {
         if (msg.sender != escrow) revert OnlyEscrow();
@@ -144,8 +149,19 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
         if (!supportedToken[token]) revert UnsupportedRewardToken();
         if (amount == 0) revert ZeroAmount();
 
-        uint256 currentLiability = rewardReserve[token] + treasuryReserve[token];
+        bytes32 key = _revenueIntentKey(token, kind, tradeId);
+        uint256 expectedAmount = pendingRevenueAmount[key];
+        if (expectedAmount == 0) revert MissingRevenueIntent();
+        if (expectedAmount != amount) revert RevenueAmountMismatch();
+
+        uint256 balanceBefore = pendingRevenueBalanceBefore[key];
+        delete pendingRevenueBalanceBefore[key];
+        delete pendingRevenueAmount[key];
+
         uint256 balanceAfterTransfer = IERC20(token).balanceOf(address(this));
+        if (balanceAfterTransfer - balanceBefore != amount) revert ExactInMismatch();
+
+        uint256 currentLiability = rewardReserve[token] + treasuryReserve[token];
         if (balanceAfterTransfer < currentLiability + amount) revert RevenueLiabilityMismatch();
 
         uint256 rewardShare = (amount * rewardBps) / BPS;
@@ -274,6 +290,33 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
         }
 
         IERC20(token).safeTransfer(rewards, amount);
+    }
+
+    function _revenueIntentKey(
+        address token,
+        uint8 kind,
+        uint256 tradeId
+    ) internal pure returns (bytes32) {
+        return keccak256(abi.encode(token, kind, tradeId));
+    }
+
+    /**
+     * @notice Escrow transferinden hemen önce çağrılır; aynı path'te exact-in doğrulaması için handshake oluşturur.
+     * @dev    Bu kayıt yoksa veya transfer tam amount kadar değilse onArafRevenue revert eder.
+     */
+    function noteEscrowRevenueIntent(
+        address token,
+        uint256 amount,
+        uint8 kind,
+        uint256 tradeId
+    ) external onlyEscrow whenNotPaused {
+        if (!supportedToken[token]) revert UnsupportedRewardToken();
+        if (amount == 0) revert ZeroAmount();
+
+        bytes32 key = _revenueIntentKey(token, kind, tradeId);
+        pendingRevenueBalanceBefore[key] = IERC20(token).balanceOf(address(this));
+        pendingRevenueAmount[key] = amount;
+        emit EscrowRevenueIntent(token, amount, kind, tradeId);
     }
 
     function pause() external onlyOwner { _pause(); }

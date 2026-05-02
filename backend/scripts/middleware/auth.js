@@ -80,14 +80,17 @@ async function _getTokenPayload(req) {
   }
 
   const payload = verifyJWT(token);
+  if (!payload?.jti) {
+    const err = new Error("Güvensiz oturum belirteci (jti eksik). Lütfen yeniden giriş yapın.");
+    err.statusCode = 401;
+    throw err;
+  }
 
-  if (payload.jti) {
-    const blacklisted = await isJWTBlacklisted(payload.jti);
-    if (blacklisted) {
-      const err = new Error("Oturum geçersiz kılınmış. Lütfen yeniden giriş yapın.");
-      err.statusCode = 401;
-      throw err;
-    }
+  const blacklisted = await isJWTBlacklisted(payload.jti);
+  if (blacklisted) {
+    const err = new Error("Oturum geçersiz kılınmış. Lütfen yeniden giriş yapın.");
+    err.statusCode = 401;
+    throw err;
   }
 
   return payload;

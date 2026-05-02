@@ -60,6 +60,8 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
     error EpochTokenAlreadyFinalized();
     error EpochTokenFinalized();
     error InvalidRecipient();
+    error EpochDustAlreadySwept();
+    error NothingToSweep();
 
     uint256 public constant BPS = 10_000;
     uint256 public constant SCALE = 100_000_000; // outcomeBps(1e4) * tierBps(1e4)
@@ -88,8 +90,10 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
     mapping(uint256 => mapping(address => mapping(address => bool))) public claimed;
     mapping(uint256 => bool) public recordedTrade;
     mapping(uint256 => mapping(address => uint256)) public epochRewardPool;
+    mapping(uint256 => mapping(address => uint256)) public epochClaimedAmount;
     mapping(uint256 => mapping(address => bool)) public epochTokenAllocated;
     mapping(uint256 => mapping(address => bool)) public epochTokenFinalized;
+    mapping(uint256 => mapping(address => bool)) public epochDustSwept;
 
     event TradeOutcomeRecorded(
         uint256 indexed tradeId,
@@ -109,6 +113,12 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
         uint256 amount,
         uint256 userWeight,
         uint256 totalWeight
+    );
+    event EpochDustSwept(
+        uint256 indexed epoch,
+        address indexed token,
+        address indexed recipient,
+        uint256 amount
     );
 
     constructor(address _escrow, address _revenueVault, address _owner) Ownable(_owner) {
@@ -186,6 +196,7 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
         uint256 amount = (epochRewardPool[epoch][token] * uWeight) / tWeight;
         if (amount == 0) revert ZeroAmount();
         claimed[epoch][msg.sender][token] = true;
+        epochClaimedAmount[epoch][token] += amount;
         IERC20(token).safeTransfer(msg.sender, amount);
 
         emit RewardClaimed(epoch, msg.sender, token, amount, uWeight, tWeight);
@@ -197,6 +208,32 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
         if (block.timestamp < epochEnd) revert EpochNotEnded();
         epochTokenFinalized[epoch][token] = true;
         emit EpochTokenFinalizedEvent(epoch, token);
+    }
+
+    /**
+     * @notice Claim penceresi sonrası integer division dust'ını protokol alıcısına süpürür.
+     * @dev Conservation: claimed + swept == epochRewardPool.
+     */
+    function sweepEpochDust(uint256 epoch, address token, address recipient)
+        external
+        onlyOwner
+        nonReentrant
+        whenNotPaused
+    {
+        if (recipient == address(0)) revert InvalidRecipient();
+        if (!epochTokenFinalized[epoch][token]) revert EpochTokenNotFinalized();
+        if (epochDustSwept[epoch][token]) revert EpochDustAlreadySwept();
+        uint256 epochEnd = (epoch + 1) * epochDuration;
+        if (block.timestamp < epochEnd + claimDelay) revert ClaimDelayActive();
+
+        uint256 pool = epochRewardPool[epoch][token];
+        uint256 claimedAmount = epochClaimedAmount[epoch][token];
+        uint256 dust = pool > claimedAmount ? pool - claimedAmount : 0;
+        if (dust == 0) revert NothingToSweep();
+
+        epochDustSwept[epoch][token] = true;
+        IERC20(token).safeTransfer(recipient, dust);
+        emit EpochDustSwept(epoch, token, recipient, dust);
     }
 
     function claimable(uint256 epoch, address user, address token) external view returns (uint256) {

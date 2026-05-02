@@ -154,7 +154,8 @@ npx hardhat coverage
 
 - [ ] `npx hardhat node` — 20 hesap görünüyor
 - [ ] `npx hardhat test` — tüm testler ✅
-- [ ] Backend `http://localhost:4000/health` → `{"status":"ok"}`
+- [ ] Backend liveness `http://localhost:4000/health` → `{"status":"ok"}`
+- [ ] Backend readiness `http://localhost:4000/ready` → Bağımlılıklar hazırsa HTTP `200`
 - [ ] Frontend `http://localhost:5173` — açılıyor
 - [ ] MetaMask Hardhat ağında — `chainId: 31337`
 - [ ] Test USDT Al butonu — mock faucet çalışıyor
@@ -377,7 +378,8 @@ const config = createConfig({
 ### Testnet Kontrol Listesi
 
 - [ ] `https://sepolia.basescan.org/address/<ESCROW_ADDRESS>` — kontrat verified ✅
-- [ ] `https://araf-protocol-backend.fly.dev/health` → `{"status":"ok","worker":"active"}`
+- [ ] `https://araf-protocol-backend.fly.dev/health` → sadece liveness (`{"status":"ok"}`)
+- [ ] `https://araf-protocol-backend.fly.dev/ready` → readiness kapısı (`hazır:200 / hazır değil:503`)
 - [ ] `https://araf-protocol.vercel.app` — site açılıyor
 - [ ] MetaMask Base Sepolia'ya bağlı
 - [ ] Test USDT/USDC faucet çalışıyor
@@ -517,7 +519,8 @@ vercel --prod
 - [ ] `pause()` / `unpause()` Gnosis Safe'ten çalışıyor
 - [ ] Event listener WSS RPC üzerinde stabil
 - [ ] DLQ monitörü alert webhook aktif (Slack/PagerDuty)
-- [ ] `GET /health` → worker: active
+- [ ] `GET /health` => sadece liveness (process ayakta mı)
+- [ ] `GET /ready` => readiness/startup gate (Mongo/Redis/provider/config/worker kontrolleri)
 - [ ] Gerçek USDT/USDC adresleri frontend'de doğru
 - [ ] Production deploy'da frontend `.env` auto-write yapılmadı (beklenen davranış)
 - [ ] SIWE domain production domain'e eşleşiyor
@@ -584,3 +587,33 @@ cd frontend && vercel --prod
 ---
 
 *Araf Protocol — "Trust the Time, Not the Oracle."*
+
+## Deployment hardening tabanı (Production)
+
+### Runtime / image politikası
+- Backend container base image: **Node 22 LTS Alpine**.
+- Image içinde dependency kurulumu lockfile ile yapılmalı: `npm ci --omit=dev`.
+- Container runtime kullanıcı **root olmamalı** (`USER nodeapp` vb.).
+
+### Frontend build politikası
+- Vite production build sourcemap politikası açık: `build.sourcemap=false`.
+- `VITE_*` değişkenleri tarayıcıda **public** görünür. `VITE_*` içine asla API key, private key, JWT secret, DB URL gibi secret koymayın.
+
+### Env matrix (production) - gerekli / yasak
+- Gerekli: `NODE_ENV=production`, `MONGODB_URI`, `REDIS_URL`, `JWT_SECRET`, `SIWE_DOMAIN`, `SIWE_URI`, `ARAF_ESCROW_ADDRESS`, `BASE_RPC_URL`, `ALLOWED_ORIGINS`.
+- Worker bootstrap için gerekli: `ARAF_DEPLOYMENT_BLOCK` veya `WORKER_START_BLOCK` (veya redis checkpoint).
+- Production'da yasak/güvensiz: `REDIS_TLS_SKIP_VERIFY=true`, wildcard `ALLOWED_ORIGINS=*`, sadece localhost origin fallback, `BASE_RPC_URL` eksikliği.
+- Geliştirme için güvenli varsayılanlar (sadece local): localhost `ALLOWED_ORIGINS`, opsiyonel non-TLS Redis, mock/local token adresleri.
+
+### Frontend hosting security header'ları
+Frontend hosting için minimum önerilen header seti (Nginx/Cloudflare/Vercel eşdeğeri):
+- `Content-Security-Policy` (sıkı allowlist; nonce/hash yoksa unsafe-inline kullanmayın)
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains; preload`
+- `X-Content-Type-Options: nosniff`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+- `Permissions-Policy: geolocation=(), microphone=(), camera=()` (gerekiyorsa açın)
+
+### Cache politikası
+- `index.html`: `Cache-Control: no-cache, no-store, must-revalidate`
+- versiyonlu statik asset'ler (`/assets/*`): `Cache-Control: public, max-age=31536000, immutable`
+- `/ready` ve `/live` health endpoint'leri cache'lenmemeli.

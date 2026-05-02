@@ -4,6 +4,8 @@ export default function RewardsDashboard({
   wallet,
   currentEpoch,
   claimableAmount,
+  claimableState,
+  claimableError,
   onClaim,
   onFundGlobal,
   onFundProduct,
@@ -20,10 +22,18 @@ export default function RewardsDashboard({
         <p className="text-sm text-amber-300">Connect wallet to view claimable rewards.</p>
       ) : (
         <div className="space-y-2">
-          <p className="text-sm text-slate-200">My Claimable: {String(claimableAmount ?? '0')}</p>
+          {claimableState === 'blocked' ? (
+            <p className="text-sm text-amber-300">Rewards unavailable on current network.</p>
+          ) : claimableState === 'error' ? (
+            <p className="text-sm text-rose-300">Claimable unavailable: {String(claimableError || 'read failed')}</p>
+          ) : claimableState === 'loading' ? (
+            <p className="text-sm text-slate-300">My Claimable: loading…</p>
+          ) : (
+            <p className="text-sm text-slate-200">My Claimable: {String(claimableAmount ?? '0')}</p>
+          )}
           <button
             className="px-3 py-2 rounded bg-emerald-600 text-white disabled:opacity-40"
-            disabled={!claimableAmount || BigInt(claimableAmount) === 0n}
+            disabled={claimableState === 'blocked' || claimableState === 'error' || claimableState === 'loading' || !claimableAmount || BigInt(claimableAmount) === 0n}
             onClick={onClaim}
           >
             Claim

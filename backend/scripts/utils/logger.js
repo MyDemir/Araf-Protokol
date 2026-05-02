@@ -3,6 +3,7 @@
 const { createLogger, format, transports } = require("winston");
 const path = require("path");
 const fs   = require("fs");
+const { redactLogMeta, redactLogString } = require("./logRedaction");
 
 /**
  * ORTA-18 Fix: Log Dizini Traversal Riski Kapatıldı.
@@ -49,8 +50,11 @@ const logger = createLogger({
     format.errors({ stack: true }),
     format.json(),
     format.printf(({ timestamp, level, message, stack, ...meta }) => {
-      const metaString = Object.keys(meta).length ? JSON.stringify(meta) : "";
-      return `${timestamp} [${level.toUpperCase()}]: ${message} ${metaString}${stack ? `\n${stack}` : ""}`;
+      const safeMeta = redactLogMeta(meta);
+      const safeMessage = redactLogString(message);
+      const safeStack = stack ? redactLogString(stack) : "";
+      const metaString = Object.keys(safeMeta).length ? JSON.stringify(safeMeta) : "";
+      return `${timestamp} [${level.toUpperCase()}]: ${safeMessage} ${metaString}${safeStack ? `\n${safeStack}` : ""}`;
     })
   ),
 
