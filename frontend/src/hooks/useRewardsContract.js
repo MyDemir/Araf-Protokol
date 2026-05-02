@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
-import { usePublicClient, useWalletClient } from 'wagmi';
+import { usePublicClient, useWalletClient, useChainId } from 'wagmi';
 import { parseAbi, getAddress } from 'viem';
+import { getSupportedChainsMap } from '../app/chainPolicy';
 
 const REWARDS_ADDRESS = import.meta.env.VITE_REWARDS_ADDRESS;
 const VAULT_ADDRESS = import.meta.env.VITE_REVENUE_VAULT_ADDRESS;
@@ -32,16 +33,20 @@ const _isValid = (addr) => addr && addr !== '0x000000000000000000000000000000000
 export function useRewardsContract() {
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
+  const chainId = useChainId();
+  const isSupportedChain = Boolean(getSupportedChainsMap()[chainId]);
 
   const readRewards = useCallback(async (functionName, args = []) => {
-    if (!_isValid(REWARDS_ADDRESS) || !publicClient) return null;
+    if (!isSupportedChain) throw new Error('Wrong chain: rewards unavailable');
+    if (!_isValid(REWARDS_ADDRESS) || !publicClient) throw new Error('Rewards unavailable');
     return publicClient.readContract({ address: getAddress(REWARDS_ADDRESS), abi: REWARDS_ABI, functionName, args });
-  }, [publicClient]);
+  }, [publicClient, isSupportedChain]);
 
   const readVault = useCallback(async (functionName, args = []) => {
-    if (!_isValid(VAULT_ADDRESS) || !publicClient) return null;
+    if (!isSupportedChain) throw new Error('Wrong chain: vault unavailable');
+    if (!_isValid(VAULT_ADDRESS) || !publicClient) throw new Error('Vault unavailable');
     return publicClient.readContract({ address: getAddress(VAULT_ADDRESS), abi: VAULT_ABI, functionName, args });
-  }, [publicClient]);
+  }, [publicClient, isSupportedChain]);
 
   const writeVault = useCallback(async (functionName, args = []) => {
     if (!_isValid(VAULT_ADDRESS) || !walletClient) throw new Error('Vault unavailable');
@@ -50,13 +55,25 @@ export function useRewardsContract() {
   }, [walletClient, publicClient]);
 
   const writeRewards = useCallback(async (functionName, args = []) => {
+    if (!isSupportedChain) throw new Error('Wrong chain: rewards unavailable');
     if (!_isValid(REWARDS_ADDRESS) || !walletClient) throw new Error('Rewards unavailable');
     const hash = await walletClient.writeContract({ address: getAddress(REWARDS_ADDRESS), abi: REWARDS_ABI, functionName, args });
     return publicClient.waitForTransactionReceipt({ hash });
-  }, [walletClient, publicClient]);
+  }, [walletClient, publicClient, isSupportedChain]);
+
+  const getClaimableState = useCallback(async (epoch, user, token) => {
+    if (!isSupportedChain) return { status: 'blocked', value: null, error: 'wrong_chain' };
+    try {
+      const value = await readRewards('claimable', [BigInt(epoch), getAddress(user), getAddress(token)]);
+      return { status: value === 0n ? 'zero' : 'ok', value, error: null };
+    } catch (error) {
+      return { status: 'error', value: null, error: error?.message || 'read_failed' };
+    }
+  }, [isSupportedChain, readRewards]);
 
   return {
     claimable: (epoch, user, token) => readRewards('claimable', [BigInt(epoch), getAddress(user), getAddress(token)]),
+    getClaimableState,
     claim: (epoch, token) => writeRewards('claim', [BigInt(epoch), getAddress(token)]),
     recordTradeOutcome: (tradeId) => writeRewards('recordTradeOutcome', [BigInt(tradeId)]),
     epochDuration: () => readRewards('epochDuration'),

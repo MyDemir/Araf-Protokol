@@ -20,6 +20,7 @@ describe("ArafRevenueVault", function () {
   }
 
   async function pushEscrowRevenue({ token, vault, escrow, amount = AMOUNT, kind = 0, tradeId = 1 }) {
+    await vault.connect(escrow).noteEscrowRevenueIntent(await token.getAddress(), amount, kind, tradeId);
     await token.mint(await vault.getAddress(), amount);
     await vault.connect(escrow).onArafRevenue(await token.getAddress(), amount, kind, tradeId);
   }
@@ -72,6 +73,7 @@ describe("ArafRevenueVault", function () {
   it("test_onArafRevenue_splits_40_60_initially", async function () {
     const { vault, token, escrow } = await loadFixture(deployFixture);
     const tokenAddr = await token.getAddress();
+    await vault.connect(escrow).noteEscrowRevenueIntent(tokenAddr, AMOUNT, 0, 101);
     await token.mint(await vault.getAddress(), AMOUNT);
 
     await expect(vault.connect(escrow).onArafRevenue(tokenAddr, AMOUNT, 0, 101))
@@ -87,6 +89,7 @@ describe("ArafRevenueVault", function () {
     const { vault, token, owner, escrow } = await loadFixture(deployFixture);
     const tokenAddr = await token.getAddress();
     await vault.connect(owner).setRewardBps(7000);
+    await vault.connect(escrow).noteEscrowRevenueIntent(tokenAddr, AMOUNT, 1, 102);
     await token.mint(await vault.getAddress(), AMOUNT);
     await vault.connect(escrow).onArafRevenue(tokenAddr, AMOUNT, 1, 102);
 
@@ -143,6 +146,47 @@ describe("ArafRevenueVault", function () {
     await expect(
       vault.connect(escrow).onArafRevenue(await token.getAddress(), AMOUNT, 0, 103)
     ).to.be.revertedWithCustomError(vault, "EnforcedPause");
+  });
+
+  it("test_onArafRevenue_reverts_without_fresh_transfer_when_prefunded_surplus_exists", async function () {
+    const { vault, token, escrow } = await loadFixture(deployFixture);
+    const tokenAddr = await token.getAddress();
+    await token.mint(await vault.getAddress(), AMOUNT * 3n); // adversarial pre-fund surplus
+    await vault.connect(escrow).noteEscrowRevenueIntent(tokenAddr, AMOUNT, 0, 555);
+
+    await expect(
+      vault.connect(escrow).onArafRevenue(tokenAddr, AMOUNT, 0, 555)
+    ).to.be.revertedWithCustomError(vault, "ExactInMismatch");
+    expect(await vault.rewardReserve(tokenAddr)).to.equal(0n);
+    expect(await vault.treasuryReserve(tokenAddr)).to.equal(0n);
+    expect(await vault.totalEscrowRevenue(tokenAddr)).to.equal(0n);
+  });
+
+  it("test_onArafRevenue_reverts_when_less_than_amount_is_transferred", async function () {
+    const { vault, token, escrow } = await loadFixture(deployFixture);
+    const tokenAddr = await token.getAddress();
+    await vault.connect(escrow).noteEscrowRevenueIntent(tokenAddr, AMOUNT, 0, 556);
+    await token.mint(await vault.getAddress(), AMOUNT - 1n);
+
+    await expect(
+      vault.connect(escrow).onArafRevenue(tokenAddr, AMOUNT, 0, 556)
+    ).to.be.revertedWithCustomError(vault, "ExactInMismatch");
+    expect(await vault.totalEscrowRevenue(tokenAddr)).to.equal(0n);
+  });
+
+  it("test_onArafRevenue_reverts_fee_on_transfer_like_shortfall", async function () {
+    const { vault, owner, escrow } = await loadFixture(deployFixture);
+    const FeeToken = await ethers.getContractFactory("MockFeeOnTransferERC20");
+    const feeToken = await FeeToken.deploy("Fee Token", "FEE", DECIMALS, 100, owner.address);
+    const tokenAddr = await feeToken.getAddress();
+    await vault.connect(owner).setSupportedToken(tokenAddr, true);
+
+    await vault.connect(escrow).noteEscrowRevenueIntent(tokenAddr, AMOUNT, 0, 557);
+    // Escrow nominally sends AMOUNT, vault receives less due to transfer fee (deflationary behavior).
+    await feeToken.mint(await vault.getAddress(), AMOUNT - 1n);
+    await expect(
+      vault.connect(escrow).onArafRevenue(tokenAddr, AMOUNT, 0, 557)
+    ).to.be.revertedWithCustomError(vault, "ExactInMismatch");
   });
 
   it("test_accounting_balance_invariant_after_multiple_revenues", async function () {

@@ -340,6 +340,8 @@ class EventWorker {
     this._livePollInProgress = false;
     this._lastLivePolledBlock = 0;
     this._blockTimestampCache = new Map();
+    this._ignoredEventsByReason = {};
+    this._reconciliation = { lastRunAt: null, lastReport: null };
   }
 
   async start() {
@@ -736,6 +738,11 @@ class EventWorker {
     return blockNumber - WORKER_FINALITY_DEPTH;
   }
 
+  _countIgnoredEvent(reason) {
+    const key = String(reason || "unknown_reason");
+    this._ignoredEventsByReason[key] = (this._ignoredEventsByReason[key] || 0) + 1;
+  }
+
   async _advanceSafeCheckpointFromAcks(finalizedUpTo) {
     if (!Number.isInteger(finalizedUpTo) || finalizedUpTo <= this._lastSafeCheckpointBlock) return;
 
@@ -1076,6 +1083,18 @@ class EventWorker {
   }
 
   async _processEvent(event) {
+    if (!event || typeof event !== "object") {
+      this._countIgnoredEvent("malformed_event_object");
+      return;
+    }
+    if (!event.eventName) {
+      this._countIgnoredEvent("missing_event_name");
+      return;
+    }
+    if (!event.args || typeof event.args !== "object") {
+      this._countIgnoredEvent("malformed_event_args");
+      return;
+    }
     const handlers = {
       WalletRegistered: this._onWalletRegistered.bind(this),
       EscrowCreated: this._onEscrowCreated.bind(this),
@@ -1110,7 +1129,35 @@ class EventWorker {
     };
 
     const handler = handlers[event.eventName];
-    if (handler) await handler(event);
+    if (handler) {
+      await handler(event);
+      return;
+    }
+    this._countIgnoredEvent(`unknown_event:${event.eventName}`);
+  }
+
+  async runReconciliationReport({ limit = 100 } = {}) {
+    const terminalTrades = await Trade.find({ status: { $in: ["RESOLVED", "CANCELED", "BURNED"] } })
+      .select("onchain_escrow_id status timers.released_at timers.canceled_at timers.burned_at")
+      .limit(Math.max(1, Number(limit) || 100))
+      .lean();
+    const drifted = terminalTrades.filter((t) => {
+      if (t.status === "RESOLVED") return !t?.timers?.released_at;
+      if (t.status === "CANCELED") return !t?.timers?.canceled_at;
+      if (t.status === "BURNED") return !t?.timers?.burned_at;
+      return false;
+    });
+    const report = {
+      checkedAt: new Date().toISOString(),
+      scanned: terminalTrades.length,
+      driftCount: drifted.length,
+      driftSample: drifted.slice(0, 20).map((t) => ({
+        onchain_escrow_id: t.onchain_escrow_id,
+        status: t.status,
+      })),
+    };
+    this._reconciliation = { lastRunAt: report.checkedAt, lastReport: report };
+    return report;
   }
 
   async _onWalletRegistered(event) {
@@ -2102,6 +2149,24 @@ worker.reprocessDLQEntry = async function reprocessDLQEntry(entry) {
     logger.error(`[Worker] DLQ re-drive başarısız: ${entry.eventName} tx=${entry.txHash} err=${err.message}`);
     return false;
   }
+};
+
+worker.getDiagnostics = function getDiagnostics() {
+  const ignoredTotal = Object.values(worker._ignoredEventsByReason || {}).reduce((a, b) => a + Number(b || 0), 0);
+  const unsafeAckBlocks = [...(worker._blockAcks?.entries?.() || [])]
+    .filter(([, state]) => Boolean(state?.unsafe))
+    .map(([block]) => block);
+  return {
+    retry: {
+      success: worker._retrySuccessCount || 0,
+      failure: worker._retryFailureCount || 0,
+    },
+    ignoredEventsByReason: { ...(worker._ignoredEventsByReason || {}) },
+    ignoredTotal,
+    unsafeAckBlocks,
+    reconciliation: worker._reconciliation || { lastRunAt: null, lastReport: null },
+    reconciliationNeeded: ignoredTotal > 0 || (worker._retryFailureCount || 0) > 0 || unsafeAckBlocks.length > 0,
+  };
 };
 
 module.exports = worker;

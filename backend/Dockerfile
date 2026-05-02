@@ -1,5 +1,5 @@
-#  Alpine Linux tabanlı, hafif ve güvenli bir Node.js imajı.
-FROM node:18-alpine
+# Alpine Linux tabanlı, hafif ve güvenli bir Node.js imajı.
+FROM node:22-alpine
 
 # Uygulama için çalışma dizini oluştur
 WORKDIR /usr/src/app
@@ -8,11 +8,17 @@ WORKDIR /usr/src/app
 # Bu katman, kod değişmediği sürece cache'lenir ve build hızını artırır.
 COPY package*.json ./
 
-# Sadece production bağımlılıklarını kur
-RUN npm install --production
+# Branch'te package-lock.json yok; npm ci lockfile olmadan build'i kırar.
+# Lockfile eklendiğinde bu satır npm ci --omit=dev ile değiştirilmeli.
+RUN npm install --omit=dev
 
 # Uygulama kodunun tamamını kopyala
 COPY . .
+
+# Güvenlik: runtime root user kullanma
+RUN addgroup -S nodeapp && adduser -S nodeapp -G nodeapp \
+  && chown -R nodeapp:nodeapp /usr/src/app
+USER nodeapp
 
 # Uygulamanın çalışacağı portu belirt
 EXPOSE 4000

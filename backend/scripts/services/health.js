@@ -213,6 +213,7 @@ async function getReadiness({ worker, provider } = {}) {
     workerStateHealthy &&
     workerLagHealthy &&
     workerReplayHealthy;
+  const workerDiagnostics = typeof worker?.getDiagnostics === "function" ? worker.getDiagnostics() : null;
 
   return {
     ok:
@@ -251,6 +252,7 @@ async function getReadiness({ worker, provider } = {}) {
       maxAllowedLagBlocks: MAX_WORKER_LAG_BLOCKS,
       livePollInProgress,
       finalityDepth: workerFinalityDepth,
+      diagnostics: workerDiagnostics,
     },
 
     missingConfig,

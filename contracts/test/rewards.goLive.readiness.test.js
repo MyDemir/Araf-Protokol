@@ -6,6 +6,7 @@ const verify = require('../scripts/verifyRewardsDeployment');
 const configure = require('../scripts/configureRewards');
 const deploy = require('../scripts/deployRewards');
 const sw = require('../scripts/switchRewardsTreasury');
+const { runAbiDriftCheck } = require('../scripts/checkAbiDrift');
 
 const A = {
   escrow: '0x1111111111111111111111111111111111111111',
@@ -105,5 +106,67 @@ describe('rewards go-live readiness hardening', function () {
     expect(envExample).to.contain('BASE_SEPOLIA_USDC_ADDRESS=');
     expect(envExample).to.contain('CONFIRM_PUBLIC_SMOKE=');
     expect(envExample).to.contain('CONFIRM_FRESH_ESCROW_DEPLOY=');
+  });
+
+  it('ABI drift: critical escrow events/getters stay in lock-step across contract/frontend/backend sources', function () {
+    expect(runAbiDriftCheck()).to.equal(true);
+    const artifact = require('../artifacts/src/ArafEscrow.sol/ArafEscrow.json');
+    const frontendSource = fs.readFileSync(path.resolve(__dirname, '../../frontend/src/hooks/useArafContract.js'), 'utf8');
+    const backendSource = fs.readFileSync(path.resolve(__dirname, '../../backend/scripts/services/eventListener.js'), 'utf8');
+
+    const events = Object.fromEntries(
+      artifact.abi
+        .filter((x) => x.type === 'event')
+        .map((x) => [x.name, x])
+    );
+    const funcs = Object.fromEntries(
+      artifact.abi
+        .filter((x) => x.type === 'function')
+        .map((x) => [x.name, x])
+    );
+
+    const criticalEventNames = ['OrderFilled', 'EscrowReleased', 'ProtocolRevenueSent', 'SettlementFinalized', 'ReputationUpdated'];
+    for (const name of criticalEventNames) {
+      expect(events[name], `missing event ${name}`).to.not.equal(undefined);
+      const expectedInputShape = events[name].inputs.map((i) => `${i.type}:${i.name}:${i.indexed ? 'i' : 'n'}`).join('|');
+      expect(expectedInputShape.length).to.be.greaterThan(0);
+      expect(backendSource).to.contain(`event ${name}(`);
+      if (name === 'OrderFilled') expect(frontendSource).to.contain(`event ${name}(`);
+    }
+
+    const criticalGetterNames = ['getReputation', 'getTrade', 'getOrder', 'getCurrentAmounts', 'getSettlementProposal'];
+    for (const name of criticalGetterNames) {
+      expect(funcs[name], `missing getter ${name}`).to.not.equal(undefined);
+      expect(frontendSource).to.contain(`function ${name}(`);
+    }
+    for (const workerGetterName of ['getReputation', 'getTrade', 'getOrder']) {
+      expect(backendSource).to.contain(`function ${workerGetterName}(`);
+    }
+  });
+
+  it('ABI drift: getReputation V3 tuple order snapshot remains stable', function () {
+    const artifact = require('../artifacts/src/ArafEscrow.sol/ArafEscrow.json');
+    const fn = artifact.abi.find((x) => x.type === 'function' && x.name === 'getReputation');
+    expect(fn).to.not.equal(undefined);
+    const out = fn.outputs || [];
+    const names = out.map((x) => x.name);
+    expect(names).to.deep.equal([
+      'successful',
+      'failed',
+      'bannedUntil',
+      'consecutiveBans',
+      'effectiveTier',
+      'manualReleaseCount',
+      'autoReleaseCount',
+      'mutualCancelCount',
+      'disputedResolvedCount',
+      'burnCount',
+      'disputeWinCount',
+      'disputeLossCount',
+      'partialSettlementCount',
+      'riskPoints',
+      'lastPositiveEventAt',
+      'lastNegativeEventAt',
+    ]);
   });
 });

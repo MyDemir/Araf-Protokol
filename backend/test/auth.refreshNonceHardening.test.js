@@ -115,4 +115,108 @@ describe("auth refresh + nonce hardening", () => {
     expect(res.status).toBe(429);
     expect(generateNonce).not.toHaveBeenCalled();
   });
+
+  it("refresh route fails closed and clears cookies on expectedWallet mismatch", async () => {
+    const rotateRefreshToken = jest.fn().mockRejectedValue(new Error("Token/wallet uyuşmazlığı. Güvenlik ihlali tespit edildi."));
+    let authRouter;
+    jest.isolateModules(() => {
+      jest.doMock("../scripts/middleware/rateLimiter", () => ({
+        authLimiter: (_req, _res, next) => next(),
+        nonceLimiter: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../scripts/middleware/auth", () => ({
+        requireAuth: (_req, _res, next) => next(),
+        requireSessionWalletMatch: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../scripts/services/siwe", () => ({
+        generateNonce: jest.fn(),
+        verifySiweSignature: jest.fn(),
+        getSiweConfig: jest.fn(() => ({ domain: "localhost", uri: "https://localhost" })),
+        issueJWT: jest.fn(),
+        issueRefreshToken: jest.fn(),
+        rotateRefreshToken,
+        revokeRefreshToken: jest.fn(),
+        blacklistJWT: jest.fn(),
+      }));
+      jest.doMock("../scripts/services/encryption", () => ({
+        encryptPayoutProfile: jest.fn(),
+        decryptPayoutProfile: jest.fn(),
+        buildPayoutFingerprint: jest.fn(() => "fp"),
+      }));
+      jest.doMock("../scripts/models/User", () => ({ findOneAndUpdate: jest.fn(), findOne: jest.fn() }));
+      jest.doMock("../scripts/models/Trade", () => ({ exists: jest.fn() }));
+      authRouter = require("../scripts/routes/auth");
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.cookies = { araf_refresh: "race-token" };
+      next();
+    });
+    app.use("/api/auth", authRouter);
+
+    const res = await request(app).post("/api/auth/refresh").send({ wallet: "0x2222222222222222222222222222222222222222" });
+    expect(res.status).toBe(401);
+    expect(rotateRefreshToken).toHaveBeenCalledTimes(1);
+    expect(Array.isArray(res.headers["set-cookie"])).toBe(true);
+  });
+
+  it("concurrent refresh calls for same token cannot both succeed", async () => {
+    let consumed = false;
+    const rotateRefreshToken = jest.fn(async () => {
+      if (consumed) throw new Error("Refresh token geçersiz veya süresi dolmuş. Lütfen yeniden giriş yapın.");
+      consumed = true;
+      return {
+        token: "new.jwt.token",
+        refreshToken: "new-refresh",
+        wallet: "0x1111111111111111111111111111111111111111",
+      };
+    });
+    let authRouter;
+    jest.isolateModules(() => {
+      jest.doMock("../scripts/middleware/rateLimiter", () => ({
+        authLimiter: (_req, _res, next) => next(),
+        nonceLimiter: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../scripts/middleware/auth", () => ({
+        requireAuth: (_req, _res, next) => next(),
+        requireSessionWalletMatch: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../scripts/services/siwe", () => ({
+        generateNonce: jest.fn(),
+        verifySiweSignature: jest.fn(),
+        getSiweConfig: jest.fn(() => ({ domain: "localhost", uri: "https://localhost" })),
+        issueJWT: jest.fn(),
+        issueRefreshToken: jest.fn(),
+        rotateRefreshToken,
+        revokeRefreshToken: jest.fn(),
+        blacklistJWT: jest.fn(),
+      }));
+      jest.doMock("../scripts/services/encryption", () => ({
+        encryptPayoutProfile: jest.fn(),
+        decryptPayoutProfile: jest.fn(),
+        buildPayoutFingerprint: jest.fn(() => "fp"),
+      }));
+      jest.doMock("../scripts/models/User", () => ({ findOneAndUpdate: jest.fn(), findOne: jest.fn() }));
+      jest.doMock("../scripts/models/Trade", () => ({ exists: jest.fn() }));
+      authRouter = require("../scripts/routes/auth");
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.cookies = { araf_refresh: "same-refresh-token" };
+      next();
+    });
+    app.use("/api/auth", authRouter);
+
+    const [res1, res2] = await Promise.all([
+      request(app).post("/api/auth/refresh").send({}),
+      request(app).post("/api/auth/refresh").send({}),
+    ]);
+
+    const statuses = [res1.status, res2.status].sort();
+    expect(statuses).toEqual([200, 401]);
+  });
 });
