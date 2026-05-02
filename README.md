@@ -17,6 +17,8 @@
 
 Araf is a **non-custodial, oracle-free, humanless** fiat ↔ crypto protocol.
 
+Araf does not act as a court, oracle, moderator, or backend arbitrator. It does not prove off-chain fiat truth. It prices delay, disagreement, and dishonest strategy so unresolved trades become economically costly.
+
 ### Canonical V3 model
 - **Parent Order** is the public market primitive.
 - **Child Trade** is the real escrow lifecycle.
@@ -49,6 +51,8 @@ Legacy listing-first / `createEscrow` / `lockEscrow` narratives are **no longer 
 
 Araf, fiat ↔ kripto takası için **emanet tutmayan, oracle-bağımsız, insansız** bir protokoldür.
 
+Araf mahkeme, oracle, moderatör veya backend hakemi değildir. Off-chain fiat gerçeğini ispatlamaz. Gecikmeyi, anlaşmazlığı ve kötü stratejiyi fiyatlandırır; çözülemeyen trade'leri ekonomik olarak maliyetli hale getirir.
+
 ### Kanonik V3 model
 - **Parent Order** kamusal pazar primitive’idir.
 - **Child Trade** gerçek escrow yaşam döngüsüdür.
@@ -79,13 +83,17 @@ Listing-first / `createEscrow` / `lockEscrow` anlatısı artık **kanonik mimari
 
 
 ## 🎁 Proof of Peace Rewards (Concise)
-- Rewards are **not trade cashback**.
+- Rewards are **not trade cashback**; they are a pro-rata peace premium.
 - Eligibility is generated only from **ArafEscrow terminal outcomes**.
-- Backend is mirror-only; admin/sponsor cannot choose recipients.
+- Fast clean release receives the strongest positive weight.
+- Partial settlement receives low positive weight because it de-escalates dispute without making dispute farming attractive.
+- Backend is mirror-only; admin/sponsor cannot choose recipients, weights, or multipliers.
 - `paymentRiskLevel` is not a reward multiplier.
 - MVP zero-weight outcomes: auto-release, burn, mutual cancel, disputed release.
 - MVP Tier 0 is not reward eligible.
 - `rewardBps` starts at 4000 and is bounded to 4000–7000.
+
+**Canonical reward thesis:** Proof of Peace makes fast clean resolution more valuable than delay, while Bleeding Escrow makes unresolved conflict expensive.
 
 Rollout docs:
 - TR: [docs/TR/REWARDS_ROLLOUT.md](./docs/TR/REWARDS_ROLLOUT.md)
@@ -103,6 +111,7 @@ Rollout docs:
   - [docs/TR/API.md](./docs/TR/API.md)
 - Game Theory:
   - [docs/EN/GAME_THEORY.md](./docs/EN/GAME_THEORY.md)
+  - [docs/TR/GAME_THEORY.md](./docs/TR/GAME_THEORY.md)
 
 ---
 *Araf Protocol — “The system does not judge. It makes dishonesty expensive.”*
