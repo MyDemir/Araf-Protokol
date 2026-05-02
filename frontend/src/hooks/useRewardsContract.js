@@ -49,10 +49,11 @@ export function useRewardsContract() {
   }, [publicClient, isSupportedChain]);
 
   const writeVault = useCallback(async (functionName, args = []) => {
+    if (!isSupportedChain) throw new Error('Wrong chain: vault unavailable');
     if (!_isValid(VAULT_ADDRESS) || !walletClient) throw new Error('Vault unavailable');
     const hash = await walletClient.writeContract({ address: getAddress(VAULT_ADDRESS), abi: VAULT_ABI, functionName, args });
     return publicClient.waitForTransactionReceipt({ hash });
-  }, [walletClient, publicClient]);
+  }, [walletClient, publicClient, isSupportedChain]);
 
   const writeRewards = useCallback(async (functionName, args = []) => {
     if (!isSupportedChain) throw new Error('Wrong chain: rewards unavailable');

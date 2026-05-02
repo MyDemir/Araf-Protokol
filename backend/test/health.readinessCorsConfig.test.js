@@ -1,10 +1,11 @@
 "use strict";
 
 const mockRedisGet = jest.fn();
+let mockRedisReady = true;
 
 jest.mock("mongoose", () => ({ connection: { readyState: 1 } }));
 jest.mock("../scripts/config/redis", () => ({
-  isReady: jest.fn(() => true),
+  isReady: jest.fn(() => mockRedisReady),
   getRedisClient: jest.fn(() => ({ get: (...args) => mockRedisGet(...args) })),
 }));
 jest.mock("../scripts/services/expectedChain", () => ({
@@ -40,6 +41,7 @@ describe("health readiness production ALLOWED_ORIGINS diagnostics", () => {
     getNetwork: jest.fn().mockResolvedValue({ chainId: 84532 }),
   };
   const worker = {
+    getDiagnostics: jest.fn(() => ({ reconciliation: { lastReport: { dlqPending: 0 } } })),
     isRunning: true,
     _state: "live",
     _lastSafeCheckpointBlock: 99,
@@ -75,6 +77,36 @@ describe("health readiness production ALLOWED_ORIGINS diagnostics", () => {
     expect(readiness.missingConfig).not.toContain("ALLOWED_ORIGINS");
     expect(readiness.missingConfig.find((item) => String(item).startsWith("ALLOWED_ORIGINS_"))).toBeUndefined();
     expect(readiness.checks.config).toBe(true);
+  });
+
+
+
+  it("chaos_ready_reports_redis_unavailable_as_503_degraded", async () => {
+    mockRedisReady = false;
+    process.env.ALLOWED_ORIGINS = "https://example.com";
+    const { getReadiness } = require("../scripts/services/health");
+    const readiness = await getReadiness({ worker, provider });
+    expect(readiness.ok).toBe(false);
+    expect(readiness.degraded).toBe(true);
+    expect(readiness.degradedReasons).toContain("redis_unavailable");
+  });
+
+  it("chaos_ready_reports_provider_unavailable_as_503_degraded", async () => {
+    process.env.ALLOWED_ORIGINS = "https://example.com";
+    const { getReadiness } = require("../scripts/services/health");
+    const badProvider = { getBlockNumber: jest.fn().mockRejectedValue(new Error("rpc down")), getNetwork: jest.fn() };
+    const readiness = await getReadiness({ worker, provider: badProvider });
+    expect(readiness.ok).toBe(false);
+    expect(readiness.degradedReasons).toContain("provider_unavailable");
+  });
+
+  it("chaos_ready_exposes_dlq_pending_in_worker_diagnostics", async () => {
+    process.env.ALLOWED_ORIGINS = "https://example.com";
+    const workerWithDlq = { ...worker, getDiagnostics: jest.fn(() => ({ reconciliation: { lastReport: { dlqPending: 5 } } })) };
+    const { getReadiness } = require("../scripts/services/health");
+    const readiness = await getReadiness({ worker: workerWithDlq, provider });
+    expect(readiness.worker.diagnostics.reconciliation.lastReport.dlqPending).toBe(5);
+    expect(readiness.degradedReasons).toContain("dlq_pending");
   });
 
   it("security_runtime_contract_ready_uses_503_on_unready_state", async () => {

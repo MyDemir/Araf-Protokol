@@ -13,4 +13,20 @@ describe('frontend deploy hardening static guards', () => {
     expect(en).toContain('VITE_*');
     expect(en).toContain('public');
   });
+
+  it('frontend static security headers config is present', () => {
+    const cfg = fs.readFileSync(path.resolve(process.cwd(), 'vercel.json'), 'utf8');
+    expect(cfg).toContain('Content-Security-Policy');
+    expect(cfg).toContain('Strict-Transport-Security');
+    expect(cfg).toContain('X-Content-Type-Options');
+    expect(cfg).toContain('Referrer-Policy');
+    expect(cfg).toContain('Permissions-Policy');
+  });
+
+  it('env example does not contain secrets', () => {
+    const candidate = path.resolve(process.cwd(), '.env.example');
+    if (!fs.existsSync(candidate)) return;
+    const env = fs.readFileSync(candidate, 'utf8');
+    expect(env).not.toMatch(/JWT_SECRET|PRIVATE_KEY|MASTER_ENCRYPTION_KEY|AWS_ENCRYPTED_DATA_KEY|VAULT_TOKEN/i);
+  });
 });

@@ -9,8 +9,8 @@ describe("deploy hardening static guards", () => {
     expect(src).toContain("FROM node:22-alpine");
     expect(src).not.toContain("FROM node:18-alpine");
     expect(src).toContain("USER nodeapp");
-    expect(src).toContain("npm install --omit=dev");
-    expect(src).not.toContain("npm ci --omit=dev");
+    expect(src).toContain("npm ci --omit=dev");
+    expect(src).not.toContain("npm install --omit=dev");
   });
 
   it("local docs mention readiness and env policy", () => {

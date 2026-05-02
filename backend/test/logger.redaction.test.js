@@ -42,6 +42,17 @@ describe("logger redaction utility", () => {
     expect(redacted).not.toContain(privateKey);
   });
 
+
+
+  test("redacts KMS/Vault assignment-like secrets in log strings", () => {
+    const msg = "MASTER_ENCRYPTION_KEY=abcd AWS_ENCRYPTED_DATA_KEY=xyz VAULT_TOKEN=tok123 KMS_PLAINTEXT_KEY=plain";
+    const redacted = redactLogString(msg);
+    expect(redacted).toContain("MASTER_ENCRYPTION_KEY=[REDACTED]");
+    expect(redacted).toContain("AWS_ENCRYPTED_DATA_KEY=[REDACTED]");
+    expect(redacted).toContain("VAULT_TOKEN=[REDACTED]");
+    expect(redacted).toContain("KMS_PLAINTEXT_KEY=[REDACTED]");
+  });
+
   test("strips URL query strings from log strings", () => {
     const msg = "request failed https://api.example.com/path?token=abc&wallet=0x1111111111111111111111111111111111111111";
     const redacted = redactLogString(msg);

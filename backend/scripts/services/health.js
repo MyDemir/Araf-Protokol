@@ -215,6 +215,11 @@ async function getReadiness({ worker, provider } = {}) {
     workerReplayHealthy;
   const workerDiagnostics = typeof worker?.getDiagnostics === "function" ? worker.getDiagnostics() : null;
 
+  const degradedReasons = [];
+  if (!redisReady) degradedReasons.push("redis_unavailable");
+  if (!providerReady) degradedReasons.push("provider_unavailable");
+  if (workerDiagnostics?.reconciliation?.lastReport?.dlqPending > 0) degradedReasons.push("dlq_pending");
+
   return {
     ok:
       mongoReady &&
@@ -256,6 +261,8 @@ async function getReadiness({ worker, provider } = {}) {
     },
 
     missingConfig,
+    degraded: degradedReasons.length > 0,
+    degradedReasons,
   };
 }
 

@@ -61,7 +61,7 @@ const { globalErrorHandler } = require("./middleware/errorHandler");
 
 // [TR] Shutdown sırasında AES master key'i RAM'den sıfırlar
 // [EN] Zeroes out AES master key from RAM on shutdown
-const { clearMasterKeyCache } = require("./services/encryption");
+const { clearMasterKeyCache, runProductionKmsStartupSelfTest } = require("./services/encryption");
 
 const app = express();
 // [TR] Admin read-only gözlem endpoint'leri için scheduler çalışma zamanını paylaşır.
@@ -72,6 +72,7 @@ app.locals.schedulerState = {
   sensitiveCleanupLastRunAt: null,
   userBankRiskCleanupLastRunAt: null,
   referenceTickerLastRunAt: null,
+  reconciliationLastRunAt: null,
 };
 let server = null;
 let isShuttingDown = false;
@@ -195,6 +196,7 @@ async function bootstrap() {
   let userBankRiskCleanupDelay = null;
   let userBankRiskCleanupInterval = null;
   let referenceTickerInterval = null;
+  let reconciliationInterval = null;
 
   // [TR] Aynı job'ın üst üste binmesini engelleyen hafif scheduler lock'ları.
   // [EN] Lightweight scheduler locks to prevent overlapping runs.
@@ -218,6 +220,7 @@ async function bootstrap() {
     if (userBankRiskCleanupDelay) clearTimeout(userBankRiskCleanupDelay);
     if (userBankRiskCleanupInterval) clearInterval(userBankRiskCleanupInterval);
     if (referenceTickerInterval) clearInterval(referenceTickerInterval);
+    if (reconciliationInterval) clearInterval(reconciliationInterval);
   };
 
   /**
@@ -348,6 +351,8 @@ async function bootstrap() {
       }
     }
 
+    await runProductionKmsStartupSelfTest();
+
     await connectDB();
     await connectRedis();
     logger.info("MongoDB ve Redis bağlantıları başarıyla sağlandı.");
@@ -382,6 +387,7 @@ async function bootstrap() {
     const SENSITIVE_CLEANUP_INTERVAL_MS = _envMs("JOB_SENSITIVE_CLEANUP_INTERVAL_MS", 30 * 60 * 1000);
     const USER_BANK_RISK_CLEANUP_DELAY_MS = _envMs("JOB_USER_BANK_RISK_CLEANUP_DELAY_MS", 150_000);
     const USER_BANK_RISK_CLEANUP_INTERVAL_MS = _envMs("JOB_USER_BANK_RISK_CLEANUP_INTERVAL_MS", 6 * 60 * 60 * 1000);
+    const RECONCILIATION_INTERVAL_MS = _envMs("JOB_RECONCILIATION_INTERVAL_MS", 10 * 60 * 1000);
 
     dlqInterval = setInterval(() => {
       runScheduledJob("dlq", processDLQ);
@@ -470,6 +476,19 @@ async function bootstrap() {
         app.locals.schedulerState.referenceTickerLastRunAt = new Date().toISOString();
       });
     }, REFERENCE_TICKER_REFRESH_INTERVAL_MS);
+    const reconciliationEnabled = process.env.NODE_ENV === "production"
+      ? String(process.env.JOB_RECONCILIATION_ENABLED || "true").toLowerCase() !== "false"
+      : String(process.env.JOB_RECONCILIATION_ENABLED || "false").toLowerCase() === "true";
+
+    if (reconciliationEnabled) {
+      reconciliationInterval = setInterval(() => {
+        runScheduledJob("dlq", () => worker.runReconciliationReport(), () => {
+          app.locals.schedulerState.reconciliationLastRunAt = new Date().toISOString();
+        });
+      }, RECONCILIATION_INTERVAL_MS);
+      logger.info(`[Scheduler] reconciliation report zamanlandı (${RECONCILIATION_INTERVAL_MS}ms).`);
+    }
+
 
     // [TR] Rotalar DB ve Redis hazır olduktan sonra yüklenir
     // [EN] Routes loaded after DB and Redis are ready

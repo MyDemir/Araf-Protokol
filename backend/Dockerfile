@@ -8,9 +8,8 @@ WORKDIR /usr/src/app
 # Bu katman, kod değişmediği sürece cache'lenir ve build hızını artırır.
 COPY package*.json ./
 
-# Branch'te package-lock.json yok; npm ci lockfile olmadan build'i kırar.
-# Lockfile eklendiğinde bu satır npm ci --omit=dev ile değiştirilmeli.
-RUN npm install --omit=dev
+# Lockfile ile deterministic dependency kurulumu
+RUN npm ci --omit=dev
 
 # Uygulama kodunun tamamını kopyala
 COPY . .
