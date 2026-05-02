@@ -86,6 +86,18 @@ Aşağıdaki sıra **bozulmamalıdır**:
 - MVP'de Tier 0 reward eligibility dışıdır.
 - `rewardBps` yalnız 4000–7000 aralığındadır (başlangıç 4000).
 
+### 3.1 Oyun teorisi doğrulama maddeleri
+
+- Fast clean release, en yüksek pozitif weight sınıfı olarak doğrulanmalıdır.
+- Slow clean release, fast clean release'ten daha düşük weight üretmelidir.
+- Partial settlement düşük pozitif weight üretmeli; clean release ile aynı sınıfa konmamalıdır.
+- Auto-release zero-weight kalmalıdır; maker inaktivitesi rewardable olmamalıdır.
+- Mutual cancel zero-weight kalmalıdır; cancel-loop farming yüzeyi açılmamalıdır.
+- Disputed release zero-weight kalmalıdır; challenge-sonra-release farming teşvik edilmemelidir.
+- Burn zero-weight kalmalıdır; deadlock hiçbir koşulda rewardable olmamalıdır.
+- Beklenen reward, sentetik hacim / wash trading maliyetinden düşük kalacak şekilde rollout bütçesi izlenmelidir.
+- Reward dili kullanıcıya cashback, getiri garantisi veya işlem başına sabit rebate olarak sunulmamalıdır.
+
 ---
 
 ## 4) Stabilization Doğrulama Adımları (Deploy gerektirmez)
@@ -96,6 +108,7 @@ Aşağıdaki sıra **bozulmamalıdır**:
 4. **Worker checkpoint + finality doğrulaması**
 5. **Health / readiness doğrulaması**
 6. **Frontend production policy doğrulaması**
+7. **Reward/game-theory guardrail doğrulaması**
 
 ---
 
@@ -103,6 +116,7 @@ Aşağıdaki sıra **bozulmamalıdır**:
 
 - `cd backend && npm test -- --runInBand`
 - `cd contracts && npm test -- --grep "deploy script|rewards"`
+- `cd contracts && npm test -- --grep "ArafRewards|Proof of Peace|partial settlement"`
 - `cd frontend && npm test`
 - `cd frontend && npm run build`
 - `curl -s http://localhost:4000/health`
@@ -128,3 +142,7 @@ Aşağıdaki sıra **bozulmamalıdır**:
 - Treasury switch doğrulama sonrası ayrı ve açık bir operasyon olarak yürütülmelidir.
 - Production adresleri hardcode edilmemelidir.
 - Treasury switch öncesi smoke ve verify komutları başarılı olmalıdır.
+- Fast clean release / partial settlement / zero-weight outcome kayıtları staging'de doğrulanmalıdır.
+- Sponsor/funder recipient seçememelidir.
+- Admin reward reserve'i treasury gibi çekememelidir.
+- Reward bütçesi wash-trade maliyetiyle karşılaştırılarak kontrollü tutulmalıdır.
