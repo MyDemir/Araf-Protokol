@@ -35,6 +35,7 @@ function buildApp() {
     findById: jest.fn(() => ({ select: () => ({ lean: async () => ({ _id: "507f1f77bcf86cd799439011", maker_address: WALLET, taker_address: WALLET, status: "LOCKED", payout_snapshot: { maker: { payout_details_enc: "x" }, taker: { payout_details_enc: "x" }, is_complete: true } }) }) })),
     findOne: jest.fn(() => ({ select: () => ({ lean: async () => ({ maker_address: WALLET, taker_address: WALLET, status: "LOCKED", payout_snapshot: { maker: { payout_details_enc: "x" }, taker: { payout_details_enc: "x" }, is_complete: true } }) }) })),
     findOneAndUpdate: jest.fn(async () => null),
+    find: jest.fn(() => ({ select: () => ({ sort: () => ({ limit: () => ({ lean: async () => [] }) }), limit: () => ({ lean: async () => [] }), lean: async () => [] }) })),
   }));
   jest.doMock("../scripts/models/Feedback", () => ({}));
   jest.doMock("../scripts/models/HistoricalStat", () => ({ findOne: jest.fn(() => ({ sort: () => ({ lean: async () => null }) })) }));

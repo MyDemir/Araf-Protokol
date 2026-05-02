@@ -113,6 +113,7 @@ async function _getMasterKey() {
 
       const response = await kms.send(command);
       _masterKeyCache = Buffer.from(response.Plaintext);
+      _assertMasterKeyLengthOrThrow(_masterKeyCache, "AWS");
 
       logger.info("[Encryption] ✅ Master key AWS KMS'ten başarıyla çözüldü.");
       return _masterKeyCache;
@@ -160,7 +161,9 @@ async function _getMasterKey() {
       }
 
       const data = await response.json();
-      _masterKeyCache = Buffer.from(data.data.plaintext, "base64").slice(0, KEY_LENGTH);
+            const vaultPlaintext = Buffer.from(data.data.plaintext, "base64");
+      _assertMasterKeyLengthOrThrow(vaultPlaintext, "VAULT");
+      _masterKeyCache = Buffer.from(vaultPlaintext);
 
       logger.info("[Encryption] ✅ Master key HashiCorp Vault'tan başarıyla alındı.");
       return _masterKeyCache;
@@ -172,6 +175,42 @@ async function _getMasterKey() {
   throw new Error(`Bilinmeyen KMS_PROVIDER: "${provider}". Geçerli değerler: env, aws, vault`);
 }
 
+
+function _assertMasterKeyLengthOrThrow(masterKey, providerLabel) {
+  if (!Buffer.isBuffer(masterKey) || masterKey.length !== KEY_LENGTH) {
+    throw new Error(`${providerLabel} master key length invalid (expected 32 bytes)`);
+  }
+}
+
+async function runProductionKmsStartupSelfTest() {
+  const provider = (process.env.KMS_PROVIDER || "env").toLowerCase();
+
+  if (process.env.NODE_ENV !== "production") {
+    return { skipped: true, provider };
+  }
+
+  if (provider === "env") {
+    throw new Error("SEC-01 BLOCKER: Production'da KMS_PROVIDER='env' kullanılamaz");
+  }
+
+  if (provider === "aws" && !process.env.AWS_ENCRYPTED_DATA_KEY) {
+    throw new Error("AWS_ENCRYPTED_DATA_KEY production'da zorunlu");
+  }
+
+  if (provider === "vault") {
+    if (!process.env.VAULT_ADDR || !process.env.VAULT_TOKEN) {
+      throw new Error("VAULT_ADDR ve VAULT_TOKEN production'da zorunlu");
+    }
+  }
+
+  if (!["aws", "vault"].includes(provider)) {
+    throw new Error(`Bilinmeyen KMS_PROVIDER: "${provider}". Geçerli değerler: env, aws, vault`);
+  }
+
+  const masterKey = await _getMasterKey();
+  _assertMasterKeyLengthOrThrow(masterKey, provider.toUpperCase());
+  return { ok: true, provider };
+}
 /**
  * Derives a wallet-specific DEK using HKDF (RFC 5869, SHA-256).
  * Same wallet always gets the same DEK — deterministic but unique per wallet.
@@ -362,4 +401,5 @@ module.exports = {
   encryptField,
   decryptField,
   clearMasterKeyCache,
+  runProductionKmsStartupSelfTest,
 };

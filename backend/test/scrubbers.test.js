@@ -1,3 +1,4 @@
+jest.mock("../scripts/middleware/rateLimiter", () => ({ clientLogLimiter: (_req, _res, next) => next() }));
 const { scrubBody } = require('../scripts/middleware/errorHandler');
 const logsRoute = require('../scripts/routes/logs');
 

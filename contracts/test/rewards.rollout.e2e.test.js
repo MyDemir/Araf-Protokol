@@ -50,8 +50,9 @@ describe('Proof of Peace Rewards rollout safety e2e', function () {
   it('end_to_end_clean_release_generates_weight_and_claim', async function () {
     const { owner, escrowSigner, maker, taker, token, mockEscrow, vault, rewards } = await loadFixture(fixture);
     const epochDuration = await rewards.epochDuration();
-    const terminalAt = Number(epochDuration / 2n);
-    const epoch = BigInt(Math.floor(terminalAt / Number(epochDuration)));
+    const now = await time.latest();
+    const epoch = BigInt(Math.floor(Number(now) / Number(epochDuration)));
+    const terminalAt = Number(epoch * epochDuration + 100n);
 
     await setTrade(mockEscrow, 1, maker.address, taker.address, OUTCOME.CLEAN_RELEASE, terminalAt);
     await rewards.recordTradeOutcome(1);
@@ -65,6 +66,7 @@ describe('Proof of Peace Rewards rollout safety e2e', function () {
 
     await time.increase(Number(epochDuration + (await rewards.claimDelay()) + 10n));
     await rewards.connect(owner).finalizeEpochToken(epoch, await token.getAddress());
+    await time.increase(60);
 
     const before = await token.balanceOf(maker.address);
     await rewards.connect(maker).claim(epoch, await token.getAddress());
@@ -76,8 +78,9 @@ describe('Proof of Peace Rewards rollout safety e2e', function () {
   it('end_to_end_auto_release_funds_pool_but_zero_weight', async function () {
     const { owner, escrowSigner, maker, taker, token, mockEscrow, vault, rewards } = await loadFixture(fixture);
     const epochDuration = await rewards.epochDuration();
-    const terminalAt = Number(epochDuration / 2n);
-    const epoch = BigInt(Math.floor(terminalAt / Number(epochDuration)));
+    const now = await time.latest();
+    const epoch = BigInt(Math.floor(Number(now) / Number(epochDuration)));
+    const terminalAt = Number(epoch * epochDuration + 100n);
 
     await setTrade(mockEscrow, 2, maker.address, taker.address, OUTCOME.AUTO_RELEASE, terminalAt);
     await rewards.recordTradeOutcome(2);
@@ -95,8 +98,9 @@ describe('Proof of Peace Rewards rollout safety e2e', function () {
   it('end_to_end_external_funding_claimable_pro_rata', async function () {
     const { owner, maker, taker, sponsor, token, mockEscrow, vault, rewards } = await loadFixture(fixture);
     const epochDuration = await rewards.epochDuration();
-    const terminalAt = Number(epochDuration / 2n);
-    const epoch = BigInt(Math.floor(terminalAt / Number(epochDuration)));
+    const now = await time.latest();
+    const epoch = BigInt(Math.floor(Number(now) / Number(epochDuration)));
+    const terminalAt = Number(epoch * epochDuration + 100n);
 
     await setTrade(mockEscrow, 10, maker.address, taker.address, OUTCOME.CLEAN_RELEASE, terminalAt);
     await setTrade(mockEscrow, 11, maker.address, maker.address, OUTCOME.CLEAN_RELEASE, terminalAt);

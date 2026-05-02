@@ -39,9 +39,9 @@ docker run -d --name araf-redis -p 6379:6379 redis:latest
 
 ```bash
 # Proje kök dizininde
-cd contracts && npm install && cd ..
-cd backend  && npm install && cd ..
-cd frontend && npm install && cd ..
+cd contracts && npm ci && cd ..
+cd backend  && npm ci && cd ..
+cd frontend && npm ci && cd ..
 ```
 
 ### Adım 3 — Terminal 1: Hardhat Node
@@ -148,6 +148,14 @@ npx hardhat test
 
 # Coverage raporu (opsiyonel)
 npx hardhat coverage
+```
+
+
+#### Deterministic local test komutları
+```bash
+cd backend && npm ci && npm test
+cd ../frontend && npm ci && npm test
+cd ../contracts && npm ci && npx hardhat compile && npm run test:abi-drift && npx hardhat test
 ```
 
 ### Yerel Test Kontrol Listesi

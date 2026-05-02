@@ -1,6 +1,6 @@
 "use strict";
 
-const mockRedis = { get: jest.fn(), set: jest.fn(), rPush: jest.fn() };
+const mockRedis = { get: jest.fn(), set: jest.fn(), rPush: jest.fn(), lLen: jest.fn().mockResolvedValue(0) };
 
 jest.mock("../scripts/config/redis", () => ({ getRedisClient: jest.fn(() => mockRedis) }));
 jest.mock("../scripts/utils/logger", () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }));
@@ -49,6 +49,32 @@ describe("eventListener replay durability", () => {
     const fail = await worker.reDriveEvent(entry);
     expect(fail.success).toBe(false);
     expect(worker._blockAcks.get(7).unsafe).toBe(true);
+  });
+
+
+
+  it("reconciliation report includes drift categories and ignored histogram", async () => {
+    const Trade = require("../scripts/models/Trade");
+    Trade.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([
+        { onchain_escrow_id: "1", status: "RESOLVED", timers: {} },
+        { onchain_escrow_id: "1", status: "RESOLVED", timers: {} },
+      ]),
+    });
+    const worker = require("../scripts/services/eventListener");
+    worker._ignoredEventsByReason = { malformed_event_args: 2 };
+    worker._blockAcks.set(9, { unsafe: true });
+    mockRedis.lLen.mockResolvedValueOnce(3);
+
+    const report = await worker.runReconciliationReport({ limit: 10 });
+    expect(report.success).toBe(true);
+    expect(report.categories.terminal_trade_drift).toBe(2);
+    expect(report.categories.duplicate_projection).toBe(1);
+    expect(report.categories.dlq_pending).toBe(3);
+    expect(report.ignoredEventReasonHistogram.malformed_event_args).toBe(2);
+    expect(report.unsafeAckBlocks).toContain(9);
   });
 
   it("tracks malformed and unknown events in ignore metrics", async () => {

@@ -1137,25 +1137,69 @@ class EventWorker {
   }
 
   async runReconciliationReport({ limit = 100 } = {}) {
+    const max = Math.max(1, Number(limit) || 100);
     const terminalTrades = await Trade.find({ status: { $in: ["RESOLVED", "CANCELED", "BURNED"] } })
       .select("onchain_escrow_id status timers.released_at timers.canceled_at timers.burned_at")
-      .limit(Math.max(1, Number(limit) || 100))
+      .limit(max)
       .lean();
-    const drifted = terminalTrades.filter((t) => {
-      if (t.status === "RESOLVED") return !t?.timers?.released_at;
-      if (t.status === "CANCELED") return !t?.timers?.canceled_at;
-      if (t.status === "BURNED") return !t?.timers?.burned_at;
-      return false;
-    });
+
+    const missingTerminalTimestamp = [];
+    const seenByEscrowId = new Map();
+    for (const t of terminalTrades) {
+      const key = String(t.onchain_escrow_id || "").trim();
+      if (key) {
+        seenByEscrowId.set(key, (seenByEscrowId.get(key) || 0) + 1);
+      }
+      if (t.status === "RESOLVED" && !t?.timers?.released_at) missingTerminalTimestamp.push(t);
+      if (t.status === "CANCELED" && !t?.timers?.canceled_at) missingTerminalTimestamp.push(t);
+      if (t.status === "BURNED" && !t?.timers?.burned_at) missingTerminalTimestamp.push(t);
+    }
+
+    const duplicateProjection = [...seenByEscrowId.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([onchain_escrow_id, count]) => ({ onchain_escrow_id, count }));
+
+    const unsafeAckBlocks = [...(this._blockAcks?.entries?.() || [])]
+      .filter(([, state]) => Boolean(state?.unsafe))
+      .map(([block]) => Number(block));
+
+    let dlqPending = null;
+    try {
+      const redis = getRedisClient();
+      dlqPending = Number(await redis.lLen(DLQ_KEY));
+      if (!Number.isFinite(dlqPending)) dlqPending = null;
+    } catch {
+      dlqPending = null;
+    }
+
+    const ignoredHistogram = { ...(this._ignoredEventsByReason || {}) };
+    const ignoredTotal = Object.values(ignoredHistogram).reduce((a, b) => a + Number(b || 0), 0);
+
+    const categories = {
+      terminal_trade_drift: missingTerminalTimestamp.length,
+      duplicate_projection: duplicateProjection.length,
+      missing_terminal_timestamp: missingTerminalTimestamp.length,
+      dlq_pending: Number(dlqPending || 0),
+      unsafe_ack_block: unsafeAckBlocks.length,
+      ignored_event_total: ignoredTotal,
+    };
+
     const report = {
+      success: true,
       checkedAt: new Date().toISOString(),
       scanned: terminalTrades.length,
-      driftCount: drifted.length,
-      driftSample: drifted.slice(0, 20).map((t) => ({
+      categories,
+      unsafeAckBlocks,
+      ignoredEventReasonHistogram: ignoredHistogram,
+      duplicateProjectionSample: duplicateProjection.slice(0, 20),
+      missingTerminalTimestampSample: missingTerminalTimestamp.slice(0, 20).map((t) => ({
         onchain_escrow_id: t.onchain_escrow_id,
         status: t.status,
       })),
+      dlqPending,
+      driftCount: categories.terminal_trade_drift + categories.duplicate_projection,
     };
+
     this._reconciliation = { lastRunAt: report.checkedAt, lastReport: report };
     return report;
   }

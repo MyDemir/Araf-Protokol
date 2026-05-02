@@ -68,6 +68,34 @@ describe("encryption AWS KMS provider security paths", () => {
     );
   });
 
+
+  test("startup self-test rejects aws provider when encrypted key missing", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.KMS_PROVIDER = "aws";
+    const { encryption } = loadEncryptionModuleWithAwsMock();
+    await expect(encryption.runProductionKmsStartupSelfTest()).rejects.toThrow(
+      "AWS_ENCRYPTED_DATA_KEY production'da zorunlu",
+    );
+  });
+
+  test("startup self-test rejects aws provider when plaintext length invalid", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.KMS_PROVIDER = "aws";
+    process.env.AWS_ENCRYPTED_DATA_KEY = Buffer.from("ciphertextblob").toString("base64");
+    const { encryption } = loadEncryptionModuleWithAwsMock({ plaintextBytes: Buffer.alloc(31, 0x01) });
+    await expect(encryption.runProductionKmsStartupSelfTest()).rejects.toThrow(
+      "AWS master key length invalid (expected 32 bytes)",
+    );
+  });
+
+  test("startup self-test accepts mocked aws happy path", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.KMS_PROVIDER = "aws";
+    process.env.AWS_ENCRYPTED_DATA_KEY = Buffer.from("ciphertextblob").toString("base64");
+    const { encryption } = loadEncryptionModuleWithAwsMock({ plaintextBytes: Buffer.alloc(32, 0x02) });
+    await expect(encryption.runProductionKmsStartupSelfTest()).resolves.toEqual({ ok: true, provider: "aws" });
+  });
+
   test("aws provider uses mocked decrypt and returns 32-byte master key", async () => {
     process.env.NODE_ENV = "production";
     process.env.KMS_PROVIDER = "aws";

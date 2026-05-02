@@ -10,6 +10,7 @@ const JWT_RX = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}\.[A-Za-z0-9._-]{10,
 const ETH_PK_RX = /0x[a-fA-F0-9]{64}\b/g;
 const WALLET_RX = /\b0x[a-fA-F0-9]{40}\b/g;
 const URL_QUERY_RX = /(https?:\/\/[^\s?]+)\?[^\s]*/gi;
+const ASSIGNMENT_SECRET_RX = /\b(MASTER_ENCRYPTION_KEY|AWS_ENCRYPTED_DATA_KEY|VAULT_TOKEN|KMS_PLAINTEXT_KEY)\s*=\s*[^\s]+/gi;
 
 function redactString(value) {
   let v = String(value);
@@ -17,6 +18,7 @@ function redactString(value) {
   v = v.replace(JWT_RX, REDACTED);
   v = v.replace(ETH_PK_RX, REDACTED);
   v = v.replace(WALLET_RX, WALLET_REDACTED);
+  v = v.replace(ASSIGNMENT_SECRET_RX, "$1=[REDACTED]");
   return v;
 }
 
