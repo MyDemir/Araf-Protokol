@@ -214,6 +214,6 @@ describe("protocolConfig token config compatibility", () => {
         tierMaxAmountsBaseUnit: [150n, 1500n, 7500n, 30000n],
       }),
     });
-    await expect(service.loadProtocolConfig()).rejects.toThrow(/tracked token seti boş/);
+    await expect(service.loadProtocolConfig()).rejects.toThrow(/BASE_MAINNET_USDT_ADDRESS ve BASE_MAINNET_USDC_ADDRESS/);
   });
 });

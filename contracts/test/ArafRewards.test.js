@@ -506,7 +506,7 @@ describe("ArafRewards global epoch weight accounting", function () {
     const amount = ethers.parseUnits("500", DECIMALS);
     await token.mint(owner.address, amount);
     await token.connect(owner).approve(await vault.getAddress(), amount);
-    await vault.connect(owner).fundGlobalRewards(await token.getAddress(), amount, 0, ethers.id("ext-fund"));
+    await vault.connect(owner).fundGlobalRewards(await token.getAddress(), amount, epoch, ethers.id("ext-fund"));
 
     const beforeClaimable = await rewards.claimable(epoch, maker.address, await token.getAddress());
     await rewards.connect(owner).allocateEpochRewards(epoch, await token.getAddress(), amount);

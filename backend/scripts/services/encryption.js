@@ -161,8 +161,9 @@ async function _getMasterKey() {
       }
 
       const data = await response.json();
-            _masterKeyCache = Buffer.from(data.data.plaintext, "base64").slice(0, KEY_LENGTH);
-      _assertMasterKeyLengthOrThrow(_masterKeyCache, "VAULT");
+            const vaultPlaintext = Buffer.from(data.data.plaintext, "base64");
+      _assertMasterKeyLengthOrThrow(vaultPlaintext, "VAULT");
+      _masterKeyCache = Buffer.from(vaultPlaintext);
 
       logger.info("[Encryption] ✅ Master key HashiCorp Vault'tan başarıyla alındı.");
       return _masterKeyCache;

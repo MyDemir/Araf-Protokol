@@ -207,6 +207,7 @@ async function bootstrap() {
     sensitiveCleanup: false,
     userBankRiskCleanup: false,
     referenceTicker: false,
+    reconciliation: false,
   };
 
   const clearRuntimeSchedulers = () => {
@@ -482,7 +483,7 @@ async function bootstrap() {
 
     if (reconciliationEnabled) {
       reconciliationInterval = setInterval(() => {
-        runScheduledJob("dlq", () => worker.runReconciliationReport(), () => {
+        runScheduledJob("reconciliation", () => worker.runReconciliationReport(), () => {
           app.locals.schedulerState.reconciliationLastRunAt = new Date().toISOString();
         });
       }, RECONCILIATION_INTERVAL_MS);
