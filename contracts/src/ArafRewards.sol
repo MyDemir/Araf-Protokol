@@ -52,6 +52,8 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
     error NotAllocationSource();
     error EpochNotEnded();
     error ClaimDelayActive();
+    error ClaimWindowActive();
+    error ClaimWindowClosed();
     error ZeroTotalWeight();
     error ZeroUserWeight();
     error AlreadyClaimed();
@@ -84,6 +86,7 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
 
     uint256 public epochDuration = 7 days;
     uint256 public claimDelay = 24 hours;
+    uint256 public claimWindow = 30 days;
 
     mapping(uint256 => uint256) public totalWeight;
     mapping(uint256 => mapping(address => uint256)) public userWeight;
@@ -91,6 +94,7 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
     mapping(uint256 => bool) public recordedTrade;
     mapping(uint256 => mapping(address => uint256)) public epochRewardPool;
     mapping(uint256 => mapping(address => uint256)) public epochClaimedAmount;
+    mapping(uint256 => mapping(address => uint256)) public epochClaimedWeight;
     mapping(uint256 => mapping(address => bool)) public epochTokenAllocated;
     mapping(uint256 => mapping(address => bool)) public epochTokenFinalized;
     mapping(uint256 => mapping(address => bool)) public epochDustSwept;
@@ -186,6 +190,7 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
         uint256 epochEnd = (epoch + 1) * epochDuration;
         if (block.timestamp < epochEnd) revert EpochNotEnded();
         if (block.timestamp < epochEnd + claimDelay) revert ClaimDelayActive();
+        if (block.timestamp > _claimWindowEnd(epochEnd)) revert ClaimWindowClosed();
 
         uint256 tWeight = totalWeight[epoch];
         if (tWeight == 0) revert ZeroTotalWeight();
@@ -197,6 +202,7 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
         if (amount == 0) revert ZeroAmount();
         claimed[epoch][msg.sender][token] = true;
         epochClaimedAmount[epoch][token] += amount;
+        epochClaimedWeight[epoch][token] += uWeight;
         IERC20(token).safeTransfer(msg.sender, amount);
 
         emit RewardClaimed(epoch, msg.sender, token, amount, uWeight, tWeight);
@@ -211,8 +217,8 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @notice Claim penceresi sonrası integer division dust'ını protokol alıcısına süpürür.
-     * @dev Conservation: claimed + swept == epochRewardPool.
+     * @notice Claim penceresi bittikten veya tüm ağırlıklı claim'ler tamamlandıktan sonra dust'ı protokol alıcısına süpürür.
+     * @dev Conservation: claimed + swept == epochRewardPool. Sweep, claim başlangıcında açılamaz.
      */
     function sweepEpochDust(uint256 epoch, address token, address recipient)
         external
@@ -225,6 +231,9 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
         if (epochDustSwept[epoch][token]) revert EpochDustAlreadySwept();
         uint256 epochEnd = (epoch + 1) * epochDuration;
         if (block.timestamp < epochEnd + claimDelay) revert ClaimDelayActive();
+        if (epochClaimedWeight[epoch][token] < totalWeight[epoch] && block.timestamp <= _claimWindowEnd(epochEnd)) {
+            revert ClaimWindowActive();
+        }
 
         uint256 pool = epochRewardPool[epoch][token];
         uint256 claimedAmount = epochClaimedAmount[epoch][token];
@@ -247,6 +256,10 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
 
     function pause() external onlyOwner { _pause(); }
     function unpause() external onlyOwner { _unpause(); }
+
+    function _claimWindowEnd(uint256 epochEnd) internal view returns (uint256) {
+        return epochEnd + claimDelay + claimWindow;
+    }
 
     function _outcomeMultiplierBps(IArafEscrowRewardView.RewardableTradeView memory t)
         internal
