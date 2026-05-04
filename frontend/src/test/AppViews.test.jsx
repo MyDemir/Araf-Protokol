@@ -26,7 +26,6 @@ const baseCtx = {
   setSidebarOpen: vi.fn(),
   setExpandedStatus: vi.fn(),
   expandedStatus: null,
-  sidebarTimerRef: { current: null },
   filterTier1: false,
   setFilterTier1: vi.fn(),
   filterToken: 'ALL',

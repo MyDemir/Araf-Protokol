@@ -11,7 +11,11 @@ export function buildGoToTradeRoomAction({
   setShowProfileModal,
 }) {
   return () => {
-    setActiveTrade(escrow.rawTrade);
+    const nextActiveTrade = {
+      ...(escrow.rawTrade || {}),
+      settlementProposal: escrow?.rawTrade?.settlementProposal || escrow?.settlementProposal || null,
+    };
+    setActiveTrade(nextActiveTrade);
     setUserRole(escrow.role);
     setTradeState(escrow.state);
     setChargebackAccepted(escrow.rawTrade?.chargebackAcked === true);

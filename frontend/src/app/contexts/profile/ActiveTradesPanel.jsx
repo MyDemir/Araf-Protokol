@@ -1,5 +1,6 @@
 import React from 'react';
 import { buildGoToTradeRoomAction } from '../../actions/tradeNavigationActions';
+import OperationTradeCard from '../operations/OperationTradeCard';
 
 export const ActiveTradesPanel = ({
   lang,
@@ -23,12 +24,12 @@ export const ActiveTradesPanel = ({
       </div>
       <div className="space-y-2">
         {filteredEscrows.map((escrow, index) => (
-          <div key={`${escrow.id}-${index}`} className="bg-[#101014] border border-[#222] rounded-xl p-3">
-            <p className="text-sm text-white">{escrow.id} · {escrow.state}</p>
-            <button onClick={buildGoToTradeRoomAction({ escrow, setActiveTrade, setUserRole, setTradeState, setChargebackAccepted, setCurrentView, setShowProfileModal })} className="mt-2 w-full bg-[#1a1a1f] text-white text-xs font-bold py-2 rounded-lg border border-[#333]">
-              {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
-            </button>
-          </div>
+          <OperationTradeCard
+            key={`${escrow.id}-${index}`}
+            escrow={escrow}
+            lang={lang}
+            onGoToRoom={buildGoToTradeRoomAction({ escrow, setActiveTrade, setUserRole, setTradeState, setChargebackAccepted, setCurrentView, setShowProfileModal })}
+          />
         ))}
       </div>
     </div>

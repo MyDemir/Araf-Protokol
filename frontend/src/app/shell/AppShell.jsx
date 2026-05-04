@@ -10,6 +10,7 @@ import { MobileBottomNav } from './MobileBottomNav';
 export const AppShell = ({
   children,
   status = null,
+  systemStatusProps = {},
   navigation = null,
   panel = null,
   outlet = null,
@@ -18,15 +19,15 @@ export const AppShell = ({
   mobileBottom = null,
 }) => {
   return (
-    <>
-      <SystemStatusBar>{status}</SystemStatusBar>
+    <div className="flex flex-col md:flex-row h-full pb-16 md:pb-0">
+      <SystemStatusBar {...systemStatusProps}>{status}</SystemStatusBar>
       <MobileTopBar>{mobileTop}</MobileTopBar>
       <ContextNavigation>{navigation}</ContextNavigation>
       <ContextPanel>{panel}</ContextPanel>
       <ContextOutlet>{outlet || children}</ContextOutlet>
       <MobileBottomNav>{mobileBottom}</MobileBottomNav>
       <ModalHost>{modals}</ModalHost>
-    </>
+    </div>
   );
 };
 

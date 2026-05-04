@@ -160,6 +160,14 @@ describe('App smoke', () => {
     expect(screen.getByTestId('home-view')).toBeInTheDocument();
   });
 
+
+  it('wires AppProviders inside ErrorBoundary in main runtime tree', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/main.jsx'), 'utf8');
+    expect(source).toContain('<ErrorBoundary>');
+    expect(source).toContain('<AppProviders>');
+    expect(source).toContain('<App />');
+  });
+
   it('keeps profile tab default aligned with modal tabs', () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
     expect(source).toContain("useState('ayarlar')");

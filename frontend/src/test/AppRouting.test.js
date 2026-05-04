@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import { removeOrderByOnchainId, resolveOrderActionFns } from '../app/orderUiModel';
 
@@ -28,6 +30,13 @@ describe('App routing side-aware contract selection', () => {
   it('UNKNOWN side fails closed and no fallback handler is returned', () => {
     expect(() => resolveOrderActionFns('UNKNOWN', fns)).toThrow(/Invalid order side/);
     expect(() => resolveOrderActionFns('MALFORMED', fns)).toThrow(/Invalid order side/);
+  });
+
+
+  it('sidebar open handler no longer uses timer-based auto-close', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
+    expect(source).not.toContain('sidebarTimerRef');
+    expect(source).not.toContain('setTimeout(() => setSidebarOpen(false)');
   });
 
   it('cancel sync removes canceled order from both market and myOrders collections', () => {

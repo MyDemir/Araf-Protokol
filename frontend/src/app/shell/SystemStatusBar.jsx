@@ -82,6 +82,12 @@ export const SystemStatusBar = ({
   chainId = null,
   isSupportedChain = true,
   activeTrade = null,
+  isWalletRegistered = null,
+  isRegisteringWallet = false,
+  handleRegisterWallet = null,
+  sybilStatus = null,
+  walletAgeRemainingDays = null,
+  supportedChains = {},
   lang = 'EN',
   children = null,
 }) => {
@@ -104,7 +110,7 @@ export const SystemStatusBar = ({
       : 'bg-slate-900/70 border-slate-700 text-slate-100';
 
   return (
-    <div className={`border-b px-4 py-2 text-xs ${toneClass}`}>
+    <div className={`fixed top-0 left-0 right-0 z-[85] border-b px-4 py-2 text-xs ${toneClass}`}>
       <div className="max-w-[1200px] mx-auto flex items-center justify-between gap-3">
         <div>
           <p className="font-bold">{status.title}</p>
@@ -120,6 +126,26 @@ export const SystemStatusBar = ({
         </div>
         {children}
       </div>
+      {isConnected && isSupportedChain === false && (
+        <div className="mt-2 text-sm font-bold">
+          ⚠️ {lang === 'TR'
+            ? `Yanlış Ağ! Lütfen ${Object.values(supportedChains).join(' / ')} ağına geçin.`
+            : `Wrong Network! Please switch to ${Object.values(supportedChains).join(' / ')}.`}
+        </div>
+      )}
+      {isConnected && isWalletRegistered === false && (
+        <div className="mt-2 flex items-center gap-4">
+          <span className="text-sm font-bold">⚠️ {lang === 'TR' ? 'Cüzdan On-Chain Kayıtlı Değil (Anti-Sybil 7 Gün)' : 'Wallet Not Registered (Anti-Sybil 7 Days)'}</span>
+          <button onClick={handleRegisterWallet} disabled={isRegisteringWallet} className="bg-orange-500 text-black px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-orange-400 disabled:opacity-50 transition">{isRegisteringWallet ? '⏳' : '📝 Kaydet'}</button>
+        </div>
+      )}
+      {isConnected && isWalletRegistered === true && sybilStatus && sybilStatus.aged === false && (
+        <div className="mt-2 text-xs font-bold">
+          ⏳ {lang === 'TR'
+            ? `Cüzdan kayıtlı ancak 7 günlük yaş şartı henüz dolmadı. Kalan süre: ~${walletAgeRemainingDays ?? '?'} gün.`
+            : `Wallet is registered but the 7-day age requirement is not met yet. Remaining: ~${walletAgeRemainingDays ?? '?'} day(s).`}
+        </div>
+      )}
     </div>
   );
 };

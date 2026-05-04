@@ -14,7 +14,21 @@ describe('buildGoToTradeRoomAction', () => {
       setCurrentView: vi.fn(),
     });
     action();
-    expect(setActiveTrade).toHaveBeenCalledWith(escrow.rawTrade);
+    expect(setActiveTrade).toHaveBeenCalledWith({ ...escrow.rawTrade, settlementProposal: null });
+  });
+
+  it('preserves settlementProposal while navigating to trade room', () => {
+    const settlementProposal = { state: 'PROPOSED', proposer: '0xabc' };
+    const setActiveTrade = vi.fn();
+    buildGoToTradeRoomAction({
+      escrow: { rawTrade: { id: 't2', settlementProposal }, role: 'maker', state: 'LOCKED' },
+      setActiveTrade,
+      setUserRole: vi.fn(),
+      setTradeState: vi.fn(),
+      setChargebackAccepted: vi.fn(),
+      setCurrentView: vi.fn(),
+    })();
+    expect(setActiveTrade).toHaveBeenCalledWith(expect.objectContaining({ settlementProposal }));
   });
 
   it('sets user role, trade state, chargeback flag, and currentView', () => {
