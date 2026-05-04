@@ -3,6 +3,7 @@ import PIIDisplay from '../components/PIIDisplay';
 import ReferenceRateTicker from '../components/ReferenceRateTicker';
 import SettlementProposalCard, { normalizeSettlementState } from '../components/SettlementProposalCard';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
+import { buildGoToTradeRoomAction } from './actions/tradeNavigationActions';
 
 // [TR] App ana görünüm/render katmanı burada tutulur.
 // [EN] Main application view/render layer lives here.
@@ -231,14 +232,15 @@ export const buildAppViews = (ctx) => {
                             </div>
                             <p className="text-slate-300 mb-2 truncate">{escrow.amount} <span className="text-slate-500 ml-1">({escrow.rawTrade.max.toFixed(0)} {escrow.rawTrade.fiat})</span></p>
                             <button
-                              onClick={() => {
-                                setActiveTrade(escrow.rawTrade);
-                                setUserRole(escrow.role);
-                                setTradeState(escrow.state);
-                                setChargebackAccepted(escrow.rawTrade?.chargebackAcked === true);
-                                setCurrentView('tradeRoom');
-                                setSidebarOpen(false);
-                              }}
+                              onClick={buildGoToTradeRoomAction({
+                                escrow,
+                                setActiveTrade,
+                                setUserRole,
+                                setTradeState,
+                                setChargebackAccepted,
+                                setCurrentView,
+                                setSidebarOpen,
+                              })}
                               className="w-full bg-[#1a1a1f] hover:bg-[#222] text-white text-[10px] font-bold py-1.5 rounded transition border border-[#333]"
                             >
                               {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
@@ -289,14 +291,15 @@ export const buildAppViews = (ctx) => {
                       </span>
                     </div>
                     <button
-                      onClick={() => {
-                        setActiveTrade(escrow.rawTrade);
-                        setUserRole(escrow.role);
-                        setTradeState(escrow.state);
-                        setChargebackAccepted(escrow.rawTrade?.chargebackAcked === true);
-                        setCurrentView('tradeRoom');
-                        setSidebarOpen(false);
-                      }}
+                      onClick={buildGoToTradeRoomAction({
+                        escrow,
+                        setActiveTrade,
+                        setUserRole,
+                        setTradeState,
+                        setChargebackAccepted,
+                        setCurrentView,
+                        setSidebarOpen,
+                      })}
                       className="w-full bg-[#1a1a1f] hover:bg-[#222] text-white text-[10px] font-bold py-1.5 rounded transition border border-[#333]"
                     >
                       {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}

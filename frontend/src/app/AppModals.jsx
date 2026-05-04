@@ -3,6 +3,7 @@ import { buildMakerPreview, getMakerModalCopy, mapOffchainHealthToUi, resolvePay
 import { TERMS_ACCEPTED_STORAGE_KEY } from './bootstrapState';
 import { mapResolutionTypeLabel } from './useAppSessionData';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
+import { buildGoToTradeRoomAction } from './actions/tradeNavigationActions';
 
 // [TR] Eksik env değişkenleri için kapatılabilir uyarı şeridi.
 // [EN] Dismissible warning strip for missing env variables.
@@ -811,14 +812,15 @@ export const buildAppModals = (ctx) => {
                       </div>
                       <p className="text-white font-medium text-sm mb-1">{escrow.amount} <span className="text-slate-500 text-xs ml-1">({escrow.rawTrade.max.toFixed(2)} {escrow.rawTrade.fiat})</span></p>
                       <p className="text-xs text-slate-400 mb-3">Karşı Taraf: <span className="font-mono">{escrow.counterparty}</span></p>
-                      <button onClick={() => {
-                        setShowProfileModal(false);
-                        setActiveTrade(escrow.rawTrade);
-                        setUserRole(escrow.role);
-                        setTradeState(escrow.state);
-                        setChargebackAccepted(escrow.rawTrade?.chargebackAcked === true);
-                        setCurrentView('tradeRoom');
-                      }} className="w-full mt-3 bg-[#0c0c0e] hover:bg-[#222] text-white text-xs font-bold py-2.5 rounded-lg transition border border-[#2a2a2e]">
+                      <button onClick={buildGoToTradeRoomAction({
+                        escrow,
+                        setActiveTrade,
+                        setUserRole,
+                        setTradeState,
+                        setChargebackAccepted,
+                        setCurrentView,
+                        setShowProfileModal,
+                      })} className="w-full mt-3 bg-[#0c0c0e] hover:bg-[#222] text-white text-xs font-bold py-2.5 rounded-lg transition border border-[#2a2a2e]">
                         {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
                       </button>
                     </div>
