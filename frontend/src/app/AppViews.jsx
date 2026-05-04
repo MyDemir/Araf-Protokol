@@ -113,7 +113,8 @@ export const buildAppViews = (ctx) => {
     withdrawSettlement,
     expireSettlement,
     acceptSettlement,
-  
+    burnExpired,
+
   } = ctx;
 
   // [TR] Frontend admin menü görünürlüğü yalnız UX katmanıdır.
