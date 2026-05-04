@@ -1381,6 +1381,8 @@ const handleCreateOrder = async () => {
   const {
     renderHome,
     renderMarket,
+    renderOperations,
+    renderProfileContext,
     renderTradeRoom,
     renderSlimRail,
     renderContextSidebar,
@@ -1427,9 +1429,14 @@ const handleCreateOrder = async () => {
     isFaucetEnabled,
     isSupportedChainId,
     handleOpenMakerModal,
+    handleUpdatePII,
+    handleLogoutAndDisconnect,
     activeEscrowCounts,
     setShowProfileModal,
     setProfileTab,
+    setConfirmDeleteId,
+    activeTradesFilter,
+    setActiveTradesFilter,
     setShowFeedbackModal,
     protocolStats,
     statsLoading,
@@ -1643,7 +1650,11 @@ const handleCreateOrder = async () => {
             ? renderHome()
             : currentView === 'market'
               ? renderMarket()
-              : currentView === 'admin'
+              : currentView === 'operations'
+                ? renderOperations()
+                : currentView === 'profile'
+                ? renderProfileContext()
+                : currentView === 'admin'
                 ? (
                   <AdminPanel
                     lang={lang}

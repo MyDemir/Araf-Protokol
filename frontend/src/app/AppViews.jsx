@@ -3,6 +3,11 @@ import PIIDisplay from '../components/PIIDisplay';
 import ReferenceRateTicker from '../components/ReferenceRateTicker';
 import SettlementProposalCard, { normalizeSettlementState } from '../components/SettlementProposalCard';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
+import { buildGoToTradeRoomAction } from './actions/tradeNavigationActions';
+import OperationsCenterPage from './contexts/operations/OperationsCenterPage';
+import ProfileContextPage from './contexts/profile/ProfileContextPage';
+import { mapResolutionTypeLabel } from './useAppSessionData';
+import TradeRoomPage from './contexts/trade-room/TradeRoomPage';
 
 // [TR] App ana görünüm/render katmanı burada tutulur.
 // [EN] Main application view/render layer lives here.
@@ -108,7 +113,8 @@ export const buildAppViews = (ctx) => {
     withdrawSettlement,
     expireSettlement,
     acceptSettlement,
-  
+    burnExpired,
+
   } = ctx;
 
   // [TR] Frontend admin menü görünürlüğü yalnız UX katmanıdır.
@@ -132,6 +138,7 @@ export const buildAppViews = (ctx) => {
         <button onClick={openSidebar} title={lang === 'TR' ? 'Filtreler' : 'Filters'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${sidebarOpen ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>☰</button>
         <button onClick={() => setCurrentView('home')} title={lang === 'TR' ? 'Ana Sayfa' : 'Home'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'home' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🏠</button>
         <button onClick={() => setCurrentView('market')} title={lang === 'TR' ? 'Pazar Yeri' : 'Marketplace'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'market' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🛒</button>
+        <button onClick={() => setCurrentView('operations')} title={lang === 'TR' ? 'İşlem Takip Merkezi' : 'Operations Center'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'operations' ? 'bg-cyan-900/30 text-cyan-400' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>📍</button>
         {/* [TR] Admin girişi authenticated kullanıcıya her zaman görünür;
             VITE_ADMIN_WALLETS yalnızca UX ipucu amaçlıdır.
             [EN] Admin entry is always visible for authenticated users;
@@ -150,6 +157,7 @@ export const buildAppViews = (ctx) => {
         <button onClick={() => setCurrentView('tradeRoom')} title={lang === 'TR' ? 'İşlem Odası' : 'Trade Room'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition relative ${currentView === 'tradeRoom' ? 'bg-orange-600/20 text-orange-500' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>
           💼 {activeEscrows.length > 0 && <span className="absolute top-2 right-2 w-2 h-2 bg-orange-500 rounded-full animate-pulse"></span>}
         </button>
+        <button onClick={() => setCurrentView('profile')} title={lang === 'TR' ? 'Profil Merkezi' : 'Profile Center'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'profile' ? 'bg-emerald-900/30 text-emerald-400' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>👤</button>
         <button onClick={() => { if (!isConnected || !isAuthenticated) { handleAuthAction(); return; } setProfileTab('gecmis'); setShowProfileModal(true); }} title={lang === 'TR' ? 'İşlem Geçmişi' : 'Trade History'} className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-500 hover:text-white hover:bg-[#111113] transition">🗂️</button>
       </div>
       <div className="space-y-4 flex flex-col items-center w-full px-2">
@@ -231,14 +239,15 @@ export const buildAppViews = (ctx) => {
                             </div>
                             <p className="text-slate-300 mb-2 truncate">{escrow.amount} <span className="text-slate-500 ml-1">({escrow.rawTrade.max.toFixed(0)} {escrow.rawTrade.fiat})</span></p>
                             <button
-                              onClick={() => {
-                                setActiveTrade(escrow.rawTrade);
-                                setUserRole(escrow.role);
-                                setTradeState(escrow.state);
-                                setChargebackAccepted(escrow.rawTrade?.chargebackAcked === true);
-                                setCurrentView('tradeRoom');
-                                setSidebarOpen(false);
-                              }}
+                              onClick={buildGoToTradeRoomAction({
+                                escrow,
+                                setActiveTrade,
+                                setUserRole,
+                                setTradeState,
+                                setChargebackAccepted,
+                                setCurrentView,
+                                setSidebarOpen,
+                              })}
                               className="w-full bg-[#1a1a1f] hover:bg-[#222] text-white text-[10px] font-bold py-1.5 rounded transition border border-[#333]"
                             >
                               {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
@@ -289,14 +298,15 @@ export const buildAppViews = (ctx) => {
                       </span>
                     </div>
                     <button
-                      onClick={() => {
-                        setActiveTrade(escrow.rawTrade);
-                        setUserRole(escrow.role);
-                        setTradeState(escrow.state);
-                        setChargebackAccepted(escrow.rawTrade?.chargebackAcked === true);
-                        setCurrentView('tradeRoom');
-                        setSidebarOpen(false);
-                      }}
+                      onClick={buildGoToTradeRoomAction({
+                        escrow,
+                        setActiveTrade,
+                        setUserRole,
+                        setTradeState,
+                        setChargebackAccepted,
+                        setCurrentView,
+                        setSidebarOpen,
+                      })}
                       className="w-full bg-[#1a1a1f] hover:bg-[#222] text-white text-[10px] font-bold py-1.5 rounded transition border border-[#333]"
                     >
                       {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
@@ -992,6 +1002,7 @@ export const buildAppViews = (ctx) => {
     <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#060608] border-t border-[#1a1a1a] z-[45] flex items-center justify-around px-2 pb-safe shadow-[0_-10px_30px_rgba(0,0,0,0.5)]">
       <button onClick={() => setCurrentView('home')} className={`p-2 text-xl transition-all ${currentView === 'home' ? 'text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)] -translate-y-1' : 'text-slate-600'}`}>🏠</button>
       <button onClick={() => setCurrentView('market')} className={`p-2 text-xl transition-all ${currentView === 'market' ? 'text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)] -translate-y-1' : 'text-slate-600'}`}>🛒</button>
+      <button onClick={() => setCurrentView('operations')} className={`p-2 text-xl transition-all ${currentView === 'operations' ? 'text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)] -translate-y-1' : 'text-slate-600'}`}>📍</button>
       <button onClick={() => setCurrentView('tradeRoom')} className={`p-2 text-xl transition-all relative ${currentView === 'tradeRoom' ? 'text-orange-500 drop-shadow-[0_0_8px_rgba(249,115,22,0.5)] -translate-y-1' : 'text-slate-600'}`}>
         💼{activeEscrows.length > 0 && <span className="absolute top-2 right-1 w-2.5 h-2.5 bg-orange-500 border border-[#060608] rounded-full animate-pulse"></span>}
       </button>
@@ -1001,10 +1012,40 @@ export const buildAppViews = (ctx) => {
         <button onClick={() => setCurrentView('admin')} className={`p-2 text-xl transition-all ${currentView === 'admin' ? 'text-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] -translate-y-1' : 'text-slate-600'}`}>🧭</button>
       )}
       <button onClick={openSidebar} className={`p-2 text-xl transition-all ${sidebarOpen ? 'text-white -translate-y-1' : 'text-slate-600'}`}>☰</button>
+      <button onClick={() => setCurrentView('profile')} className={`p-2 text-xl transition-all ${currentView === 'profile' ? 'text-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] -translate-y-1' : 'text-slate-600'}`}>👤</button>
       <button onClick={handleAuthAction} className={`p-2 text-xl transition-all ${isConnected && isAuthenticated ? 'text-emerald-500 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] -translate-y-1' : 'text-slate-600'}`}>
         {isConnected && isAuthenticated ? '👤' : '👛'}
       </button>
     </div>
+  );
+
+
+  const renderProfileContext = () => (
+    <ProfileContextPage
+      lang={lang}
+      address={address}
+      formatAddress={formatAddress}
+      isConnected={isConnected}
+      isAuthenticated={isAuthenticated}
+      payoutProfileDraft={ctx.payoutProfileDraft}
+      setPayoutProfileDraft={ctx.setPayoutProfileDraft}
+      handleUpdatePII={ctx.handleUpdatePII}
+      userReputation={userReputation}
+      myOrders={ctx.myOrders || []}
+      setConfirmDeleteId={ctx.setConfirmDeleteId || (() => {})}
+      activeTradesFilter={ctx.activeTradesFilter}
+      setActiveTradesFilter={ctx.setActiveTradesFilter}
+      activeEscrows={activeEscrows}
+      setActiveTrade={setActiveTrade}
+      setUserRole={setUserRole}
+      setTradeState={setTradeState}
+      setChargebackAccepted={setChargebackAccepted}
+      setCurrentView={setCurrentView}
+      setShowProfileModal={setShowProfileModal}
+      tradeHistory={ctx.tradeHistory || []}
+      mapResolutionTypeLabel={mapResolutionTypeLabel}
+      handleLogoutAndDisconnect={ctx.handleLogoutAndDisconnect}
+    />
   );
 
   const renderFooter = () => (
@@ -1026,9 +1067,28 @@ export const buildAppViews = (ctx) => {
   );
 
 
+  const renderOperations = () => (
+    <OperationsCenterPage
+      activeEscrows={activeEscrows}
+      activeEscrowCounts={activeEscrowCounts}
+      activeTrade={activeTrade}
+      address={address}
+      lang={lang}
+      setActiveTrade={setActiveTrade}
+      setUserRole={setUserRole}
+      setTradeState={setTradeState}
+      setChargebackAccepted={setChargebackAccepted}
+      setCurrentView={setCurrentView}
+      setSidebarOpen={setSidebarOpen}
+      setShowProfileModal={setShowProfileModal}
+    />
+  );
+
   return {
     renderHome,
     renderMarket,
+    renderOperations,
+    renderProfileContext,
     renderTradeRoom,
     renderSlimRail,
     renderContextSidebar,
