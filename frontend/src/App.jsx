@@ -1381,6 +1381,7 @@ const handleCreateOrder = async () => {
   const {
     renderHome,
     renderMarket,
+    renderOperations,
     renderTradeRoom,
     renderSlimRail,
     renderContextSidebar,
@@ -1643,7 +1644,9 @@ const handleCreateOrder = async () => {
             ? renderHome()
             : currentView === 'market'
               ? renderMarket()
-              : currentView === 'admin'
+              : currentView === 'operations'
+                ? renderOperations()
+                : currentView === 'admin'
                 ? (
                   <AdminPanel
                     lang={lang}

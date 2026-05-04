@@ -4,6 +4,7 @@ import ReferenceRateTicker from '../components/ReferenceRateTicker';
 import SettlementProposalCard, { normalizeSettlementState } from '../components/SettlementProposalCard';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
 import { buildGoToTradeRoomAction } from './actions/tradeNavigationActions';
+import OperationsCenterPage from './contexts/operations/OperationsCenterPage';
 
 // [TR] App ana görünüm/render katmanı burada tutulur.
 // [EN] Main application view/render layer lives here.
@@ -133,6 +134,7 @@ export const buildAppViews = (ctx) => {
         <button onClick={openSidebar} title={lang === 'TR' ? 'Filtreler' : 'Filters'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${sidebarOpen ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>☰</button>
         <button onClick={() => setCurrentView('home')} title={lang === 'TR' ? 'Ana Sayfa' : 'Home'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'home' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🏠</button>
         <button onClick={() => setCurrentView('market')} title={lang === 'TR' ? 'Pazar Yeri' : 'Marketplace'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'market' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🛒</button>
+        <button onClick={() => setCurrentView('operations')} title={lang === 'TR' ? 'İşlem Takip Merkezi' : 'Operations Center'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'operations' ? 'bg-cyan-900/30 text-cyan-400' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>📍</button>
         {/* [TR] Admin girişi authenticated kullanıcıya her zaman görünür;
             VITE_ADMIN_WALLETS yalnızca UX ipucu amaçlıdır.
             [EN] Admin entry is always visible for authenticated users;
@@ -995,6 +997,7 @@ export const buildAppViews = (ctx) => {
     <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#060608] border-t border-[#1a1a1a] z-[45] flex items-center justify-around px-2 pb-safe shadow-[0_-10px_30px_rgba(0,0,0,0.5)]">
       <button onClick={() => setCurrentView('home')} className={`p-2 text-xl transition-all ${currentView === 'home' ? 'text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)] -translate-y-1' : 'text-slate-600'}`}>🏠</button>
       <button onClick={() => setCurrentView('market')} className={`p-2 text-xl transition-all ${currentView === 'market' ? 'text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)] -translate-y-1' : 'text-slate-600'}`}>🛒</button>
+      <button onClick={() => setCurrentView('operations')} className={`p-2 text-xl transition-all ${currentView === 'operations' ? 'text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)] -translate-y-1' : 'text-slate-600'}`}>📍</button>
       <button onClick={() => setCurrentView('tradeRoom')} className={`p-2 text-xl transition-all relative ${currentView === 'tradeRoom' ? 'text-orange-500 drop-shadow-[0_0_8px_rgba(249,115,22,0.5)] -translate-y-1' : 'text-slate-600'}`}>
         💼{activeEscrows.length > 0 && <span className="absolute top-2 right-1 w-2.5 h-2.5 bg-orange-500 border border-[#060608] rounded-full animate-pulse"></span>}
       </button>
@@ -1029,9 +1032,27 @@ export const buildAppViews = (ctx) => {
   );
 
 
+  const renderOperations = () => (
+    <OperationsCenterPage
+      activeEscrows={activeEscrows}
+      activeEscrowCounts={activeEscrowCounts}
+      activeTrade={activeTrade}
+      address={address}
+      lang={lang}
+      setActiveTrade={setActiveTrade}
+      setUserRole={setUserRole}
+      setTradeState={setTradeState}
+      setChargebackAccepted={setChargebackAccepted}
+      setCurrentView={setCurrentView}
+      setSidebarOpen={setSidebarOpen}
+      setShowProfileModal={setShowProfileModal}
+    />
+  );
+
   return {
     renderHome,
     renderMarket,
+    renderOperations,
     renderTradeRoom,
     renderSlimRail,
     renderContextSidebar,

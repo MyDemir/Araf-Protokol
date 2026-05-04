@@ -19,7 +19,7 @@ export const contextRegistry = [
   },
   {
     key: 'operations',
-    label: { TR: 'Operasyonlar', EN: 'Operations' },
+    label: { TR: 'İşlem Takip Merkezi', EN: 'Operations Center' },
     icon: '⚙️',
     requiresAuth: true,
     layout: CONTEXT_LAYOUTS.OPERATIONS,
