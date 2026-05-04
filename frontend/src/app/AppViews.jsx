@@ -8,6 +8,7 @@ import OperationsCenterPage from './contexts/operations/OperationsCenterPage';
 import ProfileContextPage from './contexts/profile/ProfileContextPage';
 import { mapResolutionTypeLabel } from './useAppSessionData';
 import TradeRoomPage from './contexts/trade-room/TradeRoomPage';
+import OperationTradeCard from './contexts/operations/OperationTradeCard';
 
 // [TR] App ana görünüm/render katmanı burada tutulur.
 // [EN] Main application view/render layer lives here.
@@ -231,28 +232,21 @@ export const buildAppViews = (ctx) => {
                   <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-[500px] opacity-100 mt-2' : 'max-h-0 opacity-0'}`}>
                     {statusTrades.length > 0 ? (
                       <div className="pl-3 pr-1 py-1 space-y-2 border-l-2 border-[#222] ml-3">
-                        {statusTrades.map(escrow => (
-                          <div key={escrow.id} className="bg-[#111113] p-2.5 rounded-lg border border-[#2a2a2e] text-xs shadow-inner">
-                            <div className="flex justify-between items-center mb-1.5">
-                              <span className="font-mono text-emerald-400 font-bold">{escrow.id}</span>
-                              <span className="text-[9px] text-slate-500 uppercase border border-[#333] px-1.5 py-0.5 rounded">{escrow.role}</span>
-                            </div>
-                            <p className="text-slate-300 mb-2 truncate">{escrow.amount} <span className="text-slate-500 ml-1">({escrow.rawTrade.max.toFixed(0)} {escrow.rawTrade.fiat})</span></p>
-                            <button
-                              onClick={buildGoToTradeRoomAction({
-                                escrow,
-                                setActiveTrade,
-                                setUserRole,
-                                setTradeState,
-                                setChargebackAccepted,
-                                setCurrentView,
-                                setSidebarOpen,
-                              })}
-                              className="w-full bg-[#1a1a1f] hover:bg-[#222] text-white text-[10px] font-bold py-1.5 rounded transition border border-[#333]"
-                            >
-                              {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
-                            </button>
-                          </div>
+                        {statusTrades.map((escrow) => (
+                          <OperationTradeCard
+                            key={escrow.id || escrow.onchainId}
+                            escrow={escrow}
+                            lang={lang}
+                            onGoToRoom={buildGoToTradeRoomAction({
+                              escrow,
+                              setActiveTrade,
+                              setUserRole,
+                              setTradeState,
+                              setChargebackAccepted,
+                              setCurrentView,
+                              setSidebarOpen,
+                            })}
+                          />
                         ))}
                       </div>
                     ) : (
@@ -1033,6 +1027,7 @@ export const buildAppViews = (ctx) => {
       userReputation={userReputation}
       myOrders={ctx.myOrders || []}
       setConfirmDeleteId={ctx.setConfirmDeleteId || (() => {})}
+      handleDeleteOrder={ctx.handleDeleteOrder}
       activeTradesFilter={ctx.activeTradesFilter}
       setActiveTradesFilter={ctx.setActiveTradesFilter}
       activeEscrows={activeEscrows}

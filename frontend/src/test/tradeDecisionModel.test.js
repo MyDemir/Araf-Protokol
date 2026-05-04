@@ -45,7 +45,10 @@ describe('buildTradeDecisionModel', () => {
   });
 
   it('wrong chain / paused / unauthenticated appear as disabled reasons', () => {
-    const model = buildTradeDecisionModel({ ...base, isSupportedChain: false, isPaused: true, isAuthenticated: false });
-    expect(model.disabledReasons.length).toBeGreaterThanOrEqual(3);
+    const model = buildTradeDecisionModel({ ...base, isConnected: false, isSupportedChain: false, isPaused: true, isAuthenticated: false });
+    expect(model.disabledReasons).toContain('Wallet not connected.');
+    expect(model.disabledReasons).toContain('Session is not authenticated.');
+    expect(model.disabledReasons).toContain('Unsupported network.');
+    expect(model.disabledReasons).toContain('System is in maintenance mode.');
   });
 });

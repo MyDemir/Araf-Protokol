@@ -8,14 +8,14 @@ import TradeSummaryCard from './TradeSummaryCard';
 import TechnicalDetailsDisclosure from './TechnicalDetailsDisclosure';
 import TradeRoomContextPanel from './TradeRoomContextPanel';
 
-export const TradeRoomPage = ({ decisionInput, children }) => {
+export const TradeRoomPage = ({ decisionInput, actionHandlers, children }) => {
   const model = React.useMemo(() => buildTradeDecisionModel(decisionInput || {}), [decisionInput]);
   return (
     <TradeRoomContextPanel>
       <TradeSummaryCard stateLabel={model.stateLabel} roleLabel={model.roleLabel} />
       <StateGuidancePanel guidance={model.guidance} />
-      <PrimaryActionPanel primaryAction={model.primaryAction} />
-      <SecondaryActionsPanel secondaryActions={model.secondaryActions} />
+      <PrimaryActionPanel primaryAction={model.primaryAction} actionHandlers={actionHandlers} disabledReasons={model.disabledReasons} />
+      <SecondaryActionsPanel secondaryActions={model.secondaryActions} actionHandlers={actionHandlers} disabledReasons={model.disabledReasons} />
       <TimerStack timerCards={model.timerCards} />
       <TechnicalDetailsDisclosure technicalDetails={model.technicalDetails} />
       {children}

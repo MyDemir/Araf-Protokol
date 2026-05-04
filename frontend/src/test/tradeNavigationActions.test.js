@@ -79,4 +79,28 @@ describe('buildGoToTradeRoomAction', () => {
     })();
     expect(setChargebackAccepted).toHaveBeenCalledWith(false);
   });
+
+  it('preserves rawTrade payload (including settlement proposal) while navigating', () => {
+    const rawTrade = {
+      id: 't2',
+      chargebackAcked: false,
+      settlementProposal: { state: 'PROPOSED', proposer: '0xabc' },
+    };
+    const setActiveTrade = vi.fn();
+    const setSidebarOpen = vi.fn();
+
+    buildGoToTradeRoomAction({
+      escrow: { rawTrade, role: 'maker', state: 'CHALLENGED' },
+      setActiveTrade,
+      setUserRole: vi.fn(),
+      setTradeState: vi.fn(),
+      setChargebackAccepted: vi.fn(),
+      setCurrentView: vi.fn(),
+      setSidebarOpen,
+    })();
+
+    expect(setActiveTrade).toHaveBeenCalledWith(rawTrade);
+    expect(setActiveTrade.mock.calls[0][0].settlementProposal).toEqual(rawTrade.settlementProposal);
+    expect(setSidebarOpen).toHaveBeenCalledWith(false);
+  });
 });

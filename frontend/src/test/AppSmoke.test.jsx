@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -132,8 +132,10 @@ vi.mock('../app/useAppSessionData', () => ({
 vi.mock('../app/AppViews', () => ({
   buildAppViews: () => ({
     renderHome: () => <div data-testid="home-view">home-view</div>,
-    renderMarket: () => null,
-    renderTradeRoom: () => null,
+    renderMarket: () => <div data-testid="market-view">market-view</div>,
+    renderOperations: () => <div data-testid="operations-view">operations-view</div>,
+    renderProfileContext: () => <div data-testid="profile-view">profile-view</div>,
+    renderTradeRoom: () => <div data-testid="trade-room-view">trade-room-view</div>,
     renderSlimRail: () => null,
     renderContextSidebar: () => null,
     renderMobileNav: () => null,
@@ -158,10 +160,20 @@ describe('App smoke', () => {
   it('mounts and renders the home view without hitting ErrorBoundary path', () => {
     render(<App />);
     expect(screen.getByTestId('home-view')).toBeInTheDocument();
+    expect(screen.getByText('System Configuration Warning')).toBeInTheDocument();
   });
 
   it('keeps profile tab default aligned with modal tabs', () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
     expect(source).toContain("useState('ayarlar')");
+  });
+
+  it('keeps operations/profile branching and modal host render path intact', () => {
+    cleanup();
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
+    expect(source).toContain("currentView === 'operations'");
+    expect(source).toContain("currentView === 'profile'");
+    render(<App />);
+    expect(screen.getAllByTitle('Feedback').length).toBeGreaterThan(0);
   });
 });

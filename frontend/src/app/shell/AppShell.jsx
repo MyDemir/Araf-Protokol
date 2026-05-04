@@ -10,6 +10,7 @@ import { MobileBottomNav } from './MobileBottomNav';
 export const AppShell = ({
   children,
   status = null,
+  systemStatusProps = null,
   navigation = null,
   panel = null,
   outlet = null,
@@ -19,7 +20,7 @@ export const AppShell = ({
 }) => {
   return (
     <>
-      <SystemStatusBar>{status}</SystemStatusBar>
+      <SystemStatusBar {...(systemStatusProps || {})}>{status}</SystemStatusBar>
       <MobileTopBar>{mobileTop}</MobileTopBar>
       <ContextNavigation>{navigation}</ContextNavigation>
       <ContextPanel>{panel}</ContextPanel>

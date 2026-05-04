@@ -8,6 +8,7 @@ import { buildAppViews } from './app/AppViews';
 import { EnvWarningBanner, buildAppModals } from './app/AppModals';
 import { useAppSessionData } from './app/useAppSessionData';
 import AdminPanel from './AdminPanel';
+import AppShell from './app/shell/AppShell';
 import { getInitialLang, getInitialTermsAccepted, APP_LANG_STORAGE_KEY } from './app/bootstrapState';
 import { resolveOrderActionFns, normalizeOrderSide, removeOrderByOnchainId, resolvePaymentRiskEntry } from './app/orderUiModel';
 import { buildApiUrl, resolveApiPolicyDiagnostics } from './app/apiConfig';
@@ -1644,36 +1645,55 @@ const handleCreateOrder = async () => {
       {renderContextSidebar()}
       {renderMobileNav()}
 
-      <div className="flex-1 overflow-y-auto relative bg-[#060608]">
-        <div className="min-h-full flex flex-col pt-4 md:pt-10 pb-24 md:pb-10 items-center">
-          {currentView === 'home'
-            ? renderHome()
-            : currentView === 'market'
-              ? renderMarket()
-              : currentView === 'operations'
-                ? renderOperations()
-                : currentView === 'profile'
-                ? renderProfileContext()
-                : currentView === 'admin'
-                ? (
-                  <AdminPanel
-                    lang={lang}
-                    authenticatedFetch={authenticatedFetch}
-                    isAuthenticated={isAuthenticated}
-                    authChecked={authChecked}
-                    showToast={showToast}
-                  />
-                )
-                : renderTradeRoom()}
-          {renderFooter()}
-        </div>
-      </div>
-
-      {renderWalletModal()}
-      {renderFeedbackModal()}
-      {renderMakerModal()}
-      {renderProfileModal()}
-      {renderTermsModal()}
+      <AppShell
+        status={null}
+        systemStatusProps={{
+          envErrors: ENV_ERRORS,
+          isPaused,
+          isConnected,
+          isAuthenticated,
+          authChecked,
+          chainId,
+          isSupportedChain,
+          activeTrade,
+          lang,
+        }}
+        outlet={
+          <div className="flex-1 overflow-y-auto relative bg-[#060608]">
+            <div className="min-h-full flex flex-col pt-4 md:pt-10 pb-24 md:pb-10 items-center">
+              {currentView === 'home'
+                ? renderHome()
+                : currentView === 'market'
+                  ? renderMarket()
+                  : currentView === 'operations'
+                    ? renderOperations()
+                    : currentView === 'profile'
+                    ? renderProfileContext()
+                    : currentView === 'admin'
+                    ? (
+                      <AdminPanel
+                        lang={lang}
+                        authenticatedFetch={authenticatedFetch}
+                        isAuthenticated={isAuthenticated}
+                        authChecked={authChecked}
+                        showToast={showToast}
+                      />
+                    )
+                    : renderTradeRoom()}
+              {renderFooter()}
+            </div>
+          </div>
+        }
+        modals={
+          <>
+            {renderWalletModal()}
+            {renderFeedbackModal()}
+            {renderMakerModal()}
+            {renderProfileModal()}
+            {renderTermsModal()}
+          </>
+        }
+      />
 
       <button
         onClick={() => setShowFeedbackModal(true)}
