@@ -17,15 +17,15 @@ describe('AppViews reference ticker placement', () => {
     expect(listLine).toBeGreaterThan(tickerLine);
   });
 
-  it('mounts ReferenceRateTicker in renderTradeRoom for active transaction context', () => {
+  it('does not mount ReferenceRateTicker directly in renderTradeRoom (owned by TradeRoomPage)', () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), 'src/app/AppViews.jsx'), 'utf8');
 
     const tradeRoomStart = source.indexOf('const renderTradeRoom = () => {');
     const tickerLine = source.indexOf('<ReferenceRateTicker lang={lang} />', tradeRoomStart);
-    const roomCardLine = source.indexOf('border rounded-2xl p-5 md:p-8 shadow-2xl', tradeRoomStart);
+    const hiddenMarker = source.indexOf('border rounded-2xl p-5 md:p-8 shadow-2xl hidden', tradeRoomStart);
 
     expect(tradeRoomStart).toBeGreaterThan(-1);
-    expect(tickerLine).toBeGreaterThan(tradeRoomStart);
-    expect(roomCardLine).toBeGreaterThan(tickerLine);
+    expect(tickerLine).toBe(-1);
+    expect(hiddenMarker).toBe(-1);
   });
 });

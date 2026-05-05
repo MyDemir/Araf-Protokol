@@ -639,10 +639,7 @@ export const buildAppViews = (ctx) => {
     };
 
     return (
-      <div className="p-4 md:p-8 max-w-[900px] w-full mx-auto relative mt-6 md:mt-0">
-        <ReferenceRateTicker lang={lang} />
-        <div className="border rounded-2xl p-5 md:p-8 shadow-2xl hidden" />
-        <TradeRoomPage
+      <TradeRoomPage
         decisionInput={{ trade: activeTrade, tradeState: roomState, userRole, chargebackAccepted, paymentIpfsHash, timers: { gracePeriodTimer, bleedingTimer, principalProtectionTimer, makerPingTimer, makerChallengePingTimer, makerChallengeTimer }, isConnected, isAuthenticated, isSupportedChain, isPaused, lang }}
         actionHandlers={actionHandlers}
         viewProps={{
@@ -686,7 +683,6 @@ export const buildAppViews = (ctx) => {
           getSafeTelegramUrl,
         }}
       />
-      </div>
     );
   };
 
