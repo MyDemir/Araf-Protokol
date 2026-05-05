@@ -213,6 +213,25 @@ describe('AppViews market side-aware rendering', () => {
     expect(screen.getAllByText(/Payment method complexity:/i).length).toBe(1);
   });
 
+
+  it('keeps an explicit sidebar close path when the contextual sidebar is open', async () => {
+    const user = userEvent.setup();
+    const setSidebarOpen = vi.fn();
+    const views = buildAppViews({
+      ...baseCtx,
+      sidebarOpen: true,
+      setSidebarOpen,
+      activeEscrows: [],
+    });
+
+    const { container } = render(<div>{views.renderContextSidebar()}</div>);
+    const mobileOverlay = container.querySelector('[class*="md:hidden"][class*="inset-0"]');
+
+    expect(mobileOverlay).not.toBeNull();
+    await user.click(mobileOverlay);
+    expect(setSidebarOpen).toHaveBeenCalledWith(false);
+  });
+
   it('shows explicit empty-state instead of broken trade room when activeTrade is missing', async () => {
     const user = userEvent.setup();
     const setCurrentView = vi.fn();
