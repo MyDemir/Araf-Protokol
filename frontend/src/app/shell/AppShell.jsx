@@ -19,7 +19,7 @@ export const AppShell = ({
 }) => {
   return (
     <>
-      <SystemStatusBar>{status}</SystemStatusBar>
+      {status ? <SystemStatusBar>{status}</SystemStatusBar> : null}
       <MobileTopBar>{mobileTop}</MobileTopBar>
       <ContextNavigation>{navigation}</ContextNavigation>
       <ContextPanel>{panel}</ContextPanel>

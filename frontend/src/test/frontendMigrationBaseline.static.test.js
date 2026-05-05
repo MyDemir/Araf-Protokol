@@ -152,11 +152,16 @@ describe('frontend migration scaffold baseline', () => {
     });
   });
 
-  it('keeps AppShell and provider files as scaffold-compatible skeletons at this stage', () => {
+  it('keeps AppShell runtime-integrated while provider files stay scaffold-compatible skeletons at this stage', () => {
     expect(appShellSource).toContain('export const AppShell');
     expect(appShellSource).toContain('<ContextNavigation>');
     expect(appShellSource).toContain('<ContextOutlet>{outlet || children}</ContextOutlet>');
-    expect(appSource).not.toMatch(/from ['"]\.\/app\/shell\/AppShell['"]/);
+    expect(appShellSource).toContain('{status ? <SystemStatusBar>{status}</SystemStatusBar> : null}');
+    expect(appSource).toContain("import AppShell from './app/shell/AppShell';");
+    expect(appSource).toContain('<AppShell');
+    expect(appSource).toContain('navigation={renderSlimRail()}');
+    expect(appSource).toContain('panel={renderContextSidebar()}');
+    expect(appSource).toContain('mobileBottom={renderMobileNav()}');
 
     Object.entries(providerSources).forEach(([providerName, source]) => {
       expect(source).toContain(`export const ${providerName}`);

@@ -144,7 +144,7 @@ vi.mock('../app/AppViews', () => ({
 vi.mock('../app/AppModals', () => ({
   EnvWarningBanner: () => null,
   buildAppModals: () => ({
-    renderWalletModal: () => null,
+    renderWalletModal: () => <div data-testid="wallet-modal-slot">wallet-modal-slot</div>,
     renderFeedbackModal: () => null,
     renderMakerModal: () => null,
     renderProfileModal: () => null,
@@ -158,6 +158,7 @@ describe('App smoke', () => {
   it('mounts and renders the home view without hitting ErrorBoundary path', () => {
     render(<App />);
     expect(screen.getByTestId('home-view')).toBeInTheDocument();
+    expect(screen.getByTestId('wallet-modal-slot')).toBeInTheDocument();
   });
 
   it('keeps profile tab default aligned with modal tabs', () => {
