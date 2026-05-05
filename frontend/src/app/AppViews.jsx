@@ -1,7 +1,6 @@
 import React from 'react';
-import PIIDisplay from '../components/PIIDisplay';
 import ReferenceRateTicker from '../components/ReferenceRateTicker';
-import SettlementProposalCard, { normalizeSettlementState } from '../components/SettlementProposalCard';
+import { normalizeSettlementState } from '../components/SettlementProposalCard';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
 import { buildGoToTradeRoomAction } from './actions/tradeNavigationActions';
 import OperationsCenterPage from './contexts/operations/OperationsCenterPage';
@@ -621,21 +620,8 @@ export const buildAppViews = (ctx) => {
       );
     }
     const roomState = resolvedTradeState;
-    const isChallenged = roomState === 'CHALLENGED';
-    const isTaker = userRole === 'taker';
-    const isMaker = userRole === 'maker';
 
-    const tradeTokenDecimals = activeTrade?.tokenDecimals ?? (tokenDecimalsMap[activeTrade?.crypto || 'USDT'] ?? DEFAULT_TOKEN_DECIMALS);
-    const rawCryptoAmt = activeTrade?.cryptoAmountRaw
-      ? rawTokenToDisplayNumber(activeTrade.cryptoAmountRaw, tradeTokenDecimals)
-      : ((activeTrade?.max || 0) / (activeTrade?.rate || 1));
-    const protocolFee  = rawCryptoAmt * ((takerFeeBps || 10) / 10000);
-    const netAmount    = rawCryptoAmt - protocolFee;
-    const asset        = activeTrade?.crypto || 'USDT';
-    const feeBreakdownText = lang === 'TR'
-      ? `Kilitli: ${rawCryptoAmt.toFixed(2)} ${asset} | Protokol Kesintisi: ${protocolFee.toFixed(4)} ${asset} | Net Alınacak: ${netAmount.toFixed(2)} ${asset}`
-      : `Locked: ${rawCryptoAmt.toFixed(2)} ${asset} | Protocol Fee: ${protocolFee.toFixed(4)} ${asset} | Net to Receive: ${netAmount.toFixed(2)} ${asset}`;
-
+    const isSupportedChain = typeof isSupportedChainId === 'function' ? isSupportedChainId(chainId) : true;
     const actionHandlers = {
       report_payment: handleReportPayment,
       release_funds: handleRelease,
@@ -649,350 +635,43 @@ export const buildAppViews = (ctx) => {
       withdraw_settlement: withdrawSettlement,
       expire_settlement: expireSettlement,
       accept_settlement: acceptSettlement,
-      burn_expired: () => burnExpired?.(BigInt(activeTrade?.onchainId || 0)),
+      burn_expired: activeTrade?.onchainId ? () => burnExpired(BigInt(activeTrade.onchainId)) : undefined,
     };
 
     return (
-      <TradeRoomPage decisionInput={{ trade: activeTrade, tradeState: roomState, userRole, chargebackAccepted, paymentIpfsHash, timers: { gracePeriodTimer, bleedingTimer, principalProtectionTimer, makerPingTimer, makerChallengePingTimer, makerChallengeTimer }, isConnected, isAuthenticated, isSupportedChain: true, isPaused, lang }} actionHandlers={actionHandlers}>
       <div className="p-4 md:p-8 max-w-[900px] w-full mx-auto relative mt-6 md:mt-0">
-        <button onClick={() => setCurrentView('market')} className="absolute -top-2 md:-top-4 left-4 md:left-8 text-slate-500 hover:text-white text-sm transition">← {lang === 'TR' ? 'Pazar Yerine Dön' : 'Go Back'}</button>
-
-        {/* [TR] Aktif işlem odasında da yalnız bilgilendirme amaçlı referans kur görünürlüğü sağlanır.
-            [EN] Active trade room also shows the same informational-only reference widget. */}
         <ReferenceRateTicker lang={lang} />
-
-        <div className={`border rounded-2xl p-5 md:p-8 shadow-2xl transition-colors duration-700 ${isChallenged ? 'bg-[#1a0f0f] border-red-900/40' : 'bg-[#111113] border-[#222]'}`}>
-          <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 border-b border-[#222] pb-6 gap-4 md:gap-0">
-            <div>
-              <p className="text-slate-500 text-xs tracking-widest mb-1">{lang === 'TR' ? 'İŞLEM ODASI' : 'TRADE ROOM'}: {activeTrade?.id}</p>
-              <h2 className="text-2xl font-bold text-white flex flex-col sm:flex-row items-start sm:items-center gap-3">
-                {activeTrade?.max || '0.00'} {activeTrade?.fiat}
-                <span className={`text-xs px-3 py-1 rounded-full border ${isChallenged ? 'bg-red-900/20 text-red-500 border-red-900' : 'bg-emerald-900/20 text-emerald-500 border-emerald-900'}`}>{isChallenged ? (lang === 'TR' ? 'Araf Fazı' : 'Purgatory') : roomState}</span>
-              </h2>
-            </div>
-            <div className="text-left md:text-right w-full md:w-auto border-t border-[#222] md:border-none pt-4 md:pt-0">
-              <p className="text-slate-500 text-xs">{lang === 'TR' ? 'KARŞI TARAF' : 'COUNTERPARTY'}</p>
-              <p className="text-white font-mono">{activeTrade?.maker || '0x...'}</p>
-            </div>
-          </div>
-
-          {/* Bleeding Escrow görsel barı — yalnızca CHALLENGED state'inde gösterilir */}
-          {isChallenged && (
-            <div className="mb-8 md:mb-10 p-4 md:p-6 bg-[#0a0505] border border-red-950 rounded-xl relative overflow-hidden">
-              <div className="flex justify-between text-xs font-bold mb-3">
-                <span className="text-red-500">MAKER BOND</span>
-                <span className="text-orange-500">TAKER BOND</span>
-              </div>
-              {(() => {
-                const myBond       = bleedingAmounts ? (isTaker ? Number(bleedingAmounts.takerBondRemaining) : Number(bleedingAmounts.makerBondRemaining)) : null;
-                const opponentBond = bleedingAmounts ? (isTaker ? Number(bleedingAmounts.makerBondRemaining) : Number(bleedingAmounts.takerBondRemaining)) : null;
-                const myBondOrig   = myBond       !== null ? Math.max(myBond, 1)       : 1;
-                const oppBondOrig  = opponentBond !== null ? Math.max(opponentBond, 1)  : 1;
-                const myPct        = myBond       !== null ? Math.round((myBond       / myBondOrig)  * 100) : 40;
-                const opponentPct  = opponentBond !== null ? Math.round((opponentBond / oppBondOrig)  * 100) : 35;
-                const decayedTotal = bleedingAmounts ? (bleedingAmounts.totalDecayed ?? 0n) : 0n;
-                return (
-                  <>
-                    <div className="w-full h-3 bg-[#111] rounded-full flex relative border border-[#222]">
-                      <div className="h-full bg-gradient-to-r from-red-700 to-red-500 rounded-l-full relative transition-all duration-500" style={{width: `${isMaker ? myPct : opponentPct}%`}}>
-                        <div className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-red-500 rounded-full blur-sm"></div>
-                      </div>
-                      <div className="flex-1 bg-transparent border-y border-red-900/30 flex items-center justify-center overflow-hidden">
-                        <div className="w-full h-px bg-red-500/20 shadow-[0_0_10px_red] animate-pulse"></div>
-                      </div>
-                      <div className="h-full bg-gradient-to-l from-orange-700 to-orange-500 rounded-r-full relative transition-all duration-500" style={{width: `${isTaker ? myPct : opponentPct}%`}}>
-                        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-orange-500 rounded-full blur-sm"></div>
-                      </div>
-                    </div>
-                    <div className="flex flex-col mt-4 space-y-2 relative">
-                      <div className="w-full flex justify-between">
-                        <span className="text-red-500/50 text-[10px] font-mono">{bleedingTimer.isFinished ? '00:00:00' : `${String(bleedingTimer.hours).padStart(2,'0')}:${String(bleedingTimer.minutes).padStart(2,'0')}:${String(bleedingTimer.seconds).padStart(2,'0')}`}</span>
-                        <span className="text-orange-500/50 text-[10px] font-mono">{bleedingTimer.isFinished ? '00:00:00' : `${String(bleedingTimer.hours).padStart(2,'0')}:${String(bleedingTimer.minutes).padStart(2,'0')}:${String(bleedingTimer.seconds).padStart(2,'0')}`}</span>
-                      </div>
-                      <div className="text-center w-full">
-                        <p className="text-red-400 font-bold text-sm drop-shadow-[0_0_5px_red]">{lang === 'TR' ? 'Yanan Toplam:' : 'Total Burned:'} {formatTokenAmountFromRaw(decayedTotal, tradeTokenDecimals)} {asset} 🔥</p>
-                      </div>
-                    </div>
-                  </>
-                );
-              })()}
-              <div className="mt-8 flex items-center justify-center gap-2 text-xs text-slate-500">
-                <span className="text-emerald-500">🔒</span> {lang === 'TR' ? 'Ana Para Güvende:' : 'Principal Safe:'} <span className="font-mono text-emerald-400">{principalProtectionTimer.isFinished ? 'Bitti' : `${principalProtectionTimer.days}g ${principalProtectionTimer.hours}s`}</span>
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-6">
-            <SettlementProposalCard
-              activeTrade={activeTrade}
-              userRole={userRole}
-              address={address}
-              lang={lang}
-              authenticatedFetch={authenticatedFetch}
-              proposeSettlement={proposeSettlement}
-              acceptSettlement={acceptSettlement}
-              rejectSettlement={rejectSettlement}
-              withdrawSettlement={withdrawSettlement}
-              expireSettlement={expireSettlement}
-              fetchMyTrades={fetchMyTrades}
-              showToast={showToast}
-              isContractLoading={isContractLoading}
-              setIsContractLoading={setIsContractLoading}
-            />
-            {/* LOCKED state aksiyon paneli */}
-            {roomState === 'LOCKED' && (
-              <div className="text-center py-6">
-                <div className="w-14 h-14 bg-blue-500/10 text-blue-500 border border-blue-500/20 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">🔒</div>
-                <h2 className="text-xl md:text-2xl font-bold text-white mb-2">{lang === 'TR' ? 'USDT Kilitlendi' : 'USDT Locked'}</h2>
-                {isTaker ? (
-                  <div className="w-full max-w-sm mt-4 space-y-3 mx-auto">
-                    <div className="relative">
-                      <input type="file" onChange={handleFileUpload} accept="image/*,.pdf" className="hidden" id="receipt-upload" />
-                      <label htmlFor="receipt-upload" className="w-full bg-[#0a0a0c] text-white px-4 py-3 rounded-xl border border-[#333] mb-4 text-sm flex items-center justify-center cursor-pointer hover:border-blue-500/50 transition">
-                        {paymentIpfsHash ? (lang === 'TR' ? '✅ Yüklendi (Hash: ' + paymentIpfsHash.slice(0,8) + '...)' : '✅ Uploaded') : (lang === 'TR' ? '📎 Dekont Yükle' : '📎 Upload Receipt')}
-                      </label>
-                      <p className="text-[10px] text-slate-500 mt-1 mb-4 text-center">
-                        {lang === 'TR' ? 'Dekontunuz AES-256 ile şifrelenir ve işlem bitince kalıcı olarak silinir.' : 'Receipt is AES-256 encrypted and permanently deleted after trade.'}
-                      </p>
-                    </div>
-                    <button onClick={handleReportPayment} disabled={isContractLoading || !paymentIpfsHash.trim()} className={`w-full py-3 rounded-xl font-bold transition ${isContractLoading || !paymentIpfsHash.trim() ? 'bg-[#1a1a1f] text-slate-500 cursor-not-allowed border border-[#2a2a2e]' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_15px_rgba(37,99,235,0.2)]'}`}>
-                      {isContractLoading ? '⏳...' : (lang === 'TR' ? '✅ Ödemeyi Bildirdim' : '✅ Report Payment')}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center">
-                    <p className="text-slate-500 mb-6 text-sm animate-pulse">{lang === 'TR' ? 'Alıcının transferi bekleniyor...' : 'Waiting for buyer transfer...'}</p>
-                    {isMaker && (
-                      <div className="w-full max-w-md mt-2 mx-auto p-4 bg-[#1a0f0f] border border-red-900/30 rounded-xl text-left">
-                        <p className="text-xs text-red-400 font-bold mb-1">⚠️ {lang === 'TR' ? 'ÜÇGEN DOLANDIRICILIK ÖNLEMİ' : 'TRIANGULATION FRAUD PREVENTION'}</p>
-                        <p className="text-sm text-slate-300 mb-2">
-                          {lang === 'TR' ? 'Alıcının Doğrulanmış İsmi:' : "Buyer's Verified Name:"} <span className="font-bold text-white">{takerName || (lang === 'TR' ? 'Yükleniyor...' : 'Loading...')}</span>
-                        </p>
-                        <p className="text-[11px] text-slate-500 leading-tight">
-                          {lang === 'TR' ? 'Gelen paranın gönderici ismi ile bu ismin KESİNLİKLE eşleştiğini teyit ediniz. Eşleşmiyorsa parayı iade edip işlemi iptal edin.' : 'Ensure the sender name on the payment EXACTLY matches this name. If not, refund and cancel.'}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* PAID state aksiyon paneli */}
-            {roomState === 'PAID' && (
-              <div className="text-center py-4 flex flex-col items-center">
-                <h2 className="text-lg md:text-xl font-bold text-emerald-400 mb-2">{lang === 'TR' ? 'Ödeme Bildirildi' : 'Payment Reported'}</h2>
-                <div className="w-full max-w-sm bg-[#0a0a0c] border border-[#222] rounded-2xl p-4 mb-6">
-                  <p className="text-xs text-slate-500 mb-1 uppercase font-bold">Grace Period</p>
-                  <div className="text-4xl sm:text-5xl font-mono font-bold text-white tracking-wider">
-                    {gracePeriodTimer.isFinished ? '00:00:00' : `${String(gracePeriodTimer.hours + gracePeriodTimer.days * 24).padStart(2, '0')}:${String(gracePeriodTimer.minutes).padStart(2, '0')}:${String(gracePeriodTimer.seconds).padStart(2, '0')}`}
-                  </div>
-                </div>
-                {isTaker ? (
-                  <div className="w-full max-w-md flex flex-col items-center">
-                    <p className="text-slate-400 text-sm mb-4">{lang === 'TR' ? 'Maker onayı bekleniyor.' : 'Waiting for maker release.'}</p>
-                    {(() => {
-                      if (!activeTrade?.paidAt) return null;
-                      if (activeTrade.pingedAt) {
-                        const autoReleaseAt = new Date(new Date(activeTrade.pingedAt).getTime() + 24 * 3600 * 1000);
-                        const canAutoRelease = new Date() > autoReleaseAt;
-                        if (canAutoRelease) {
-                          return (
-                            <div className="w-full mt-2 flex flex-col items-center">
-                              <p className="text-[11px] text-red-400 font-bold mb-1 text-center leading-tight">
-                                {lang === 'TR' ? 'Dikkat: Maker pasif kaldığı için her iki tarafın teminatından %2 ihmal cezası kesilecektir (Maker: %2, Taker: %2).' : 'Warning: Due to maker inaction, a 2% negligence penalty will be deducted from both parties\' bonds (Maker: 2%, Taker: 2%).'}
-                              </p>
-                              <button onClick={() => handleAutoRelease(activeTrade.onchainId)} disabled={isContractLoading} className="w-full text-sm font-bold py-3 rounded-xl transition bg-emerald-600/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500 hover:text-white shadow-lg">
-                                {isContractLoading ? '...' : (lang === 'TR' ? '✅ Fonları Otomatik Serbest Bırak' : '✅ Auto-Release Funds')}
-                              </button>
-                            </div>
-                          );
-                        }
-                        return <div className="mt-2 text-center text-xs text-emerald-400 bg-emerald-900/20 p-3 rounded-lg border border-emerald-900/50 w-full"><p className="font-bold">✓ {lang === 'TR' ? 'Maker Uyarıldı' : 'Maker Pinged'}</p></div>;
-                      }
-                      const gracePeriodEnds = new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000);
-                      const canPing = new Date() > gracePeriodEnds;
-                      if (activeTrade.challengePingedAt) {
-                        return (
-                          <div className="w-full mt-2 flex flex-col items-center">
-                            <button disabled className="w-full text-sm font-bold py-3 rounded-xl transition bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed">
-                              {lang === 'TR' ? '🔔 Maker’ı Uyar' : '🔔 Ping Maker'}
-                            </button>
-                            <p className="text-[11px] text-red-400 mt-2 text-center leading-tight">
-                              ⚠️ {lang === 'TR' ? 'Maker itiraz uyarı sürecini başlattı. Artık otomatik serbest bırakma (Auto-Release) yolunu kullanamazsınız.' : 'Maker has initiated the challenge warning process. You can no longer use Auto-Release.'}
-                            </p>
-                          </div>
-                        );
-                      }
-                      return <button onClick={() => handlePingMaker(activeTrade.onchainId)} disabled={!canPing || isContractLoading} className={`w-full mt-2 text-sm font-bold py-3 rounded-xl transition ${!canPing || isContractLoading ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-orange-600/20 text-orange-400 border border-orange-500/40 hover:bg-orange-500 hover:text-white'}`}>{isContractLoading ? '...' : canPing ? (lang === 'TR' ? '🔔 Maker’ı Uyar' : '🔔 Ping Maker') : (lang === 'TR' ? '⏱️ Onay Bekleniyor' : '⏱️ Awaiting Confirmation')}</button>;
-                    })()}
-                  </div>
-                ) : (
-                  <div className="w-full max-w-md flex flex-col space-y-4">
-                    {!activeTrade?.challengePingedAt && (
-                      <button
-                        onClick={handleChallenge}
-                        disabled={!canMakerStartChallengeFlow || isContractLoading}
-                        className={`w-full py-3 rounded-xl font-bold transition ${!canMakerStartChallengeFlow || isContractLoading ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-orange-600/20 text-orange-400 border border-orange-500/40 hover:bg-orange-500 hover:text-white'}`}
-                      >
-                        {isContractLoading ? '...' : (!canMakerStartChallengeFlow ? (lang === 'TR' ? '⏱️ Uyarı için 24 saat bekleyin' : '⏱️ Wait 24h to ping buyer') : (lang === 'TR' ? '🔔 Alıcıyı Uyar (Ödeme Gelmedi)' : '🔔 Ping Buyer (No Payment)'))}
-                      </button>
-                    )}
-                    {activeTrade?.challengePingedAt && (
-                      <button
-                        onClick={handleChallenge}
-                        disabled={!canMakerChallenge || isContractLoading}
-                        className={`w-full py-3 rounded-xl font-bold transition ${!canMakerChallenge || isContractLoading ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-red-600/20 text-red-400 border border-red-500/40 hover:bg-red-500 hover:text-white'}`}
-                      >
-                        {isContractLoading ? '...' : (!canMakerChallenge ? (lang === 'TR' ? '⏱️ İtiraz için 24 saat bekleyin' : '⏱️ Wait 24h to challenge') : (lang === 'TR' ? '⚔️ Resmi İtiraz Başlat' : '⚔️ Open Formal Challenge'))}
-                      </button>
-                    )}
-                    <label className="flex items-start space-x-3 p-3 md:p-4 bg-[#1a0f0f] border border-red-900/30 rounded-xl cursor-pointer text-left">
-                      <input type="checkbox" checked={chargebackAccepted} onChange={(e) => handleChargebackAck(e.target.checked)} className="mt-1 w-4 h-4 accent-emerald-500 rounded bg-[#0a0a0c] border-[#333]" />
-                      <span className="text-xs text-slate-400"><strong className="text-red-500">{lang === 'TR' ? 'UYARI:' : 'WARNING:'}</strong> {lang === 'TR' ? 'Paranın farklı isimli bir hesaptan gelmediğini ve Chargeback riskini anladığımı kabul ediyorum.' : 'I confirm the funds came from the correct name and understand the Chargeback risk.'}</span>
-                    </label>
-                    <div className="w-full flex flex-col gap-2">
-                      <div className="text-center p-2 bg-[#0c0c0e] rounded-xl border border-[#222]">
-                        <p className="text-[10px] text-slate-400 font-mono">{feeBreakdownText}</p>
-                      </div>
-                      <div className="flex flex-col sm:flex-row justify-center gap-3">
-                        <button disabled={!chargebackAccepted || isContractLoading} onClick={handleRelease} className={`w-full sm:w-auto px-8 py-3 rounded-xl font-bold transition ${chargebackAccepted && !isContractLoading ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-[#1a1a1f] text-slate-500 cursor-not-allowed border border-[#2a2a2e]'}`}>
-                          {isContractLoading ? (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...') : (lang === 'TR' ? 'Serbest Bırak' : 'Release USDT')}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Ortak aksiyon paneli (iptal + serbest bırakma) — tüm aktif durumlarda gösterilir */}
-            {['LOCKED', 'PAID', 'CHALLENGED'].includes(roomState) && (
-              <div className="mt-6 bg-[#0c0c0e] border border-[#222] rounded-xl p-4">
-                <div className="mb-3 text-center p-2 bg-[#111113] rounded-lg border border-[#2a2a2e]">
-                  <p className="text-[10px] text-slate-400 font-mono">{feeBreakdownText}</p>
-                </div>
-                {cancelStatus === null && (
-                  <>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {isChallenged && isMaker && (
-                        <button onClick={handleRelease} disabled={isContractLoading} className={`w-full bg-[#0a0a0c] border border-emerald-500/30 text-emerald-500 p-3 rounded-xl font-bold text-sm transition ${isContractLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500 hover:text-white'}`}>
-                          🤝 {lang === 'TR' ? 'Serbest Bırak' : 'Release'}
-                        </button>
-                      )}
-                      <button onClick={() => {
-                        const msg = roomState === 'LOCKED'
-                          ? (lang === 'TR' ? 'LOCKED aşamasında (henüz ödeme bildirilmeden) iptaller kesintisizdir. Onaylıyor musunuz?' : 'Cancel in LOCKED state has zero fees. Confirm?')
-                          : (lang === 'TR' ? 'Karşılıklı iptal durumunda standart protokol ücreti kesilecektir. Onaylıyor musunuz?' : 'Standard protocol fees will be deducted upon mutual cancellation. Confirm?');
-                        if (window.confirm(msg)) handleProposeCancel();
-                      }} className={`w-full bg-[#0a0a0c] border border-orange-500/30 text-orange-500 p-3 rounded-xl font-bold text-sm hover:bg-orange-500 hover:text-white transition ${!(isChallenged && isMaker) ? 'sm:col-span-2' : ''}`}>
-                        ↩️ {lang === 'TR' ? 'İptal Teklif Et' : 'Propose Cancel'}
-                      </button>
-                    </div>
-                    <p className="text-[10px] text-slate-500 text-center mt-3">
-                      {lang === 'TR' ? 'Not: İptal onaylandığında her iki taraftan protokol ücreti kesilir.' : 'Note: Protocol fee is deducted from both parties upon cancel.'}
-                    </p>
-                  </>
-                )}
-                {cancelStatus === 'proposed_by_me' && (
-                  <div className="py-3 px-4 bg-orange-900/10 border border-orange-500/20 rounded-xl flex items-center justify-center gap-3">
-                    <div className="w-4 h-4 border-2 border-orange-400 border-t-transparent rounded-full animate-spin shrink-0"></div>
-                    <span className="text-orange-400 font-bold text-sm">
-                      {lang === 'TR' ? 'İptal teklifiniz gönderildi. Karşı tarafın onayı bekleniyor...' : 'Cancel proposal sent. Awaiting counterparty approval...'}
-                    </span>
-                  </div>
-                )}
-                {cancelStatus === 'proposed_by_other' && (
-                  <div>
-                    <p className="text-orange-400 font-bold text-sm mb-2">⚠️ {lang === 'TR' ? 'Karşı taraf iptal teklif etti.' : 'Opponent proposed cancellation.'}</p>
-                    <p className="text-[11px] text-slate-400 mb-3">
-                      {roomState === 'LOCKED'
-                        ? (lang === 'TR' ? 'İşlem LOCKED aşamasında olduğu için herhangi bir kesinti yapılmayacaktır.' : 'Since trade is in LOCKED state, no fees will be deducted.')
-                        : (lang === 'TR' ? 'Onaylarsanız standart protokol ücreti kesilecek ve kalan fonlar iade edilecektir.' : 'If you approve, standard protocol fee will be deducted and remaining funds returned.')}
-                    </p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button onClick={handleProposeCancel} disabled={isContractLoading} className="w-full bg-orange-600 hover:bg-orange-500 text-white p-3 rounded-xl font-bold text-sm transition">
-                        {isContractLoading ? '...' : (lang === 'TR' ? 'Onayla ve İptal Et' : 'Approve Cancel')}
-                      </button>
-                      <button onClick={() => setCancelStatus(null)} className="w-full bg-[#1a1a1f] border border-[#2a2a2e] hover:bg-[#222] text-white p-3 rounded-xl font-bold text-sm transition">
-                        {lang === 'TR' ? 'Reddet' : 'Reject'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* PII bölümü: taker şifreli banka bilgilerini görür, maker ödeme beklediğini bilir */}
-            {isTaker && !['RESOLVED', 'CANCELED', 'BURNED'].includes(roomState) && (
-              <div className="border border-[#222] rounded-xl overflow-hidden mt-6 bg-[#0a0a0c] p-1">
-                <PIIDisplay
-                  tradeId={activeTrade?.id}
-                  lang={lang}
-                  getSafeTelegramUrl={getSafeTelegramUrl}
-                  authenticatedFetch={authenticatedFetch}
-                />
-              </div>
-            )}
-            {isMaker && !['RESOLVED', 'CANCELED', 'BURNED'].includes(roomState) && (
-              <div className="bg-[#0a0a0c] p-6 rounded-xl border border-[#222] text-center mt-6">
-                <div className="text-3xl mb-2">🏦</div>
-                <p className="text-slate-300 font-medium text-sm">{lang === 'TR' ? 'Banka hesabınıza ödeme bekleniyor.' : 'Waiting for fiat payment.'}</p>
-                <p className="text-xs text-slate-500 mt-2">{lang === 'TR' ? 'Alıcı IBAN ve Telegram bilgilerinizi şifreli kanaldan aldı.' : 'Buyer received your IBAN & Telegram via encrypted channel.'}</p>
-              </div>
-            )}
-
-            {/* burnExpired butonu — CHALLENGED ve 10 günü geçmiş işlemler için */}
-            {activeTrade?.onchainId && roomState === 'CHALLENGED' && (() => {
-              const burnDate = activeTrade.challengedAt;
-              if (!burnDate) return null;
-              const isExpired = new Date().getTime() - new Date(burnDate).getTime() > 10 * 24 * 3600 * 1000;
-              if (!isExpired) return null;
-              return (
-                <div className="mt-6 bg-[#1a0505] border border-red-950 rounded-xl p-4 text-center">
-                  <p className="text-red-500 text-xs font-bold mb-2">
-                    🔥 {lang === 'TR' ? '10 Gün Süresi Doldu — Sözleşme Artık Yakılabilir' : '10-Day Deadline Passed — Contract Can Now Be Burned'}
-                  </p>
-                  <p className="text-slate-500 text-[11px] mb-3">
-                    {lang === 'TR' ? 'Uyarı: Sözleşme yakıldığında içerideki kilitli tüm USDT ve her iki tarafın teminatları kalıcı olarak Protokol Hazinesine aktarılır. İade yapılmaz.' : 'Warning: When burned, all locked USDT and bonds from both parties are permanently transferred to the Treasury. No refunds.'}
-                  </p>
-                  <p className="text-[11px] text-orange-300 mb-3">
-                    {lang === 'TR'
-                      ? 'Not: burnExpired fonksiyonu kontratta herkese açıktır; 10 gün dolduktan sonra üçüncü kişiler de bu çağrıyı yapabilir.'
-                      : 'Note: burnExpired is permissionless on-chain; after 10 days, third parties can also execute it.'}
-                  </p>
-                  <button
-                    onClick={async () => {
-                      if (isContractLoading) return;
-                      try {
-                        setIsContractLoading(true);
-                        showToast(lang === 'TR' ? 'Yakma işlemi gönderiliyor... Cüzdanınızdan onaylayın.' : 'Burn transaction sent... Confirm in wallet.', 'info');
-                        await burnExpired(BigInt(activeTrade.onchainId));
-                        setTradeState('BURNED');
-                        setActiveTrade(null);
-                        setCancelStatus(null);
-                        setChargebackAccepted(false);
-                        setCurrentView('home');
-                        showToast(lang === 'TR' ? '🔥 İşlem yakıldı. Maker bond protokole aktarıldı.' : '🔥 Trade burned. Maker bond transferred to protocol.', 'success');
-                      } catch (err) {
-                        console.error('burnExpired error:', err);
-                        const reason = err.reason || err.message || (lang === 'TR' ? 'Yakma işlemi başarısız.' : 'Burn failed.');
-                        showToast(reason, 'error');
-                      } finally {
-                        setIsContractLoading(false);
-                      }
-                    }}
-                    disabled={isContractLoading}
-                    className={`px-6 py-2.5 rounded-xl font-bold text-sm transition ${isContractLoading ? 'bg-[#1a1a1f] text-slate-500 cursor-not-allowed border border-[#2a2a2e]' : 'bg-red-900/30 text-red-400 border border-red-800/50 hover:bg-red-600 hover:text-white'}`}>
-                    {isContractLoading ? '⏳...' : (lang === 'TR' ? '🔥 Süresi Dolan İşlemi Yak' : '🔥 Burn Expired Trade')}
-                  </button>
-                </div>
-              );
-            })()}
-          </div>
-        </div>
+        <div className="border rounded-2xl p-5 md:p-8 shadow-2xl hidden" />
+        <TradeRoomPage
+        decisionInput={{ trade: activeTrade, tradeState: roomState, userRole, chargebackAccepted, paymentIpfsHash, timers: { gracePeriodTimer, bleedingTimer, principalProtectionTimer, makerPingTimer, makerChallengePingTimer, makerChallengeTimer }, isConnected, isAuthenticated, isSupportedChain, isPaused, lang }}
+        actionHandlers={actionHandlers}
+        viewProps={{
+          setCurrentView,
+          handleFileUpload,
+          isContractLoading,
+          canMakerStartChallengeFlow,
+          canMakerChallenge,
+          cancelStatus,
+          setCancelStatus,
+          activeTrade,
+          address,
+          authenticatedFetch,
+          fetchMyTrades,
+          showToast,
+          setIsContractLoading,
+          getSafeTelegramUrl,
+          takerName,
+          tokenDecimalsMap,
+          DEFAULT_TOKEN_DECIMALS,
+          rawTokenToDisplayNumber,
+          takerFeeBps,
+          formatTokenAmountFromRaw,
+          resolvedTradeState,
+          userRole,
+          lang,
+        }}
+      />
       </div>
-      </TradeRoomPage>
     );
   };
 
