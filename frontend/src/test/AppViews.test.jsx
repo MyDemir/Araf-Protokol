@@ -275,4 +275,30 @@ describe('AppViews market side-aware rendering', () => {
     render(<div>{views.renderMarket()}</div>);
     expect(screen.getAllByText(/Payment method complexity/i).length).toBe(1);
   });
+
+  it('paid+taker without paidAt does not show ping or auto-release actions', () => {
+    const views = buildAppViews({ ...baseCtx, currentView: 'tradeRoom', resolvedTradeState: 'PAID', userRole: 'taker', activeTrade: { id:'t1', max:100, fiat:'TRY', rate:10, maker:'0x1' } });
+    render(<div>{views.renderTradeRoom()}</div>);
+    expect(screen.getByText(/Waiting for maker release/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Ping Maker/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Auto-Release Funds/i)).not.toBeInTheDocument();
+  });
+
+  it('paid+taker before 48h shows awaiting confirmation disabled', () => {
+    const paidAt = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+    const views = buildAppViews({ ...baseCtx, currentView: 'tradeRoom', resolvedTradeState: 'PAID', userRole: 'taker', activeTrade: { id:'t1', paidAt, max:100, fiat:'TRY', rate:10, maker:'0x1' } });
+    render(<div>{views.renderTradeRoom()}</div>);
+    expect(screen.getByRole('button', { name: /Awaiting Confirmation/i })).toBeDisabled();
+  });
+
+  it('paid+taker after 48h enables ping maker and calls handler', async () => {
+    const user = userEvent.setup();
+    const handlePingMaker = vi.fn();
+    const paidAt = new Date(Date.now() - 49 * 3600 * 1000).toISOString();
+    const views = buildAppViews({ ...baseCtx, handlePingMaker, currentView: 'tradeRoom', resolvedTradeState: 'PAID', userRole: 'taker', activeTrade: { id:'t1', onchainId: 77, paidAt, max:100, fiat:'TRY', rate:10, maker:'0x1' } });
+    render(<div>{views.renderTradeRoom()}</div>);
+    await user.click(screen.getByRole('button', { name: /Ping Maker/i }));
+    expect(handlePingMaker).toHaveBeenCalledWith(77);
+  });
+
 });
