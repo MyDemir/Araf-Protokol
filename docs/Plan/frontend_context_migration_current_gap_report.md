@@ -1,6 +1,6 @@
 # Frontend Context Migration — Current Gap Report (PR92/PR94/PR95)
 
-Bu rapor repo gerçekliğine göre hazırlanmıştır. Kod değişikliği yapılmamıştır; yalnızca mevcut durum doğrulanmıştır.
+Bu rapor commit’i ürün kodu değiştirmeden mevcut PR92/PR94/PR95 durumunu belgelendirir. Ancak raporun eklendiği PR95 ayrıca Trade Room refactor kod değişiklikleri de içerdiği için bu PR doc-only değildir.
 
 ## 1) PR 92 iskeleti şu an main’de hangi dosyalarda aktif?
 
@@ -56,37 +56,65 @@ Parçalı risk azaltma için aşağıdaki dosyalarda büyük yapısal refactor y
 
 ## 5) Taşınacak davranışları dosya dosya listele
 
-### Operations Center
-- Mevcut: `contexts/operations/*` aktif.
-- Kalan: operasyon kartlarındaki bazı durum kopyaları ve filtre davranışlarının model katmanına daha fazla taşınması.
+### `frontend/src/app/AppViews.jsx`
+- Trade Room tarafında orchestration-only sınırını koru; presentation JSX geri dönmemeli.
+- `decisionInput` / `viewProps` içeriği tek kaynak olarak güncel tutulmalı.
+- Pending backend sync ve empty-state fallback’leri AppViews’te kalmalı.
 
-### Profile Context
-- Mevcut: `ProfileContextPage` aktif.
-- Kalan: modal içi profile alt-akışlarının AppModals’tan ayrıştırılması (küçük PR’larla).
+### `frontend/src/app/AppModals.jsx`
+- Maker/Profile/History modal branch’leri küçük parçalara ayrılmaya uygun ama davranış değişikliği olmadan taşınmalı.
+- Trade room ile ilgili action/state leakage olmamalı.
+- Copy/validation blokları mevcut TR/EN davranışı bozulmadan model katmanına yaklaştırılmalı.
 
-### Trade Room
-- Mevcut: `TradeRoomPage` owner, AppViews delegator.
-- Kalan: TradeRoomPage içindeki büyük inline branch’lerin (`LOCKED/PAID/CHALLENGED` alt panelleri) mevcut alt bileşenlere daha temiz dağıtımı.
+### `frontend/src/App.jsx`
+- App root orchestration yoğunluğu azaltılabilir; ancak auth/contract/session akışları tek yerde tutarlı kalmalı.
+- `buildAppViews` + `buildAppModals` besleyen context verileri kırılmadan sadeleştirilmeli.
+- Shell/provider hattına dokunmadan incremental extraction yapılmalı.
 
-### SystemStatusBar / guardrails
-- Mevcut: `AppShell` + `SystemStatusBar` runtime’da aktif.
-- Kalan: guardrail mesajlarının raw enum sızıntısı olmadan normalize edilmesi.
+### `frontend/src/app/contexts/operations/OperationsCenterPage.jsx`
+- Operations summary ve panel wiring’i model bazlı standardize edilmeli.
+- Settlement queue/pending sync sinyalleri tek bir bağlamsal modelden beslenmeli.
+- Trade room’a geçişte navigation payload parity korunmalı.
 
-### Market / Maker flow
-- Mevcut: AppViews + AppModals içinde side-aware akışlar çalışıyor.
-- Kalan: maker modal validation/copy bloklarının daha test edilebilir küçük birimlere ayrılması.
+### `frontend/src/app/contexts/operations/ActiveTradesPanel.jsx`
+- Active trade kartlarında role/state badge ve action CTA koşulları modelleştirilmeli.
+- `_pendingBackendSync` görünürlüğü tutarlı kalmalı.
+- Trade room navigation sırasında settlementProposal/chargeback bilgisi kaybolmamalı.
 
-### PII / Payment profile
-- Mevcut: PIIDisplay + profile payout draft canonicalization var.
-- Kalan: PII/secure payment UI paritelerinin trade-room alt panellerine tam ayrıştırılması.
+### `frontend/src/app/contexts/trade-room/TradeRoomPage.jsx`
+- Büyük inline branch’ler (LOCKED/PAID/CHALLENGED) mevcut alt bileşenlere daha temiz dağıtılmalı.
+- PAID+taker ping/auto-release parity korunarak sadeleştirme yapılmalı.
+- Burn/cancel/PII/settlement alt akışları behavior parity testleriyle birlikte ele alınmalı.
 
-### Settlement queue
-- Mevcut: Settlement card + queue metrikleri operasyon tarafında var.
-- Kalan: settlement quick counts ve proposal action görünümlerinin tek model kaynaktan beslenmesi.
+### `frontend/src/app/contexts/trade-room/tradeDecisionModel.js`
+- User-facing metinlerin raw key sızıntısını engelleyecek normalizasyon artırılmalı.
+- Disabled reason üretimi action bazında daha deterministik hale getirilmeli.
+- Settlement/action family sıralaması UI parity ile senkron tutulmalı.
 
-### Copy dictionary
-- Mevcut: TR/EN karma stringler farklı dosyalarda dağınık.
-- Kalan: davranış değiştirmeden copy dictionary konsolidasyonu (ayrı küçük PR).
+### `frontend/src/app/shell/SystemStatusBar.jsx`
+- Runtime guardrail mesajları kullanıcı dostu ve non-raw enum olacak şekilde iyileştirilmeli.
+- Pending backend sync / chain/auth durumları tekrar etmeyecek biçimde normalize edilmeli.
+- Shell katmanında only-observability prensibi korunmalı.
+
+### `frontend/src/app/orderUiModel.js`
+- Side-aware order state/CTA mapping daha fazla merkezi modele taşınmalı.
+- Payment risk sinyali + maker/taker copy üretimi tek kaynaktan yönetilmeli.
+- Fill/min-max/policy validation çıktıları AppModals/AppViews ile tam uyumlu tutulmalı.
+
+### `frontend/src/components/PaymentRiskBadge.jsx`
+- Risk severity/copy mapping dictionary ile tam hizalanmalı.
+- Compact/full görünüm ayrımı davranış farkı üretmeden sadeleştirilmeli.
+- Unknown risk fallback kullanıcıya ham backend değer göstermemeli.
+
+### `frontend/src/components/PIIDisplay.jsx`
+- Secure fetch/cache davranışı bozulmadan sadeleştirme yapılmalı.
+- Insecure-context fallback copy parity korunmalı.
+- Trade room ve profile akışlarında aynı güvenlik beklentisi sürdürülmeli.
+
+### `frontend/src/components/SettlementProposalCard.jsx`
+- Proposal state normalizasyonu tek kaynak olarak korunmalı.
+- Preview availability/pending backend sync mesajları tutarlı kalmalı.
+- Accept/reject/withdraw/expire/propose handler zinciri UI katmanlarında kayıpsız kullanılmalı.
 
 ## 6) Riskler
 
