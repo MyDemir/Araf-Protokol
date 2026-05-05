@@ -48,6 +48,14 @@ const toLaneItem = (escrow, laneKey) => ({
   rawTrade: escrow?.rawTrade,
 });
 
+export const mapEscrowToOperationCardModel = (escrow = {}) => ({
+  id: escrow?.id || `#${escrow?.onchainId ?? '—'}`,
+  role: escrow?.role || 'viewer',
+  state: String(escrow?.state || 'LOCKED').toUpperCase(),
+  amount: escrow?.amount || null,
+  fiat: escrow?.rawTrade?.max ? `${Number(escrow.rawTrade.max).toFixed(0)} ${escrow?.rawTrade?.fiat || ''}`.trim() : null,
+});
+
 export function buildOperationsContextModel({
   activeEscrows = [],
   activeEscrowCounts = {},

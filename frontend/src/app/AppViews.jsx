@@ -8,6 +8,9 @@ import OperationsCenterPage from './contexts/operations/OperationsCenterPage';
 import ProfileContextPage from './contexts/profile/ProfileContextPage';
 import { mapResolutionTypeLabel } from './useAppSessionData';
 import TradeRoomPage from './contexts/trade-room/TradeRoomPage';
+import OperationTradeCard from './contexts/operations/OperationTradeCard';
+import SettlementQueueCard from './contexts/operations/SettlementQueueCard';
+import PendingSyncCard from './contexts/operations/PendingSyncCard';
 
 // [TR] App ana görünüm/render katmanı burada tutulur.
 // [EN] Main application view/render layer lives here.
@@ -34,7 +37,6 @@ export const buildAppViews = (ctx) => {
     setSidebarOpen,
     setExpandedStatus,
     expandedStatus,
-    sidebarTimerRef,
     filterTier1,
     setFilterTier1,
     filterToken,
@@ -130,11 +132,11 @@ export const buildAppViews = (ctx) => {
   const canSeeAdminEntry = Boolean(isConnected && isAuthenticated && connectedWalletLower);
 
   const renderSlimRail = () => (
-    <div className="hidden md:flex w-16 bg-black border-r border-[#1a1a1a] flex-col items-center py-6 justify-between z-50 shrink-0 shadow-2xl">
+    <div className="space-y-6 flex flex-col items-center w-full">
+      <div className="w-8 h-8 rounded bg-gradient-to-br from-white to-slate-400 flex items-center justify-center font-bold text-black mb-4 cursor-pointer" onClick={() => setCurrentView('home')}>
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="square" strokeLinejoin="miter" strokeWidth="3" d="M4 4h4v4H4zm12 0h4v4h-4zM4 16h4v4H4zm12 0h4v4h-4zM10 10h4v4h-4z" /></svg>
+      </div>
       <div className="space-y-6 flex flex-col items-center w-full">
-        <div className="w-8 h-8 rounded bg-gradient-to-br from-white to-slate-400 flex items-center justify-center font-bold text-black mb-4 cursor-pointer" onClick={() => setCurrentView('home')}>
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="square" strokeLinejoin="miter" strokeWidth="3" d="M4 4h4v4H4zm12 0h4v4h-4zM4 16h4v4H4zm12 0h4v4h-4zM10 10h4v4h-4z" /></svg>
-        </div>
         <button onClick={openSidebar} title={lang === 'TR' ? 'Filtreler' : 'Filters'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${sidebarOpen ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>☰</button>
         <button onClick={() => setCurrentView('home')} title={lang === 'TR' ? 'Ana Sayfa' : 'Home'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'home' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🏠</button>
         <button onClick={() => setCurrentView('market')} title={lang === 'TR' ? 'Pazar Yeri' : 'Marketplace'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'market' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🛒</button>
@@ -169,17 +171,15 @@ export const buildAppViews = (ctx) => {
     </div>
   );
 
-  // [TR] Bağlamsal yan panel — 5 sn sonra kapanır, hover timer'ı sıfırlar.
+  // [TR] Bağlamsal yan panel — açık/kapalı davranışı kullanıcı etkileşimi ile yönetilir.
   //      Filtreler, durum akordiyonu ve yeni order oluşturma butonu içerir.
-  // [EN] Context sidebar — closes after 5s, hover resets timer.
+  // [EN] Context sidebar — visibility is controlled by explicit user interaction.
   //      Contains filters, status accordion and create-order button.
   const renderContextSidebar = () => (
     <>
       {sidebarOpen && <div className="md:hidden fixed inset-0 bg-black/60 z-[55] backdrop-blur-sm transition-opacity" onClick={() => setSidebarOpen(false)} />}
       <div
         className={`fixed md:relative top-0 left-0 h-full bg-[#0c0c0e] border-r border-[#1a1a1a] flex flex-col z-[60] md:z-40 shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${sidebarOpen ? 'w-[260px] p-5 opacity-100' : 'w-0 p-0 opacity-0'}`}
-        onMouseEnter={openSidebar}
-        onMouseLeave={() => {}}
       >
         <div className="relative mb-6">
           <span className="absolute left-3 top-2.5 text-slate-500 text-sm">🔍</span>
@@ -231,28 +231,21 @@ export const buildAppViews = (ctx) => {
                   <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-[500px] opacity-100 mt-2' : 'max-h-0 opacity-0'}`}>
                     {statusTrades.length > 0 ? (
                       <div className="pl-3 pr-1 py-1 space-y-2 border-l-2 border-[#222] ml-3">
-                        {statusTrades.map(escrow => (
-                          <div key={escrow.id} className="bg-[#111113] p-2.5 rounded-lg border border-[#2a2a2e] text-xs shadow-inner">
-                            <div className="flex justify-between items-center mb-1.5">
-                              <span className="font-mono text-emerald-400 font-bold">{escrow.id}</span>
-                              <span className="text-[9px] text-slate-500 uppercase border border-[#333] px-1.5 py-0.5 rounded">{escrow.role}</span>
-                            </div>
-                            <p className="text-slate-300 mb-2 truncate">{escrow.amount} <span className="text-slate-500 ml-1">({escrow.rawTrade.max.toFixed(0)} {escrow.rawTrade.fiat})</span></p>
-                            <button
-                              onClick={buildGoToTradeRoomAction({
-                                escrow,
-                                setActiveTrade,
-                                setUserRole,
-                                setTradeState,
-                                setChargebackAccepted,
-                                setCurrentView,
-                                setSidebarOpen,
-                              })}
-                              className="w-full bg-[#1a1a1f] hover:bg-[#222] text-white text-[10px] font-bold py-1.5 rounded transition border border-[#333]"
-                            >
-                              {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
-                            </button>
-                          </div>
+                        {statusTrades.map((escrow) => (
+                          <OperationTradeCard
+                            key={escrow.id}
+                            escrow={escrow}
+                            lang={lang}
+                            onGoToRoom={buildGoToTradeRoomAction({
+                              escrow,
+                              setActiveTrade,
+                              setUserRole,
+                              setTradeState,
+                              setChargebackAccepted,
+                              setCurrentView,
+                              setSidebarOpen,
+                            })}
+                          />
                         ))}
                       </div>
                     ) : (
@@ -289,30 +282,19 @@ export const buildAppViews = (ctx) => {
                 const proposer = escrow?.rawTrade?.settlementProposal?.proposer?.toLowerCase?.() || null;
                 const viewer = address?.toLowerCase?.() || null;
                 const isWaiting = Boolean(proposer && viewer && proposer === viewer);
-                return (
-                  <div key={`settle-${escrow.onchainId}`} className="border border-[#2a2a2e] bg-[#0f1014] rounded-lg p-2">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[11px] font-mono text-emerald-400">#{escrow.onchainId}</span>
-                      <span className={`text-[10px] px-2 py-0.5 rounded border ${isWaiting ? 'text-sky-400 border-sky-500/30' : 'text-orange-400 border-orange-500/30'}`}>
-                        {isWaiting ? (lang === 'TR' ? 'Bekleniyor' : 'Waiting') : (lang === 'TR' ? 'Aksiyon Gerekli' : 'Action Required')}
-                      </span>
-                    </div>
-                    <button
-                      onClick={buildGoToTradeRoomAction({
-                        escrow,
-                        setActiveTrade,
-                        setUserRole,
-                        setTradeState,
-                        setChargebackAccepted,
-                        setCurrentView,
-                        setSidebarOpen,
-                      })}
-                      className="w-full bg-[#1a1a1f] hover:bg-[#222] text-white text-[10px] font-bold py-1.5 rounded transition border border-[#333]"
-                    >
-                      {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
-                    </button>
-                  </div>
-                );
+                const goToRoom = buildGoToTradeRoomAction({
+                  escrow,
+                  setActiveTrade,
+                  setUserRole,
+                  setTradeState,
+                  setChargebackAccepted,
+                  setCurrentView,
+                  setSidebarOpen,
+                });
+                if (escrow?.rawTrade?._pendingBackendSync) {
+                  return <PendingSyncCard key={`settle-${escrow.onchainId}`} escrow={escrow} lang={lang} onGoToRoom={goToRoom} />;
+                }
+                return <SettlementQueueCard key={`settle-${escrow.onchainId}`} escrow={escrow} lang={lang} onGoToRoom={goToRoom} isWaiting={isWaiting} />;
               })}
           </div>
         </div>
@@ -654,7 +636,24 @@ export const buildAppViews = (ctx) => {
       ? `Kilitli: ${rawCryptoAmt.toFixed(2)} ${asset} | Protokol Kesintisi: ${protocolFee.toFixed(4)} ${asset} | Net Alınacak: ${netAmount.toFixed(2)} ${asset}`
       : `Locked: ${rawCryptoAmt.toFixed(2)} ${asset} | Protocol Fee: ${protocolFee.toFixed(4)} ${asset} | Net to Receive: ${netAmount.toFixed(2)} ${asset}`;
 
+    const actionHandlers = {
+      report_payment: handleReportPayment,
+      release_funds: handleRelease,
+      start_challenge: handleChallenge,
+      ping_maker: () => handlePingMaker(activeTrade?.onchainId),
+      auto_release: () => handleAutoRelease(activeTrade?.onchainId),
+      propose_cancel: handleProposeCancel,
+      chargeback_ack: () => handleChargebackAck(true),
+      propose_settlement: proposeSettlement,
+      reject_settlement: rejectSettlement,
+      withdraw_settlement: withdrawSettlement,
+      expire_settlement: expireSettlement,
+      accept_settlement: acceptSettlement,
+      burn_expired: () => burnExpired?.(BigInt(activeTrade?.onchainId || 0)),
+    };
+
     return (
+      <TradeRoomPage decisionInput={{ trade: activeTrade, tradeState: roomState, userRole, chargebackAccepted, paymentIpfsHash, timers: { gracePeriodTimer, bleedingTimer, principalProtectionTimer, makerPingTimer, makerChallengePingTimer, makerChallengeTimer }, isConnected, isAuthenticated, isSupportedChain: true, isPaused, lang }} actionHandlers={actionHandlers}>
       <div className="p-4 md:p-8 max-w-[900px] w-full mx-auto relative mt-6 md:mt-0">
         <button onClick={() => setCurrentView('market')} className="absolute -top-2 md:-top-4 left-4 md:left-8 text-slate-500 hover:text-white text-sm transition">← {lang === 'TR' ? 'Pazar Yerine Dön' : 'Go Back'}</button>
 
@@ -993,13 +992,14 @@ export const buildAppViews = (ctx) => {
           </div>
         </div>
       </div>
+      </TradeRoomPage>
     );
   };
 
   // [TR] Mobil alt navigasyon çubuğu — yalnızca mobil cihazlarda görünür
   // [EN] Mobile bottom navigation bar — visible only on mobile devices
   const renderMobileNav = () => (
-    <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#060608] border-t border-[#1a1a1a] z-[45] flex items-center justify-around px-2 pb-safe shadow-[0_-10px_30px_rgba(0,0,0,0.5)]">
+    <>
       <button onClick={() => setCurrentView('home')} className={`p-2 text-xl transition-all ${currentView === 'home' ? 'text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)] -translate-y-1' : 'text-slate-600'}`}>🏠</button>
       <button onClick={() => setCurrentView('market')} className={`p-2 text-xl transition-all ${currentView === 'market' ? 'text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)] -translate-y-1' : 'text-slate-600'}`}>🛒</button>
       <button onClick={() => setCurrentView('operations')} className={`p-2 text-xl transition-all ${currentView === 'operations' ? 'text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)] -translate-y-1' : 'text-slate-600'}`}>📍</button>
@@ -1016,7 +1016,7 @@ export const buildAppViews = (ctx) => {
       <button onClick={handleAuthAction} className={`p-2 text-xl transition-all ${isConnected && isAuthenticated ? 'text-emerald-500 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] -translate-y-1' : 'text-slate-600'}`}>
         {isConnected && isAuthenticated ? '👤' : '👛'}
       </button>
-    </div>
+    </>
   );
 
 

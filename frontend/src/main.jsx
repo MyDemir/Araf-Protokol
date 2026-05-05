@@ -15,6 +15,7 @@ import {
 } from './app/chainPolicy'
 
 import ErrorBoundary from './components/ErrorBoundary.jsx'
+import AppProviders from './app/providers/AppProviders.jsx'
 
 // YÜKS-09 Fix: ErrorBoundary WagmiProvider + QueryClientProvider'ın IÇINE alındı.
 //   ÖNCEKİ: ErrorBoundary tüm provider'ları sarmalıyordu. Bir connector (OKX, Coinbase)
@@ -78,7 +79,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         <ErrorBoundary>
-          <App />
+          <AppProviders>
+            <App />
+          </AppProviders>
         </ErrorBoundary>
       </QueryClientProvider>
     </WagmiProvider>

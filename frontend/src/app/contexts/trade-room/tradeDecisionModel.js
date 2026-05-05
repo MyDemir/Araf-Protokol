@@ -68,10 +68,13 @@ export function buildTradeDecisionModel({
   }
 
   if (normalizedState === 'CHALLENGED') {
-    primaryAction = { type: 'settlement', key: 'settlement_actions' };
+    primaryAction = { type: 'settlement', key: 'propose_settlement' };
     secondaryActions = [
-      { type: 'settlement', key: 'reject_or_withdraw' },
-      { type: 'settlement', key: 'burn_or_expire' },
+      { type: 'settlement', key: 'accept_settlement' },
+      { type: 'settlement', key: 'reject_settlement' },
+      { type: 'settlement', key: 'withdraw_settlement' },
+      { type: 'settlement', key: 'expire_settlement' },
+      { type: 'settlement', key: 'burn_expired' },
     ];
     guidance.push(t(lang, 'Araf hakem değildir; settlement taraf aksiyonu gerektirir.', 'Araf is not an arbitrator; settlement requires party action.'));
   }
@@ -94,6 +97,7 @@ export function buildTradeDecisionModel({
       tradeState: normalizedState,
       userRole: normalizedRole,
     },
+    actionDisabledReason: disabledReasons[0] || null,
   };
 }
 

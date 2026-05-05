@@ -40,12 +40,19 @@ describe('buildTradeDecisionModel', () => {
 
   it('CHALLENGED produces settlement family', () => {
     const model = buildTradeDecisionModel({ ...base, tradeState: 'CHALLENGED', userRole: 'maker' });
-    expect(model.primaryAction.type).toBe('settlement');
-    expect(model.secondaryActions.every((a) => a.type === 'settlement')).toBe(true);
+    expect(model.primaryAction.key).toBe('propose_settlement');
+    expect(model.secondaryActions.map((a) => a.key)).toEqual([
+      'accept_settlement',
+      'reject_settlement',
+      'withdraw_settlement',
+      'expire_settlement',
+      'burn_expired',
+    ]);
   });
 
   it('wrong chain / paused / unauthenticated appear as disabled reasons', () => {
     const model = buildTradeDecisionModel({ ...base, isSupportedChain: false, isPaused: true, isAuthenticated: false });
     expect(model.disabledReasons.length).toBeGreaterThanOrEqual(3);
+    expect(model.actionDisabledReason).toBeTruthy();
   });
 });

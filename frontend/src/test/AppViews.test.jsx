@@ -3,6 +3,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { buildAppViews } from '../app/AppViews';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const baseCtx = {
   lang: 'EN',
@@ -26,7 +28,6 @@ const baseCtx = {
   setSidebarOpen: vi.fn(),
   setExpandedStatus: vi.fn(),
   expandedStatus: null,
-  sidebarTimerRef: { current: null },
   filterTier1: false,
   setFilterTier1: vi.fn(),
   filterToken: 'ALL',
@@ -102,6 +103,14 @@ const baseCtx = {
 };
 
 describe('AppViews market side-aware rendering', () => {
+  it('does not use sidebarTimerRef and does not nest shell wrapper components', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/app/AppViews.jsx'), 'utf8');
+    expect(source).not.toContain('sidebarTimerRef');
+    expect(source).not.toContain('<ContextNavigation>');
+    expect(source).not.toContain('<ContextPanel');
+    expect(source).not.toContain('<MobileBottomNav>');
+  });
+
   it('security_prod_mode_hides_test_faucet_buttons', () => {
     const views = buildAppViews({
       ...baseCtx,
