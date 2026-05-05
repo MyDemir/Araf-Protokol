@@ -5,7 +5,7 @@ import { formatUnits } from 'viem';
 import { useArafContract } from './hooks/useArafContract';
 import PIIDisplay from './components/PIIDisplay';
 import { buildAppViews } from './app/AppViews';
-import { EnvWarningBanner, buildAppModals } from './app/AppModals';
+import { buildAppModals } from './app/AppModals';
 import { useAppSessionData } from './app/useAppSessionData';
 import AdminPanel from './AdminPanel';
 import { getInitialLang, getInitialTermsAccepted, APP_LANG_STORAGE_KEY } from './app/bootstrapState';
@@ -1670,7 +1670,6 @@ const handleCreateOrder = async () => {
         mobileBottom={renderMobileNav()}
         modals={renderModalLayer()}
       />
-      <EnvWarningBanner envErrors={ENV_ERRORS} />
       {toast && (
         <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 md:left-auto md:-translate-x-0 md:right-6 z-[100] animate-bounce-in w-[90%] sm:w-auto">
           <div className={`px-4 md:px-6 py-3 md:py-4 rounded-xl shadow-2xl border text-sm font-bold backdrop-blur-md text-center md:text-left ${toast.type === 'error' ? 'bg-[#1a0f0f]/90 border-red-900/50 text-red-400' : toast.type === 'info' ? 'bg-[#0a1a2a]/90 border-blue-900/50 text-blue-400' : 'bg-[#0a1a10]/90 border-emerald-900/50 text-emerald-400'}`}>

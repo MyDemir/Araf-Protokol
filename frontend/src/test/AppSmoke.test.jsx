@@ -168,6 +168,14 @@ describe('App smoke', () => {
     expect(source).toContain('<App />');
   });
 
+  it('renders shell through AppShell/SystemStatusBar path and no EnvWarningBanner in App root', () => {
+    const appSource = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
+    const shellSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/shell/AppShell.jsx'), 'utf8');
+    expect(appSource).toContain('<AppShell');
+    expect(appSource).not.toContain('<EnvWarningBanner');
+    expect(shellSource).toContain('<SystemStatusBar');
+  });
+
   it('keeps profile tab default aligned with modal tabs', () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
     expect(source).toContain("useState('ayarlar')");
