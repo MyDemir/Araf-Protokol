@@ -185,8 +185,11 @@ describe('PR #94 frontend regression guards', () => {
   });
 
   it('keeps sidebar close paths even if the auto-close timer is later removed', () => {
-    expect(appSource).toContain('setTimeout(() => setSidebarOpen(false), 5000)');
+    expect(appSource).not.toContain('sidebarTimerRef');
+    expect(appSource).not.toContain('setTimeout(() => setSidebarOpen(false), 5000)');
+    expect(appSource).toContain('const toggleSidebar = () => {');
     expect(appViewsSource).toContain('onClick={() => setSidebarOpen(false)}');
+    expect(appViewsSource).toContain('onClick={toggleSidebar}');
     expect(appViewsSource).toContain('setSidebarOpen,');
     expect(readSrc('app', 'actions', 'tradeNavigationActions.js')).toContain('setSidebarOpen(false)');
   });

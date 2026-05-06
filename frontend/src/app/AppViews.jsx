@@ -25,7 +25,7 @@ export const buildAppViews = (ctx) => {
     authChecked,
     currentView,
     setCurrentView,
-    openSidebar,
+    toggleSidebar,
     handleAuthAction,
     formatAddress,
     address,
@@ -34,7 +34,6 @@ export const buildAppViews = (ctx) => {
     setSidebarOpen,
     setExpandedStatus,
     expandedStatus,
-    sidebarTimerRef,
     filterTier1,
     setFilterTier1,
     filterToken,
@@ -135,7 +134,7 @@ export const buildAppViews = (ctx) => {
         <div className="w-8 h-8 rounded bg-gradient-to-br from-white to-slate-400 flex items-center justify-center font-bold text-black mb-4 cursor-pointer" onClick={() => setCurrentView('home')}>
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="square" strokeLinejoin="miter" strokeWidth="3" d="M4 4h4v4H4zm12 0h4v4h-4zM4 16h4v4H4zm12 0h4v4h-4zM10 10h4v4h-4z" /></svg>
         </div>
-        <button onClick={openSidebar} title={lang === 'TR' ? 'Filtreler' : 'Filters'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${sidebarOpen ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>☰</button>
+        <button onClick={toggleSidebar} title={lang === 'TR' ? 'Filtreler' : 'Filters'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${sidebarOpen ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>☰</button>
         <button onClick={() => setCurrentView('home')} title={lang === 'TR' ? 'Ana Sayfa' : 'Home'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'home' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🏠</button>
         <button onClick={() => setCurrentView('market')} title={lang === 'TR' ? 'Pazar Yeri' : 'Marketplace'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'market' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🛒</button>
         <button onClick={() => setCurrentView('operations')} title={lang === 'TR' ? 'İşlem Takip Merkezi' : 'Operations Center'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'operations' ? 'bg-cyan-900/30 text-cyan-400' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>📍</button>
@@ -169,17 +168,15 @@ export const buildAppViews = (ctx) => {
     </div>
   );
 
-  // [TR] Bağlamsal yan panel — 5 sn sonra kapanır, hover timer'ı sıfırlar.
+  // [TR] Bağlamsal yan panel — açık/kapalı durumu explicit butonlar ve overlay ile yönetilir.
   //      Filtreler, durum akordiyonu ve yeni order oluşturma butonu içerir.
-  // [EN] Context sidebar — closes after 5s, hover resets timer.
+  // [EN] Context sidebar — open/close state is controlled by explicit buttons and overlay.
   //      Contains filters, status accordion and create-order button.
   const renderContextSidebar = () => (
     <>
       {sidebarOpen && <div className="md:hidden fixed inset-0 bg-black/60 z-[55] backdrop-blur-sm transition-opacity" onClick={() => setSidebarOpen(false)} />}
       <div
         className={`fixed md:relative top-0 left-0 h-full bg-[#0c0c0e] border-r border-[#1a1a1a] flex flex-col z-[60] md:z-40 shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${sidebarOpen ? 'w-[260px] p-5 opacity-100' : 'w-0 p-0 opacity-0'}`}
-        onMouseEnter={openSidebar}
-        onMouseLeave={() => {}}
       >
         <div className="relative mb-6">
           <span className="absolute left-3 top-2.5 text-slate-500 text-sm">🔍</span>
@@ -1011,7 +1008,7 @@ export const buildAppViews = (ctx) => {
       {canSeeAdminEntry && (
         <button onClick={() => setCurrentView('admin')} className={`p-2 text-xl transition-all ${currentView === 'admin' ? 'text-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] -translate-y-1' : 'text-slate-600'}`}>🧭</button>
       )}
-      <button onClick={openSidebar} className={`p-2 text-xl transition-all ${sidebarOpen ? 'text-white -translate-y-1' : 'text-slate-600'}`}>☰</button>
+      <button onClick={toggleSidebar} className={`p-2 text-xl transition-all ${sidebarOpen ? 'text-white -translate-y-1' : 'text-slate-600'}`}>☰</button>
       <button onClick={() => setCurrentView('profile')} className={`p-2 text-xl transition-all ${currentView === 'profile' ? 'text-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] -translate-y-1' : 'text-slate-600'}`}>👤</button>
       <button onClick={handleAuthAction} className={`p-2 text-xl transition-all ${isConnected && isAuthenticated ? 'text-emerald-500 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] -translate-y-1' : 'text-slate-600'}`}>
         {isConnected && isAuthenticated ? '👤' : '👛'}

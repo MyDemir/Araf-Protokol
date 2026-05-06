@@ -120,10 +120,6 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [expandedStatus, setExpandedStatus] = useState(null);
 
-  // [TR] Sidebar 5 sn otomatik kapanma timer referansı
-  // [EN] Sidebar auto-close timer ref (resets on hover)
-  const sidebarTimerRef = React.useRef(null);
-
   // [TR] Maker order formu state'leri (SELL/BUY side-aware)
   // [EN] Maker order form states (SELL/BUY side-aware)
   const [makerTier, setMakerTier]         = useState(1);
@@ -343,12 +339,10 @@ function App() {
   //    Utility helpers
   // ═══════════════════════════════════════════
 
-  // [TR] Sidebar'ı açar ve 5 sn sonra otomatik kapatır; hover timer'ı sıfırlar
-  // [EN] Opens sidebar, auto-closes after 5s; hover resets the timer
-  const openSidebar = () => {
-    setSidebarOpen(true);
-    if (sidebarTimerRef.current) clearTimeout(sidebarTimerRef.current);
-    sidebarTimerRef.current = setTimeout(() => setSidebarOpen(false), 5000);
+  // [TR] Sidebar artık timer ile kapanmaz; rail/mobile butonları açık/kapalı durumu değiştirir.
+  // [EN] Sidebar no longer auto-closes by timer; rail/mobile buttons explicitly toggle open/closed state.
+  const toggleSidebar = () => {
+    setSidebarOpen(prev => !prev);
   };
 
   // [TR] Profil modalı açıkken cüzdan/auth düşerse modalı effect katmanında kapat.
@@ -1402,7 +1396,7 @@ const handleCreateOrder = async () => {
     authChecked,
     currentView,
     setCurrentView,
-    openSidebar,
+    toggleSidebar,
     handleAuthAction,
     formatAddress,
     address,
@@ -1411,7 +1405,6 @@ const handleCreateOrder = async () => {
     setSidebarOpen,
     setExpandedStatus,
     expandedStatus,
-    sidebarTimerRef,
     filterTier1,
     setFilterTier1,
     filterToken,

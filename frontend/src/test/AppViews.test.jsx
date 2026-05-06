@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { buildAppViews } from '../app/AppViews';
 
@@ -17,7 +17,7 @@ const baseCtx = {
   authChecked: true,
   currentView: 'market',
   setCurrentView: vi.fn(),
-  openSidebar: vi.fn(),
+  toggleSidebar: vi.fn(),
   handleAuthAction: vi.fn(),
   formatAddress: (a) => a,
   address: '0xabc',
@@ -26,7 +26,6 @@ const baseCtx = {
   setSidebarOpen: vi.fn(),
   setExpandedStatus: vi.fn(),
   expandedStatus: null,
-  sidebarTimerRef: { current: null },
   filterTier1: false,
   setFilterTier1: vi.fn(),
   filterToken: 'ALL',
@@ -211,6 +210,32 @@ describe('AppViews market side-aware rendering', () => {
     expect(screen.getAllByText('Open').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Bond/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Payment method complexity:/i).length).toBe(1);
+  });
+
+
+  it('toggles the desktop sidebar open and closed from the rail filter button', async () => {
+    const user = userEvent.setup();
+
+    const SidebarHarness = () => {
+      const [sidebarOpen, setSidebarOpen] = React.useState(false);
+      const views = buildAppViews({
+        ...baseCtx,
+        sidebarOpen,
+        toggleSidebar: () => setSidebarOpen(prev => !prev),
+        setSidebarOpen,
+        activeEscrows: [],
+      });
+      return <div>{views.renderSlimRail()}{views.renderContextSidebar()}</div>;
+    };
+
+    const { container } = render(<SidebarHarness />);
+    const filtersButton = within(container).getByTitle('Filters');
+
+    expect(container.querySelector('[class*="w-0"][class*="opacity-0"]')).not.toBeNull();
+    await user.click(filtersButton);
+    expect(container.querySelector('[class*="w-[260px]"][class*="opacity-100"]')).not.toBeNull();
+    await user.click(filtersButton);
+    expect(container.querySelector('[class*="w-0"][class*="opacity-0"]')).not.toBeNull();
   });
 
 

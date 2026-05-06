@@ -68,4 +68,16 @@ describe('App routing side-aware contract selection', () => {
     expect(appShellBlock).toContain('renderTermsModal()');
   });
 
+
+  it('uses explicit sidebar toggle state without timer-based auto-close', () => {
+    const appSource = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
+    const appViewsSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/AppViews.jsx'), 'utf8');
+
+    expect(appSource).toContain('const toggleSidebar = () => {');
+    expect(appSource).not.toContain('sidebarTimerRef');
+    expect(appSource).not.toContain('setTimeout(() => setSidebarOpen(false), 5000)');
+    expect(appViewsSource).toContain('onClick={toggleSidebar}');
+    expect(appViewsSource).toContain('onClick={() => setSidebarOpen(false)}');
+  });
+
 });
