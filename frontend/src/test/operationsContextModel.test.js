@@ -95,6 +95,9 @@ describe('buildOperationsContextModel', () => {
     const lane = model.lanes.find((l) => l.key === 'pending_backend_sync');
     expect(lane).toBeTruthy();
     expect(lane.items).toHaveLength(1);
+    expect(lane.items[0].escrow.rawTrade).toBe(activeTrade);
+    expect(lane.items[0].escrow.rawTrade._pendingBackendSync).toBe(true);
+    expect(lane.items[0].escrow.rawTrade.settlementProposal).toEqual({ state: 'PROPOSED' });
     expect(model.summary.pendingBackendSync).toBe(1);
   });
 
