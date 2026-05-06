@@ -19,11 +19,13 @@ export const AppShell = ({
 }) => {
   return (
     <>
-      {status ? <SystemStatusBar>{status}</SystemStatusBar> : null}
+      {status ? <SystemStatusBar {...status} /> : null}
       <MobileTopBar>{mobileTop}</MobileTopBar>
-      <ContextNavigation>{navigation}</ContextNavigation>
-      <ContextPanel>{panel}</ContextPanel>
-      <ContextOutlet>{outlet || children}</ContextOutlet>
+      <div className="flex flex-col md:flex-row min-h-0 flex-1">
+        <ContextNavigation>{navigation}</ContextNavigation>
+        <ContextPanel>{panel}</ContextPanel>
+        <ContextOutlet>{outlet || children}</ContextOutlet>
+      </div>
       <MobileBottomNav>{mobileBottom}</MobileBottomNav>
       <ModalHost>{modals}</ModalHost>
     </>

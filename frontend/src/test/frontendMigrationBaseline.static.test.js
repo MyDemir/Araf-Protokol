@@ -112,7 +112,7 @@ describe('frontend migration scaffold baseline', () => {
 
   it('uses buildAppViews and buildAppModals as extracted render factories without moving ownership away from App.jsx', () => {
     expect(appSource).toContain("import { buildAppViews } from './app/AppViews';");
-    expect(appSource).toContain("import { EnvWarningBanner, buildAppModals } from './app/AppModals';");
+    expect(appSource).toContain("import { buildAppModals } from './app/AppModals';");
     expect(appSource).toContain('} = buildAppViews({');
     expect(appSource).toContain('} = buildAppModals({');
     expect(appViewsSource).toContain('export const buildAppViews = (ctx) => {');
@@ -156,12 +156,16 @@ describe('frontend migration scaffold baseline', () => {
     expect(appShellSource).toContain('export const AppShell');
     expect(appShellSource).toContain('<ContextNavigation>');
     expect(appShellSource).toContain('<ContextOutlet>{outlet || children}</ContextOutlet>');
-    expect(appShellSource).toContain('{status ? <SystemStatusBar>{status}</SystemStatusBar> : null}');
+    expect(appShellSource).toContain('{status ? <SystemStatusBar {...status} /> : null}');
     expect(appSource).toContain("import AppShell from './app/shell/AppShell';");
     expect(appSource).toContain('<AppShell');
     expect(appSource).toContain('navigation={renderSlimRail()}');
     expect(appSource).toContain('panel={renderContextSidebar()}');
     expect(appSource).toContain('mobileBottom={renderMobileNav()}');
+    expect(appSource).toContain('status={{');
+    expect(appSource).toContain('envErrors: ENV_ERRORS');
+    expect(appSource).toContain('supportedChains');
+    expect(appSource).toContain('onRegisterWallet: handleRegisterWallet');
 
     Object.entries(providerSources).forEach(([providerName, source]) => {
       expect(source).toContain(`export const ${providerName}`);

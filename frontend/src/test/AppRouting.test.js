@@ -45,6 +45,10 @@ describe('App routing side-aware contract selection', () => {
     const appShellBlock = source.slice(source.indexOf('<AppShell'), source.indexOf('<button', source.indexOf('<AppShell')));
 
     expect(source).toContain("import AppShell from './app/shell/AppShell';");
+    expect(appShellBlock).toContain('status={{');
+    expect(appShellBlock).toContain('envErrors: ENV_ERRORS');
+    expect(appShellBlock).toContain('supportedChains');
+    expect(appShellBlock).toContain('onRegisterWallet: handleRegisterWallet');
     expect(appShellBlock).toContain('navigation={renderSlimRail()}');
     expect(appShellBlock).toContain('panel={renderContextSidebar()}');
     expect(appShellBlock).toContain('mobileBottom={renderMobileNav()}');
