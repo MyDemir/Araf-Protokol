@@ -4,6 +4,8 @@ import ReferenceRateTicker from '../components/ReferenceRateTicker';
 import SettlementProposalCard, { normalizeSettlementState } from '../components/SettlementProposalCard';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
 import { buildGoToTradeRoomAction } from './actions/tradeNavigationActions';
+import OperationTradeCard from './contexts/operations/OperationTradeCard';
+import SettlementQueueCard from './contexts/operations/SettlementQueueCard';
 import OperationsCenterPage from './contexts/operations/OperationsCenterPage';
 import ProfileContextPage from './contexts/profile/ProfileContextPage';
 import { mapResolutionTypeLabel } from './useAppSessionData';
@@ -229,27 +231,20 @@ export const buildAppViews = (ctx) => {
                     {statusTrades.length > 0 ? (
                       <div className="pl-3 pr-1 py-1 space-y-2 border-l-2 border-[#222] ml-3">
                         {statusTrades.map(escrow => (
-                          <div key={escrow.id} className="bg-[#111113] p-2.5 rounded-lg border border-[#2a2a2e] text-xs shadow-inner">
-                            <div className="flex justify-between items-center mb-1.5">
-                              <span className="font-mono text-emerald-400 font-bold">{escrow.id}</span>
-                              <span className="text-[9px] text-slate-500 uppercase border border-[#333] px-1.5 py-0.5 rounded">{escrow.role}</span>
-                            </div>
-                            <p className="text-slate-300 mb-2 truncate">{escrow.amount} <span className="text-slate-500 ml-1">({escrow.rawTrade.max.toFixed(0)} {escrow.rawTrade.fiat})</span></p>
-                            <button
-                              onClick={buildGoToTradeRoomAction({
-                                escrow,
-                                setActiveTrade,
-                                setUserRole,
-                                setTradeState,
-                                setChargebackAccepted,
-                                setCurrentView,
-                                setSidebarOpen,
-                              })}
-                              className="w-full bg-[#1a1a1f] hover:bg-[#222] text-white text-[10px] font-bold py-1.5 rounded transition border border-[#333]"
-                            >
-                              {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
-                            </button>
-                          </div>
+                          <OperationTradeCard
+                            key={escrow.id}
+                            escrow={escrow}
+                            lang={lang}
+                            onGoToRoom={buildGoToTradeRoomAction({
+                              escrow,
+                              setActiveTrade,
+                              setUserRole,
+                              setTradeState,
+                              setChargebackAccepted,
+                              setCurrentView,
+                              setSidebarOpen,
+                            })}
+                          />
                         ))}
                       </div>
                     ) : (
@@ -285,30 +280,21 @@ export const buildAppViews = (ctx) => {
               .map((escrow) => {
                 const proposer = escrow?.rawTrade?.settlementProposal?.proposer?.toLowerCase?.() || null;
                 const viewer = address?.toLowerCase?.() || null;
-                const isWaiting = Boolean(proposer && viewer && proposer === viewer);
                 return (
-                  <div key={`settle-${escrow.onchainId}`} className="border border-[#2a2a2e] bg-[#0f1014] rounded-lg p-2">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[11px] font-mono text-emerald-400">#{escrow.onchainId}</span>
-                      <span className={`text-[10px] px-2 py-0.5 rounded border ${isWaiting ? 'text-sky-400 border-sky-500/30' : 'text-orange-400 border-orange-500/30'}`}>
-                        {isWaiting ? (lang === 'TR' ? 'Bekleniyor' : 'Waiting') : (lang === 'TR' ? 'Aksiyon Gerekli' : 'Action Required')}
-                      </span>
-                    </div>
-                    <button
-                      onClick={buildGoToTradeRoomAction({
-                        escrow,
-                        setActiveTrade,
-                        setUserRole,
-                        setTradeState,
-                        setChargebackAccepted,
-                        setCurrentView,
-                        setSidebarOpen,
-                      })}
-                      className="w-full bg-[#1a1a1f] hover:bg-[#222] text-white text-[10px] font-bold py-1.5 rounded transition border border-[#333]"
-                    >
-                      {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
-                    </button>
-                  </div>
+                  <SettlementQueueCard
+                    key={`settle-${escrow.onchainId}`}
+                    escrow={{ ...escrow, viewerAddress: address }}
+                    lang={lang}
+                    onGoToRoom={buildGoToTradeRoomAction({
+                      escrow,
+                      setActiveTrade,
+                      setUserRole,
+                      setTradeState,
+                      setChargebackAccepted,
+                      setCurrentView,
+                      setSidebarOpen,
+                    })}
+                  />
                 );
               })}
           </div>
