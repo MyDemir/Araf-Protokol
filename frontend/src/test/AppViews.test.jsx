@@ -279,6 +279,64 @@ describe('AppViews market side-aware rendering', () => {
     expect(setCurrentView).toHaveBeenCalledWith('market');
   });
 
+
+  it('renders passive trade decision disabled reasons with the real chain policy and keeps actual report button singular', () => {
+    const views = buildAppViews({
+      ...baseCtx,
+      currentView: 'tradeRoom',
+      activeTrade: { id: 'trade-1', onchainId: 1, max: 100, fiat: 'TRY', crypto: 'USDT', rate: 10, maker: '0xmaker' },
+      resolvedTradeState: 'LOCKED',
+      tradeState: 'LOCKED',
+      userRole: 'taker',
+      paymentIpfsHash: '',
+      chargebackAccepted: false,
+      isSupportedChainId: () => false,
+      gracePeriodTimer: { isFinished: false, hours: 1, minutes: 2, seconds: 3 },
+    });
+
+    render(<div>{views.renderTradeRoom()}</div>);
+
+    expect(screen.getByText('Unsupported network.')).toBeInTheDocument();
+    expect(screen.getByText('Payment proof is required.')).toBeInTheDocument();
+    expect(screen.getByText('Chargeback acknowledgement is required.')).toBeInTheDocument();
+    expect(screen.getByText('Timer summaries')).toBeInTheDocument();
+    expect(screen.getByText('01h 02m 03s')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Report Payment/i })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: /Upload payment proof and acknowledge/i })).not.toBeInTheDocument();
+  });
+
+  it('renders CHALLENGED passive settlement guidance without introducing settlement action buttons', () => {
+    const proposeSettlement = vi.fn();
+    const acceptSettlement = vi.fn();
+    const rejectSettlement = vi.fn();
+    const withdrawSettlement = vi.fn();
+    const expireSettlement = vi.fn();
+    const views = buildAppViews({
+      ...baseCtx,
+      currentView: 'tradeRoom',
+      activeTrade: { id: 'trade-2', onchainId: 2, max: 100, fiat: 'TRY', crypto: 'USDT', rate: 10, maker: '0xmaker' },
+      resolvedTradeState: 'CHALLENGED',
+      tradeState: 'CHALLENGED',
+      userRole: 'maker',
+      proposeSettlement,
+      acceptSettlement,
+      rejectSettlement,
+      withdrawSettlement,
+      expireSettlement,
+    });
+
+    render(<div>{views.renderTradeRoom()}</div>);
+
+    expect(screen.getByText(/Araf is not an arbitrator/i)).toBeInTheDocument();
+    expect(screen.getByText(/Follow settlement steps from the existing settlement card/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /settlement guidance/i })).not.toBeInTheDocument();
+    expect(proposeSettlement).not.toHaveBeenCalled();
+    expect(acceptSettlement).not.toHaveBeenCalled();
+    expect(rejectSettlement).not.toHaveBeenCalled();
+    expect(withdrawSettlement).not.toHaveBeenCalled();
+    expect(expireSettlement).not.toHaveBeenCalled();
+  });
+
   it('does not render payment complexity badge when all orders have null paymentRiskSignal', () => {
     const views = buildAppViews({
       ...baseCtx,

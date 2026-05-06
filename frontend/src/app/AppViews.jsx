@@ -636,6 +636,26 @@ export const buildAppViews = (ctx) => {
     const feeBreakdownText = lang === 'TR'
       ? `Kilitli: ${rawCryptoAmt.toFixed(2)} ${asset} | Protokol Kesintisi: ${protocolFee.toFixed(4)} ${asset} | Net Alınacak: ${netAmount.toFixed(2)} ${asset}`
       : `Locked: ${rawCryptoAmt.toFixed(2)} ${asset} | Protocol Fee: ${protocolFee.toFixed(4)} ${asset} | Net to Receive: ${netAmount.toFixed(2)} ${asset}`;
+    const tradeDecisionInput = {
+      trade: activeTrade,
+      tradeState: roomState,
+      userRole,
+      chargebackAccepted,
+      paymentIpfsHash,
+      timers: {
+        gracePeriod: gracePeriodTimer,
+        makerPing: makerPingTimer,
+        makerChallengePing: makerChallengePingTimer,
+        makerChallenge: makerChallengeTimer,
+        bleeding: bleedingTimer,
+        principalProtection: principalProtectionTimer,
+      },
+      isConnected,
+      isAuthenticated,
+      isSupportedChain: isSupportedChainId(chainId),
+      isPaused,
+      lang,
+    };
 
     return (
       <div className="p-4 md:p-8 max-w-[900px] w-full mx-auto relative mt-6 md:mt-0">
@@ -706,23 +726,24 @@ export const buildAppViews = (ctx) => {
             </div>
           )}
 
-          <div className="space-y-6">
-            <SettlementProposalCard
-              activeTrade={activeTrade}
-              userRole={userRole}
-              address={address}
-              lang={lang}
-              authenticatedFetch={authenticatedFetch}
-              proposeSettlement={proposeSettlement}
-              acceptSettlement={acceptSettlement}
-              rejectSettlement={rejectSettlement}
-              withdrawSettlement={withdrawSettlement}
-              expireSettlement={expireSettlement}
-              fetchMyTrades={fetchMyTrades}
-              showToast={showToast}
-              isContractLoading={isContractLoading}
-              setIsContractLoading={setIsContractLoading}
-            />
+          <TradeRoomPage decisionInput={tradeDecisionInput}>
+            <div className="space-y-6">
+              <SettlementProposalCard
+                activeTrade={activeTrade}
+                userRole={userRole}
+                address={address}
+                lang={lang}
+                authenticatedFetch={authenticatedFetch}
+                proposeSettlement={proposeSettlement}
+                acceptSettlement={acceptSettlement}
+                rejectSettlement={rejectSettlement}
+                withdrawSettlement={withdrawSettlement}
+                expireSettlement={expireSettlement}
+                fetchMyTrades={fetchMyTrades}
+                showToast={showToast}
+                isContractLoading={isContractLoading}
+                setIsContractLoading={setIsContractLoading}
+              />
             {/* LOCKED state aksiyon paneli */}
             {roomState === 'LOCKED' && (
               <div className="text-center py-6">
@@ -973,7 +994,8 @@ export const buildAppViews = (ctx) => {
                 </div>
               );
             })()}
-          </div>
+            </div>
+          </TradeRoomPage>
         </div>
       </div>
     );

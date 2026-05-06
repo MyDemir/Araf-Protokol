@@ -13,8 +13,8 @@ export const TradeRoomPage = ({ decisionInput, children }) => {
   return (
     <TradeRoomContextPanel>
       <TradeSummaryCard stateLabel={model.stateLabel} roleLabel={model.roleLabel} />
-      <StateGuidancePanel guidance={model.guidance} />
-      <PrimaryActionPanel primaryAction={model.primaryAction} />
+      <StateGuidancePanel guidance={model.guidance} riskCopy={model.riskCopy} />
+      <PrimaryActionPanel primaryAction={model.primaryAction} disabledReasons={model.disabledReasons} />
       <SecondaryActionsPanel secondaryActions={model.secondaryActions} />
       <TimerStack timerCards={model.timerCards} />
       <TechnicalDetailsDisclosure technicalDetails={model.technicalDetails} />

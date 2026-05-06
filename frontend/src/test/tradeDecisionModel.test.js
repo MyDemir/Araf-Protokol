@@ -46,6 +46,30 @@ describe('buildTradeDecisionModel', () => {
 
   it('wrong chain / paused / unauthenticated appear as disabled reasons', () => {
     const model = buildTradeDecisionModel({ ...base, isSupportedChain: false, isPaused: true, isAuthenticated: false });
-    expect(model.disabledReasons.length).toBeGreaterThanOrEqual(3);
+    expect(model.disabledReasons).toEqual(expect.arrayContaining([
+      'Unsupported network.',
+      'System is in maintenance mode.',
+      'Session is not authenticated.',
+    ]));
+  });
+
+  it('LOCKED+taker blocks passive guidance on missing proof and chargeback acknowledgement', () => {
+    const model = buildTradeDecisionModel({ ...base, paymentIpfsHash: '', chargebackAccepted: false });
+    expect(model.primaryAction.requiresPaymentProof).toBe(true);
+    expect(model.primaryAction.requiresChargebackAck).toBe(true);
+    expect(model.disabledReasons).toEqual(expect.arrayContaining([
+      'Payment proof is required.',
+      'Chargeback acknowledgement is required.',
+    ]));
+  });
+
+  it('turns supplied timers into passive timer summaries', () => {
+    const model = buildTradeDecisionModel({
+      ...base,
+      timers: { gracePeriod: { isFinished: false, hours: 1, minutes: 2, seconds: 3 } },
+    });
+    expect(model.timerCards).toEqual([
+      { key: 'gracePeriod', label: 'Grace period', summary: '01h 02m 03s' },
+    ]);
   });
 });
