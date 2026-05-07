@@ -158,7 +158,10 @@ describe('frontend transition regression invariants', () => {
     expect(screen.getByRole('button', { name: /Market route/i })).toBeVisible();
 
     const statusSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/shell/SystemStatusBar.jsx'), 'utf8');
+    const appViewsSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/AppViews.jsx'), 'utf8');
     expect(statusSource).not.toMatch(/fixed[\s\S]*top-0|top-0[\s\S]*fixed/);
+    expect(appViewsSource).toContain("import ThemeToggle from './shell/ThemeToggle';");
+    expect(appViewsSource).toContain('<ThemeToggle />');
   });
 
   it('migration_system_status_bar_covers_wrong_chain_paused_auth_and_pending_sync_states', () => {
