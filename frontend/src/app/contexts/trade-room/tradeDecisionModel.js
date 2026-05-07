@@ -68,11 +68,13 @@ export function buildTradeDecisionModel({
   const normalizedState = String(tradeState || trade?.state || 'LOCKED').toUpperCase();
   const normalizedRole = String(userRole || 'taker').toLowerCase();
 
-  const disabledReasons = [];
-  if (!isConnected) disabledReasons.push(t(lang, 'Cüzdan bağlı değil.', 'Wallet not connected.'));
-  if (!isAuthenticated) disabledReasons.push(t(lang, 'Oturum doğrulanmamış.', 'Session is not authenticated.'));
-  if (!isSupportedChain) disabledReasons.push(t(lang, 'Desteklenmeyen ağ.', 'Unsupported network.'));
-  if (isPaused) disabledReasons.push(t(lang, 'Sistem bakım modunda.', 'System is in maintenance mode.'));
+  const globalDisabledReasons = [];
+  if (!isConnected) globalDisabledReasons.push(t(lang, 'Cüzdan bağlı değil.', 'Wallet not connected.'));
+  if (!isAuthenticated) globalDisabledReasons.push(t(lang, 'Oturum doğrulanmamış.', 'Session is not authenticated.'));
+  if (!isSupportedChain) globalDisabledReasons.push(t(lang, 'Desteklenmeyen ağ.', 'Unsupported network.'));
+  if (isPaused) globalDisabledReasons.push(t(lang, 'Sistem bakım modunda.', 'System is in maintenance mode.'));
+
+  const primaryDisabledReasons = [...globalDisabledReasons];
 
   let primaryAction = action('waiting', 'waiting', t(lang, 'Bekle', 'Wait'), t(lang, 'Bir sonraki kontrat aksiyonu mevcut durum tarafından belirlenir.', 'Next contract action is determined by the current state.'));
   let secondaryActions = [];
@@ -89,7 +91,7 @@ export function buildTradeDecisionModel({
       },
     );
     guidance.push(t(lang, 'Ödeme kanıtı yüklenmeden pasif rehberlik işlemi hazır saymaz.', 'Passive guidance does not consider the payment path ready until proof is uploaded.'));
-    if (!paymentIpfsHash) disabledReasons.push(t(lang, 'Dekont gerekli.', 'Payment proof is required.'));
+    if (!paymentIpfsHash) primaryDisabledReasons.push(t(lang, 'Dekont gerekli.', 'Payment proof is required.'));
   }
 
   if (normalizedState === 'LOCKED' && normalizedRole === 'maker') {
@@ -135,7 +137,8 @@ export function buildTradeDecisionModel({
     roleLabel: labels.role[normalizedRole]?.[pickLocale(lang)] || normalizedRole,
     primaryAction,
     secondaryActions,
-    disabledReasons,
+    disabledReasons: primaryDisabledReasons,
+    globalDisabledReasons,
     timerCards: buildTimerCards(timers, lang),
     guidance,
     riskCopy: {
