@@ -1,4 +1,3 @@
-import React from 'react';
 import { buildApiUrl } from '../apiConfig';
 import { resolveValidatedFillAmountRaw } from '../fillAmountPolicy';
 import { normalizeOrderSide, removeOrderByOnchainId, resolveOrderActionFns } from '../orderUiModel';
@@ -226,12 +225,6 @@ export const buildStartTradeAction = ({
     setLoadingText('');
   }
 };
-
-export const ContractActionProvider = ({ children }) => {
-  return <>{children}</>;
-};
-
-export default ContractActionProvider;
 
 const getTxErrorMessage = (err, fallback) => err?.shortMessage || err?.reason || err?.message || fallback;
 const isUserRejected = (message) => String(message || '').includes('rejected') || String(message || '').includes('User rejected');

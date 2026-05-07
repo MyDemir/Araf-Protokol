@@ -1,9 +1,7 @@
 import React from 'react';
 import { describe, expect, it, afterEach } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
-import stateCopy from '../app/copy/states';
-import actionCopy from '../app/copy/actions';
-import orderSideCopy from '../app/copy/orderSide';
+import { actions as actionCopy, orderSide as orderSideCopy, pii, states as stateCopy, getPiiCopy } from '../app/copy';
 import { CopyProvider, getCopy, useCopy } from '../app/providers/CopyProvider';
 
 describe('copy dictionaries', () => {
@@ -29,6 +27,11 @@ describe('copy dictionaries', () => {
 
   it('missing key fails safely with fallback', () => {
     expect(getCopy(actionCopy, 'missing_action', 'EN')).toBe('missing_action');
+  });
+
+  it('copy index exports PII helper copy without forcing it into row-shaped provider dictionaries', () => {
+    expect(pii.en.sectionTitle).toBe('Secure payment details');
+    expect(getPiiCopy('EN').revealBtn).toMatch(/Reveal secure payment details/i);
   });
 
   it('CopyProvider exposes dictionaries and getCopy through context', () => {

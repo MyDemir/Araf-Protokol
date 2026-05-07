@@ -166,7 +166,7 @@ describe('buildOperationsContextModel', () => {
   it('keeps Operations Center derived-only and wired to the shared room navigation action', () => {
     const operationsPageSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/operations/OperationsCenterPage.jsx'), 'utf8');
     const operationsModelSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/operations/operationsContextModel.js'), 'utf8');
-    const operationsPanelSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/operations/OperationsContextPanel.jsx'), 'utf8');
+    const operationsPanelSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/operations/OperationsPanels.jsx'), 'utf8');
 
     expect(operationsPageSource).toContain("import { buildGoToTradeRoomAction } from '../../actions/tradeNavigationActions';");
     expect(operationsPageSource).toContain('buildGoToTradeRoomAction({');

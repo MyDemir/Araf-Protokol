@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { buildStartTradeAction } from '../app/providers/ContractActionProvider';
+import { buildStartTradeAction } from '../app/actions/contractLifecycleActions';
 
 const makeDeps = (overrides = {}) => ({
   lang: 'EN',
@@ -227,7 +227,7 @@ describe('start trade action', () => {
 
   it('keeps App.jsx from declaring handleStartTrade inline', () => {
     const appSource = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
-    expect(appSource).toMatch(/import \{[^}]*buildStartTradeAction[^}]*\} from '\.\/app\/providers\/ContractActionProvider';/);
+    expect(appSource).toMatch(/import \{[^}]*buildStartTradeAction[^}]*\} from '\.\/app\/actions\/contractLifecycleActions';/);
     expect(appSource).toContain('const handleStartTrade = React.useMemo(() => buildStartTradeAction({');
     expect(appSource).not.toMatch(/const\s+handleStartTrade\s*=\s*async/);
     expect(appSource).not.toContain('childListingRef');

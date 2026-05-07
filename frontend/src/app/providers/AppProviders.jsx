@@ -2,22 +2,13 @@ import React from 'react';
 import { ThemeProvider } from './ThemeProvider';
 import { CopyProvider } from './CopyProvider';
 import { SessionProvider } from './SessionProvider';
-import { ContractActionProvider } from './ContractActionProvider';
-import { ToastProvider } from './ToastProvider';
-import { RouteStateProvider } from './RouteStateProvider';
 
-export const AppProviders = ({ children, initialContext = 'home' }) => {
+export const AppProviders = ({ children }) => {
   return (
     <ThemeProvider>
       <CopyProvider>
         <SessionProvider>
-          <ContractActionProvider>
-            <ToastProvider>
-              <RouteStateProvider initialContext={initialContext}>
-                {children}
-              </RouteStateProvider>
-            </ToastProvider>
-          </ContractActionProvider>
+          {children}
         </SessionProvider>
       </CopyProvider>
     </ThemeProvider>

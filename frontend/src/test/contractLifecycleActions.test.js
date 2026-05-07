@@ -4,7 +4,7 @@ import {
   buildOrderActions,
   buildProfileActions,
   buildTradeRoomActions,
-} from '../app/providers/ContractActionProvider';
+} from '../app/actions/contractLifecycleActions';
 
 const baseTrade = { id: 'db-trade', onchainId: '9' };
 

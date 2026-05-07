@@ -1,24 +1,18 @@
 import React from 'react';
-import stateCopy from '../copy/states';
-import actionCopy from '../copy/actions';
-import orderSideCopy from '../copy/orderSide';
-import settlementCopy from '../copy/settlement';
-import paymentRiskCopy from '../copy/paymentRisk';
-import profileCopy from '../copy/profile';
-import rewardsCopy from '../copy/rewards';
-import adminCopy from '../copy/admin';
-import errorCopy from '../copy/errors';
+import { actions, admin, errors, orderSide, paymentRisk, profile, rewards, settlement, states } from '../copy';
 
+// PII copy uses a language-bucket shape (`tr`/`en` objects) consumed by getPiiCopy,
+// not the row-based `{ TR, EN }` dictionary shape expected by getCopy/CopyProvider.
 const dictionaries = {
-  states: stateCopy,
-  actions: actionCopy,
-  orderSide: orderSideCopy,
-  settlement: settlementCopy,
-  paymentRisk: paymentRiskCopy,
-  profile: profileCopy,
-  rewards: rewardsCopy,
-  admin: adminCopy,
-  errors: errorCopy,
+  states,
+  actions,
+  orderSide,
+  settlement,
+  paymentRisk,
+  profile,
+  rewards,
+  admin,
+  errors,
 };
 
 export const getCopy = (dict, key, lang = 'EN') => {

@@ -4,8 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import fs from 'node:fs';
 import path from 'node:path';
 import OperationTradeCard from '../app/contexts/operations/OperationTradeCard';
-import SettlementQueueCard from '../app/contexts/operations/SettlementQueueCard';
-import PendingSyncCard from '../app/contexts/operations/PendingSyncCard';
+import { PendingSyncCard, SettlementQueueCard } from '../app/contexts/operations/OperationsPanels';
 
 afterEach(() => cleanup());
 
@@ -80,11 +79,11 @@ describe('shared active trade cards', () => {
   it('keeps sidebar/profile/operations surfaces on shared card components without new data fetches', () => {
     const appViewsSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/AppViews.jsx'), 'utf8');
     const profileSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/profile/ActiveTradesPanel.jsx'), 'utf8');
-    const operationsPanelSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/operations/OperationsContextPanel.jsx'), 'utf8');
+    const operationsPanelSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/operations/OperationsPanels.jsx'), 'utf8');
     const sessionSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/useAppSessionData.jsx'), 'utf8');
 
     expect(appViewsSource).toContain("import OperationTradeCard from './contexts/operations/OperationTradeCard';");
-    expect(appViewsSource).toContain("import SettlementQueueCard from './contexts/operations/SettlementQueueCard';");
+    expect(appViewsSource).toContain("import { SettlementQueueCard } from './contexts/operations/OperationsPanels';");
     expect(profileSource).toContain("import OperationTradeCard from '../operations/OperationTradeCard';");
     expect(operationsPanelSource).toContain('<SettlementQueueCard');
     expect(operationsPanelSource).toContain('<PendingSyncCard');

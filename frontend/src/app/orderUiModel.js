@@ -4,7 +4,7 @@
  */
 
 import { formatUnits } from 'viem';
-import orderSideCopy from './copy/orderSide';
+import { orderSide as orderSideCopy } from './copy';
 
 const DEFAULT_TOKEN_DECIMALS = 6;
 const VALID_ORDER_SIDES = new Set(['SELL_CRYPTO', 'BUY_CRYPTO']);

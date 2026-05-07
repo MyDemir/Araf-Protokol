@@ -1,12 +1,12 @@
 import React from 'react';
 import PIIDisplay from '../components/PIIDisplay';
-import { getPiiCopy } from './copy/pii';
+import { getPiiCopy } from './copy';
 import ReferenceRateTicker from '../components/ReferenceRateTicker';
 import SettlementProposalCard, { normalizeSettlementState } from '../components/SettlementProposalCard';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
 import { buildGoToTradeRoomAction } from './actions/tradeNavigationActions';
 import OperationTradeCard from './contexts/operations/OperationTradeCard';
-import SettlementQueueCard from './contexts/operations/SettlementQueueCard';
+import { SettlementQueueCard } from './contexts/operations/OperationsPanels';
 import OperationsCenterPage from './contexts/operations/OperationsCenterPage';
 import ProfileContextPage from './contexts/profile/ProfileContextPage';
 import { getOrderSideCopy } from './orderUiModel';

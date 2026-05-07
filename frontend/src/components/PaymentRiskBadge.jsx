@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { getPaymentRiskLevelLabel, getPaymentRiskSummaryCopy } from '../app/copy/paymentRisk';
+import { getPaymentRiskLevelLabel, getPaymentRiskSummaryCopy } from '../app/copy';
 
 const RISK_LEVEL_CLASS = {
   LOW: 'text-emerald-400 border-emerald-500/30 bg-emerald-900/20',

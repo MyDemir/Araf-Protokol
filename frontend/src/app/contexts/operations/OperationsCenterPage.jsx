@@ -1,8 +1,7 @@
 import React from 'react';
 import { buildOperationsContextModel } from './operationsContextModel';
-import OperationsSummaryBar from './OperationsSummaryBar';
 import OperationLaneTabs from './OperationLaneTabs';
-import OperationsContextPanel from './OperationsContextPanel';
+import { OperationsContextPanel, OperationsSummaryBar } from './OperationsPanels';
 import { buildGoToTradeRoomAction } from '../../actions/tradeNavigationActions';
 
 export const OperationsCenterPage = ({
