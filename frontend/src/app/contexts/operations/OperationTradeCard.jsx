@@ -1,4 +1,17 @@
 import React from 'react';
+import { getStateLabel } from '../../copy/states';
+
+const roleCopy = {
+  maker: { TR: 'İlan Sahibi', EN: 'Maker' },
+  taker: { TR: 'Alıcı', EN: 'Taker' },
+};
+
+const getRoleLabel = (role, lang = 'EN') => {
+  const normalized = String(role || '').toLowerCase();
+  const row = roleCopy[normalized];
+  if (!row) return role || '—';
+  return row[lang === 'TR' ? 'TR' : 'EN'] || row.EN || row.TR || role;
+};
 
 const normalizeSettlementState = (state) => {
   const normalized = String(state || '').toUpperCase();
@@ -36,8 +49,9 @@ const resolveCardModel = (escrow = {}, lang = 'EN') => {
 
   return {
     displayId,
-    role,
+    roleLabel: getRoleLabel(role, lang),
     state,
+    stateLabel: getStateLabel(state, lang),
     amount,
     fiatEstimate,
     settlementCopy,
@@ -52,16 +66,16 @@ export const OperationTradeCard = ({ escrow, lang = 'EN', onGoToRoom }) => {
     <div className="bg-[#101014] border border-[#222] rounded-xl p-3" data-testid="operation-trade-card">
       <div className="flex items-center justify-between mb-2 gap-2">
         <span className="font-mono text-emerald-400 text-sm truncate">{model.displayId}</span>
-        <span className="text-[10px] border border-[#333] rounded px-2 py-0.5 text-slate-400 uppercase shrink-0">{model.role}</span>
+        <span className="text-xs border border-[#333] rounded px-2 py-0.5 text-slate-300 shrink-0">{model.roleLabel}</span>
       </div>
-      <p className="text-xs text-slate-400 mb-1">{model.state}</p>
+      <p className="text-sm font-medium text-white mb-1">{model.stateLabel}</p>
       {model.amount && (
         <p className="text-xs text-slate-300 mb-1 truncate">
           {model.amount}{model.fiatEstimate && <span className="text-slate-500 ml-1">({model.fiatEstimate})</span>}
         </p>
       )}
-      {model.settlementCopy && <p className="text-[11px] text-orange-300 mb-1">{model.settlementCopy}</p>}
-      {model.pendingSyncCopy && <p className="text-[11px] text-sky-300 mb-1">{model.pendingSyncCopy}</p>}
+      {model.settlementCopy && <p className="text-xs text-orange-300 mb-1">{model.settlementCopy}</p>}
+      {model.pendingSyncCopy && <p className="text-xs text-sky-300 mb-1">{model.pendingSyncCopy}</p>}
       <button onClick={onGoToRoom} className="w-full bg-[#1a1a1f] hover:bg-[#222] text-white text-xs font-bold py-2 rounded-lg border border-[#333]">
         {lang === 'TR' ? 'Odaya Git →' : 'Go to Room →'}
       </button>

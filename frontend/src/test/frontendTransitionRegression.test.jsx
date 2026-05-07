@@ -10,6 +10,7 @@ import { buildAppViews } from '../app/AppViews';
 import { buildOperationsContextModel } from '../app/contexts/operations/operationsContextModel';
 import OperationsCenterPage from '../app/contexts/operations/OperationsCenterPage';
 import ActiveTradesPanel from '../app/contexts/profile/ActiveTradesPanel';
+import { getStateLabel } from '../app/copy';
 import { buildGoToTradeRoomAction } from '../app/actions/tradeNavigationActions';
 import { isSupportedChainId } from '../app/chainPolicy';
 import { buildTradeDecisionModel } from '../app/contexts/trade-room/tradeDecisionModel';
@@ -318,8 +319,12 @@ describe('frontend transition regression invariants', () => {
       />,
     );
 
+    expect(screen.getByText('Payment proof is needed')).toBeInTheDocument();
+    expect(screen.getByText('What to do now')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Report guarded payment/i })).toBeDisabled();
     expect(screen.getAllByText(/Unsupported network\./i).length).toBeGreaterThan(0);
+    expect(screen.getByTestId('trade-summary-card')).not.toHaveTextContent('tradeState');
+    expect(screen.getByText('Technical details').closest('details')).not.toHaveAttribute('open');
   });
 
 
@@ -495,25 +500,59 @@ describe('frontend transition regression invariants', () => {
       { id: 'T-CHALLENGED', state: 'CHALLENGED', role: 'maker', rawTrade: { id: 'challenged-raw', chargebackAcked: true } },
     ];
 
-    render(
+    const setActiveTradesFilter = vi.fn();
+    const { rerender } = render(
       <ActiveTradesPanel
         lang="EN"
         activeTradesFilter="ALL"
-        setActiveTradesFilter={vi.fn()}
+        setActiveTradesFilter={setActiveTradesFilter}
         activeEscrows={activeEscrows}
         {...setters}
       />,
     );
 
+    expect(screen.getByRole('button', { name: /All\s+3/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Locked\s+1/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Payment Reported\s+1/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Challenge Phase\s+1/i })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Payment Reported\s+1/i }));
+    expect(setActiveTradesFilter).toHaveBeenCalledWith('PAID');
+
     const cards = screen.getAllByTestId('operation-trade-card');
     expect(cards).toHaveLength(3);
-    expect(within(cards[0]).getByText('LOCKED')).toBeInTheDocument();
-    expect(within(cards[1]).getByText('PAID')).toBeInTheDocument();
-    expect(within(cards[2]).getByText('CHALLENGED')).toBeInTheDocument();
+    expect(within(cards[0]).getByText(getStateLabel('LOCKED', 'EN'))).toBeInTheDocument();
+    expect(within(cards[1]).getByText(getStateLabel('PAID', 'EN'))).toBeInTheDocument();
+    expect(within(cards[2]).getByText(getStateLabel('CHALLENGED', 'EN'))).toBeInTheDocument();
 
-    await user.click(within(cards[0]).getByRole('button', { name: /Go to Room/i }));
-    await user.click(within(cards[1]).getByRole('button', { name: /Go to Room/i }));
-    await user.click(within(cards[2]).getByRole('button', { name: /Go to Room/i }));
+    rerender(
+      <ActiveTradesPanel
+        lang="EN"
+        activeTradesFilter="PAID"
+        setActiveTradesFilter={setActiveTradesFilter}
+        activeEscrows={activeEscrows}
+        {...setters}
+      />,
+    );
+
+    const paidCards = screen.getAllByTestId('operation-trade-card');
+    expect(paidCards).toHaveLength(1);
+    expect(within(paidCards[0]).getByText('T-PAID')).toBeInTheDocument();
+
+    rerender(
+      <ActiveTradesPanel
+        lang="EN"
+        activeTradesFilter="ALL"
+        setActiveTradesFilter={setActiveTradesFilter}
+        activeEscrows={activeEscrows}
+        {...setters}
+      />,
+    );
+
+    const allCards = screen.getAllByTestId('operation-trade-card');
+
+    await user.click(within(allCards[0]).getByRole('button', { name: /Go to Room/i }));
+    await user.click(within(allCards[1]).getByRole('button', { name: /Go to Room/i }));
+    await user.click(within(allCards[2]).getByRole('button', { name: /Go to Room/i }));
 
     expect(setters.setTradeState.mock.calls.map(([state]) => state)).toEqual(['LOCKED', 'PAID', 'CHALLENGED']);
     expect(setters.setCurrentView).toHaveBeenCalledWith('tradeRoom');

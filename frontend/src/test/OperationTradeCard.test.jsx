@@ -4,7 +4,8 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import fs from 'node:fs';
 import path from 'node:path';
 import OperationTradeCard from '../app/contexts/operations/OperationTradeCard';
-import { PendingSyncCard, SettlementQueueCard } from '../app/contexts/operations/OperationsPanels';
+import { OperationsSummaryBar, PendingSyncCard, SettlementQueueCard } from '../app/contexts/operations/OperationsPanels';
+import { getStateLabel } from '../app/copy';
 
 afterEach(() => cleanup());
 
@@ -26,8 +27,9 @@ describe('shared active trade cards', () => {
     );
 
     expect(screen.getByText('#42')).toBeInTheDocument();
-    expect(screen.getByText('maker')).toBeInTheDocument();
-    expect(screen.getByText(state)).toBeInTheDocument();
+    expect(screen.getByText('Maker')).toBeInTheDocument();
+    expect(screen.getByText(getStateLabel(state, 'EN'))).toBeInTheDocument();
+    expect(screen.queryByText(state)).not.toBeInTheDocument();
     expect(screen.getByText(/12.5 USDT/)).toBeInTheDocument();
     expect(screen.getByText('(410 TRY)')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Go to Room/i }));
@@ -74,6 +76,21 @@ describe('shared active trade cards', () => {
     expect(screen.getAllByText(/Pending backend sync/i).length).toBeGreaterThan(0);
     expect(screen.getByTestId('pending-sync-card')).toHaveClass('border-sky-500/40');
     expect(screen.getByRole('button', { name: /Go to Room/i })).toBeInTheDocument();
+  });
+
+  it('renders operations summary with localized state labels', () => {
+    render(
+      <OperationsSummaryBar
+        lang="EN"
+        summary={{ totalActive: 3, locked: 1, paid: 1, challenged: 1 }}
+      />,
+    );
+
+    expect(screen.getByText('Locked')).toBeInTheDocument();
+    expect(screen.getByText('Payment Reported')).toBeInTheDocument();
+    expect(screen.getByText('Challenge Phase')).toBeInTheDocument();
+    expect(screen.queryByText('PAID')).not.toBeInTheDocument();
+    expect(screen.queryByText('CHALLENGED')).not.toBeInTheDocument();
   });
 
   it('keeps sidebar/profile/operations surfaces on shared card components without new data fetches', () => {

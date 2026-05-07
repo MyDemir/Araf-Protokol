@@ -150,7 +150,7 @@ export const SystemStatusBar = ({
     <section aria-label={lang === 'TR' ? 'Sistem durumu' : 'System status'} className="shrink-0 border-b border-[#1a1a1a]" data-testid="system-status-bar">
       <div className="flex flex-col">
         {statuses.map((status) => (
-          <div key={status.key} className={`px-4 py-2 text-xs border-b last:border-b-0 ${toneClass(status.tone)}`} data-status-key={status.key}>
+          <div key={status.key} className={`px-4 py-2 text-sm border-b last:border-b-0 ${toneClass(status.tone)}`} data-status-key={status.key}>
             <div className="max-w-[1200px] mx-auto flex items-center justify-between gap-3">
               <div>
                 <p className="font-bold">{status.title}</p>

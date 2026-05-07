@@ -6,14 +6,15 @@ import { StateGuidancePanel, TechnicalDetailsDisclosure, TimerStack, TradeSummar
 
 export const TradeRoomPage = ({ decisionInput, actionCallbacks, children }) => {
   const model = React.useMemo(() => buildTradeDecisionModel(decisionInput || {}), [decisionInput]);
+  const lang = decisionInput?.lang || 'EN';
   return (
     <>
-      <TradeSummaryCard stateLabel={model.stateLabel} roleLabel={model.roleLabel} />
+      <TradeSummaryCard {...model.decisionSummary} stateLabel={model.stateLabel} roleLabel={model.roleLabel} lang={lang} />
       <StateGuidancePanel guidance={model.guidance} riskCopy={model.riskCopy} />
-      <PrimaryActionPanel primaryAction={model.primaryAction} disabledReasons={model.disabledReasons} actionCallbacks={actionCallbacks} />
-      <SecondaryActionsPanel secondaryActions={model.secondaryActions} disabledReasons={model.globalDisabledReasons || []} actionCallbacks={actionCallbacks} />
-      <TimerStack timerCards={model.timerCards} />
-      <TechnicalDetailsDisclosure technicalDetails={model.technicalDetails} />
+      <PrimaryActionPanel primaryAction={model.primaryAction} disabledReasons={model.disabledReasons} actionCallbacks={actionCallbacks} lang={lang} />
+      <SecondaryActionsPanel secondaryActions={model.secondaryActions} disabledReasons={model.globalDisabledReasons || []} actionCallbacks={actionCallbacks} lang={lang} />
+      <TimerStack timerCards={model.timerCards} lang={lang} />
+      <TechnicalDetailsDisclosure technicalDetails={model.technicalDetails} lang={lang} />
       {children}
     </>
   );

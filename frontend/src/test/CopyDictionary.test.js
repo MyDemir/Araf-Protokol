@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, afterEach } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
-import { actions as actionCopy, orderSide as orderSideCopy, pii, states as stateCopy, getPiiCopy } from '../app/copy';
+import { actions as actionCopy, orderSide as orderSideCopy, pii, states as stateCopy, getPiiCopy, getStateLabel } from '../app/copy';
 import { CopyProvider, getCopy, useCopy } from '../app/providers/CopyProvider';
 
 describe('copy dictionaries', () => {
@@ -23,6 +23,16 @@ describe('copy dictionaries', () => {
   it('orderSide SELL_CRYPTO and BUY_CRYPTO do not return raw enum as user-facing label', () => {
     expect(getCopy(orderSideCopy, 'SELL_CRYPTO', 'EN')).not.toBe('SELL_CRYPTO');
     expect(getCopy(orderSideCopy, 'BUY_CRYPTO', 'EN')).not.toBe('BUY_CRYPTO');
+  });
+
+  it('state label helper returns localized active trade labels', () => {
+    expect(getStateLabel('ALL', 'EN')).toBe('All');
+    expect(getStateLabel('ALL', 'TR')).toBe('Tümü');
+    expect(getStateLabel('LOCKED', 'EN')).toBe('Locked');
+    expect(getStateLabel('PAID', 'EN')).toBe('Payment Reported');
+    expect(getStateLabel('CHALLENGED', 'TR')).toBe('İtiraz Süreci');
+    expect(getStateLabel('LOCKED', 'EN', 'descriptive')).toBe('Locked Trade');
+    expect(getStateLabel('UNKNOWN_STATE', 'EN')).toBe('UNKNOWN_STATE');
   });
 
   it('missing key fails safely with fallback', () => {

@@ -357,7 +357,7 @@ describe('AppViews market side-aware rendering', () => {
     expect(screen.getAllByText('Unsupported network.').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Payment proof is required.').length).toBeGreaterThan(0);
     expect(screen.queryByText('Chargeback acknowledgement is required.')).not.toBeInTheDocument();
-    expect(screen.getByText('Timer summaries')).toBeInTheDocument();
+    expect(screen.getByText('Timers')).toBeInTheDocument();
     expect(screen.getByText('01h 02m 03s')).toBeInTheDocument();
     const primaryGuidance = screen.getByTestId('trade-primary-guidance');
     expect(within(primaryGuidance).getByRole('button', { name: /Report Payment/i })).toBeDisabled();

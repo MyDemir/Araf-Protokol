@@ -38,9 +38,9 @@ function PaymentRiskSummary({ lang, riskEntry, compact }) {
         </p>
         <span className={`text-[10px] px-2 py-0.5 rounded border font-bold ${chipClass}`}>{riskLabel}</span>
       </div>
-      {!compact && desc && <p className="text-[11px] text-slate-400">{desc}</p>}
-      {isGenericSignal && <p className={`${compact ? 'text-[10px]' : 'text-[11px]'} text-amber-300 mt-1`}>{getPaymentRiskSummaryCopy('genericWarning', lang)}</p>}
-      <p className={`${compact ? 'text-[10px]' : 'text-[10px]'} text-slate-500 mt-1`}>
+      {!compact && desc && <p className="text-xs text-slate-400">{desc}</p>}
+      {isGenericSignal && <p className={`${compact ? 'text-xs' : 'text-xs'} text-amber-300 mt-1`}>{getPaymentRiskSummaryCopy('genericWarning', lang)}</p>}
+      <p className={`${compact ? 'text-xs' : 'text-xs'} text-slate-500 mt-1`}>
         {getPaymentRiskSummaryCopy('notTrustScore', lang)}
       </p>
     </>
@@ -57,24 +57,24 @@ function PaymentRiskTechnicalDisclosure({ lang, riskEntry, defaultOpen = false }
         type="button"
         aria-expanded={isOpen}
         onClick={() => setIsOpen((current) => !current)}
-        className="text-[11px] text-slate-300 underline decoration-dotted underline-offset-4 hover:text-white"
+        className="text-xs text-slate-300 underline decoration-dotted underline-offset-4 hover:text-white"
       >
         {isOpen ? getPaymentRiskSummaryCopy('hideDisclosureButton', lang) : getPaymentRiskSummaryCopy('disclosureButton', lang)}
       </button>
       {isOpen && (
         <div className="mt-2 rounded-lg border border-[#2a2a2e] bg-[#0b0b0e] p-2" aria-label={getPaymentRiskSummaryCopy('disclosureTitle', lang)}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
             {TECHNICAL_FIELDS.map(([label, readValue]) => (
               <p key={label} className="text-slate-400">
                 {label}: <span className="text-white font-mono break-all">{formatTechnicalValue(readValue(riskEntry))}</span>
               </p>
             ))}
           </div>
-          <p className="text-[10px] text-slate-500 mt-2">
+          <p className="text-xs text-slate-500 mt-2">
             {getPaymentRiskSummaryCopy('previewOnly', lang)}
           </p>
           {(riskLevel === 'RESTRICTED' || riskEntry.enabled === false) && (
-            <p className="text-[10px] text-red-400 mt-2">
+            <p className="text-xs text-red-400 mt-2">
               {getPaymentRiskSummaryCopy('restrictedAvailability', lang)}
             </p>
           )}

@@ -170,7 +170,7 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
           ) : t.revealBtn}
         </button>
 
-        <p className="text-center text-[10px] text-slate-500 mt-2">{t.disclaimer}</p>
+        <p className="text-center text-xs text-slate-500 mt-2">{t.disclaimer}</p>
       </div>
     );
   }
@@ -201,7 +201,7 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
           )}
 
           {pii.payoutProfile?.rail && (
-            <p className="text-[11px] text-blue-300 mb-3">
+            <p className="text-xs text-blue-300 mb-3">
               {t.railPrefix}: <span className="font-mono">{pii.payoutProfile.rail}</span>
             </p>
           )}
@@ -281,7 +281,7 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
 
           <div className="p-2 bg-slate-800 rounded-lg flex items-start space-x-2 border border-slate-700">
             <span className="text-sm shrink-0">🛡️</span>
-            <p className="text-[10px] text-slate-400 leading-tight">{t.notice}</p>
+            <p className="text-xs text-slate-400 leading-snug">{t.notice}</p>
           </div>
         </>
       ) : error ? (

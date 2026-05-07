@@ -1,12 +1,13 @@
 import React from 'react';
+import { getStateLabel } from '../../copy/states';
 import OperationTradeCard from './OperationTradeCard';
 
 export const OperationsSummaryBar = ({ summary, lang = 'EN' }) => {
   const items = [
     { key: 'totalActive', label: lang === 'TR' ? 'Toplam Aktif' : 'Total Active' },
-    { key: 'locked', label: 'LOCKED' },
-    { key: 'paid', label: 'PAID' },
-    { key: 'challenged', label: 'CHALLENGED' },
+    { key: 'locked', label: getStateLabel('LOCKED', lang) },
+    { key: 'paid', label: getStateLabel('PAID', lang) },
+    { key: 'challenged', label: getStateLabel('CHALLENGED', lang) },
     { key: 'settlementActionRequired', label: lang === 'TR' ? 'Settlement Aksiyon' : 'Settlement Action' },
     { key: 'settlementWaiting', label: lang === 'TR' ? 'Settlement Bekleme' : 'Settlement Waiting' },
     { key: 'pendingBackendSync', label: lang === 'TR' ? 'Backend Senkron' : 'Backend Sync' },
@@ -16,7 +17,7 @@ export const OperationsSummaryBar = ({ summary, lang = 'EN' }) => {
     <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2 mb-4">
       {items.map((item) => (
         <div key={item.key} className="bg-[#101014] border border-[#222] rounded-lg px-3 py-2">
-          <p className="text-[10px] text-slate-500 uppercase tracking-wide">{item.label}</p>
+          <p className="text-xs text-slate-500 uppercase tracking-wide">{item.label}</p>
           <p className="text-sm font-bold text-white">{summary?.[item.key] ?? 0}</p>
         </div>
       ))}
@@ -47,7 +48,7 @@ export const SettlementQueueCard = ({ escrow, lang, onGoToRoom }) => {
 
   return (
     <div className={`rounded-xl border p-2 ${accentClass}`} data-testid="settlement-queue-card">
-      <p className="mb-2 text-[11px] font-bold uppercase tracking-widest">{title}</p>
+      <p className="mb-2 text-xs font-bold uppercase tracking-widest">{title}</p>
       <OperationTradeCard escrow={escrow} lang={lang} onGoToRoom={onGoToRoom} />
     </div>
   );
@@ -56,7 +57,7 @@ export const SettlementQueueCard = ({ escrow, lang, onGoToRoom }) => {
 export const PendingSyncCard = ({ escrow, lang, onGoToRoom }) => {
   return (
     <div className="rounded-xl border border-sky-500/40 bg-sky-950/10 p-2" data-testid="pending-sync-card">
-      <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-sky-300">
+      <p className="mb-2 text-xs font-bold uppercase tracking-widest text-sky-300">
         {lang === 'TR' ? 'Backend senkron bekliyor' : 'Pending backend sync'}
       </p>
       <OperationTradeCard escrow={escrow} lang={lang} onGoToRoom={onGoToRoom} />

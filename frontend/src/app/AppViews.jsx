@@ -1,6 +1,6 @@
 import React from 'react';
 import PIIDisplay from '../components/PIIDisplay';
-import { getPiiCopy } from './copy';
+import { getPiiCopy, getStateLabel } from './copy';
 import ReferenceRateTicker from '../components/ReferenceRateTicker';
 import SettlementProposalCard, { normalizeSettlementState } from '../components/SettlementProposalCard';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
@@ -216,7 +216,7 @@ export const buildAppViews = (ctx) => {
                       <span className={status === 'CHALLENGED' ? 'text-red-500' : 'text-slate-500'}>
                         {status === 'LOCKED' ? '🔒' : status === 'PAID' ? '%' : '⚔️'}
                       </span>
-                      {status}
+                      {getStateLabel(status, lang)}
                     </div>
                     {count > 0 && (
                       <span className={status === 'CHALLENGED' ? 'bg-red-900/40 text-red-400 text-[10px] font-bold px-2 py-0.5 rounded border border-red-900/50' : 'bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-300'}>
@@ -421,10 +421,10 @@ export const buildAppViews = (ctx) => {
       <ReferenceRateTicker lang={lang} />
 
       <div className="mb-4 p-3 rounded-xl border border-orange-700/40 bg-orange-900/20">
-        <p className="text-[11px] text-orange-200 leading-relaxed">
+        <p className="text-xs text-orange-200 leading-relaxed">
           {lang === 'TR'
-            ? 'Bilgi: CHALLENGED durumunda 10 gün dolunca burnExpired fonksiyonu kontratta herkese açıktır; üçüncü taraflar da çağırabilir.'
-            : 'Info: In CHALLENGED state, once 10 days pass, burnExpired is permissionless on-chain and can be called by third parties.'}
+            ? `Bilgi: ${getStateLabel('CHALLENGED', lang)} durumunda 10 gün dolunca burnExpired fonksiyonu kontratta herkese açıktır; üçüncü taraflar da çağırabilir.`
+            : `Info: In ${getStateLabel('CHALLENGED', lang)}, once 10 days pass, burnExpired is permissionless on-chain and can be called by third parties.`}
         </p>
       </div>
 
@@ -497,7 +497,7 @@ export const buildAppViews = (ctx) => {
                               : 'Informational quick summary; not a final verdict.'}
                           </p>
                         </div>
-                        <p className="text-[10px] text-slate-500 mt-3 leading-relaxed">
+                        <p className="text-xs text-slate-500 mt-3 leading-relaxed">
                           {lang === 'TR'
                             ? 'Not: Bu kart hızlı bir özet gösterir; nihai güven/hüküm değerlendirmesi değildir.'
                             : 'Note: This card is a quick summary, not a final trust verdict.'}
@@ -532,12 +532,12 @@ export const buildAppViews = (ctx) => {
                      (isContractLoading  ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : (order.ctaLabel || (lang === 'TR' ? 'İşlem Yap' : 'Trade')))}
                   </button>
                   {!isFunded && isConnected && canTakeOrder && !isPaused && (
-                    <p className="text-[10px] text-red-500 mt-2 text-center md:text-right w-full leading-tight">
+                    <p className="text-xs text-red-500 mt-2 text-center md:text-right w-full leading-snug">
                       ⚠️ Anti-Spam: {lang === 'TR' ? 'İşlem yapabilmek için cüzdanınızda en az 0.001 ETH bulunmalıdır.' : 'You must have at least 0.001 ETH in your wallet to trade.'}
                     </p>
                   )}
                   {!isCooldownOk && isConnected && (
-                    <p className="text-[10px] text-amber-400 mt-2 text-center md:text-right w-full leading-tight">
+                    <p className="text-xs text-amber-400 mt-2 text-center md:text-right w-full leading-snug">
                       {lang === 'TR'
                         ? 'Not: 4 saatlik cooldown Tier 0 ve Tier 1 için geçerlidir.'
                         : 'Note: the 4-hour cooldown applies to both Tier 0 and Tier 1.'}
@@ -774,7 +774,7 @@ export const buildAppViews = (ctx) => {
                       <label htmlFor="receipt-upload" className="w-full bg-[#0a0a0c] text-white px-4 py-3 rounded-xl border border-[#333] mb-4 text-sm flex items-center justify-center cursor-pointer hover:border-blue-500/50 transition">
                         {paymentIpfsHash ? (lang === 'TR' ? '✅ Yüklendi (Hash: ' + paymentIpfsHash.slice(0,8) + '...)' : '✅ Uploaded') : (lang === 'TR' ? '📎 Dekont Yükle' : '📎 Upload Receipt')}
                       </label>
-                      <p className="text-[10px] text-slate-500 mt-1 mb-4 text-center">
+                      <p className="text-xs text-slate-500 mt-1 mb-4 text-center">
                         {lang === 'TR' ? 'Dekontunuz AES-256 ile şifrelenir ve işlem bitince kalıcı olarak silinir.' : 'Receipt is AES-256 encrypted and permanently deleted after trade.'}
                       </p>
                     </div>
@@ -791,7 +791,7 @@ export const buildAppViews = (ctx) => {
                         <p className="text-sm text-slate-300 mb-2">
                           {lang === 'TR' ? 'Alıcının Doğrulanmış İsmi:' : "Buyer's Verified Name:"} <span className="font-bold text-white">{takerName || (lang === 'TR' ? 'Yükleniyor...' : 'Loading...')}</span>
                         </p>
-                        <p className="text-[11px] text-slate-500 leading-tight">
+                        <p className="text-xs text-slate-500 leading-snug">
                           {lang === 'TR' ? 'Gelen paranın gönderici ismi ile bu ismin KESİNLİKLE eşleştiğini teyit ediniz. Eşleşmiyorsa parayı iade edip işlemi iptal edin.' : 'Ensure the sender name on the payment EXACTLY matches this name. If not, refund and cancel.'}
                         </p>
                       </div>
@@ -822,7 +822,7 @@ export const buildAppViews = (ctx) => {
                         if (canAutoRelease) {
                           return (
                             <div className="w-full mt-2 flex flex-col items-center">
-                              <p className="text-[11px] text-red-400 font-bold mb-1 text-center leading-tight">
+                              <p className="text-xs text-red-400 font-bold mb-1 text-center leading-snug">
                                 {lang === 'TR' ? 'Dikkat: Maker pasif kaldığı için her iki tarafın teminatından %2 ihmal cezası kesilecektir (Maker: %2, Taker: %2).' : 'Warning: Due to maker inaction, a 2% negligence penalty will be deducted from both parties\' bonds (Maker: 2%, Taker: 2%).'}
                               </p>
                               <button onClick={() => handleAutoRelease(activeTrade.onchainId)} disabled={isContractLoading} className="w-full text-sm font-bold py-3 rounded-xl transition bg-emerald-600/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500 hover:text-white shadow-lg">
@@ -841,7 +841,7 @@ export const buildAppViews = (ctx) => {
                             <button disabled className="w-full text-sm font-bold py-3 rounded-xl transition bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed">
                               {lang === 'TR' ? '🔔 Maker’ı Uyar' : '🔔 Ping Maker'}
                             </button>
-                            <p className="text-[11px] text-red-400 mt-2 text-center leading-tight">
+                            <p className="text-xs text-red-400 mt-2 text-center leading-snug">
                               ⚠️ {lang === 'TR' ? 'Maker itiraz uyarı sürecini başlattı. Artık otomatik serbest bırakma (Auto-Release) yolunu kullanamazsınız.' : 'Maker has initiated the challenge warning process. You can no longer use Auto-Release.'}
                             </p>
                           </div>
@@ -905,14 +905,14 @@ export const buildAppViews = (ctx) => {
                       )}
                       <button onClick={() => {
                         const msg = roomState === 'LOCKED'
-                          ? (lang === 'TR' ? 'LOCKED aşamasında (henüz ödeme bildirilmeden) iptaller kesintisizdir. Onaylıyor musunuz?' : 'Cancel in LOCKED state has zero fees. Confirm?')
+                          ? (lang === 'TR' ? `${getStateLabel('LOCKED', lang)} aşamasında (henüz ödeme bildirilmeden) iptaller kesintisizdir. Onaylıyor musunuz?` : `Cancel in ${getStateLabel('LOCKED', lang)} state has zero fees. Confirm?`)
                           : (lang === 'TR' ? 'Karşılıklı iptal durumunda standart protokol ücreti kesilecektir. Onaylıyor musunuz?' : 'Standard protocol fees will be deducted upon mutual cancellation. Confirm?');
                         if (window.confirm(msg)) handleProposeCancel();
                       }} className={`w-full bg-[#0a0a0c] border border-orange-500/30 text-orange-500 p-3 rounded-xl font-bold text-sm hover:bg-orange-500 hover:text-white transition ${!(isChallenged && isMaker) ? 'sm:col-span-2' : ''}`}>
                         ↩️ {lang === 'TR' ? 'İptal Teklif Et' : 'Propose Cancel'}
                       </button>
                     </div>
-                    <p className="text-[10px] text-slate-500 text-center mt-3">
+                    <p className="text-xs text-slate-500 text-center mt-3">
                       {lang === 'TR' ? 'Not: İptal onaylandığında her iki taraftan protokol ücreti kesilir.' : 'Note: Protocol fee is deducted from both parties upon cancel.'}
                     </p>
                   </>
@@ -928,9 +928,9 @@ export const buildAppViews = (ctx) => {
                 {cancelStatus === 'proposed_by_other' && (
                   <div>
                     <p className="text-orange-400 font-bold text-sm mb-2">⚠️ {lang === 'TR' ? 'Karşı taraf iptal teklif etti.' : 'Opponent proposed cancellation.'}</p>
-                    <p className="text-[11px] text-slate-400 mb-3">
+                    <p className="text-xs text-slate-400 mb-3">
                       {roomState === 'LOCKED'
-                        ? (lang === 'TR' ? 'İşlem LOCKED aşamasında olduğu için herhangi bir kesinti yapılmayacaktır.' : 'Since trade is in LOCKED state, no fees will be deducted.')
+                        ? (lang === 'TR' ? `İşlem ${getStateLabel('LOCKED', lang)} aşamasında olduğu için herhangi bir kesinti yapılmayacaktır.` : `Since trade is in ${getStateLabel('LOCKED', lang)} state, no fees will be deducted.`)
                         : (lang === 'TR' ? 'Onaylarsanız standart protokol ücreti kesilecek ve kalan fonlar iade edilecektir.' : 'If you approve, standard protocol fee will be deducted and remaining funds returned.')}
                     </p>
                     <div className="grid grid-cols-2 gap-3">
@@ -976,10 +976,10 @@ export const buildAppViews = (ctx) => {
                   <p className="text-red-500 text-xs font-bold mb-2">
                     🔥 {lang === 'TR' ? '10 Gün Süresi Doldu — Sözleşme Artık Yakılabilir' : '10-Day Deadline Passed — Contract Can Now Be Burned'}
                   </p>
-                  <p className="text-slate-500 text-[11px] mb-3">
+                  <p className="text-slate-500 text-xs mb-3">
                     {lang === 'TR' ? 'Uyarı: Sözleşme yakıldığında içerideki kilitli tüm USDT ve her iki tarafın teminatları kalıcı olarak Protokol Hazinesine aktarılır. İade yapılmaz.' : 'Warning: When burned, all locked USDT and bonds from both parties are permanently transferred to the Treasury. No refunds.'}
                   </p>
-                  <p className="text-[11px] text-orange-300 mb-3">
+                  <p className="text-xs text-orange-300 mb-3">
                     {lang === 'TR'
                       ? 'Not: burnExpired fonksiyonu kontratta herkese açıktır; 10 gün dolduktan sonra üçüncü kişiler de bu çağrıyı yapabilir.'
                       : 'Note: burnExpired is permissionless on-chain; after 10 days, third parties can also execute it.'}
