@@ -56,7 +56,6 @@ export function buildTradeDecisionModel({
   trade,
   tradeState,
   userRole,
-  chargebackAccepted,
   paymentIpfsHash,
   timers,
   isConnected,
@@ -84,15 +83,13 @@ export function buildTradeDecisionModel({
       'contract',
       'report_payment',
       t(lang, 'Ödemeyi Bildir', 'Report Payment'),
-      t(lang, 'Dekont yükleyip chargeback riskini onayladıktan sonra mevcut ödeme bildirimi formunu kullanın.', 'Upload payment proof and acknowledge chargeback risk, then use the existing payment report form.'),
+      t(lang, 'Dekont yükledikten sonra mevcut ödeme bildirimi formunu kullanın.', 'Upload payment proof, then use the existing payment report form.'),
       {
         requiresPaymentProof: !paymentIpfsHash,
-        requiresChargebackAck: !chargebackAccepted,
       },
     );
     guidance.push(t(lang, 'Ödeme kanıtı yüklenmeden pasif rehberlik işlemi hazır saymaz.', 'Passive guidance does not consider the payment path ready until proof is uploaded.'));
     if (!paymentIpfsHash) disabledReasons.push(t(lang, 'Dekont gerekli.', 'Payment proof is required.'));
-    if (!chargebackAccepted) disabledReasons.push(t(lang, 'Chargeback onayı gerekli.', 'Chargeback acknowledgement is required.'));
   }
 
   if (normalizedState === 'LOCKED' && normalizedRole === 'maker') {

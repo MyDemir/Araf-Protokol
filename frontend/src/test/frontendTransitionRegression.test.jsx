@@ -310,18 +310,71 @@ describe('frontend transition regression invariants', () => {
     expect(screen.getAllByText(/Unsupported network\./i).length).toBeGreaterThan(0);
   });
 
-  it('migration_settlement_actions_are_not_bare_handlers_and_keep_required_trade_context', () => {
-    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/components/SettlementProposalCard.jsx'), 'utf8');
 
-    expect(source).not.toContain('onClick={acceptSettlement}');
-    expect(source).not.toContain('onClick={rejectSettlement}');
-    expect(source).not.toContain('onClick={withdrawSettlement}');
-    expect(source).not.toContain('onClick={expireSettlement}');
-    expect(source).toContain('proposeSettlement(BigInt(onchainTradeId), normalizedMakerShareBps, computedExpiresAt)');
-    expect(source).toContain('acceptSettlement(BigInt(onchainTradeId))');
-    expect(source).toContain('rejectSettlement(BigInt(onchainTradeId))');
-    expect(source).toContain('withdrawSettlement(BigInt(onchainTradeId))');
-    expect(source).toContain('expireSettlement(BigInt(onchainTradeId))');
+  it('migration_locked_taker_report_payment_requires_proof_not_chargeback_acknowledgement', () => {
+    render(
+      <TradeRoomPage
+        decisionInput={{
+          trade: { id: 'trade-ack', onchainId: 12 },
+          tradeState: 'LOCKED',
+          userRole: 'taker',
+          chargebackAccepted: false,
+          paymentIpfsHash: 'ipfs://proof',
+          isConnected: true,
+          isAuthenticated: true,
+          isSupportedChain: true,
+          isPaused: false,
+          lang: 'EN',
+        }}
+        actionCallbacks={{ report_payment: { onClick: vi.fn(), label: 'Report without chargeback ack' } }}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /Report without chargeback ack/i })).toBeEnabled();
+    expect(screen.queryByText(/Chargeback acknowledgement is required\./i)).not.toBeInTheDocument();
+
+    cleanup();
+
+    render(
+      <TradeRoomPage
+        decisionInput={{
+          trade: { id: 'trade-no-proof', onchainId: 13 },
+          tradeState: 'LOCKED',
+          userRole: 'taker',
+          chargebackAccepted: false,
+          paymentIpfsHash: '',
+          isConnected: true,
+          isAuthenticated: true,
+          isSupportedChain: true,
+          isPaused: false,
+          lang: 'EN',
+        }}
+        actionCallbacks={{ report_payment: { onClick: vi.fn(), label: 'Report missing proof' } }}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /Report missing proof/i })).toBeDisabled();
+    expect(screen.getAllByText(/Payment proof is required\./i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Chargeback acknowledgement is required\./i)).not.toBeInTheDocument();
+  });
+
+  it('migration_static_guardrails_prevent_chain_hardcode_and_bare_settlement_handlers_before_extraction', () => {
+    const appViewsSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/AppViews.jsx'), 'utf8');
+    const settlementCardSource = fs.readFileSync(path.resolve(process.cwd(), 'src/components/SettlementProposalCard.jsx'), 'utf8');
+    const tradeRoomSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/trade-room/TradeRoomPage.jsx'), 'utf8');
+    const primaryPanelSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/trade-room/PrimaryActionPanel.jsx'), 'utf8');
+    const secondaryPanelSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/trade-room/SecondaryActionsPanel.jsx'), 'utf8');
+    const nonSettlementUiSource = `${appViewsSource}\n${tradeRoomSource}\n${primaryPanelSource}\n${secondaryPanelSource}`;
+
+    expect(appViewsSource).not.toMatch(/isSupportedChain:\s*true/);
+    expect(appViewsSource).toContain('isSupportedChain: isSupportedChainId(chainId)');
+    expect(nonSettlementUiSource).not.toMatch(/onClick=\{(?:acceptSettlement|rejectSettlement|withdrawSettlement|expireSettlement|proposeSettlement)/);
+    expect(`${appViewsSource}\n${settlementCardSource}`).not.toMatch(/(?:acceptSettlement|rejectSettlement|withdrawSettlement|expireSettlement|proposeSettlement)\(\s*\)/);
+    expect(settlementCardSource).toContain('proposeSettlement(BigInt(onchainTradeId), normalizedMakerShareBps, computedExpiresAt)');
+    expect(settlementCardSource).toContain('acceptSettlement(BigInt(onchainTradeId))');
+    expect(settlementCardSource).toContain('rejectSettlement(BigInt(onchainTradeId))');
+    expect(settlementCardSource).toContain('withdrawSettlement(BigInt(onchainTradeId))');
+    expect(settlementCardSource).toContain('expireSettlement(BigInt(onchainTradeId))');
   });
 
   it('migration_order_side_copy_prevents_visible_raw_side_enums_in_market_cards', () => {

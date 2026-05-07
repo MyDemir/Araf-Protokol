@@ -356,7 +356,7 @@ describe('AppViews market side-aware rendering', () => {
 
     expect(screen.getAllByText('Unsupported network.').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Payment proof is required.').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Chargeback acknowledgement is required.').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Chargeback acknowledgement is required.')).not.toBeInTheDocument();
     expect(screen.getByText('Timer summaries')).toBeInTheDocument();
     expect(screen.getByText('01h 02m 03s')).toBeInTheDocument();
     const primaryGuidance = screen.getByTestId('trade-primary-guidance');
@@ -382,7 +382,7 @@ describe('AppViews market side-aware rendering', () => {
       tradeState: 'LOCKED',
       userRole: 'taker',
       paymentIpfsHash: 'proof-hash',
-      chargebackAccepted: true,
+      chargebackAccepted: false,
       handleReportPayment,
       proposeSettlement,
       acceptSettlement,
@@ -424,6 +424,27 @@ describe('AppViews market side-aware rendering', () => {
     expect(panelButtons.length).toBeGreaterThan(0);
     panelButtons.forEach((button) => expect(button).toBeDisabled());
     expect(screen.getAllByText('Unsupported network.').length).toBeGreaterThan(0);
+  });
+
+
+  it('keeps maker release blocked by chargeback acknowledgement in PAID state', () => {
+    const views = buildAppViews({
+      ...baseCtx,
+      currentView: 'tradeRoom',
+      activeTrade: { id: 'trade-release', onchainId: 44, max: 100, fiat: 'TRY', crypto: 'USDT', rate: 10, maker: '0xmaker' },
+      resolvedTradeState: 'PAID',
+      tradeState: 'PAID',
+      userRole: 'maker',
+      chargebackAccepted: false,
+      canMakerStartChallengeFlow: true,
+      isSupportedChainId: () => true,
+    });
+
+    render(<div>{views.renderTradeRoom()}</div>);
+
+    const primaryGuidance = screen.getByTestId('trade-primary-guidance');
+    expect(within(primaryGuidance).getByRole('button', { name: /Release Funds/i })).toBeDisabled();
+    expect(screen.getAllByText('Chargeback acknowledgement is required.').length).toBeGreaterThan(0);
   });
 
   it('disables executable guidance buttons when on-chain trade ID is missing', () => {

@@ -55,14 +55,22 @@ describe('buildTradeDecisionModel', () => {
     ]));
   });
 
-  it('LOCKED+taker blocks passive guidance on missing proof and chargeback acknowledgement', () => {
+  it('LOCKED+taker with payment proof can report payment without chargeback acknowledgement', () => {
+    const model = buildTradeDecisionModel({ ...base, paymentIpfsHash: 'proof-hash', chargebackAccepted: false });
+    expect(model.primaryAction.key).toBe('report_payment');
+    expect(model.primaryAction.requiresPaymentProof).toBe(false);
+    expect(model.primaryAction.requiresChargebackAck).toBeUndefined();
+    expect(model.disabledReasons).not.toContain('Chargeback acknowledgement is required.');
+    expect(model.disabledReasons).not.toContain('Payment proof is required.');
+  });
+
+  it('LOCKED+taker without payment proof still cannot report payment', () => {
     const model = buildTradeDecisionModel({ ...base, paymentIpfsHash: '', chargebackAccepted: false });
+    expect(model.primaryAction.key).toBe('report_payment');
     expect(model.primaryAction.requiresPaymentProof).toBe(true);
-    expect(model.primaryAction.requiresChargebackAck).toBe(true);
-    expect(model.disabledReasons).toEqual(expect.arrayContaining([
-      'Payment proof is required.',
-      'Chargeback acknowledgement is required.',
-    ]));
+    expect(model.primaryAction.requiresChargebackAck).toBeUndefined();
+    expect(model.disabledReasons).toContain('Payment proof is required.');
+    expect(model.disabledReasons).not.toContain('Chargeback acknowledgement is required.');
   });
 
   it('adds burn_expired only when the caller proves the burn deadline is available', () => {
