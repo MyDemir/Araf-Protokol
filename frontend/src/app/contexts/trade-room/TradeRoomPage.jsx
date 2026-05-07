@@ -15,7 +15,7 @@ export const TradeRoomPage = ({ decisionInput, actionCallbacks, children }) => {
       <TradeSummaryCard stateLabel={model.stateLabel} roleLabel={model.roleLabel} />
       <StateGuidancePanel guidance={model.guidance} riskCopy={model.riskCopy} />
       <PrimaryActionPanel primaryAction={model.primaryAction} disabledReasons={model.disabledReasons} actionCallbacks={actionCallbacks} />
-      <SecondaryActionsPanel secondaryActions={model.secondaryActions} disabledReasons={model.disabledReasons} actionCallbacks={actionCallbacks} />
+      <SecondaryActionsPanel secondaryActions={model.secondaryActions} disabledReasons={model.globalDisabledReasons || []} actionCallbacks={actionCallbacks} />
       <TimerStack timerCards={model.timerCards} />
       <TechnicalDetailsDisclosure technicalDetails={model.technicalDetails} />
       {children}
