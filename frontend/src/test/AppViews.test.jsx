@@ -1,8 +1,10 @@
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { buildAppViews } from '../app/AppViews';
+
+afterEach(() => cleanup());
 
 const baseCtx = {
   lang: 'EN',
@@ -17,7 +19,7 @@ const baseCtx = {
   authChecked: true,
   currentView: 'market',
   setCurrentView: vi.fn(),
-  openSidebar: vi.fn(),
+  toggleSidebar: vi.fn(),
   handleAuthAction: vi.fn(),
   formatAddress: (a) => a,
   address: '0xabc',
@@ -26,7 +28,6 @@ const baseCtx = {
   setSidebarOpen: vi.fn(),
   setExpandedStatus: vi.fn(),
   expandedStatus: null,
-  sidebarTimerRef: { current: null },
   filterTier1: false,
   setFilterTier1: vi.fn(),
   filterToken: 'ALL',
@@ -210,7 +211,108 @@ describe('AppViews market side-aware rendering', () => {
     expect(screen.queryByText('SELLER PROFILE')).not.toBeInTheDocument();
     expect(screen.getAllByText('Open').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Bond/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Payment method complexity:/i).length).toBe(1);
+    expect(screen.getAllByText(/Payment method complexity/i).length).toBe(1);
+    expect(screen.getByText('Medium')).toBeInTheDocument();
+    expect(screen.queryByText(/minBondSurchargeBps/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/feeSurchargeBps/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/warningKey/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/BANK_TRANSFER_CONFIRMATION_REQUIRED/i)).not.toBeInTheDocument();
+  });
+
+
+  it('renders dictionary order-side labels when market cards receive raw enums without display fields', () => {
+    const views = buildAppViews({
+      ...baseCtx,
+      filteredOrders: [
+        {
+          id: 'raw-sell',
+          side: 'SELL_CRYPTO',
+          statusLabel: 'Open',
+          bondLabel: '8%',
+          maker: '0xmaker',
+          makerFull: '0xmaker',
+          rate: 33,
+          fiat: 'TRY',
+          crypto: 'USDT',
+          minFillAmount: 10,
+          limitLabel: 'Min Fill 10 USDT • Remaining 50 USDT',
+          tier: 1,
+          trustSummary: { available: false, band: null, label: 'Signal unavailable', chipClass: 'text-slate-400' },
+          paymentRiskSignal: null,
+          tokenPolicy: { supported: true, allowSellOrders: true, allowBuyOrders: true },
+        },
+        {
+          id: 'raw-buy',
+          side: 'BUY_CRYPTO',
+          statusLabel: 'Open',
+          bondLabel: '10%',
+          maker: '0xbuyer',
+          makerFull: '0xbuyer',
+          rate: 34,
+          fiat: 'TRY',
+          crypto: 'USDT',
+          minFillAmount: 5,
+          limitLabel: 'Min Fill 5 USDT • Remaining 20 USDT',
+          tier: 1,
+          trustSummary: { available: false, band: null, label: 'Signal unavailable', chipClass: 'text-slate-400' },
+          paymentRiskSignal: null,
+          tokenPolicy: { supported: true, allowSellOrders: true, allowBuyOrders: true },
+        },
+      ],
+      orders: [{ crypto: 'USDT' }],
+    });
+
+    render(<div>{views.renderMarket()}</div>);
+
+    expect(screen.getAllByText('Sell Order').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Buy Order').length).toBeGreaterThan(0);
+    expect(screen.queryByText('SELL_CRYPTO')).not.toBeInTheDocument();
+    expect(screen.queryByText('BUY_CRYPTO')).not.toBeInTheDocument();
+  });
+
+
+  it('toggles the desktop sidebar open and closed from the rail filter button', async () => {
+    const user = userEvent.setup();
+
+    const SidebarHarness = () => {
+      const [sidebarOpen, setSidebarOpen] = React.useState(false);
+      const views = buildAppViews({
+        ...baseCtx,
+        sidebarOpen,
+        toggleSidebar: () => setSidebarOpen(prev => !prev),
+        setSidebarOpen,
+        activeEscrows: [],
+      });
+      return <div>{views.renderSlimRail()}{views.renderContextSidebar()}</div>;
+    };
+
+    const { container } = render(<SidebarHarness />);
+    const filtersButton = within(container).getByTitle('Filters');
+
+    expect(container.querySelector('[class*="w-0"][class*="opacity-0"]')).not.toBeNull();
+    await user.click(filtersButton);
+    expect(container.querySelector('[class*="w-[260px]"][class*="opacity-100"]')).not.toBeNull();
+    await user.click(filtersButton);
+    expect(container.querySelector('[class*="w-0"][class*="opacity-0"]')).not.toBeNull();
+  });
+
+
+  it('keeps an explicit sidebar close path when the contextual sidebar is open', async () => {
+    const user = userEvent.setup();
+    const setSidebarOpen = vi.fn();
+    const views = buildAppViews({
+      ...baseCtx,
+      sidebarOpen: true,
+      setSidebarOpen,
+      activeEscrows: [],
+    });
+
+    const { container } = render(<div>{views.renderContextSidebar()}</div>);
+    const mobileOverlay = container.querySelector('[class*="md:hidden"][class*="inset-0"]');
+
+    expect(mobileOverlay).not.toBeNull();
+    await user.click(mobileOverlay);
+    expect(setSidebarOpen).toHaveBeenCalledWith(false);
   });
 
   it('shows explicit empty-state instead of broken trade room when activeTrade is missing', async () => {
@@ -233,6 +335,147 @@ describe('AppViews market side-aware rendering', () => {
 
     await user.click(screen.getByRole('button', { name: /Go to Marketplace/i }));
     expect(setCurrentView).toHaveBeenCalledWith('market');
+  });
+
+
+  it('renders passive trade decision disabled reasons with the real chain policy and a disabled panel report button', () => {
+    const views = buildAppViews({
+      ...baseCtx,
+      currentView: 'tradeRoom',
+      activeTrade: { id: 'trade-1', onchainId: 1, max: 100, fiat: 'TRY', crypto: 'USDT', rate: 10, maker: '0xmaker' },
+      resolvedTradeState: 'LOCKED',
+      tradeState: 'LOCKED',
+      userRole: 'taker',
+      paymentIpfsHash: '',
+      chargebackAccepted: false,
+      isSupportedChainId: () => false,
+      gracePeriodTimer: { isFinished: false, hours: 1, minutes: 2, seconds: 3 },
+    });
+
+    render(<div>{views.renderTradeRoom()}</div>);
+
+    expect(screen.getAllByText('Unsupported network.').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Payment proof is required.').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Chargeback acknowledgement is required.').length).toBeGreaterThan(0);
+    expect(screen.getByText('Timer summaries')).toBeInTheDocument();
+    expect(screen.getByText('01h 02m 03s')).toBeInTheDocument();
+    const primaryGuidance = screen.getByTestId('trade-primary-guidance');
+    expect(within(primaryGuidance).getByRole('button', { name: /Report Payment/i })).toBeDisabled();
+    expect(screen.getAllByRole('button', { name: /Report Payment/i })).toHaveLength(2);
+  });
+
+
+
+  it('wires executable guidance panel callbacks without using settlement functions', async () => {
+    const user = userEvent.setup();
+    const handleReportPayment = vi.fn();
+    const proposeSettlement = vi.fn();
+    const acceptSettlement = vi.fn();
+    const rejectSettlement = vi.fn();
+    const withdrawSettlement = vi.fn();
+    const expireSettlement = vi.fn();
+    const views = buildAppViews({
+      ...baseCtx,
+      currentView: 'tradeRoom',
+      activeTrade: { id: 'trade-5', onchainId: 5, max: 100, fiat: 'TRY', crypto: 'USDT', rate: 10, maker: '0xmaker' },
+      resolvedTradeState: 'LOCKED',
+      tradeState: 'LOCKED',
+      userRole: 'taker',
+      paymentIpfsHash: 'proof-hash',
+      chargebackAccepted: true,
+      handleReportPayment,
+      proposeSettlement,
+      acceptSettlement,
+      rejectSettlement,
+      withdrawSettlement,
+      expireSettlement,
+    });
+
+    render(<div>{views.renderTradeRoom()}</div>);
+    await user.click(within(screen.getByTestId('trade-primary-guidance')).getByRole('button', { name: /Report Payment/i }));
+
+    expect(handleReportPayment).toHaveBeenCalledTimes(1);
+    expect(proposeSettlement).not.toHaveBeenCalled();
+    expect(acceptSettlement).not.toHaveBeenCalled();
+    expect(rejectSettlement).not.toHaveBeenCalled();
+    expect(withdrawSettlement).not.toHaveBeenCalled();
+    expect(expireSettlement).not.toHaveBeenCalled();
+  });
+
+  it('disables every executable guidance button on the wrong chain', () => {
+    const views = buildAppViews({
+      ...baseCtx,
+      currentView: 'tradeRoom',
+      activeTrade: { id: 'trade-3', onchainId: 3, max: 100, fiat: 'TRY', crypto: 'USDT', rate: 10, maker: '0xmaker' },
+      resolvedTradeState: 'PAID',
+      tradeState: 'PAID',
+      userRole: 'maker',
+      chargebackAccepted: true,
+      canMakerStartChallengeFlow: true,
+      isSupportedChainId: () => false,
+    });
+
+    render(<div>{views.renderTradeRoom()}</div>);
+
+    const panelButtons = [
+      ...within(screen.getByTestId('trade-primary-guidance')).getAllByRole('button'),
+      ...within(screen.getByTestId('trade-secondary-guidance')).getAllByRole('button'),
+    ];
+    expect(panelButtons.length).toBeGreaterThan(0);
+    panelButtons.forEach((button) => expect(button).toBeDisabled());
+    expect(screen.getAllByText('Unsupported network.').length).toBeGreaterThan(0);
+  });
+
+  it('disables executable guidance buttons when on-chain trade ID is missing', () => {
+    const views = buildAppViews({
+      ...baseCtx,
+      currentView: 'tradeRoom',
+      activeTrade: { id: 'trade-4', max: 100, fiat: 'TRY', crypto: 'USDT', rate: 10, maker: '0xmaker' },
+      resolvedTradeState: 'LOCKED',
+      tradeState: 'LOCKED',
+      userRole: 'taker',
+      paymentIpfsHash: 'proof-hash',
+      chargebackAccepted: true,
+    });
+
+    render(<div>{views.renderTradeRoom()}</div>);
+
+    const primaryGuidance = screen.getByTestId('trade-primary-guidance');
+    expect(within(primaryGuidance).getByRole('button', { name: /Report Payment/i })).toBeDisabled();
+    expect(screen.getAllByText('Missing on-chain trade ID.').length).toBeGreaterThan(0);
+  });
+
+  it('renders CHALLENGED passive settlement guidance without introducing settlement action buttons', () => {
+    const proposeSettlement = vi.fn();
+    const acceptSettlement = vi.fn();
+    const rejectSettlement = vi.fn();
+    const withdrawSettlement = vi.fn();
+    const expireSettlement = vi.fn();
+    const views = buildAppViews({
+      ...baseCtx,
+      currentView: 'tradeRoom',
+      activeTrade: { id: 'trade-2', onchainId: 2, max: 100, fiat: 'TRY', crypto: 'USDT', rate: 10, maker: '0xmaker' },
+      resolvedTradeState: 'CHALLENGED',
+      tradeState: 'CHALLENGED',
+      userRole: 'maker',
+      proposeSettlement,
+      acceptSettlement,
+      rejectSettlement,
+      withdrawSettlement,
+      expireSettlement,
+    });
+
+    render(<div>{views.renderTradeRoom()}</div>);
+
+    expect(screen.getByText(/Araf is not an arbitrator/i)).toBeInTheDocument();
+    expect(screen.getByText(/Follow settlement steps from the existing settlement card/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /settlement guidance/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /propose settlement|accept settlement|reject settlement|withdraw settlement|expire settlement/i })).not.toBeInTheDocument();
+    expect(proposeSettlement).not.toHaveBeenCalled();
+    expect(acceptSettlement).not.toHaveBeenCalled();
+    expect(rejectSettlement).not.toHaveBeenCalled();
+    expect(withdrawSettlement).not.toHaveBeenCalled();
+    expect(expireSettlement).not.toHaveBeenCalled();
   });
 
   it('does not render payment complexity badge when all orders have null paymentRiskSignal', () => {
@@ -264,6 +507,6 @@ describe('AppViews market side-aware rendering', () => {
     });
 
     render(<div>{views.renderMarket()}</div>);
-    expect(screen.getAllByText(/Payment method complexity/i).length).toBe(1);
+    expect(screen.queryAllByText(/Payment method complexity/i)).toHaveLength(0);
   });
 });

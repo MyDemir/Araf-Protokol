@@ -1,5 +1,5 @@
 import React from 'react';
-import { buildMakerPreview, getMakerModalCopy, mapOffchainHealthToUi, resolvePaymentRiskEntry } from './orderUiModel';
+import { buildMakerPreview, getMakerModalCopy, getOrderSideCopy, mapOffchainHealthToUi, resolvePaymentRiskEntry } from './orderUiModel';
 import { TERMS_ACCEPTED_STORAGE_KEY } from './bootstrapState';
 import { mapResolutionTypeLabel } from './useAppSessionData';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
@@ -298,8 +298,8 @@ export const buildAppModals = (ctx) => {
             <div>
               <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Order Side' : 'Order Side'}</label>
               <div className="grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => setMakerSide('SELL_CRYPTO')} className={`py-2 rounded-xl text-xs font-bold border transition ${makerSide === 'SELL_CRYPTO' ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40' : 'bg-[#151518] text-slate-300 border-[#2a2a2e]'}`}>SELL_CRYPTO</button>
-                <button type="button" onClick={() => setMakerSide('BUY_CRYPTO')} className={`py-2 rounded-xl text-xs font-bold border transition ${makerSide === 'BUY_CRYPTO' ? 'bg-blue-600/20 text-blue-400 border-blue-500/40' : 'bg-[#151518] text-slate-300 border-[#2a2a2e]'}`}>BUY_CRYPTO</button>
+                <button type="button" data-testid="maker-side-SELL_CRYPTO" onClick={() => setMakerSide('SELL_CRYPTO')} className={`py-2 rounded-xl text-xs font-bold border transition ${makerSide === 'SELL_CRYPTO' ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40' : 'bg-[#151518] text-slate-300 border-[#2a2a2e]'}`}>{getOrderSideCopy('SELL_CRYPTO', 'display', lang)}</button>
+                <button type="button" data-testid="maker-side-BUY_CRYPTO" onClick={() => setMakerSide('BUY_CRYPTO')} className={`py-2 rounded-xl text-xs font-bold border transition ${makerSide === 'BUY_CRYPTO' ? 'bg-blue-600/20 text-blue-400 border-blue-500/40' : 'bg-[#151518] text-slate-300 border-[#2a2a2e]'}`}>{getOrderSideCopy('BUY_CRYPTO', 'display', lang)}</button>
               </div>
             </div>
             <div>
@@ -766,7 +766,7 @@ export const buildAppModals = (ctx) => {
                   <div key={order.id} className={`bg-[#151518] border rounded-xl p-4 transition-all duration-200 ${confirmDeleteId === order.id ? 'border-red-900/60 bg-red-950/20' : 'border-[#2a2a2e] flex flex-col'}`}>
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="font-bold text-white text-sm">{order.side} · {order.status}</p>
+                        <p className="font-bold text-white text-sm">{order.sideLabel || getOrderSideCopy(order.side, 'order', lang) || order.side} · {order.status}</p>
                         <p className="text-xs text-slate-400 mt-0.5">{order.crypto}/{order.fiat} @ {order.rate}</p>
                         <p className="text-xs text-slate-500 mt-0.5">Remaining: {order.remainingAmount} {order.crypto} • Min Fill: {order.minFillAmount} {order.crypto} • Tier: {order.tier}</p>
                       </div>

@@ -220,6 +220,121 @@ describe('SettlementProposalCard state normalization safety', () => {
     expect(scope.getByRole('button', { name: /Preview/i })).toBeDisabled();
   });
 
+
+  it('security_missing_onchain_id_blocks_create_proposal_contract_call', () => {
+    const proposeSettlement = vi.fn();
+    const view = render(React.createElement(SettlementProposalCard, {
+      activeTrade: {
+        id: 'db-id',
+        onchainId: null,
+        state: 'CHALLENGED',
+        makerFull: '0x1111111111111111111111111111111111111111',
+        takerFull: '0x2222222222222222222222222222222222222222',
+        settlementProposal: null,
+      },
+      userRole: 'maker',
+      address: '0x1111111111111111111111111111111111111111',
+      lang: 'EN',
+      authenticatedFetch: vi.fn(),
+      proposeSettlement,
+      acceptSettlement: vi.fn(),
+      rejectSettlement: vi.fn(),
+      withdrawSettlement: vi.fn(),
+      expireSettlement: vi.fn(),
+      fetchMyTrades: vi.fn(),
+      showToast: vi.fn(),
+      isContractLoading: false,
+      setIsContractLoading: vi.fn(),
+    }));
+
+    const scope = within(view.container);
+    expect(scope.getAllByText(/Missing on-chain trade ID/i).length).toBeGreaterThan(0);
+    const previewButton = scope.getByRole('button', { name: /Preview/i });
+    expect(previewButton).toBeDisabled();
+    fireEvent.click(previewButton);
+    expect(proposeSettlement).not.toHaveBeenCalled();
+  });
+
+  it('security_missing_onchain_id_blocks_proposed_settlement_party_contract_calls', () => {
+    const settlementFns = {
+      proposeSettlement: vi.fn(),
+      acceptSettlement: vi.fn(),
+      rejectSettlement: vi.fn(),
+      withdrawSettlement: vi.fn(),
+      expireSettlement: vi.fn(),
+    };
+    const baseTrade = {
+      id: 'db-id',
+      onchainId: null,
+      state: 'CHALLENGED',
+      makerFull: '0x1111111111111111111111111111111111111111',
+      takerFull: '0x2222222222222222222222222222222222222222',
+      settlementProposal: {
+        state: 'PROPOSED',
+        proposer: '0x1111111111111111111111111111111111111111',
+        makerShareBps: 6000,
+        takerShareBps: 4000,
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      },
+    };
+    const commonProps = {
+      lang: 'EN',
+      authenticatedFetch: vi.fn(),
+      fetchMyTrades: vi.fn(),
+      showToast: vi.fn(),
+      isContractLoading: false,
+      setIsContractLoading: vi.fn(),
+      ...settlementFns,
+    };
+
+    const proposerView = render(React.createElement(SettlementProposalCard, {
+      ...commonProps,
+      activeTrade: baseTrade,
+      userRole: 'maker',
+      address: '0x1111111111111111111111111111111111111111',
+    }));
+    const withdrawButton = within(proposerView.container).getByRole('button', { name: /Withdraw/i });
+    expect(withdrawButton).toBeDisabled();
+    fireEvent.click(withdrawButton);
+    expect(settlementFns.withdrawSettlement).not.toHaveBeenCalled();
+    proposerView.unmount();
+
+    const counterpartyView = render(React.createElement(SettlementProposalCard, {
+      ...commonProps,
+      activeTrade: baseTrade,
+      userRole: 'taker',
+      address: '0x2222222222222222222222222222222222222222',
+    }));
+    const counterpartyScope = within(counterpartyView.container);
+    const acceptButton = counterpartyScope.getByRole('button', { name: /Accept \(Preview\)/i });
+    const rejectButton = counterpartyScope.getByRole('button', { name: /Reject/i });
+    expect(acceptButton).toBeDisabled();
+    expect(rejectButton).toBeDisabled();
+    fireEvent.click(acceptButton);
+    fireEvent.click(rejectButton);
+    expect(settlementFns.acceptSettlement).not.toHaveBeenCalled();
+    expect(settlementFns.rejectSettlement).not.toHaveBeenCalled();
+    counterpartyView.unmount();
+
+    const expiredView = render(React.createElement(SettlementProposalCard, {
+      ...commonProps,
+      activeTrade: {
+        ...baseTrade,
+        settlementProposal: {
+          ...baseTrade.settlementProposal,
+          expiresAt: '2000-01-01T00:00:00.000Z',
+        },
+      },
+      userRole: 'maker',
+      address: '0x1111111111111111111111111111111111111111',
+    }));
+    const expireButton = within(expiredView.container).getByRole('button', { name: /Mark as Expired/i });
+    expect(expireButton).toBeDisabled();
+    fireEvent.click(expireButton);
+    expect(settlementFns.expireSettlement).not.toHaveBeenCalled();
+    expect(settlementFns.proposeSettlement).not.toHaveBeenCalled();
+  });
+
   it('security_settlement_controls_hidden_in_locked_and_paid_with_challenged_only_copy', () => {
     const commonProps = {
       userRole: 'maker',

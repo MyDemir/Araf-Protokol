@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
+import AppProviders from './app/providers/AppProviders.jsx'
 import './index.css'
 
 import { WagmiProvider, createConfig, http } from 'wagmi'
@@ -78,7 +79,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         <ErrorBoundary>
-          <App />
+          <AppProviders>
+            <App />
+          </AppProviders>
         </ErrorBoundary>
       </QueryClientProvider>
     </WagmiProvider>

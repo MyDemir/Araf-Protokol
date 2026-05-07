@@ -4,19 +4,34 @@
  */
 
 import { formatUnits } from 'viem';
+import orderSideCopy from './copy/orderSide';
 
 const DEFAULT_TOKEN_DECIMALS = 6;
 const VALID_ORDER_SIDES = new Set(['SELL_CRYPTO', 'BUY_CRYPTO']);
 const SEPA_COUNTRIES = new Set(['DE', 'FR', 'NL', 'BE', 'ES', 'IT', 'AT', 'PT', 'IE', 'LU', 'FI', 'GR']);
 
+export const getOrderSideCopy = (side, variant = 'display', lang = 'TR') => {
+  const suffixByVariant = {
+    display: '',
+    action: '_ACTION',
+    order: '_ORDER',
+  };
+  const suffix = suffixByVariant[variant] ?? '';
+  const row = orderSideCopy?.[`${side}${suffix}`];
+  if (!row) return null;
+  return row[lang === 'TR' ? 'TR' : 'EN'] || row.EN || row.TR || null;
+};
+
 export const SIDE_META = {
   SELL_CRYPTO: {
-    sideLabel: { TR: 'Sell Order', EN: 'Sell Order' },
-    ctaLabel: { TR: 'Satın Al', EN: 'Buy' },
+    sideLabel: { TR: getOrderSideCopy('SELL_CRYPTO', 'order', 'TR'), EN: getOrderSideCopy('SELL_CRYPTO', 'order', 'EN') },
+    ctaLabel: { TR: getOrderSideCopy('SELL_CRYPTO', 'action', 'TR'), EN: getOrderSideCopy('SELL_CRYPTO', 'action', 'EN') },
+    displayLabel: { TR: getOrderSideCopy('SELL_CRYPTO', 'display', 'TR'), EN: getOrderSideCopy('SELL_CRYPTO', 'display', 'EN') },
   },
   BUY_CRYPTO: {
-    sideLabel: { TR: 'Buy Order', EN: 'Buy Order' },
-    ctaLabel: { TR: 'Sat', EN: 'Sell' },
+    sideLabel: { TR: getOrderSideCopy('BUY_CRYPTO', 'order', 'TR'), EN: getOrderSideCopy('BUY_CRYPTO', 'order', 'EN') },
+    ctaLabel: { TR: getOrderSideCopy('BUY_CRYPTO', 'action', 'TR'), EN: getOrderSideCopy('BUY_CRYPTO', 'action', 'EN') },
+    displayLabel: { TR: getOrderSideCopy('BUY_CRYPTO', 'display', 'TR'), EN: getOrderSideCopy('BUY_CRYPTO', 'display', 'EN') },
   },
 };
 
@@ -70,16 +85,16 @@ const rawToNumber = (raw, decimals = DEFAULT_TOKEN_DECIMALS) => {
 export const getMakerModalCopy = (side, lang = 'TR') => {
   if (side === 'BUY_CRYPTO') {
     return {
-      submitLabel: lang === 'TR' ? '🧾 Onayla ve Buy Order Aç' : '🧾 Approve & Open Buy Order',
-      previewTitle: lang === 'TR' ? 'Buy Order Reserve Özeti' : 'Buy Order Reserve Summary',
+      submitLabel: lang === 'TR' ? `🧾 Onayla ve ${getOrderSideCopy('BUY_CRYPTO', 'order', 'TR')} Aç` : `🧾 Approve & Open ${getOrderSideCopy('BUY_CRYPTO', 'order', 'EN')}`,
+      previewTitle: lang === 'TR' ? `${getOrderSideCopy('BUY_CRYPTO', 'order', 'TR')} Reserve Özeti` : `${getOrderSideCopy('BUY_CRYPTO', 'order', 'EN')} Reserve Summary`,
       bondRoleLabel: lang === 'TR' ? 'Taker Reserve' : 'Taker Reserve',
       totalLabel: lang === 'TR' ? 'Toplam Reserve' : 'Total Reserve',
       previewHint: lang === 'TR' ? 'Kontrat buy order oluştururken yalnız taker reserve tutar.' : 'Contract only locks taker reserve when creating a buy order.',
     };
   }
   return {
-    submitLabel: lang === 'TR' ? '🧾 Onayla ve Sell Order Aç' : '🧾 Approve & Open Sell Order',
-    previewTitle: lang === 'TR' ? 'Sell Order Kilit Özeti' : 'Sell Order Lock Summary',
+    submitLabel: lang === 'TR' ? `🧾 Onayla ve ${getOrderSideCopy('SELL_CRYPTO', 'order', 'TR')} Aç` : `🧾 Approve & Open ${getOrderSideCopy('SELL_CRYPTO', 'order', 'EN')}`,
+    previewTitle: lang === 'TR' ? `${getOrderSideCopy('SELL_CRYPTO', 'order', 'TR')} Kilit Özeti` : `${getOrderSideCopy('SELL_CRYPTO', 'order', 'EN')} Lock Summary`,
     bondRoleLabel: lang === 'TR' ? 'Maker Reserve' : 'Maker Reserve',
     totalLabel: lang === 'TR' ? 'Toplam Kilitlenecek' : 'Total Locked',
     previewHint: lang === 'TR' ? 'Kontrat sell order oluştururken inventory + maker reserve kilitler.' : 'Contract locks inventory + maker reserve when creating a sell order.',
@@ -311,9 +326,9 @@ export const mapApiOrderToUi = ({ order, lang = 'TR', bondMap = {}, tokenMap = {
   const tokenAddress = order?.token_address || '';
   const tokenPolicy = tokenAddress ? (tokenMap?.[tokenAddress.toLowerCase()] || null) : null;
   const ownerSideHint = side === 'SELL_CRYPTO'
-    ? (lang === 'TR' ? 'Order sahibi kripto satıyor' : 'Order owner is selling crypto')
+    ? (lang === 'TR' ? `Order sahibi: ${getOrderSideCopy('SELL_CRYPTO', 'display', 'TR')}` : `Order owner: ${getOrderSideCopy('SELL_CRYPTO', 'display', 'EN')}`)
     : side === 'BUY_CRYPTO'
-      ? (lang === 'TR' ? 'Order sahibi kripto alıyor' : 'Order owner is buying crypto')
+      ? (lang === 'TR' ? `Order sahibi: ${getOrderSideCopy('BUY_CRYPTO', 'display', 'TR')}` : `Order owner: ${getOrderSideCopy('BUY_CRYPTO', 'display', 'EN')}`)
       : (lang === 'TR' ? 'Order sahibi rolü doğrulanamadı' : 'Order owner side could not be verified');
   const fillsCount = Number(order?.stats?.fills_count ?? 0);
   const trustSummary = mapCompactTrustSummary({

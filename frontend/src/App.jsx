@@ -5,7 +5,8 @@ import { formatUnits } from 'viem';
 import { useArafContract } from './hooks/useArafContract';
 import PIIDisplay from './components/PIIDisplay';
 import { buildAppViews } from './app/AppViews';
-import { EnvWarningBanner, buildAppModals } from './app/AppModals';
+import { buildAppModals } from './app/AppModals';
+import AppShell from './app/shell/AppShell';
 import { useAppSessionData } from './app/useAppSessionData';
 import AdminPanel from './AdminPanel';
 import { getInitialLang, getInitialTermsAccepted, APP_LANG_STORAGE_KEY } from './app/bootstrapState';
@@ -118,10 +119,6 @@ function App() {
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [expandedStatus, setExpandedStatus] = useState(null);
-
-  // [TR] Sidebar 5 sn otomatik kapanma timer referansı
-  // [EN] Sidebar auto-close timer ref (resets on hover)
-  const sidebarTimerRef = React.useRef(null);
 
   // [TR] Maker order formu state'leri (SELL/BUY side-aware)
   // [EN] Maker order form states (SELL/BUY side-aware)
@@ -342,12 +339,10 @@ function App() {
   //    Utility helpers
   // ═══════════════════════════════════════════
 
-  // [TR] Sidebar'ı açar ve 5 sn sonra otomatik kapatır; hover timer'ı sıfırlar
-  // [EN] Opens sidebar, auto-closes after 5s; hover resets the timer
-  const openSidebar = () => {
-    setSidebarOpen(true);
-    if (sidebarTimerRef.current) clearTimeout(sidebarTimerRef.current);
-    sidebarTimerRef.current = setTimeout(() => setSidebarOpen(false), 5000);
+  // [TR] Sidebar artık timer ile kapanmaz; rail/mobile butonları açık/kapalı durumu değiştirir.
+  // [EN] Sidebar no longer auto-closes by timer; rail/mobile buttons explicitly toggle open/closed state.
+  const toggleSidebar = () => {
+    setSidebarOpen(prev => !prev);
   };
 
   // [TR] Profil modalı açıkken cüzdan/auth düşerse modalı effect katmanında kapat.
@@ -1401,7 +1396,7 @@ const handleCreateOrder = async () => {
     authChecked,
     currentView,
     setCurrentView,
-    openSidebar,
+    toggleSidebar,
     handleAuthAction,
     formatAddress,
     address,
@@ -1410,7 +1405,6 @@ const handleCreateOrder = async () => {
     setSidebarOpen,
     setExpandedStatus,
     expandedStatus,
-    sidebarTimerRef,
     filterTier1,
     setFilterTier1,
     filterToken,
@@ -1605,75 +1599,64 @@ const handleCreateOrder = async () => {
   //     Root layout: rail + sidebar + content + modals + toast
   // ═══════════════════════════════════════════
   return (
-    <div className="flex flex-col md:flex-row h-screen bg-[#060608] text-slate-100 font-sans overflow-hidden selection:bg-emerald-500/30 pb-16 md:pb-0 relative">
-      <EnvWarningBanner envErrors={ENV_ERRORS} />
-
-      {isPaused && (
-        <div className="absolute top-0 left-0 right-0 z-[70] bg-red-950/90 backdrop-blur border-b border-red-800 px-6 py-2 flex justify-center items-center shadow-xl">
-          <span className="text-sm font-bold text-red-200">⚠️ {lang === 'TR' ? 'Sistem şu an bakım modundadır. Yeni işlem açılamaz.' : 'System is currently in maintenance mode. New trades cannot be opened.'}</span>
-        </div>
-      )}
-
-      {isConnected && !isSupportedChain && (
-        <div className="absolute top-0 left-0 right-0 z-[80] bg-red-950/95 backdrop-blur border-b border-red-800 px-6 py-2 flex justify-center items-center shadow-xl">
-          <span className="text-sm font-bold text-red-200">
-            ⚠️ {lang === 'TR'
-              ? `Yanlış Ağ! Lütfen ${Object.values(supportedChains).join(' / ')} ağına geçin.`
-              : `Wrong Network! Please switch to ${Object.values(supportedChains).join(' / ')}.`}
-          </span>
-        </div>
-      )}
-
-      {isConnected && isWalletRegistered === false && (
-        <div className="absolute top-0 left-0 right-0 z-[60] bg-orange-900/90 backdrop-blur border-b border-orange-700 px-6 py-2 flex justify-center items-center gap-4 shadow-xl">
-          <span className="text-sm font-bold text-orange-200">⚠️ {lang === 'TR' ? 'Cüzdan On-Chain Kayıtlı Değil (Anti-Sybil 7 Gün)' : 'Wallet Not Registered (Anti-Sybil 7 Days)'}</span>
-          <button onClick={handleRegisterWallet} disabled={isRegisteringWallet} className="bg-orange-500 text-black px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-orange-400 disabled:opacity-50 transition">{isRegisteringWallet ? '⏳' : '📝 Kaydet'}</button>
-        </div>
-      )}
-      {isConnected && isWalletRegistered === true && sybilStatus && sybilStatus.aged === false && (
-        <div className="absolute top-0 left-0 right-0 z-[59] bg-orange-900/80 backdrop-blur border-b border-orange-700 px-6 py-2 flex justify-center items-center shadow-xl">
-          <span className="text-xs font-bold text-orange-100">
-            ⏳ {lang === 'TR'
-              ? `Cüzdan kayıtlı ancak 7 günlük yaş şartı henüz dolmadı. Kalan süre: ~${walletAgeRemainingDays ?? '?'} gün.`
-              : `Wallet is registered but the 7-day age requirement is not met yet. Remaining: ~${walletAgeRemainingDays ?? '?'} day(s).`}
-          </span>
-        </div>
-      )}
-
-      {renderSlimRail()}
-      {renderContextSidebar()}
-      {renderMobileNav()}
-
-      <div className="flex-1 overflow-y-auto relative bg-[#060608]">
-        <div className="min-h-full flex flex-col pt-4 md:pt-10 pb-24 md:pb-10 items-center">
-          {currentView === 'home'
-            ? renderHome()
-            : currentView === 'market'
-              ? renderMarket()
-              : currentView === 'operations'
-                ? renderOperations()
-                : currentView === 'profile'
-                ? renderProfileContext()
-                : currentView === 'admin'
-                ? (
-                  <AdminPanel
-                    lang={lang}
-                    authenticatedFetch={authenticatedFetch}
-                    isAuthenticated={isAuthenticated}
-                    authChecked={authChecked}
-                    showToast={showToast}
-                  />
-                )
-                : renderTradeRoom()}
-          {renderFooter()}
-        </div>
-      </div>
-
-      {renderWalletModal()}
-      {renderFeedbackModal()}
-      {renderMakerModal()}
-      {renderProfileModal()}
-      {renderTermsModal()}
+    <div className="flex flex-col h-screen bg-[#060608] text-slate-100 font-sans overflow-hidden selection:bg-emerald-500/30 pb-16 md:pb-0 relative">
+      <AppShell
+        status={{
+          envErrors: ENV_ERRORS,
+          isPaused,
+          isConnected,
+          isAuthenticated,
+          authChecked,
+          chainId,
+          isSupportedChain,
+          supportedChains,
+          isWalletRegistered,
+          isRegisteringWallet,
+          onRegisterWallet: handleRegisterWallet,
+          sybilStatus,
+          walletAgeRemainingDays,
+          activeTrade,
+          lang,
+        }}
+        navigation={renderSlimRail()}
+        panel={renderContextSidebar()}
+        mobileBottom={renderMobileNav()}
+        outlet={(
+          <div className="flex-1 overflow-y-auto relative bg-[#060608]">
+            <div className="min-h-full flex flex-col pt-4 md:pt-10 pb-24 md:pb-10 items-center">
+              {currentView === 'home'
+                ? renderHome()
+                : currentView === 'market'
+                  ? renderMarket()
+                  : currentView === 'operations'
+                    ? renderOperations()
+                    : currentView === 'profile'
+                    ? renderProfileContext()
+                    : currentView === 'admin'
+                    ? (
+                      <AdminPanel
+                        lang={lang}
+                        authenticatedFetch={authenticatedFetch}
+                        isAuthenticated={isAuthenticated}
+                        authChecked={authChecked}
+                        showToast={showToast}
+                      />
+                    )
+                    : renderTradeRoom()}
+              {renderFooter()}
+            </div>
+          </div>
+        )}
+        modals={(
+          <>
+            {renderWalletModal()}
+            {renderFeedbackModal()}
+            {renderMakerModal()}
+            {renderProfileModal()}
+            {renderTermsModal()}
+          </>
+        )}
+      />
 
       <button
         onClick={() => setShowFeedbackModal(true)}
