@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { removeOrderByOnchainId, resolveOrderActionFns } from '../app/orderUiModel';
 
 describe('App routing side-aware contract selection', () => {
@@ -37,4 +39,46 @@ describe('App routing side-aware contract selection', () => {
     expect(removeOrderByOnchainId(market, 2)).toStrictEqual([{ onchainId: 1 }]);
     expect(removeOrderByOnchainId(mine, 2)).toStrictEqual([{ onchainId: 3 }]);
   });
+
+  it('routes all primary views through the AppShell outlet composition', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
+    const appShellBlock = source.slice(source.indexOf('<AppShell'), source.indexOf('<button', source.indexOf('<AppShell')));
+
+    expect(source).toContain("import AppShell from './app/shell/AppShell';");
+    expect(appShellBlock).toContain('status={systemStatus}');
+    expect(source).toContain('const systemStatus = React.useMemo(() => ({');
+    expect(source).toContain('envErrors: ENV_ERRORS');
+    expect(source).toContain('supportedChains');
+    expect(source).toContain('onRegisterWallet: handleRegisterWallet');
+    expect(appShellBlock).toContain('navigation={renderSlimRail()}');
+    expect(appShellBlock).toContain('panel={renderContextSidebar()}');
+    expect(appShellBlock).toContain('mobileBottom={renderMobileNav()}');
+    expect(appShellBlock).toContain('outlet={(');
+    expect(appShellBlock).toContain("currentView === 'home'");
+    expect(appShellBlock).toContain("currentView === 'market'");
+    expect(appShellBlock).toContain("currentView === 'operations'");
+    expect(appShellBlock).toContain("currentView === 'profile'");
+    expect(appShellBlock).toContain("currentView === 'admin'");
+    expect(appShellBlock).toContain('renderTradeRoom()');
+    expect(appShellBlock).toContain('renderFooter()');
+    expect(appShellBlock).toContain('modals={(');
+    expect(appShellBlock).toContain('renderWalletModal()');
+    expect(appShellBlock).toContain('renderFeedbackModal()');
+    expect(appShellBlock).toContain('renderMakerModal()');
+    expect(appShellBlock).toContain('renderProfileModal()');
+    expect(appShellBlock).toContain('renderTermsModal()');
+  });
+
+
+  it('uses explicit sidebar toggle state without timer-based auto-close', () => {
+    const appSource = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
+    const appViewsSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/AppViews.jsx'), 'utf8');
+
+    expect(appSource).toContain('const toggleSidebar = () => {');
+    expect(appSource).not.toContain('sidebarTimerRef');
+    expect(appSource).not.toContain('setTimeout(() => setSidebarOpen(false), 5000)');
+    expect(appViewsSource).toContain('onClick={toggleSidebar}');
+    expect(appViewsSource).toContain('onClick={() => setSidebarOpen(false)}');
+  });
+
 });

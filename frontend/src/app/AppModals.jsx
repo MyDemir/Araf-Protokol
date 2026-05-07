@@ -1,5 +1,5 @@
 import React from 'react';
-import { buildMakerPreview, getMakerModalCopy, mapOffchainHealthToUi, resolvePaymentRiskEntry } from './orderUiModel';
+import { buildMakerPreview, getMakerModalCopy, getOrderSideCopy, mapOffchainHealthToUi } from './orderUiModel';
 import { TERMS_ACCEPTED_STORAGE_KEY } from './bootstrapState';
 import { mapResolutionTypeLabel } from './useAppSessionData';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
@@ -73,6 +73,9 @@ export const buildAppModals = (ctx) => {
     SUPPORTED_TOKEN_ADDRESSES,
     onchainTokenMap,
     handleCreateOrder,
+    makerValidationError,
+    makerPayoutRiskEntry,
+    isCreateTemporarilyDisabledByRisk,
     isContractLoading,
     setIsContractLoading,
     loadingText,
@@ -242,33 +245,9 @@ export const buildAppModals = (ctx) => {
     const preview = buildMakerPreview({ side: makerSide, amountUi: cryptoAmt, bondPct });
     const effectiveUserTier = userReputation?.effectiveTier ?? 0;
 
-    const cryptoAmtNum = parseFloat(makerAmount) || 0;
-    const rateNum      = parseFloat(makerRate) || 0;
-    const minLimNum    = parseFloat(makerMinLimit) || 0;
-    const maxLimNum    = parseFloat(makerMaxLimit) || 0;
-    const totalFiatValue = cryptoAmtNum * rateNum;
     const modalCopy = getMakerModalCopy(makerSide, lang);
-    const payoutRail = payoutProfileDraft?.rail || null;
-    const payoutCountry = payoutProfileDraft?.country || null;
-    const payoutRiskEntry = resolvePaymentRiskEntry({
-      paymentRiskConfig: paymentRiskConfig || {},
-      rail: payoutRail,
-      country: payoutCountry,
-    });
-    const isCreateTemporarilyDisabledByRisk = payoutRiskEntry
-      && (String(payoutRiskEntry.riskLevel || '').toUpperCase() === 'RESTRICTED' || payoutRiskEntry.enabled === false);
-
-    let validationError = null;
-    if (!makerAmount || cryptoAmtNum <= 0)                    validationError = lang === 'TR' ? 'Order miktarını giriniz.' : 'Enter order amount.';
-    else if (makerTier === 0 && cryptoAmtNum > 150)           validationError = lang === 'TR' ? 'Tier 0 maksimum order limiti 150 USDT/USDC.' : 'Tier 0 max order limit is 150 USDT/USDC.';
-    else if (makerTier === 1 && cryptoAmtNum > 1500)          validationError = lang === 'TR' ? 'Tier 1 maksimum order limiti 1.500 USDT/USDC.' : 'Tier 1 max order limit is 1500 USDT/USDC.';
-    else if (makerTier === 2 && cryptoAmtNum > 7500)          validationError = lang === 'TR' ? 'Tier 2 maksimum order limiti 7.500 USDT/USDC.' : 'Tier 2 max order limit is 7500 USDT/USDC.';
-    else if (makerTier === 3 && cryptoAmtNum > 30000)         validationError = lang === 'TR' ? 'Tier 3 maksimum order limiti 30.000 USDT/USDC.' : 'Tier 3 max order limit is 30000 USDT/USDC.';
-    else if (!makerRate || rateNum <= 0)                      validationError = lang === 'TR' ? 'Kur fiyatını giriniz.' : 'Enter exchange rate.';
-    else if (!makerMinLimit || minLimNum <= 0)                validationError = lang === 'TR' ? 'Minimum işlem limitini giriniz.' : 'Enter min limit.';
-    else if (!makerMaxLimit || maxLimNum <= 0)                validationError = lang === 'TR' ? 'Maksimum işlem limitini giriniz.' : 'Enter max limit.';
-    else if (minLimNum > maxLimNum)                           validationError = lang === 'TR' ? 'Min limit, Max limitten büyük olamaz.' : 'Min limit cannot exceed Max.';
-    else if (maxLimNum > totalFiatValue)                      validationError = lang === 'TR' ? `Max limit toplam değeri (${totalFiatValue.toFixed(2)} ${makerFiat}) aşamaz.` : `Max limit exceeds total fiat (${totalFiatValue.toFixed(2)} ${makerFiat}).`;
+    const payoutRiskEntry = makerPayoutRiskEntry;
+    const validationError = makerValidationError || null;
 
     return (
       <div className="fixed inset-0 bg-[#060608]/80 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
@@ -298,8 +277,8 @@ export const buildAppModals = (ctx) => {
             <div>
               <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Order Side' : 'Order Side'}</label>
               <div className="grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => setMakerSide('SELL_CRYPTO')} className={`py-2 rounded-xl text-xs font-bold border transition ${makerSide === 'SELL_CRYPTO' ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40' : 'bg-[#151518] text-slate-300 border-[#2a2a2e]'}`}>SELL_CRYPTO</button>
-                <button type="button" onClick={() => setMakerSide('BUY_CRYPTO')} className={`py-2 rounded-xl text-xs font-bold border transition ${makerSide === 'BUY_CRYPTO' ? 'bg-blue-600/20 text-blue-400 border-blue-500/40' : 'bg-[#151518] text-slate-300 border-[#2a2a2e]'}`}>BUY_CRYPTO</button>
+                <button type="button" data-testid="maker-side-SELL_CRYPTO" onClick={() => setMakerSide('SELL_CRYPTO')} className={`py-2 rounded-xl text-xs font-bold border transition ${makerSide === 'SELL_CRYPTO' ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40' : 'bg-[#151518] text-slate-300 border-[#2a2a2e]'}`}>{getOrderSideCopy('SELL_CRYPTO', 'display', lang)}</button>
+                <button type="button" data-testid="maker-side-BUY_CRYPTO" onClick={() => setMakerSide('BUY_CRYPTO')} className={`py-2 rounded-xl text-xs font-bold border transition ${makerSide === 'BUY_CRYPTO' ? 'bg-blue-600/20 text-blue-400 border-blue-500/40' : 'bg-[#151518] text-slate-300 border-[#2a2a2e]'}`}>{getOrderSideCopy('BUY_CRYPTO', 'display', lang)}</button>
               </div>
             </div>
             <div>
@@ -766,7 +745,7 @@ export const buildAppModals = (ctx) => {
                   <div key={order.id} className={`bg-[#151518] border rounded-xl p-4 transition-all duration-200 ${confirmDeleteId === order.id ? 'border-red-900/60 bg-red-950/20' : 'border-[#2a2a2e] flex flex-col'}`}>
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="font-bold text-white text-sm">{order.side} · {order.status}</p>
+                        <p className="font-bold text-white text-sm">{order.sideLabel || getOrderSideCopy(order.side, 'order', lang) || order.side} · {order.status}</p>
                         <p className="text-xs text-slate-400 mt-0.5">{order.crypto}/{order.fiat} @ {order.rate}</p>
                         <p className="text-xs text-slate-500 mt-0.5">Remaining: {order.remainingAmount} {order.crypto} • Min Fill: {order.minFillAmount} {order.crypto} • Tier: {order.tier}</p>
                       </div>

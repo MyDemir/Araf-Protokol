@@ -144,7 +144,7 @@ vi.mock('../app/AppViews', () => ({
 vi.mock('../app/AppModals', () => ({
   EnvWarningBanner: () => null,
   buildAppModals: () => ({
-    renderWalletModal: () => null,
+    renderWalletModal: () => <div data-testid="wallet-modal-slot">wallet-modal-slot</div>,
     renderFeedbackModal: () => null,
     renderMakerModal: () => null,
     renderProfileModal: () => null,
@@ -152,12 +152,33 @@ vi.mock('../app/AppModals', () => ({
   }),
 }));
 
+import AppProviders from '../app/providers/AppProviders.jsx';
 import App from '../App.jsx';
 
 describe('App smoke', () => {
   it('mounts and renders the home view without hitting ErrorBoundary path', () => {
-    render(<App />);
+    render(<AppProviders><App /></AppProviders>);
     expect(screen.getByTestId('home-view')).toBeInTheDocument();
+    expect(screen.getByTestId('wallet-modal-slot')).toBeInTheDocument();
+  });
+
+
+  it('wires AppProviders in main while keeping Wagmi and Query providers outside ErrorBoundary', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/main.jsx'), 'utf8');
+    expect(source).toContain("import AppProviders from './app/providers/AppProviders.jsx'");
+    expect(source).toContain('<AppProviders>');
+
+    const wagmiIndex = source.indexOf('<WagmiProvider');
+    const queryIndex = source.indexOf('<QueryClientProvider');
+    const boundaryIndex = source.indexOf('<ErrorBoundary>');
+    const providersIndex = source.indexOf('<AppProviders>');
+    const appIndex = source.indexOf('<App />');
+
+    expect(wagmiIndex).toBeGreaterThan(-1);
+    expect(queryIndex).toBeGreaterThan(wagmiIndex);
+    expect(boundaryIndex).toBeGreaterThan(queryIndex);
+    expect(providersIndex).toBeGreaterThan(boundaryIndex);
+    expect(appIndex).toBeGreaterThan(providersIndex);
   });
 
   it('keeps profile tab default aligned with modal tabs', () => {

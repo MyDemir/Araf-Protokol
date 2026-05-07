@@ -4,7 +4,7 @@ import path from 'node:path';
 
 describe('session guard regression checks', () => {
   it('gates signed-session checks behind authChecked to avoid flash-close race', () => {
-    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/app/providers/SessionProvider.jsx'), 'utf8');
     expect(source).toContain('if (!authChecked) {');
     expect(source).toContain('Session check in progress. Please try again in a moment.');
   });

@@ -3,34 +3,34 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
 
-describe('PaymentRiskBadge non-authoritative complexity copy', () => {
-  it('renders compact complexity warning without trust-user semantics', () => {
-    render(<PaymentRiskBadge lang="EN" compact riskEntry={{ riskLevel: 'MEDIUM' }} />);
-    expect(screen.getByText(/Payment method complexity/i)).toBeInTheDocument();
-    expect(screen.getByText('MEDIUM')).toBeInTheDocument();
-    expect(screen.getByText(/does not judge the counterparty/i)).toBeInTheDocument();
-  });
-
-  it('renders preview/config-only warning for detailed card', () => {
+describe('PaymentRiskBadge user-facing complexity summary', () => {
+  it('renders compact payment-method complexity with a display label and no trust-score semantics', () => {
     render(
       <PaymentRiskBadge
         lang="EN"
+        compact
         riskEntry={{
-          riskLevel: 'RESTRICTED',
+          riskLevel: 'MEDIUM',
           minBondSurchargeBps: 50,
-          feeSurchargeBps: 0,
-          warningKey: 'RESTRICTED',
-          enabled: false,
-          description: { EN: 'config', TR: 'config' },
+          feeSurchargeBps: 25,
+          warningKey: 'BANK_TRANSFER_CONFIRMATION_REQUIRED',
         }}
       />
     );
-    expect(screen.getByText(/Preview\/config only/i)).toBeInTheDocument();
-    expect(screen.getByText(/availability config signal/i)).toBeInTheDocument();
+
+    expect(screen.getByText(/Payment method complexity/i)).toBeInTheDocument();
+    expect(screen.getByText('Medium')).toBeInTheDocument();
+    expect(screen.queryByText('MEDIUM')).not.toBeInTheDocument();
+    expect(screen.getByText(/not a user trust score/i)).toBeInTheDocument();
+    expect(screen.queryByText(/minBondSurchargeBps/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/feeSurchargeBps/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/warningKey/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/BANK_TRANSFER_CONFIRMATION_REQUIRED/i)).not.toBeInTheDocument();
   });
 
   it('renders generic config warning when payload is generic in compact mode', () => {
     render(<PaymentRiskBadge lang="EN" compact riskEntry={{ riskLevel: 'LOW', generic: true }} />);
+    expect(screen.getByText('Low')).toBeInTheDocument();
     expect(screen.getByText(/Generic payment config; this is not an order-specific rail signal/i)).toBeInTheDocument();
   });
 });
