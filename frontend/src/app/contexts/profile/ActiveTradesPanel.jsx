@@ -27,9 +27,9 @@ export const ActiveTradesPanel = ({
     <div>
       <div className="flex flex-wrap gap-2 mb-3">
         {ACTIVE_TRADE_FILTERS.map((f) => (
-          <button key={f} onClick={() => setActiveTradesFilter(f)} className={`px-2 py-1 rounded text-xs ${activeTradesFilter === f ? 'bg-[#222] text-white' : 'bg-[#101014] text-slate-400'}`}>
+          <button key={f} onClick={() => setActiveTradesFilter(f)} className={`px-2 py-1 rounded text-xs ${activeTradesFilter === f ? 'bg-elevated text-textPrimary border border-borderStrong' : 'bg-surface text-textSecondary border border-borderSubtle'}`}>
             <span>{getStateLabel(f, lang)}</span>
-            <span className="ml-1 text-slate-500">{getFilterCount(f)}</span>
+            <span className="ml-1 text-textMuted">{getFilterCount(f)}</span>
           </button>
         ))}
       </div>

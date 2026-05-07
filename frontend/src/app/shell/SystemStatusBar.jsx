@@ -106,7 +106,7 @@ export const resolveSystemStatuses = ({
 const toneClass = (tone) => {
   if (tone === 'danger') return 'bg-red-950/90 border-red-800 text-red-100';
   if (tone === 'warning') return 'bg-orange-950/80 border-orange-800 text-orange-100';
-  return 'bg-slate-900/80 border-slate-700 text-slate-100';
+  return 'bg-surface border-borderSubtle text-textPrimary';
 };
 
 export const SystemStatusBar = ({
@@ -147,7 +147,7 @@ export const SystemStatusBar = ({
   if (statuses.length === 0 && !children) return null;
 
   return (
-    <section aria-label={lang === 'TR' ? 'Sistem durumu' : 'System status'} className="shrink-0 border-b border-[#1a1a1a]" data-testid="system-status-bar">
+    <section aria-label={lang === 'TR' ? 'Sistem durumu' : 'System status'} className="shrink-0 border-b border-borderSubtle" data-testid="system-status-bar">
       <div className="flex flex-col">
         {statuses.map((status) => (
           <div key={status.key} className={`px-4 py-2 text-sm border-b last:border-b-0 ${toneClass(status.tone)}`} data-status-key={status.key}>

@@ -21,7 +21,7 @@ export const ActionGuidanceButton = ({ action, actionCallbacks, disabledReasons 
   const label = config.label || action.label || action.key;
 
   const enabledClass = variant === 'secondary'
-    ? 'bg-elevated hover:bg-[#222] text-textPrimary border border-borderStrong'
+    ? 'bg-elevated hover:bg-surface text-textPrimary border border-borderStrong'
     : 'bg-emerald-600 hover:bg-emerald-500 text-white';
 
   return (
@@ -30,7 +30,7 @@ export const ActionGuidanceButton = ({ action, actionCallbacks, disabledReasons 
         type="button"
         onClick={config.onClick}
         disabled={isDisabled}
-        className={`w-full px-4 py-2.5 rounded-lg font-bold transition ${isDisabled ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : enabledClass}`}
+        className={`w-full px-4 py-2.5 rounded-lg font-bold transition ${isDisabled ? 'bg-elevated text-textMuted border border-borderStrong cursor-not-allowed' : enabledClass}`}
       >
         {label}
       </button>

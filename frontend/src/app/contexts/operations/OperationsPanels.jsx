@@ -16,9 +16,9 @@ export const OperationsSummaryBar = ({ summary, lang = 'EN' }) => {
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2 mb-4">
       {items.map((item) => (
-        <div key={item.key} className="bg-[#101014] border border-[#222] rounded-lg px-3 py-2">
-          <p className="text-xs text-slate-500 uppercase tracking-wide">{item.label}</p>
-          <p className="text-sm font-bold text-white">{summary?.[item.key] ?? 0}</p>
+        <div key={item.key} className="bg-surface border border-borderSubtle rounded-lg px-3 py-2">
+          <p className="text-xs text-textMuted uppercase tracking-wide">{item.label}</p>
+          <p className="text-sm font-bold text-textPrimary">{summary?.[item.key] ?? 0}</p>
         </div>
       ))}
     </div>

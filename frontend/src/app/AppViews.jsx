@@ -183,24 +183,24 @@ export const buildAppViews = (ctx) => {
         </div>
 
         <div className="mb-8">
-          <p className="text-[10px] font-bold text-slate-500 mb-3 tracking-widest">{lang === 'TR' ? 'PAZAR YERİ' : 'MARKETPLACE'}</p>
+          <p className="text-[10px] font-bold text-textMuted mb-3 tracking-widest">{lang === 'TR' ? 'PAZAR YERİ' : 'MARKETPLACE'}</p>
           <div className="space-y-1">
-            <button onClick={() => { setFilterToken('ALL'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'ALL' && currentView === 'market' ? 'bg-[#1a1a1f] text-white border border-[#2a2a2e]' : 'text-slate-400 hover:text-white hover:bg-[#1a1a1f]/50'}`}>
+            <button onClick={() => { setFilterToken('ALL'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'ALL' && currentView === 'market' ? 'bg-elevated text-textPrimary border border-borderStrong' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/50'}`}>
               <div className="flex items-center gap-2"><span className="text-slate-500">⛓️</span> {lang === 'TR' ? 'TÜM ORDERLAR' : 'ALL ORDERS'}</div>
-              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-300">{orders.length}</span>
+              <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textSecondary">{orders.length}</span>
             </button>
-            <button onClick={() => { setFilterToken('USDT'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'USDT' && currentView === 'market' ? 'bg-[#1a1a1f] text-white border border-[#2a2a2e]' : 'text-slate-400 hover:text-white hover:bg-[#1a1a1f]/50'}`}>
+            <button onClick={() => { setFilterToken('USDT'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'USDT' && currentView === 'market' ? 'bg-elevated text-textPrimary border border-borderStrong' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/50'}`}>
               <div className="flex items-center gap-2"><span className="text-emerald-500">₮</span> USDT</div>
-              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-300">{orders.filter(o => o.crypto === 'USDT').length}</span>
+              <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textSecondary">{orders.filter(o => o.crypto === 'USDT').length}</span>
             </button>
-            <button onClick={() => setFilterTier1(!filterTier1)} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterTier1 ? 'bg-[#1a1a1f] text-yellow-500 border border-yellow-500/20' : 'text-slate-400 hover:text-white hover:bg-[#1a1a1f]/50'}`}>
+            <button onClick={() => setFilterTier1(!filterTier1)} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterTier1 ? 'bg-elevated text-yellow-500 border border-yellow-500/20' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/50'}`}>
               <div className="flex items-center gap-2"><span className="text-yellow-500/70">🛡️</span> {lang === 'TR' ? 'Tier 0-1 Düşük Risk Filtresi' : 'Tier 0-1 Low-Risk Filter'}</div>
             </button>
           </div>
         </div>
 
         <div>
-          <p className="text-[10px] font-bold text-slate-500 mb-3 tracking-widest">{lang === 'TR' ? 'DURUM' : 'STATUS'}</p>
+          <p className="text-[10px] font-bold text-textMuted mb-3 tracking-widest">{lang === 'TR' ? 'DURUM' : 'STATUS'}</p>
           <div className="space-y-2">
             {['LOCKED', 'PAID', 'CHALLENGED'].map(status => {
               const count = activeEscrowCounts[status];
@@ -210,23 +210,23 @@ export const buildAppViews = (ctx) => {
                 <div key={status} className="flex flex-col">
                   <button
                     onClick={() => setExpandedStatus(isExpanded ? null : status)}
-                    className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${isExpanded ? 'bg-[#1a1a1f] text-white border border-[#2a2a2e]' : 'text-slate-400 hover:text-white hover:bg-[#1a1a1f]/50 border border-transparent'}`}
+                    className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${isExpanded ? 'bg-elevated text-textPrimary border border-borderStrong' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/50 border border-transparent'}`}
                   >
                     <div className="flex items-center gap-2">
-                      <span className={status === 'CHALLENGED' ? 'text-red-500' : 'text-slate-500'}>
+                      <span className={status === 'CHALLENGED' ? 'text-red-500' : 'text-textMuted'}>
                         {status === 'LOCKED' ? '🔒' : status === 'PAID' ? '%' : '⚔️'}
                       </span>
                       {getStateLabel(status, lang)}
                     </div>
                     {count > 0 && (
-                      <span className={status === 'CHALLENGED' ? 'bg-red-900/40 text-red-400 text-[10px] font-bold px-2 py-0.5 rounded border border-red-900/50' : 'bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-300'}>
+                      <span className={status === 'CHALLENGED' ? 'bg-red-900/40 text-red-400 text-[10px] font-bold px-2 py-0.5 rounded border border-red-900/50' : 'bg-elevated text-[10px] px-2 py-0.5 rounded text-textSecondary'}>
                         {status === 'CHALLENGED' ? 'Araf' : count}
                       </span>
                     )}
                   </button>
                   <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-[500px] opacity-100 mt-2' : 'max-h-0 opacity-0'}`}>
                     {statusTrades.length > 0 ? (
-                      <div className="pl-3 pr-1 py-1 space-y-2 border-l-2 border-[#222] ml-3">
+                      <div className="pl-3 pr-1 py-1 space-y-2 border-l-2 border-borderSubtle ml-3">
                         {statusTrades.map(escrow => (
                           <OperationTradeCard
                             key={escrow.id}
@@ -245,7 +245,7 @@ export const buildAppViews = (ctx) => {
                         ))}
                       </div>
                     ) : (
-                      <div className="pl-3 ml-3 border-l-2 border-[#222] py-2 text-xs text-slate-600 italic">
+                      <div className="pl-3 ml-3 border-l-2 border-borderSubtle py-2 text-xs text-slate-600 italic">
                         {lang === 'TR' ? 'Bu duruma ait işlem yok.' : 'No trades in this status.'}
                       </div>
                     )}
@@ -256,21 +256,21 @@ export const buildAppViews = (ctx) => {
           </div>
         </div>
         <div className="mt-6">
-          <p className="text-[10px] font-bold text-slate-500 mb-3 tracking-widest">
+          <p className="text-[10px] font-bold text-textMuted mb-3 tracking-widest">
             {lang === 'TR' ? 'SETTLEMENT' : 'SETTLEMENT'}
           </p>
           <div className="space-y-1">
-            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-slate-300 border border-[#2a2a2e] bg-[#101014]">
+            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-textSecondary border border-borderStrong bg-surface">
               <span className="flex items-center gap-2"><span className="text-emerald-400">🧩</span>{lang === 'TR' ? 'Aktif Teklif' : 'Active Proposals'}</span>
-              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-200">{activeEscrowCounts?.settlement?.PROPOSED ?? 0}</span>
+              <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textPrimary">{activeEscrowCounts?.settlement?.PROPOSED ?? 0}</span>
             </div>
-            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-slate-300 border border-[#2a2a2e] bg-[#101014]">
+            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-textSecondary border border-borderStrong bg-surface">
               <span className="flex items-center gap-2"><span className="text-yellow-400">⏳</span>{lang === 'TR' ? 'Benden Aksiyon Bekliyor' : 'Action Required'}</span>
-              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-200">{activeEscrowCounts?.settlement?.ACTION_REQUIRED ?? 0}</span>
+              <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textPrimary">{activeEscrowCounts?.settlement?.ACTION_REQUIRED ?? 0}</span>
             </div>
-            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-slate-300 border border-[#2a2a2e] bg-[#101014]">
+            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-textSecondary border border-borderStrong bg-surface">
               <span className="flex items-center gap-2"><span className="text-sky-400">🕒</span>{lang === 'TR' ? 'Karşı Taraftan Yanıt Bekliyorum' : 'Waiting Counterparty'}</span>
-              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-200">{activeEscrowCounts?.settlement?.WAITING ?? 0}</span>
+              <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textPrimary">{activeEscrowCounts?.settlement?.WAITING ?? 0}</span>
             </div>
             {activeEscrows
               .filter((escrow) => normalizeSettlementState(escrow?.rawTrade?.settlementProposal?.state) === 'PROPOSED')
