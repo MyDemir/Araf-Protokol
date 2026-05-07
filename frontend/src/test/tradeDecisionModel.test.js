@@ -46,13 +46,15 @@ describe('buildTradeDecisionModel', () => {
     expect(model.secondaryActions.map((a) => a.key)).not.toEqual(expect.arrayContaining(['propose_settlement', 'accept_settlement', 'reject_settlement', 'withdraw_settlement', 'expire_settlement']));
   });
 
-  it('wrong chain / paused / unauthenticated appear as disabled reasons', () => {
+  it('wrong chain / paused / unauthenticated appear as global and primary disabled reasons', () => {
     const model = buildTradeDecisionModel({ ...base, isSupportedChain: false, isPaused: true, isAuthenticated: false });
-    expect(model.disabledReasons).toEqual(expect.arrayContaining([
+    const expected = [
       'Unsupported network.',
       'System is in maintenance mode.',
       'Session is not authenticated.',
-    ]));
+    ];
+    expect(model.disabledReasons).toEqual(expect.arrayContaining(expected));
+    expect(model.globalDisabledReasons).toEqual(expect.arrayContaining(expected));
   });
 
   it('LOCKED+taker with payment proof can report payment without chargeback acknowledgement', () => {
@@ -62,15 +64,18 @@ describe('buildTradeDecisionModel', () => {
     expect(model.primaryAction.requiresChargebackAck).toBeUndefined();
     expect(model.disabledReasons).not.toContain('Chargeback acknowledgement is required.');
     expect(model.disabledReasons).not.toContain('Payment proof is required.');
+    expect(model.globalDisabledReasons).not.toContain('Payment proof is required.');
   });
 
-  it('LOCKED+taker without payment proof still cannot report payment', () => {
+  it('LOCKED+taker without payment proof only disables the primary report-payment action', () => {
     const model = buildTradeDecisionModel({ ...base, paymentIpfsHash: '', chargebackAccepted: false });
     expect(model.primaryAction.key).toBe('report_payment');
     expect(model.primaryAction.requiresPaymentProof).toBe(true);
     expect(model.primaryAction.requiresChargebackAck).toBeUndefined();
     expect(model.disabledReasons).toContain('Payment proof is required.');
     expect(model.disabledReasons).not.toContain('Chargeback acknowledgement is required.');
+    expect(model.globalDisabledReasons).not.toContain('Payment proof is required.');
+    expect(model.secondaryActions.map((a) => a.key)).toContain('propose_cancel');
   });
 
   it('adds burn_expired only when the caller proves the burn deadline is available', () => {
