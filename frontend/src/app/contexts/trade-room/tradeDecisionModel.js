@@ -1,12 +1,12 @@
 const labels = {
   state: {
     LOCKED: { TR: 'Kilitli', EN: 'Locked' },
-    PAID: { TR: 'Ödeme Bildirildi', EN: 'Paid' },
-    CHALLENGED: { TR: 'İtirazlı', EN: 'Challenged' },
+    PAID: { TR: 'Ödeme Bildirildi', EN: 'Payment Reported' },
+    CHALLENGED: { TR: 'İtiraz Süreci', EN: 'Challenge Phase' },
   },
   role: {
     taker: { TR: 'Alıcı', EN: 'Taker' },
-    maker: { TR: 'Satıcı', EN: 'Maker' },
+    maker: { TR: 'İlan Sahibi', EN: 'Maker' },
   },
 };
 
@@ -51,6 +51,74 @@ const buildTimerCards = (timers = {}, lang = 'EN') => {
 };
 
 const action = (type, key, label, description, extra = {}) => ({ type, key, label, description, ...extra });
+
+const decisionCopy = {
+  LOCKED: {
+    taker: {
+      headline: { TR: 'Ödeme kanıtı bekleniyor', EN: 'Payment proof is needed' },
+      subheadline: { TR: 'İşlem kilitli. Ödemeyi yaptıysanız kanıtı yükleyip ödeme bildirimini gönderin.', EN: 'The trade is locked. If you paid, upload proof and report the payment.' },
+      nowLabel: { TR: 'Şimdi', EN: 'Now' },
+      nowDescription: { TR: 'Dekontu yükleyin ve ödeme bildirimi aksiyonunu kullanın. Frontend sizi yönlendirir; kontrat durumu belirler.', EN: 'Upload payment proof and use the report payment action. The frontend guides you; the contract state remains authoritative.' },
+      nextLabel: { TR: 'Süre devam ederse', EN: 'If time continues' },
+      nextDescription: { TR: 'Ödeme bildirilmezse işlem kilitli kalır ve mevcut süreler sonraki kontrat seçeneklerini belirler.', EN: 'If payment is not reported, the trade remains locked and the existing timers determine the next contract options.' },
+    },
+    maker: {
+      headline: { TR: 'Alıcının ödeme bildirimi bekleniyor', EN: 'Waiting for the buyer to report payment' },
+      subheadline: { TR: 'Fonlar kilitli. Alıcı ödeme bildirimi yapana kadar ana göreviniz beklemek ve bilgileri izlemek.', EN: 'Funds are locked. Until the buyer reports payment, your main task is to wait and monitor the details.' },
+      nowLabel: { TR: 'Şimdi', EN: 'Now' },
+      nowDescription: { TR: 'Ödeme bildirimi gelene kadar kontrat aksiyonu bekleme durumundadır.', EN: 'Contract actions remain in a waiting state until payment is reported.' },
+      nextLabel: { TR: 'Süre devam ederse', EN: 'If time continues' },
+      nextDescription: { TR: 'Ödeme bildirimi yapılırsa ödeme kontrolü aşamasına geçersiniz; yapılmazsa mevcut süreler sonraki seçenekleri belirler.', EN: 'If payment is reported, you move to payment review; otherwise existing timers determine the next options.' },
+    },
+  },
+  PAID: {
+    maker: {
+      headline: { TR: 'Ödeme bildirildi; kontrol sizde', EN: 'Payment was reported; review it now' },
+      subheadline: { TR: 'Alıcı ödeme yaptığını bildirdi. Banka hesabınızı ve isim eşleşmesini siz kontrol edersiniz.', EN: 'The buyer reported payment. You review your bank account and sender-name match.' },
+      nowLabel: { TR: 'Şimdi', EN: 'Now' },
+      nowDescription: { TR: 'Ödemeyi doğruladıysanız fonları serbest bırakın. Ödeme yoksa mevcut itiraz akışını başlatabilirsiniz.', EN: 'If payment checks out, release the funds. If it did not arrive, you can start the existing challenge flow.' },
+      nextLabel: { TR: 'Risk sürerse', EN: 'If risk continues' },
+      nextDescription: { TR: 'Yanıt verilmezse zamanlayıcılar alıcının uyarı ve otomatik serbest bırakma yollarını etkileyebilir. Araf hakem değildir.', EN: 'If there is no response, timers may affect the buyer ping and auto-release paths. Araf is not an arbitrator.' },
+    },
+    taker: {
+      headline: { TR: 'Ödeme bildirildi; satıcı onayı bekleniyor', EN: 'Payment reported; waiting for maker review' },
+      subheadline: { TR: 'Ödeme bildiriminiz gönderildi. Satıcının ödemeyi doğrulayıp fonları serbest bırakması beklenir.', EN: 'Your payment report was sent. The maker is expected to verify payment and release funds.' },
+      nowLabel: { TR: 'Şimdi', EN: 'Now' },
+      nowDescription: { TR: 'Kanıt ve işlem detaylarını hazır tutun. Gerekli süreler dolunca mevcut uyarı veya otomatik serbest bırakma seçenekleri kullanılabilir.', EN: 'Keep proof and trade details ready. When required timers expire, existing ping or auto-release options may become available.' },
+      nextLabel: { TR: 'Süre devam ederse', EN: 'If time continues' },
+      nextDescription: { TR: 'Satıcı pasif kalırsa zamanlayıcılar uyarı ve otomatik serbest bırakma yollarını belirler; frontend sadece bu yolları gösterir.', EN: 'If the maker remains inactive, timers determine the ping and auto-release paths; the frontend only presents those paths.' },
+    },
+  },
+  CHALLENGED: {
+    maker: {
+      headline: { TR: 'İtiraz süreci başladı', EN: 'Challenge phase is active' },
+      subheadline: { TR: 'Bu aşamada settlement yalnızca tarafların aksiyonlarıyla ilerler. Araf karar vermez.', EN: 'In this phase, settlement moves only through party actions. Araf does not decide the outcome.' },
+      nowLabel: { TR: 'Şimdi', EN: 'Now' },
+      nowDescription: { TR: 'Mevcut settlement kartındaki taraf aksiyonlarını takip edin. Kontrat ve taraf imzaları otoritedir.', EN: 'Follow party actions in the existing settlement card. The contract and party signatures remain authoritative.' },
+      nextLabel: { TR: 'Süre / risk devam ederse', EN: 'If time or risk continues' },
+      nextDescription: { TR: 'Settlement olmazsa süre dolumu ve yakma bilgileri mevcut panellerde kalır; Araf hakemlik yapmaz.', EN: 'If settlement does not happen, expiry and burn information remains in the existing panels; Araf does not arbitrate.' },
+    },
+    taker: {
+      headline: { TR: 'İtiraz süreci başladı', EN: 'Challenge phase is active' },
+      subheadline: { TR: 'Bu aşamada settlement yalnızca tarafların aksiyonlarıyla ilerler. Araf karar vermez.', EN: 'In this phase, settlement moves only through party actions. Araf does not decide the outcome.' },
+      nowLabel: { TR: 'Şimdi', EN: 'Now' },
+      nowDescription: { TR: 'Mevcut settlement kartındaki taraf aksiyonlarını takip edin. Kontrat ve taraf imzaları otoritedir.', EN: 'Follow party actions in the existing settlement card. The contract and party signatures remain authoritative.' },
+      nextLabel: { TR: 'Süre / risk devam ederse', EN: 'If time or risk continues' },
+      nextDescription: { TR: 'Settlement olmazsa süre dolumu ve yakma bilgileri mevcut panellerde kalır; Araf hakemlik yapmaz.', EN: 'If settlement does not happen, expiry and burn information remains in the existing panels; Araf does not arbitrate.' },
+    },
+  },
+};
+
+const localizeDecisionCopy = (copy, lang) => ({
+  headline: copy?.headline?.[pickLocale(lang)] || t(lang, 'İşlem durumu güncellendi', 'Trade status updated'),
+  subheadline: copy?.subheadline?.[pickLocale(lang)] || t(lang, 'Mevcut işlem durumuna göre bir sonraki adımı izleyin.', 'Follow the next step for the current trade state.'),
+  nowLabel: copy?.nowLabel?.[pickLocale(lang)] || t(lang, 'Şimdi', 'Now'),
+  nowDescription: copy?.nowDescription?.[pickLocale(lang)] || t(lang, 'Frontend rehberlik eder; kontrat otoritedir.', 'The frontend guides you; the contract remains authoritative.'),
+  nextLabel: copy?.nextLabel?.[pickLocale(lang)] || t(lang, 'Sonraki adım', 'Next'),
+  nextDescription: copy?.nextDescription?.[pickLocale(lang)] || t(lang, 'Mevcut süreler ve kontrat kuralları sonraki seçenekleri belirler.', 'Existing timers and contract rules determine the next options.'),
+});
+
+const buildDecisionSummary = (state, role, lang) => localizeDecisionCopy(decisionCopy[state]?.[role] || decisionCopy[state]?.taker, lang);
 
 export function buildTradeDecisionModel({
   trade,
@@ -132,7 +200,11 @@ export function buildTradeDecisionModel({
     secondaryActions.push(action('contract', 'burn_expired', t(lang, 'Süresi Dolan İşlemi Yak', 'Burn Expired Trade'), t(lang, '10 günlük süre dolduysa mevcut yakma akışı kullanılabilir.', 'If the 10-day deadline has passed, the existing burn flow can be used.')));
   }
 
+  const decisionSummary = buildDecisionSummary(normalizedState, normalizedRole, lang);
+
   return {
+    ...decisionSummary,
+    decisionSummary,
     stateLabel: labels.state[normalizedState]?.[pickLocale(lang)] || normalizedState,
     roleLabel: labels.role[normalizedRole]?.[pickLocale(lang)] || normalizedRole,
     primaryAction,

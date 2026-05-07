@@ -1,8 +1,12 @@
 import React from 'react';
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { afterEach, describe, it, expect } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
+
+afterEach(() => {
+  cleanup();
+});
 
 const technicalRiskEntry = {
   riskLevel: 'RESTRICTED',
@@ -23,7 +27,7 @@ describe('PaymentRiskBadge technical disclosure', () => {
 
     expect(screen.getByText('Restricted')).toBeInTheDocument();
     expect(screen.getByText(/High-friction rail/i)).toBeInTheDocument();
-    expect(screen.getByText(/not a user trust score/i)).toBeInTheDocument();
+    expect(screen.getByText(/not a user trust score.*counterparty trust score/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Show technical disclosure/i })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText(/minBondSurchargeBps/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/feeSurchargeBps/i)).not.toBeInTheDocument();
@@ -48,6 +52,16 @@ describe('PaymentRiskBadge technical disclosure', () => {
     expect(screen.getAllByText(/snapshot/i).length).toBeGreaterThan(0);
     expect(screen.getByText('12345')).toBeInTheDocument();
     expect(screen.getByText(/Preview\/config only/i)).toBeInTheDocument();
-    expect(screen.getByText(/availability config signal/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/availability config signal/i).length).toBeGreaterThan(0);
+  });
+
+  it('opens technical fields by default only when explicitly requested', () => {
+    render(<PaymentRiskBadge lang="EN" riskEntry={technicalRiskEntry} defaultTechnicalOpen />);
+
+    expect(screen.getByRole('button', { name: /Hide technical disclosure/i })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText(/minBondSurchargeBps/i)).toBeInTheDocument();
+    expect(screen.getByText(/feeSurchargeBps/i)).toBeInTheDocument();
+    expect(screen.getByText(/warningKey/i)).toBeInTheDocument();
+    expect(screen.getByText(/onchain_snapshot/i)).toBeInTheDocument();
   });
 });

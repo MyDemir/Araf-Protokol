@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import fs from 'node:fs';
 import path from 'node:path';
+import OperationsCenterPage from '../app/contexts/operations/OperationsCenterPage';
 import OperationTradeCard from '../app/contexts/operations/OperationTradeCard';
-import { PendingSyncCard, SettlementQueueCard } from '../app/contexts/operations/OperationsPanels';
+import { OperationsSummaryBar, PendingSyncCard, SettlementQueueCard } from '../app/contexts/operations/OperationsPanels';
+import { getStateLabel } from '../app/copy';
 
 afterEach(() => cleanup());
 
@@ -26,12 +28,34 @@ describe('shared active trade cards', () => {
     );
 
     expect(screen.getByText('#42')).toBeInTheDocument();
-    expect(screen.getByText('maker')).toBeInTheDocument();
-    expect(screen.getByText(state)).toBeInTheDocument();
+    expect(screen.getByText('Listing owner')).toBeInTheDocument();
+    expect(screen.getByText(getStateLabel(state, 'EN'))).toBeInTheDocument();
+    expect(screen.queryByText(state)).not.toBeInTheDocument();
     expect(screen.getByText(/12.5 USDT/)).toBeInTheDocument();
     expect(screen.getByText('(410 TRY)')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Go to Room/i }));
     expect(onGoToRoom).toHaveBeenCalledTimes(1);
+  });
+
+
+  it('renders localized Turkish state labels without exposing raw active-trade enums', () => {
+    render(
+      <OperationTradeCard
+        escrow={{
+          id: '#TR-1',
+          role: 'taker',
+          state: 'CHALLENGED',
+          rawTrade: {},
+        }}
+        lang="TR"
+        onGoToRoom={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(getStateLabel('CHALLENGED', 'TR'))).toBeInTheDocument();
+    expect(screen.getByText('Karşı Taraf')).toBeInTheDocument();
+    expect(screen.queryByText('CHALLENGED')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Odaya Git/i })).toBeInTheDocument();
   });
 
   it('renders settlement proposal status through SettlementQueueCard without settlement action buttons', () => {
@@ -51,7 +75,7 @@ describe('shared active trade cards', () => {
       />,
     );
 
-    expect(screen.getByText(/Settlement: action required/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Settlement needs your response/i).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /Go to Room/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Accept|Reject|Withdraw|Expire/i })).toBeNull();
   });
@@ -71,9 +95,50 @@ describe('shared active trade cards', () => {
     );
 
     expect(screen.getByText('#99')).toBeInTheDocument();
-    expect(screen.getAllByText(/Pending backend sync/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Room sync in progress/i).length).toBeGreaterThan(0);
     expect(screen.getByTestId('pending-sync-card')).toHaveClass('border-sky-500/40');
     expect(screen.getByRole('button', { name: /Go to Room/i })).toBeInTheDocument();
+  });
+
+  it('renders operations summary with localized state labels', () => {
+    render(
+      <OperationsSummaryBar
+        lang="EN"
+        summary={{ totalActive: 3, locked: 1, paid: 1, challenged: 1 }}
+      />,
+    );
+
+    expect(screen.getByText('Locked')).toBeInTheDocument();
+    expect(screen.getByText('Payment Reported')).toBeInTheDocument();
+    expect(screen.getByText('Challenge Phase')).toBeInTheDocument();
+    expect(screen.getByText('Needs response')).toBeInTheDocument();
+    expect(screen.getByText('Room sync')).toBeInTheDocument();
+    expect(screen.queryByText('PAID')).not.toBeInTheDocument();
+    expect(screen.queryByText('CHALLENGED')).not.toBeInTheDocument();
+  });
+
+
+  it('renders command-center priority guidance and friendly empty state without fetches', () => {
+    render(
+      <OperationsCenterPage
+        activeEscrows={[]}
+        activeEscrowCounts={{ LOCKED: 0, PAID: 0, CHALLENGED: 0, settlement: {} }}
+        activeTrade={null}
+        address="0xviewer"
+        lang="EN"
+        setActiveTrade={vi.fn()}
+        setUserRole={vi.fn()}
+        setTradeState={vi.fn()}
+        setChargebackAccepted={vi.fn()}
+        setCurrentView={vi.fn()}
+        setSidebarOpen={vi.fn()}
+        setShowProfileModal={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/settlement\/action required first/i)).toBeInTheDocument();
+    expect(screen.getByText(/payment reported next/i)).toBeInTheDocument();
+    expect(screen.getByText(/No active trades need attention right now/i)).toBeInTheDocument();
   });
 
   it('keeps sidebar/profile/operations surfaces on shared card components without new data fetches', () => {

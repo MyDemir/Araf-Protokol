@@ -1,4 +1,4 @@
-export { default as states, stateCopy } from './states';
+export { default as states, stateCopy, stateDescriptiveCopy, getStateLabel } from './states';
 export { default as actions, actionCopy } from './actions';
 export { default as orderSide, orderSideCopy } from './orderSide';
 export { default as settlement, settlementCopy } from './settlement';

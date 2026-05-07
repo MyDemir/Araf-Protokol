@@ -18,10 +18,10 @@ describe('PaymentRiskBadge user-facing complexity summary', () => {
       />
     );
 
-    expect(screen.getByText(/Payment method complexity/i)).toBeInTheDocument();
+    expect(screen.getByText(/Payment complexity/i)).toBeInTheDocument();
     expect(screen.getByText('Medium')).toBeInTheDocument();
     expect(screen.queryByText('MEDIUM')).not.toBeInTheDocument();
-    expect(screen.getByText(/not a user trust score/i)).toBeInTheDocument();
+    expect(screen.getByText(/not a user trust score.*counterparty trust score/i)).toBeInTheDocument();
     expect(screen.queryByText(/minBondSurchargeBps/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/feeSurchargeBps/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/warningKey/i)).not.toBeInTheDocument();
@@ -32,5 +32,27 @@ describe('PaymentRiskBadge user-facing complexity summary', () => {
     render(<PaymentRiskBadge lang="EN" compact riskEntry={{ riskLevel: 'LOW', generic: true }} />);
     expect(screen.getByText('Low')).toBeInTheDocument();
     expect(screen.getByText(/Generic payment config; this is not an order-specific rail signal/i)).toBeInTheDocument();
+  });
+
+  it('keeps restricted availability guidance visible without exposing raw compact fields', () => {
+    render(
+      <PaymentRiskBadge
+        lang="EN"
+        compact
+        riskEntry={{
+          riskLevel: 'RESTRICTED',
+          enabled: false,
+          minBondSurchargeBps: 100,
+          feeSurchargeBps: 50,
+          source: 'config',
+          warningKey: 'RESTRICTED_RAIL',
+        }}
+      />
+    );
+
+    expect(screen.getByText(/availability config signal/i)).toBeInTheDocument();
+    expect(screen.getByText(/settlement\/release authority remains on-chain/i)).toBeInTheDocument();
+    expect(screen.queryByText(/minBondSurchargeBps/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/RESTRICTED_RAIL/i)).not.toBeInTheDocument();
   });
 });

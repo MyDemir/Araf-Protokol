@@ -211,7 +211,7 @@ describe('AppViews market side-aware rendering', () => {
     expect(screen.queryByText('SELLER PROFILE')).not.toBeInTheDocument();
     expect(screen.getAllByText('Open').length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Bond/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Payment method complexity/i).length).toBe(1);
+    expect(screen.getAllByText(/Payment complexity/i).length).toBe(1);
     expect(screen.getByText('Medium')).toBeInTheDocument();
     expect(screen.queryByText(/minBondSurchargeBps/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/feeSurchargeBps/i)).not.toBeInTheDocument();
@@ -357,7 +357,7 @@ describe('AppViews market side-aware rendering', () => {
     expect(screen.getAllByText('Unsupported network.').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Payment proof is required.').length).toBeGreaterThan(0);
     expect(screen.queryByText('Chargeback acknowledgement is required.')).not.toBeInTheDocument();
-    expect(screen.getByText('Timer summaries')).toBeInTheDocument();
+    expect(screen.getByText('Timers')).toBeInTheDocument();
     expect(screen.getByText('01h 02m 03s')).toBeInTheDocument();
     const primaryGuidance = screen.getByTestId('trade-primary-guidance');
     expect(within(primaryGuidance).getByRole('button', { name: /Report Payment/i })).toBeDisabled();
@@ -528,6 +528,6 @@ describe('AppViews market side-aware rendering', () => {
     });
 
     render(<div>{views.renderMarket()}</div>);
-    expect(screen.queryAllByText(/Payment method complexity/i)).toHaveLength(0);
+    expect(screen.queryAllByText(/Payment complexity/i)).toHaveLength(0);
   });
 });

@@ -10,9 +10,21 @@ export const paymentRiskSummaryCopy = {
     TR: 'Ödeme yöntemi karmaşıklığı',
     EN: 'Payment method complexity',
   },
+  compactTitle: {
+    TR: 'Ödeme karmaşıklığı',
+    EN: 'Payment complexity',
+  },
+  subtitle: {
+    TR: 'Ödeme yönteminin operasyonel iş yükünü gösterir.',
+    EN: 'Shows operational handling for the payment method.',
+  },
+  operationalExplanation: {
+    TR: 'Bu sinyal ödeme yönteminin operasyonel iş yükünü ve işlem adımlarını özetler.',
+    EN: 'This signal summarizes operational workload and handling steps for the payment method.',
+  },
   notTrustScore: {
-    TR: 'Bu sınıf kullanıcı güven puanı değildir; yalnızca ödeme yönteminin operasyonel karmaşıklığını açıklar.',
-    EN: 'This class is not a user trust score; it only describes payment-method operational complexity.',
+    TR: 'Kullanıcı veya karşı taraf güven puanı değildir; escrow sonucunu belirlemez.',
+    EN: 'Not a user trust score or counterparty trust score; it does not decide escrow outcomes.',
   },
   genericWarning: {
     TR: 'Genel payment config; bu order’a özel rail sinyali değildir.',
@@ -37,6 +49,10 @@ export const paymentRiskSummaryCopy = {
   disclosureTitle: {
     TR: 'Teknik açıklama',
     EN: 'Technical disclosure',
+  },
+  disclosureIntro: {
+    TR: 'Aşağıdaki alanlar config/debug bağlamıdır; kullanıcı güveni veya settlement otoritesi değildir.',
+    EN: 'The fields below are config/debug context; they are not user trust or settlement authority.',
   },
 };
 

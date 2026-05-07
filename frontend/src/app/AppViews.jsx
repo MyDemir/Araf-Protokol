@@ -1,6 +1,6 @@
 import React from 'react';
 import PIIDisplay from '../components/PIIDisplay';
-import { getPiiCopy } from './copy';
+import { getPiiCopy, getStateLabel } from './copy';
 import ReferenceRateTicker from '../components/ReferenceRateTicker';
 import SettlementProposalCard, { normalizeSettlementState } from '../components/SettlementProposalCard';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
@@ -12,6 +12,7 @@ import ProfileContextPage from './contexts/profile/ProfileContextPage';
 import { getOrderSideCopy } from './orderUiModel';
 import { mapResolutionTypeLabel } from './useAppSessionData';
 import TradeRoomPage from './contexts/trade-room/TradeRoomPage';
+import ThemeToggle from './shell/ThemeToggle';
 import { buildTradeRoomPanelCallbacks, getBurnExpiredDeadlinePassed } from './contexts/trade-room/tradeRoomPanelActions';
 
 // [TR] App ana görünüm/render katmanı burada tutulur.
@@ -158,7 +159,10 @@ export const buildAppViews = (ctx) => {
         <button onClick={() => setCurrentView('profile')} title={lang === 'TR' ? 'Profil Merkezi' : 'Profile Center'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'profile' ? 'bg-emerald-900/30 text-emerald-400' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>👤</button>
         <button onClick={() => { if (!isConnected || !isAuthenticated) { handleAuthAction(); return; } setProfileTab('gecmis'); setShowProfileModal(true); }} title={lang === 'TR' ? 'İşlem Geçmişi' : 'Trade History'} className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-500 hover:text-white hover:bg-[#111113] transition">🗂️</button>
       </div>
-      <div className="space-y-4 flex flex-col items-center w-full px-2">
+      <div className="space-y-3 flex flex-col items-center w-full px-2">
+        <div className="w-full flex justify-center">
+          <ThemeToggle />
+        </div>
         <button onClick={() => setLang(lang === 'TR' ? 'EN' : 'TR')} title={lang === 'TR' ? 'Dili Değiştir' : 'Change Language'} className="text-xs font-bold text-slate-400 hover:text-white mb-1">{lang}</button>
         <button onClick={handleAuthAction} title={isConnected && isAuthenticated ? (lang === 'TR' ? 'Profil Merkezi' : 'Profile Center') : (lang === 'TR' ? 'Cüzdan Bağla' : 'Connect Wallet')} className={`w-10 h-10 rounded-full border-2 flex items-center justify-center transition-all shadow-lg mx-auto ${isConnected && isAuthenticated ? 'border-emerald-500 bg-emerald-900/20 text-emerald-400 hover:bg-emerald-900/40 shadow-[0_0_10px_rgba(16,185,129,0.2)]' : 'border-[#2a2a2e] bg-[#111113] text-slate-400 hover:text-white hover:border-emerald-500/50 hover:bg-[#1a1a1f]'}`}>
           {isLoggingIn || !authChecked ? <span className="text-xs animate-spin">⚙️</span> : (isConnected && isAuthenticated ? <span className="text-base drop-shadow-[0_0_5px_rgba(16,185,129,0.8)]">👤</span> : <span className="text-base drop-shadow-[0_0_5px_rgba(255,255,255,0.5)]">👛</span>)}
@@ -183,24 +187,24 @@ export const buildAppViews = (ctx) => {
         </div>
 
         <div className="mb-8">
-          <p className="text-[10px] font-bold text-slate-500 mb-3 tracking-widest">{lang === 'TR' ? 'PAZAR YERİ' : 'MARKETPLACE'}</p>
+          <p className="text-[10px] font-bold text-textMuted mb-3 tracking-widest">{lang === 'TR' ? 'PAZAR YERİ' : 'MARKETPLACE'}</p>
           <div className="space-y-1">
-            <button onClick={() => { setFilterToken('ALL'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'ALL' && currentView === 'market' ? 'bg-[#1a1a1f] text-white border border-[#2a2a2e]' : 'text-slate-400 hover:text-white hover:bg-[#1a1a1f]/50'}`}>
+            <button onClick={() => { setFilterToken('ALL'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'ALL' && currentView === 'market' ? 'bg-elevated text-textPrimary border border-borderStrong' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/50'}`}>
               <div className="flex items-center gap-2"><span className="text-slate-500">⛓️</span> {lang === 'TR' ? 'TÜM ORDERLAR' : 'ALL ORDERS'}</div>
-              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-300">{orders.length}</span>
+              <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textSecondary">{orders.length}</span>
             </button>
-            <button onClick={() => { setFilterToken('USDT'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'USDT' && currentView === 'market' ? 'bg-[#1a1a1f] text-white border border-[#2a2a2e]' : 'text-slate-400 hover:text-white hover:bg-[#1a1a1f]/50'}`}>
+            <button onClick={() => { setFilterToken('USDT'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'USDT' && currentView === 'market' ? 'bg-elevated text-textPrimary border border-borderStrong' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/50'}`}>
               <div className="flex items-center gap-2"><span className="text-emerald-500">₮</span> USDT</div>
-              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-300">{orders.filter(o => o.crypto === 'USDT').length}</span>
+              <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textSecondary">{orders.filter(o => o.crypto === 'USDT').length}</span>
             </button>
-            <button onClick={() => setFilterTier1(!filterTier1)} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterTier1 ? 'bg-[#1a1a1f] text-yellow-500 border border-yellow-500/20' : 'text-slate-400 hover:text-white hover:bg-[#1a1a1f]/50'}`}>
+            <button onClick={() => setFilterTier1(!filterTier1)} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterTier1 ? 'bg-elevated text-yellow-500 border border-yellow-500/20' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/50'}`}>
               <div className="flex items-center gap-2"><span className="text-yellow-500/70">🛡️</span> {lang === 'TR' ? 'Tier 0-1 Düşük Risk Filtresi' : 'Tier 0-1 Low-Risk Filter'}</div>
             </button>
           </div>
         </div>
 
         <div>
-          <p className="text-[10px] font-bold text-slate-500 mb-3 tracking-widest">{lang === 'TR' ? 'DURUM' : 'STATUS'}</p>
+          <p className="text-[10px] font-bold text-textMuted mb-3 tracking-widest">{lang === 'TR' ? 'DURUM' : 'STATUS'}</p>
           <div className="space-y-2">
             {['LOCKED', 'PAID', 'CHALLENGED'].map(status => {
               const count = activeEscrowCounts[status];
@@ -210,23 +214,23 @@ export const buildAppViews = (ctx) => {
                 <div key={status} className="flex flex-col">
                   <button
                     onClick={() => setExpandedStatus(isExpanded ? null : status)}
-                    className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${isExpanded ? 'bg-[#1a1a1f] text-white border border-[#2a2a2e]' : 'text-slate-400 hover:text-white hover:bg-[#1a1a1f]/50 border border-transparent'}`}
+                    className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${isExpanded ? 'bg-elevated text-textPrimary border border-borderStrong' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/50 border border-transparent'}`}
                   >
                     <div className="flex items-center gap-2">
-                      <span className={status === 'CHALLENGED' ? 'text-red-500' : 'text-slate-500'}>
+                      <span className={status === 'CHALLENGED' ? 'text-red-500' : 'text-textMuted'}>
                         {status === 'LOCKED' ? '🔒' : status === 'PAID' ? '%' : '⚔️'}
                       </span>
-                      {status}
+                      {getStateLabel(status, lang)}
                     </div>
                     {count > 0 && (
-                      <span className={status === 'CHALLENGED' ? 'bg-red-900/40 text-red-400 text-[10px] font-bold px-2 py-0.5 rounded border border-red-900/50' : 'bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-300'}>
+                      <span className={status === 'CHALLENGED' ? 'bg-red-900/40 text-red-400 text-[10px] font-bold px-2 py-0.5 rounded border border-red-900/50' : 'bg-elevated text-[10px] px-2 py-0.5 rounded text-textSecondary'}>
                         {status === 'CHALLENGED' ? 'Araf' : count}
                       </span>
                     )}
                   </button>
                   <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-[500px] opacity-100 mt-2' : 'max-h-0 opacity-0'}`}>
                     {statusTrades.length > 0 ? (
-                      <div className="pl-3 pr-1 py-1 space-y-2 border-l-2 border-[#222] ml-3">
+                      <div className="pl-3 pr-1 py-1 space-y-2 border-l-2 border-borderSubtle ml-3">
                         {statusTrades.map(escrow => (
                           <OperationTradeCard
                             key={escrow.id}
@@ -245,7 +249,7 @@ export const buildAppViews = (ctx) => {
                         ))}
                       </div>
                     ) : (
-                      <div className="pl-3 ml-3 border-l-2 border-[#222] py-2 text-xs text-slate-600 italic">
+                      <div className="pl-3 ml-3 border-l-2 border-borderSubtle py-2 text-xs text-slate-600 italic">
                         {lang === 'TR' ? 'Bu duruma ait işlem yok.' : 'No trades in this status.'}
                       </div>
                     )}
@@ -256,21 +260,21 @@ export const buildAppViews = (ctx) => {
           </div>
         </div>
         <div className="mt-6">
-          <p className="text-[10px] font-bold text-slate-500 mb-3 tracking-widest">
+          <p className="text-[10px] font-bold text-textMuted mb-3 tracking-widest">
             {lang === 'TR' ? 'SETTLEMENT' : 'SETTLEMENT'}
           </p>
           <div className="space-y-1">
-            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-slate-300 border border-[#2a2a2e] bg-[#101014]">
+            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-textSecondary border border-borderStrong bg-surface">
               <span className="flex items-center gap-2"><span className="text-emerald-400">🧩</span>{lang === 'TR' ? 'Aktif Teklif' : 'Active Proposals'}</span>
-              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-200">{activeEscrowCounts?.settlement?.PROPOSED ?? 0}</span>
+              <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textPrimary">{activeEscrowCounts?.settlement?.PROPOSED ?? 0}</span>
             </div>
-            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-slate-300 border border-[#2a2a2e] bg-[#101014]">
+            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-textSecondary border border-borderStrong bg-surface">
               <span className="flex items-center gap-2"><span className="text-yellow-400">⏳</span>{lang === 'TR' ? 'Benden Aksiyon Bekliyor' : 'Action Required'}</span>
-              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-200">{activeEscrowCounts?.settlement?.ACTION_REQUIRED ?? 0}</span>
+              <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textPrimary">{activeEscrowCounts?.settlement?.ACTION_REQUIRED ?? 0}</span>
             </div>
-            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-slate-300 border border-[#2a2a2e] bg-[#101014]">
+            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-textSecondary border border-borderStrong bg-surface">
               <span className="flex items-center gap-2"><span className="text-sky-400">🕒</span>{lang === 'TR' ? 'Karşı Taraftan Yanıt Bekliyorum' : 'Waiting Counterparty'}</span>
-              <span className="bg-[#222] text-[10px] px-2 py-0.5 rounded text-slate-200">{activeEscrowCounts?.settlement?.WAITING ?? 0}</span>
+              <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textPrimary">{activeEscrowCounts?.settlement?.WAITING ?? 0}</span>
             </div>
             {activeEscrows
               .filter((escrow) => normalizeSettlementState(escrow?.rawTrade?.settlementProposal?.state) === 'PROPOSED')
@@ -421,10 +425,10 @@ export const buildAppViews = (ctx) => {
       <ReferenceRateTicker lang={lang} />
 
       <div className="mb-4 p-3 rounded-xl border border-orange-700/40 bg-orange-900/20">
-        <p className="text-[11px] text-orange-200 leading-relaxed">
+        <p className="text-xs text-orange-200 leading-relaxed">
           {lang === 'TR'
-            ? 'Bilgi: CHALLENGED durumunda 10 gün dolunca burnExpired fonksiyonu kontratta herkese açıktır; üçüncü taraflar da çağırabilir.'
-            : 'Info: In CHALLENGED state, once 10 days pass, burnExpired is permissionless on-chain and can be called by third parties.'}
+            ? `Bilgi: ${getStateLabel('CHALLENGED', lang)} durumunda 10 gün dolunca burnExpired fonksiyonu kontratta herkese açıktır; üçüncü taraflar da çağırabilir.`
+            : `Info: In ${getStateLabel('CHALLENGED', lang)}, once 10 days pass, burnExpired is permissionless on-chain and can be called by third parties.`}
         </p>
       </div>
 
@@ -497,7 +501,7 @@ export const buildAppViews = (ctx) => {
                               : 'Informational quick summary; not a final verdict.'}
                           </p>
                         </div>
-                        <p className="text-[10px] text-slate-500 mt-3 leading-relaxed">
+                        <p className="text-xs text-slate-500 mt-3 leading-relaxed">
                           {lang === 'TR'
                             ? 'Not: Bu kart hızlı bir özet gösterir; nihai güven/hüküm değerlendirmesi değildir.'
                             : 'Note: This card is a quick summary, not a final trust verdict.'}
@@ -532,12 +536,12 @@ export const buildAppViews = (ctx) => {
                      (isContractLoading  ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : (order.ctaLabel || (lang === 'TR' ? 'İşlem Yap' : 'Trade')))}
                   </button>
                   {!isFunded && isConnected && canTakeOrder && !isPaused && (
-                    <p className="text-[10px] text-red-500 mt-2 text-center md:text-right w-full leading-tight">
+                    <p className="text-xs text-red-500 mt-2 text-center md:text-right w-full leading-snug">
                       ⚠️ Anti-Spam: {lang === 'TR' ? 'İşlem yapabilmek için cüzdanınızda en az 0.001 ETH bulunmalıdır.' : 'You must have at least 0.001 ETH in your wallet to trade.'}
                     </p>
                   )}
                   {!isCooldownOk && isConnected && (
-                    <p className="text-[10px] text-amber-400 mt-2 text-center md:text-right w-full leading-tight">
+                    <p className="text-xs text-amber-400 mt-2 text-center md:text-right w-full leading-snug">
                       {lang === 'TR'
                         ? 'Not: 4 saatlik cooldown Tier 0 ve Tier 1 için geçerlidir.'
                         : 'Note: the 4-hour cooldown applies to both Tier 0 and Tier 1.'}
@@ -774,7 +778,7 @@ export const buildAppViews = (ctx) => {
                       <label htmlFor="receipt-upload" className="w-full bg-[#0a0a0c] text-white px-4 py-3 rounded-xl border border-[#333] mb-4 text-sm flex items-center justify-center cursor-pointer hover:border-blue-500/50 transition">
                         {paymentIpfsHash ? (lang === 'TR' ? '✅ Yüklendi (Hash: ' + paymentIpfsHash.slice(0,8) + '...)' : '✅ Uploaded') : (lang === 'TR' ? '📎 Dekont Yükle' : '📎 Upload Receipt')}
                       </label>
-                      <p className="text-[10px] text-slate-500 mt-1 mb-4 text-center">
+                      <p className="text-xs text-slate-500 mt-1 mb-4 text-center">
                         {lang === 'TR' ? 'Dekontunuz AES-256 ile şifrelenir ve işlem bitince kalıcı olarak silinir.' : 'Receipt is AES-256 encrypted and permanently deleted after trade.'}
                       </p>
                     </div>
@@ -791,7 +795,7 @@ export const buildAppViews = (ctx) => {
                         <p className="text-sm text-slate-300 mb-2">
                           {lang === 'TR' ? 'Alıcının Doğrulanmış İsmi:' : "Buyer's Verified Name:"} <span className="font-bold text-white">{takerName || (lang === 'TR' ? 'Yükleniyor...' : 'Loading...')}</span>
                         </p>
-                        <p className="text-[11px] text-slate-500 leading-tight">
+                        <p className="text-xs text-slate-500 leading-snug">
                           {lang === 'TR' ? 'Gelen paranın gönderici ismi ile bu ismin KESİNLİKLE eşleştiğini teyit ediniz. Eşleşmiyorsa parayı iade edip işlemi iptal edin.' : 'Ensure the sender name on the payment EXACTLY matches this name. If not, refund and cancel.'}
                         </p>
                       </div>
@@ -822,7 +826,7 @@ export const buildAppViews = (ctx) => {
                         if (canAutoRelease) {
                           return (
                             <div className="w-full mt-2 flex flex-col items-center">
-                              <p className="text-[11px] text-red-400 font-bold mb-1 text-center leading-tight">
+                              <p className="text-xs text-red-400 font-bold mb-1 text-center leading-snug">
                                 {lang === 'TR' ? 'Dikkat: Maker pasif kaldığı için her iki tarafın teminatından %2 ihmal cezası kesilecektir (Maker: %2, Taker: %2).' : 'Warning: Due to maker inaction, a 2% negligence penalty will be deducted from both parties\' bonds (Maker: 2%, Taker: 2%).'}
                               </p>
                               <button onClick={() => handleAutoRelease(activeTrade.onchainId)} disabled={isContractLoading} className="w-full text-sm font-bold py-3 rounded-xl transition bg-emerald-600/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500 hover:text-white shadow-lg">
@@ -841,7 +845,7 @@ export const buildAppViews = (ctx) => {
                             <button disabled className="w-full text-sm font-bold py-3 rounded-xl transition bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed">
                               {lang === 'TR' ? '🔔 Maker’ı Uyar' : '🔔 Ping Maker'}
                             </button>
-                            <p className="text-[11px] text-red-400 mt-2 text-center leading-tight">
+                            <p className="text-xs text-red-400 mt-2 text-center leading-snug">
                               ⚠️ {lang === 'TR' ? 'Maker itiraz uyarı sürecini başlattı. Artık otomatik serbest bırakma (Auto-Release) yolunu kullanamazsınız.' : 'Maker has initiated the challenge warning process. You can no longer use Auto-Release.'}
                             </p>
                           </div>
@@ -905,14 +909,14 @@ export const buildAppViews = (ctx) => {
                       )}
                       <button onClick={() => {
                         const msg = roomState === 'LOCKED'
-                          ? (lang === 'TR' ? 'LOCKED aşamasında (henüz ödeme bildirilmeden) iptaller kesintisizdir. Onaylıyor musunuz?' : 'Cancel in LOCKED state has zero fees. Confirm?')
+                          ? (lang === 'TR' ? `${getStateLabel('LOCKED', lang)} aşamasında (henüz ödeme bildirilmeden) iptaller kesintisizdir. Onaylıyor musunuz?` : `Cancel in ${getStateLabel('LOCKED', lang)} state has zero fees. Confirm?`)
                           : (lang === 'TR' ? 'Karşılıklı iptal durumunda standart protokol ücreti kesilecektir. Onaylıyor musunuz?' : 'Standard protocol fees will be deducted upon mutual cancellation. Confirm?');
                         if (window.confirm(msg)) handleProposeCancel();
                       }} className={`w-full bg-[#0a0a0c] border border-orange-500/30 text-orange-500 p-3 rounded-xl font-bold text-sm hover:bg-orange-500 hover:text-white transition ${!(isChallenged && isMaker) ? 'sm:col-span-2' : ''}`}>
                         ↩️ {lang === 'TR' ? 'İptal Teklif Et' : 'Propose Cancel'}
                       </button>
                     </div>
-                    <p className="text-[10px] text-slate-500 text-center mt-3">
+                    <p className="text-xs text-slate-500 text-center mt-3">
                       {lang === 'TR' ? 'Not: İptal onaylandığında her iki taraftan protokol ücreti kesilir.' : 'Note: Protocol fee is deducted from both parties upon cancel.'}
                     </p>
                   </>
@@ -928,9 +932,9 @@ export const buildAppViews = (ctx) => {
                 {cancelStatus === 'proposed_by_other' && (
                   <div>
                     <p className="text-orange-400 font-bold text-sm mb-2">⚠️ {lang === 'TR' ? 'Karşı taraf iptal teklif etti.' : 'Opponent proposed cancellation.'}</p>
-                    <p className="text-[11px] text-slate-400 mb-3">
+                    <p className="text-xs text-slate-400 mb-3">
                       {roomState === 'LOCKED'
-                        ? (lang === 'TR' ? 'İşlem LOCKED aşamasında olduğu için herhangi bir kesinti yapılmayacaktır.' : 'Since trade is in LOCKED state, no fees will be deducted.')
+                        ? (lang === 'TR' ? `İşlem ${getStateLabel('LOCKED', lang)} aşamasında olduğu için herhangi bir kesinti yapılmayacaktır.` : `Since trade is in ${getStateLabel('LOCKED', lang)} state, no fees will be deducted.`)
                         : (lang === 'TR' ? 'Onaylarsanız standart protokol ücreti kesilecek ve kalan fonlar iade edilecektir.' : 'If you approve, standard protocol fee will be deducted and remaining funds returned.')}
                     </p>
                     <div className="grid grid-cols-2 gap-3">
@@ -976,10 +980,10 @@ export const buildAppViews = (ctx) => {
                   <p className="text-red-500 text-xs font-bold mb-2">
                     🔥 {lang === 'TR' ? '10 Gün Süresi Doldu — Sözleşme Artık Yakılabilir' : '10-Day Deadline Passed — Contract Can Now Be Burned'}
                   </p>
-                  <p className="text-slate-500 text-[11px] mb-3">
+                  <p className="text-slate-500 text-xs mb-3">
                     {lang === 'TR' ? 'Uyarı: Sözleşme yakıldığında içerideki kilitli tüm USDT ve her iki tarafın teminatları kalıcı olarak Protokol Hazinesine aktarılır. İade yapılmaz.' : 'Warning: When burned, all locked USDT and bonds from both parties are permanently transferred to the Treasury. No refunds.'}
                   </p>
-                  <p className="text-[11px] text-orange-300 mb-3">
+                  <p className="text-xs text-orange-300 mb-3">
                     {lang === 'TR'
                       ? 'Not: burnExpired fonksiyonu kontratta herkese açıktır; 10 gün dolduktan sonra üçüncü kişiler de bu çağrıyı yapabilir.'
                       : 'Note: burnExpired is permissionless on-chain; after 10 days, third parties can also execute it.'}

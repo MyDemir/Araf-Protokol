@@ -1,23 +1,24 @@
 import React from 'react';
+import { getStateLabel } from '../../copy/states';
 import OperationTradeCard from './OperationTradeCard';
 
 export const OperationsSummaryBar = ({ summary, lang = 'EN' }) => {
   const items = [
-    { key: 'totalActive', label: lang === 'TR' ? 'Toplam Aktif' : 'Total Active' },
-    { key: 'locked', label: 'LOCKED' },
-    { key: 'paid', label: 'PAID' },
-    { key: 'challenged', label: 'CHALLENGED' },
-    { key: 'settlementActionRequired', label: lang === 'TR' ? 'Settlement Aksiyon' : 'Settlement Action' },
-    { key: 'settlementWaiting', label: lang === 'TR' ? 'Settlement Bekleme' : 'Settlement Waiting' },
-    { key: 'pendingBackendSync', label: lang === 'TR' ? 'Backend Senkron' : 'Backend Sync' },
+    { key: 'totalActive', label: lang === 'TR' ? 'Aktif işlem' : 'Active trades' },
+    { key: 'settlementActionRequired', label: lang === 'TR' ? 'Yanıt gerekiyor' : 'Needs response' },
+    { key: 'paid', label: getStateLabel('PAID', lang) },
+    { key: 'challenged', label: getStateLabel('CHALLENGED', lang) },
+    { key: 'settlementWaiting', label: lang === 'TR' ? 'Yanıt bekleniyor' : 'Awaiting response' },
+    { key: 'locked', label: getStateLabel('LOCKED', lang) },
+    { key: 'pendingBackendSync', label: lang === 'TR' ? 'Oda senkronu' : 'Room sync' },
   ];
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2 mb-4">
       {items.map((item) => (
-        <div key={item.key} className="bg-[#101014] border border-[#222] rounded-lg px-3 py-2">
-          <p className="text-[10px] text-slate-500 uppercase tracking-wide">{item.label}</p>
-          <p className="text-sm font-bold text-white">{summary?.[item.key] ?? 0}</p>
+        <div key={item.key} className="bg-surface border border-borderSubtle rounded-xl px-3 py-3">
+          <p className="text-sm font-semibold text-textPrimary leading-snug">{item.label}</p>
+          <p className="mt-1 text-xl font-bold text-textPrimary">{summary?.[item.key] ?? 0}</p>
         </div>
       ))}
     </div>
@@ -39,15 +40,15 @@ export const SettlementQueueCard = ({ escrow, lang, onGoToRoom }) => {
   const mode = resolveSettlementMode(escrow);
   const isActionRequired = mode === 'action_required';
   const title = isActionRequired
-    ? (lang === 'TR' ? 'Settlement aksiyonu gerekli' : 'Settlement action required')
-    : (lang === 'TR' ? 'Karşı taraf yanıtı bekleniyor' : 'Waiting for counterparty');
+    ? (lang === 'TR' ? 'Settlement yanıtı gerekiyor' : 'Settlement needs your response')
+    : (lang === 'TR' ? 'Karşı taraf settlement yanıtı bekleniyor' : 'Waiting on counterparty settlement response');
   const accentClass = isActionRequired
     ? 'border-red-500/40 bg-red-950/10 text-red-300'
     : 'border-amber-500/40 bg-amber-950/10 text-amber-300';
 
   return (
     <div className={`rounded-xl border p-2 ${accentClass}`} data-testid="settlement-queue-card">
-      <p className="mb-2 text-[11px] font-bold uppercase tracking-widest">{title}</p>
+      <p className="mb-2 text-sm font-bold">{title}</p>
       <OperationTradeCard escrow={escrow} lang={lang} onGoToRoom={onGoToRoom} />
     </div>
   );
@@ -56,8 +57,8 @@ export const SettlementQueueCard = ({ escrow, lang, onGoToRoom }) => {
 export const PendingSyncCard = ({ escrow, lang, onGoToRoom }) => {
   return (
     <div className="rounded-xl border border-sky-500/40 bg-sky-950/10 p-2" data-testid="pending-sync-card">
-      <p className="mb-2 text-[11px] font-bold uppercase tracking-widest text-sky-300">
-        {lang === 'TR' ? 'Backend senkron bekliyor' : 'Pending backend sync'}
+      <p className="mb-2 text-sm font-bold text-sky-300">
+        {lang === 'TR' ? 'Oda senkronu sürüyor' : 'Room sync in progress'}
       </p>
       <OperationTradeCard escrow={escrow} lang={lang} onGoToRoom={onGoToRoom} />
     </div>

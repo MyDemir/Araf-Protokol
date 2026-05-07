@@ -3,6 +3,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { APP_THEME_STORAGE_KEY, getInitialThemeMode } from '../app/bootstrapState';
 import { ThemeProvider, useThemeMode } from '../app/providers/ThemeProvider';
+import ThemeToggle from '../app/shell/ThemeToggle';
 
 describe('getInitialThemeMode', () => {
   beforeEach(() => {
@@ -46,6 +47,20 @@ describe('getInitialThemeMode', () => {
     await waitFor(() => expect(window.localStorage.getItem(APP_THEME_STORAGE_KEY)).toBe('day'));
     expect(document.documentElement.dataset.theme).toBe('day');
     expect(screen.getByRole('button', { name: 'day' })).toBeInTheDocument();
+  });
+
+
+  it('ThemeToggle updates provider mode and persisted theme', async () => {
+    render(React.createElement(ThemeProvider, null, React.createElement(ThemeToggle)));
+
+    const toggle = screen.getByRole('combobox', { name: /theme mode/i });
+    expect(toggle).toHaveValue('system');
+
+    fireEvent.change(toggle, { target: { value: 'day' } });
+
+    await waitFor(() => expect(window.localStorage.getItem(APP_THEME_STORAGE_KEY)).toBe('day'));
+    expect(document.documentElement.dataset.theme).toBe('day');
+    expect(toggle).toHaveValue('day');
   });
 
 });

@@ -130,6 +130,23 @@ describe('buildOperationsContextModel', () => {
   });
 
 
+  it('keeps lane keys stable while exposing localized command-center labels', () => {
+    const model = buildOperationsContextModel({
+      activeEscrows: [
+        { id: 'action', state: 'LOCKED', role: 'taker', rawTrade: { settlementProposal: { state: 'PROPOSED', proposer: '0xother' } } },
+        { id: 'paid', state: 'PAID', role: 'maker', rawTrade: {} },
+      ],
+      activeEscrowCounts: baseCounts,
+      activeTrade: { _pendingBackendSync: true },
+      address: '0xviewer',
+      lang: 'TR',
+    });
+
+    expect(model.lanes.map((l) => l.key)).toEqual(['settlement_action_required', 'pending_backend_sync', 'paid']);
+    expect(model.lanes.map((l) => l.label)).toEqual(['Yanıt Gereken Settlement', 'Oda Senkronu Sürüyor', 'Ödeme Bildirilenler']);
+  });
+
+
   it('settlement action required outranks CHALLENGED for the same trade', () => {
     const model = buildOperationsContextModel({
       activeEscrows: [
