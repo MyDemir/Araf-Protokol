@@ -1,6 +1,7 @@
 import React from 'react';
 import { buildSettlementPreviewUrl } from '../app/apiConfig';
 import SettlementPreviewModal from './SettlementPreviewModal';
+import { useSettlementActions } from '../app/contexts/settlement/useSettlementActions';
 
 const ACTIVE_ROOM_STATES = ['CHALLENGED'];
 const TERMINAL_ROOM_STATES = ['RESOLVED', 'CANCELED', 'BURNED'];
@@ -45,6 +46,7 @@ export default function SettlementProposalCard({
   address,
   lang,
   authenticatedFetch,
+  settlementContractFns,
   proposeSettlement,
   acceptSettlement,
   rejectSettlement,
@@ -88,6 +90,24 @@ export default function SettlementProposalCard({
     ? 'Backend trade kaydı hazır olmadığı için settlement önizleme açılamıyor.'
     : 'Settlement preview is unavailable until backend trade record is ready.';
   const missingOnchainIdMessage = lang === 'TR' ? 'On-chain trade ID bulunamadı.' : 'Missing on-chain trade ID.';
+  const contractFns = settlementContractFns || {
+    proposeSettlement,
+    acceptSettlement,
+    rejectSettlement,
+    withdrawSettlement,
+    expireSettlement,
+  };
+  const settlementActions = useSettlementActions({
+    activeTrade,
+    userRole,
+    address,
+    lang,
+    contractFns,
+    fetchMyTrades,
+    showToast,
+    isContractLoading,
+    setIsContractLoading,
+  });
 
   const normalizedMakerShareBps = Number(makerShareBps);
   const normalizedTakerShareBps = 10000 - normalizedMakerShareBps;
@@ -156,24 +176,6 @@ export default function SettlementProposalCard({
     }
   }, [activeTrade?.id, authenticatedFetch, hasBackendTradeId, lang, normalizedMakerShareBps, previewUnavailableMessage]);
 
-  const refreshTradesAfterTx = React.useCallback(async () => {
-    await fetchMyTrades();
-  }, [fetchMyTrades]);
-
-  const runTx = React.useCallback(async (fn, successMessage) => {
-    try {
-      setIsContractLoading(true);
-      await fn();
-      showToast(successMessage, 'success');
-      await refreshTradesAfterTx();
-    } catch (err) {
-      const msg = err?.shortMessage || err?.reason || err?.message || (lang === 'TR' ? 'Settlement işlemi başarısız.' : 'Settlement transaction failed.');
-      showToast(msg, 'error');
-    } finally {
-      setIsContractLoading(false);
-    }
-  }, [lang, refreshTradesAfterTx, setIsContractLoading, showToast]);
-
   const onPreviewCreate = async () => {
     if (!validateInput()) return;
     if (!hasBackendTradeId) {
@@ -186,12 +188,11 @@ export default function SettlementProposalCard({
   };
 
   const onConfirmCreate = async () => {
-    if (!hasOnchainTradeId) return;
-    await runTx(
-      () => proposeSettlement(BigInt(onchainTradeId), normalizedMakerShareBps, computedExpiresAt),
-      lang === 'TR' ? 'Settlement teklifi zincire gönderildi.' : 'Settlement proposal submitted on-chain.'
-    );
-    setPreviewOpen(false);
+    const ok = await settlementActions.propose({
+      makerShareBps: normalizedMakerShareBps,
+      expiresAt: computedExpiresAt,
+    });
+    if (ok) setPreviewOpen(false);
   };
 
   const onPreviewAccept = async () => {
@@ -333,8 +334,8 @@ export default function SettlementProposalCard({
               )}
               {!isExpired && isProposer && (
                 <button
-                  onClick={() => runTx(() => withdrawSettlement(BigInt(onchainTradeId)), lang === 'TR' ? 'Settlement teklifi geri çekildi.' : 'Settlement proposal withdrawn.')}
-                  disabled={isContractLoading || !hasOnchainTradeId}
+                  onClick={settlementActions.withdraw}
+                  disabled={isContractLoading || !hasOnchainTradeId || !settlementActions.canWithdraw}
                   className="px-3 py-2 text-sm rounded-lg border border-orange-500/40 text-orange-400 hover:bg-orange-500 hover:text-white transition disabled:opacity-50"
                 >
                   {lang === 'TR' ? 'Geri Çek' : 'Withdraw'}
@@ -344,14 +345,14 @@ export default function SettlementProposalCard({
                 <>
                   <button
                     onClick={onPreviewAccept}
-                    disabled={isContractLoading || !hasOnchainTradeId || !hasBackendTradeId}
+                    disabled={isContractLoading || !hasOnchainTradeId || !hasBackendTradeId || !settlementActions.canAccept}
                     className="px-3 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 transition disabled:opacity-50"
                   >
                     {lang === 'TR' ? 'Kabul Et (Önizleme)' : 'Accept (Preview)'}
                   </button>
                   <button
-                    onClick={() => runTx(() => rejectSettlement(BigInt(onchainTradeId)), lang === 'TR' ? 'Settlement teklifi reddedildi.' : 'Settlement proposal rejected.')}
-                    disabled={isContractLoading || !hasOnchainTradeId}
+                    onClick={settlementActions.reject}
+                    disabled={isContractLoading || !hasOnchainTradeId || !settlementActions.canReject}
                     className="px-3 py-2 text-sm rounded-lg border border-red-500/40 text-red-400 hover:bg-red-500 hover:text-white transition disabled:opacity-50"
                   >
                     {lang === 'TR' ? 'Reddet' : 'Reject'}
@@ -360,8 +361,8 @@ export default function SettlementProposalCard({
               )}
               {isExpired && isTradeParty && (
                 <button
-                  onClick={() => runTx(() => expireSettlement(BigInt(onchainTradeId)), lang === 'TR' ? 'Settlement teklifi süresi doldu olarak işaretlendi.' : 'Settlement proposal marked expired.')}
-                  disabled={isContractLoading || !hasOnchainTradeId}
+                  onClick={settlementActions.expire}
+                  disabled={isContractLoading || !hasOnchainTradeId || !settlementActions.canExpire}
                   className="px-3 py-2 text-sm rounded-lg border border-yellow-500/40 text-yellow-400 hover:bg-yellow-500 hover:text-black transition disabled:opacity-50"
                 >
                   {lang === 'TR' ? 'Süresi Doldu Olarak İşaretle' : 'Mark as Expired'}
@@ -400,7 +401,7 @@ export default function SettlementProposalCard({
         takerShareBps={previewMode === 'accept' ? (proposal?.takerShareBps ?? proposal?.taker_share_bps ?? '—') : normalizedTakerShareBps}
         previewData={previewData}
         onConfirm={previewMode === 'accept'
-          ? () => runTx(() => acceptSettlement(BigInt(onchainTradeId)), lang === 'TR' ? 'Settlement kabul edildi ve işlem on-chain kapanacak.' : 'Settlement accepted; trade will close on-chain.')
+          ? settlementActions.accept
           : onConfirmCreate}
         confirmLabel={previewMode === 'accept'
           ? (lang === 'TR' ? 'Kabul Et ve On-Chain Gönder' : 'Accept and Submit On-Chain')

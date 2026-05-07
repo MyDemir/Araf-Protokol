@@ -5,7 +5,7 @@ const ThemeContext = React.createContext({ themeMode: 'system', setThemeMode: ()
 
 const resolveTheme = (mode) => {
   if (mode === 'day' || mode === 'night') return mode;
-  if (typeof window === 'undefined') return 'night';
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'night';
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'night' : 'day';
 };
 
@@ -26,7 +26,7 @@ export const ThemeProvider = ({ children }) => {
 
     applyTheme();
 
-    if (themeMode !== 'system' || typeof window === 'undefined') return undefined;
+    if (themeMode !== 'system' || typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
 
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     media.addEventListener?.('change', applyTheme);

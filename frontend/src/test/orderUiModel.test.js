@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   assertOrderSide,
+  getOrderSideCopy,
   buildMakerPreview,
   mapApiOrderToUi,
   mapOffchainHealthToUi,
@@ -35,6 +36,7 @@ describe('orderUiModel mapping', () => {
     });
 
     expect(ui.side).toBe('SELL_CRYPTO');
+    expect(ui.sideLabel).toBe('Sell Order');
     expect(ui.ctaLabel).toBe('Buy');
     expect(ui.bondLabel).toBe('8%');
     expect(ui.limitLabel).toContain('Min Fill 10 USDT');
@@ -53,8 +55,19 @@ describe('orderUiModel mapping', () => {
     });
 
     expect(ui.side).toBe('BUY_CRYPTO');
+    expect(ui.sideLabel).toBe('Buy Order');
     expect(ui.ctaLabel).toBe('Sell');
     expect(ui.bondLabel).toBe('10%');
+  });
+
+
+  it('maps side copy for display, action, and order labels without changing enums', () => {
+    expect(getOrderSideCopy('SELL_CRYPTO', 'display', 'EN')).toBe('Selling Crypto');
+    expect(getOrderSideCopy('BUY_CRYPTO', 'display', 'EN')).toBe('Buying Crypto');
+    expect(getOrderSideCopy('SELL_CRYPTO', 'action', 'TR')).toBe('Satın Al');
+    expect(getOrderSideCopy('BUY_CRYPTO', 'action', 'TR')).toBe('Sat');
+    expect(getOrderSideCopy('SELL_CRYPTO', 'order', 'TR')).toBe('Satış orderı');
+    expect(getOrderSideCopy('BUY_CRYPTO', 'order', 'TR')).toBe('Alış orderı');
   });
 
   it('keeps tokenMap policy from /api/orders/config mirror', () => {

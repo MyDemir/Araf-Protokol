@@ -62,6 +62,9 @@ const makeCtx = (overrides = {}) => ({
   SUPPORTED_TOKEN_ADDRESSES: { USDT: '0x1' },
   onchainTokenMap: {},
   handleCreateOrder: vi.fn(),
+  makerValidationError: null,
+  makerPayoutRiskEntry: { riskLevel: 'MEDIUM', enabled: true, minBondSurchargeBps: 0, feeSurchargeBps: 0, warningKey: 'BANK_TRANSFER_CONFIRMATION_REQUIRED', description: { TR: 'x', EN: 'y' } },
+  isCreateTemporarilyDisabledByRisk: false,
   isContractLoading: false,
   setIsContractLoading: vi.fn(),
   loadingText: '',
@@ -128,11 +131,13 @@ describe('AppModals side-aware behaviors', () => {
 
     render(<div>{modals.renderMakerModal()}</div>);
 
-    expect(screen.getByRole('button', { name: 'SELL_CRYPTO' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'BUY_CRYPTO' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Selling Crypto' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Buying Crypto' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'SELL_CRYPTO' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'BUY_CRYPTO' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Open Buy Order/i })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'SELL_CRYPTO' }));
+    await user.click(screen.getByRole('button', { name: 'Selling Crypto' }));
     expect(setMakerSide).toHaveBeenCalledWith('SELL_CRYPTO');
   });
 
@@ -155,18 +160,15 @@ describe('AppModals side-aware behaviors', () => {
     const modals = buildAppModals(makeCtx({
       profileTab: 'ayarlar',
       showProfileModal: false,
-      paymentRiskConfig: {
-        US: {
-          US_ACH: {
-            riskLevel: 'RESTRICTED',
-            minBondSurchargeBps: 0,
-            feeSurchargeBps: 0,
-            warningKey: 'RESTRICTED',
-            enabled: false,
-            description: { TR: 'x', EN: 'Restricted in UI config only.' },
-          },
-        },
+      makerPayoutRiskEntry: {
+        riskLevel: 'RESTRICTED',
+        minBondSurchargeBps: 0,
+        feeSurchargeBps: 0,
+        warningKey: 'RESTRICTED',
+        enabled: false,
+        description: { TR: 'x', EN: 'Restricted in UI config only.' },
       },
+      isCreateTemporarilyDisabledByRisk: true,
       payoutProfileDraft: {
         rail: 'US_ACH',
         country: 'US',
@@ -183,11 +185,33 @@ describe('AppModals side-aware behaviors', () => {
     expect(screen.getByText(/not a contract authority rule|kontrat hükmü değildir/i)).toBeInTheDocument();
   });
 
+
+  it('lets maker modal reveal payment-risk technical disclosure on demand', async () => {
+    const user = userEvent.setup();
+    const modals = buildAppModals(makeCtx({ profileTab: 'ayarlar', showProfileModal: false }));
+
+    render(<div>{modals.renderMakerModal()}</div>);
+
+    expect(screen.getAllByText(/Payment method complexity/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Medium').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/not a user trust score/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/minBondSurchargeBps/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/warningKey/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getAllByRole('button', { name: /Show technical disclosure/i })[0]);
+
+    expect(screen.getAllByText(/minBondSurchargeBps/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/feeSurchargeBps/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/warningKey/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/BANK_TRANSFER_CONFIRMATION_REQUIRED/i).length).toBeGreaterThan(0);
+  });
+
   it('renders authoritative my orders fields', () => {
     const modals = buildAppModals(makeCtx({ showMakerModal: false }));
     render(<div>{modals.renderProfileModal()}</div>);
 
-    expect(screen.getByText(/BUY_CRYPTO · OPEN/)).toBeInTheDocument();
+    expect(screen.getByText(/Buy Order · OPEN/)).toBeInTheDocument();
+    expect(screen.queryByText(/BUY_CRYPTO · OPEN/)).not.toBeInTheDocument();
     expect(screen.getByText(/Remaining: 50 USDT/)).toBeInTheDocument();
     expect(screen.getByText(/Min Fill: 10 USDT/)).toBeInTheDocument();
   });

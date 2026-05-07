@@ -1,9 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildGoToTradeRoomAction } from '../app/actions/tradeNavigationActions';
+import { buildGoToTradeRoomAction, buildNextActiveTrade } from '../app/actions/tradeNavigationActions';
 
 describe('buildGoToTradeRoomAction', () => {
-  it('sets active trade from escrow.rawTrade', () => {
-    const escrow = { rawTrade: { id: 't1', chargebackAcked: true }, role: 'maker', state: 'LOCKED' };
+  it('sets active trade from escrow.rawTrade without dropping rawTrade fields', () => {
+    const rawTrade = {
+      id: 't1',
+      onchainId: '77',
+      chargebackAcked: true,
+      arbitraryBackendField: 'kept',
+      nested: { ok: true },
+    };
+    const escrow = { rawTrade, role: 'maker', state: 'LOCKED' };
     const setActiveTrade = vi.fn();
     const action = buildGoToTradeRoomAction({
       escrow,
@@ -14,7 +21,7 @@ describe('buildGoToTradeRoomAction', () => {
       setCurrentView: vi.fn(),
     });
     action();
-    expect(setActiveTrade).toHaveBeenCalledWith(escrow.rawTrade);
+    expect(setActiveTrade).toHaveBeenCalledWith(expect.objectContaining(rawTrade));
   });
 
   it('sets user role, trade state, chargeback flag, and currentView', () => {
@@ -37,6 +44,72 @@ describe('buildGoToTradeRoomAction', () => {
     expect(setTradeState).toHaveBeenCalledWith('PAID');
     expect(setChargebackAccepted).toHaveBeenCalledWith(true);
     expect(setCurrentView).toHaveBeenCalledWith('tradeRoom');
+  });
+
+  it('preserves settlementProposal from rawTrade before escrow fallback', () => {
+    const rawSettlement = { state: 'PROPOSED', proposer: '0xraw' };
+    const escrowSettlement = { state: 'PROPOSED', proposer: '0xescrow' };
+
+    expect(buildNextActiveTrade({
+      rawTrade: { id: 'raw-first', settlementProposal: rawSettlement },
+      settlementProposal: escrowSettlement,
+    })).toEqual(expect.objectContaining({ settlementProposal: rawSettlement }));
+  });
+
+  it('preserves settlementProposal from escrow when rawTrade omits it', () => {
+    const settlementProposal = { state: 'PROPOSED', proposer: '0xescrow' };
+    const setActiveTrade = vi.fn();
+
+    buildGoToTradeRoomAction({
+      escrow: {
+        rawTrade: { id: 'fallback-settlement', untouched: 'yes' },
+        settlementProposal,
+        role: 'maker',
+        state: 'CHALLENGED',
+      },
+      setActiveTrade,
+      setUserRole: vi.fn(),
+      setTradeState: vi.fn(),
+      setChargebackAccepted: vi.fn(),
+      setCurrentView: vi.fn(),
+    })();
+
+    expect(setActiveTrade).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'fallback-settlement',
+      untouched: 'yes',
+      settlementProposal,
+    }));
+  });
+
+  it('preserves _pendingBackendSync from rawTrade or escrow', () => {
+    expect(buildNextActiveTrade({
+      rawTrade: { id: 'raw-pending', _pendingBackendSync: true },
+      _pendingBackendSync: false,
+    })).toEqual(expect.objectContaining({ _pendingBackendSync: true }));
+
+    expect(buildNextActiveTrade({
+      rawTrade: { id: 'escrow-pending' },
+      _pendingBackendSync: true,
+    })).toEqual(expect.objectContaining({ _pendingBackendSync: true }));
+  });
+
+
+  it('defensively builds active trade from escrow fields when rawTrade is missing', () => {
+    expect(buildNextActiveTrade({
+      id: 'escrow-only',
+      onchainId: '12',
+      role: 'maker',
+      state: 'LOCKED',
+      settlementProposal: { state: 'PROPOSED' },
+      _pendingBackendSync: true,
+    })).toEqual(expect.objectContaining({
+      id: 'escrow-only',
+      onchainId: '12',
+      role: 'maker',
+      state: 'LOCKED',
+      settlementProposal: { state: 'PROPOSED' },
+      _pendingBackendSync: true,
+    }));
   });
 
   it('closes sidebar if setter exists', () => {
@@ -67,16 +140,40 @@ describe('buildGoToTradeRoomAction', () => {
     expect(setShowProfileModal).toHaveBeenCalledWith(false);
   });
 
-  it('sets chargeback accepted false when rawTrade.chargebackAcked is not true', () => {
+  it('keeps sidebar/profile close setters optional and safe', () => {
+    expect(() => buildGoToTradeRoomAction({
+      escrow: { rawTrade: {}, role: 'maker', state: 'LOCKED' },
+      setActiveTrade: vi.fn(),
+      setUserRole: vi.fn(),
+      setTradeState: vi.fn(),
+      setChargebackAccepted: vi.fn(),
+      setCurrentView: vi.fn(),
+    })()).not.toThrow();
+  });
+
+  it('sets chargeback accepted true only when rawTrade.chargebackAcked is exactly true', () => {
+    for (const value of ['yes', 1, 'true', false, undefined, null]) {
+      const setChargebackAccepted = vi.fn();
+      buildGoToTradeRoomAction({
+        escrow: { rawTrade: { chargebackAcked: value }, role: 'maker', state: 'LOCKED' },
+        setActiveTrade: vi.fn(),
+        setUserRole: vi.fn(),
+        setTradeState: vi.fn(),
+        setChargebackAccepted,
+        setCurrentView: vi.fn(),
+      })();
+      expect(setChargebackAccepted).toHaveBeenCalledWith(false);
+    }
+
     const setChargebackAccepted = vi.fn();
     buildGoToTradeRoomAction({
-      escrow: { rawTrade: { chargebackAcked: 'yes' }, role: 'maker', state: 'LOCKED' },
+      escrow: { rawTrade: { chargebackAcked: true }, role: 'maker', state: 'LOCKED' },
       setActiveTrade: vi.fn(),
       setUserRole: vi.fn(),
       setTradeState: vi.fn(),
       setChargebackAccepted,
       setCurrentView: vi.fn(),
     })();
-    expect(setChargebackAccepted).toHaveBeenCalledWith(false);
+    expect(setChargebackAccepted).toHaveBeenCalledWith(true);
   });
 });

@@ -1,7 +1,7 @@
 /**
- * PIIDisplay — Şifreli payout profile + contact görüntüleme bileşeni
+ * PIIDisplay — Şifreli ödeme profili + iletişim görüntüleme bileşeni
  *
- * IBAN varsayılan olarak GİZLİ gelir; kullanıcı onay verince fetch edilir.
+ * Ödeme bilgileri varsayılan olarak GİZLİ gelir; kullanıcı onay verince fetch edilir.
  * usePII(tradeId, authenticatedFetch) — tüm auth httpOnly cookie üzerinden.
  *
  * ORTA-15 Fix: Pano (Clipboard) Güvenlik Eksikliği giderildi.
@@ -21,51 +21,8 @@
 
 import React, { useState } from 'react';
 import { usePII } from '../hooks/usePII';
+import { getPiiCopy } from '../app/copy/pii';
 
-const LABELS = {
-  tr: {
-    sectionTitle:     'Satıcı Ödeme Profili ve İletişim',
-    lockedTitle:      'Ödeme profili şifrelenmiş & korunuyor',
-    lockedSub:        'Güvenli görmek için kimliğini doğrula',
-    revealBtn:        '🔓 Payout Profile\'ı Güvenli Göster',
-    revealBtnLoading: 'Doğrulanıyor...',
-    copyIban:         '📋 IBAN Kopyala',
-    copyRouting:      '📋 Routing Kopyala',
-    copyAccount:      '📋 Hesap No Kopyala',
-    copied:           '✓ Kopyalandı',
-    copyError:        '⚠ Kopyalanamadı — manuel seçin',
-    noSecureContext:  '⚠ HTTP bağlantısı — IBAN\'ı manuel kopyalayın',
-    hideBtn:          '🙈 Gizle',
-    telegramBtn:      'Telegram Aç',
-    emailBtn:         'E-posta Gönder',
-    phoneBtn:         'Ara / Dialer Aç',
-    disclaimer:       '🔒 Şifreli kanal — ekran görüntüsüne dikkat et',
-    notice:           'Bu bilgiler blockchain\'e kaydedilmez. Sadece bu işleme özel şifreli olarak iletildi.',
-    loading:          'Yükleniyor...',
-    noContact:        'İletişim bilgisi eklenmemiş',
-  },
-  en: {
-    sectionTitle:     'Seller Payout Profile & Contact',
-    lockedTitle:      'Payout profile is encrypted & protected',
-    lockedSub:        'Verify your identity to view securely',
-    revealBtn:        '🔓 Securely Reveal Payout Profile',
-    revealBtnLoading: 'Verifying...',
-    copyIban:         '📋 Copy IBAN',
-    copyRouting:      '📋 Copy Routing',
-    copyAccount:      '📋 Copy Account',
-    copied:           '✓ Copied',
-    copyError:        '⚠ Copy failed — please select manually',
-    noSecureContext:  '⚠ HTTP connection — copy IBAN manually',
-    hideBtn:          '🙈 Hide',
-    telegramBtn:      'Open Telegram',
-    emailBtn:         'Send Email',
-    phoneBtn:         'Call / Open Dialer',
-    disclaimer:       '🔒 Encrypted channel — beware of screenshots',
-    notice:           'Not stored on-chain. Transmitted encrypted for this trade only.',
-    loading:          'Loading...',
-    noContact:       'No contact info provided',
-  },
-};
 
 /**
  * @param {string}   tradeId             Backend trade ID (Trade koleksiyonunun MongoDB _id'si)
@@ -75,7 +32,7 @@ const LABELS = {
  */
 export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, authenticatedFetch }) {
   const normalizedLang = (lang || 'tr').toLowerCase();
-  const t = LABELS[normalizedLang] || LABELS['tr'];
+  const t = getPiiCopy(normalizedLang);
 
   const { pii, loading, error, fetchPII, clearPII } = usePII(tradeId, authenticatedFetch);
   const [revealed, setRevealed] = useState(false);
@@ -222,7 +179,7 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
   return (
     <div className="bg-slate-900 p-4 rounded-xl border border-blue-500/40 relative overflow-hidden">
       <div className="absolute top-0 right-0 bg-blue-600 text-white text-[10px] font-bold px-2 py-1 rounded-bl-lg">
-        End-to-End Encrypted
+        {t.encryptedBadge}
       </div>
 
       <p className="text-slate-400 text-xs mb-3 font-medium uppercase tracking-widest">
@@ -245,7 +202,7 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
 
           {pii.payoutProfile?.rail && (
             <p className="text-[11px] text-blue-300 mb-3">
-              Rail: <span className="font-mono">{pii.payoutProfile.rail}</span>
+              {t.railPrefix}: <span className="font-mono">{pii.payoutProfile.rail}</span>
             </p>
           )}
 

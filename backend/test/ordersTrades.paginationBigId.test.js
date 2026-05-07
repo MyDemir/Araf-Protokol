@@ -229,8 +229,10 @@ describe("orders/trades pagination + big on-chain id", () => {
     const fs = require("fs");
     const os = require("os");
     const path = require("path");
-    const tempPdfPath = path.join(os.tmpdir(), `receipt-test-${Date.now()}.pdf`);
-    fs.writeFileSync(tempPdfPath, Buffer.from("%PDF-1.4 test"));
+    const tempPdfPathBad = path.join(os.tmpdir(), `receipt-test-bad-${Date.now()}.pdf`);
+    const tempPdfPathOk = path.join(os.tmpdir(), `receipt-test-ok-${Date.now()}.pdf`);
+    fs.writeFileSync(tempPdfPathBad, Buffer.from("%PDF-1.4 bad"));
+    fs.writeFileSync(tempPdfPathOk, Buffer.from("%PDF-1.4 ok"));
 
     const Trade = {
       findOneAndUpdate: jest.fn().mockResolvedValue({ _id: "ok" }),
@@ -240,11 +242,16 @@ describe("orders/trades pagination + big on-chain id", () => {
     const roomReadLimiter = jest.fn((_req, _res, next) => next());
     const receiptUploadLimiter = jest.fn((_req, _res, next) => next());
 
+    let uploadCallCount = 0;
     let router;
     jest.isolateModules(() => {
       jest.doMock("multer", () => {
         const mw = (_req, _res, next) => {
-          _req.file = { path: tempPdfPath, mimetype: "application/pdf" };
+          uploadCallCount += 1;
+          _req.file = {
+            path: uploadCallCount === 1 ? tempPdfPathBad : tempPdfPathOk,
+            mimetype: "application/pdf",
+          };
           next();
         };
         const multerFn = () => ({ single: () => mw });
@@ -279,7 +286,6 @@ describe("orders/trades pagination + big on-chain id", () => {
 
     const badRes = await request(app).post("/api/receipts/upload").send({ onchainEscrowId: "abc" });
     expect(badRes.status).toBe(400);
-    fs.writeFileSync(tempPdfPath, Buffer.from("%PDF-1.4 test"));
 
     const huge = "900719925474099312345";
     const okRes = await request(app).post("/api/receipts/upload").send({ onchainEscrowId: huge });
@@ -288,6 +294,8 @@ describe("orders/trades pagination + big on-chain id", () => {
     expect(receiptUploadLimiter).toHaveBeenCalled();
     expect(roomReadLimiter).not.toHaveBeenCalled();
 
-    if (fs.existsSync(tempPdfPath)) fs.unlinkSync(tempPdfPath);
+    for (const filePath of [tempPdfPathBad, tempPdfPathOk]) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
   });
 });
