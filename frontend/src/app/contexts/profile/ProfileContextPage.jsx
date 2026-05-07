@@ -1,5 +1,5 @@
 import React from 'react';
-import ProfileNav from './ProfileNav';
+import { ProfileNav } from './ProfilePanels';
 import ProfileContextPanel from './ProfileContextPanel';
 
 export const ProfileContextPage = (props) => {

@@ -21,7 +21,7 @@
 
 import React, { useState } from 'react';
 import { usePII } from '../hooks/usePII';
-import { getPiiCopy } from '../app/copy/pii';
+import { getPiiCopy } from '../app/copy';
 
 
 /**

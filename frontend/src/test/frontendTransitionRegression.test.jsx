@@ -25,7 +25,7 @@ afterEach(() => cleanup());
 describe('start trade action extraction regression', () => {
   it('keeps taker start-trade orchestration outside App.jsx while preserving AppViews wiring', () => {
     const appSource = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
-    expect(appSource).toMatch(/import \{[^}]*buildStartTradeAction[^}]*\} from '\.\/app\/providers\/ContractActionProvider';/);
+    expect(appSource).toMatch(/import \{[^}]*buildStartTradeAction[^}]*\} from '\.\/app\/actions\/contractLifecycleActions';/);
     expect(appSource).toContain('const handleStartTrade = React.useMemo(() => buildStartTradeAction({');
     expect(appSource).not.toMatch(/const\s+handleStartTrade\s*=\s*async/);
     expect(appSource).not.toContain('childListingRef');
@@ -375,9 +375,10 @@ describe('frontend transition regression invariants', () => {
     const settlementCardSource = fs.readFileSync(path.resolve(process.cwd(), 'src/components/SettlementProposalCard.jsx'), 'utf8');
     const settlementActionsSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/settlement/useSettlementActions.js'), 'utf8');
     const tradeRoomSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/trade-room/TradeRoomPage.jsx'), 'utf8');
+    const tradeRoomPanelsSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/trade-room/TradeRoomPanels.jsx'), 'utf8');
     const primaryPanelSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/trade-room/PrimaryActionPanel.jsx'), 'utf8');
     const secondaryPanelSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/trade-room/SecondaryActionsPanel.jsx'), 'utf8');
-    const nonSettlementUiSource = `${appViewsSource}\n${tradeRoomSource}\n${primaryPanelSource}\n${secondaryPanelSource}`;
+    const nonSettlementUiSource = `${appViewsSource}\n${tradeRoomSource}\n${tradeRoomPanelsSource}\n${primaryPanelSource}\n${secondaryPanelSource}`;
 
     expect(appViewsSource).not.toMatch(/isSupportedChain:\s*true/);
     expect(appViewsSource).toContain('isSupportedChain: isSupportedChainId(chainId)');

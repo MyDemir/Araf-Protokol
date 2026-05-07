@@ -11,13 +11,19 @@ const appSource = readSrc('App.jsx');
 const appViewsSource = readSrc('app', 'AppViews.jsx');
 const appModalsSource = readSrc('app', 'AppModals.jsx');
 const appShellSource = readSrc('app', 'shell', 'AppShell.jsx');
-const contextOutletSource = readSrc('app', 'shell', 'ContextOutlet.jsx');
+const appProvidersSource = readSrc('app', 'providers', 'AppProviders.jsx');
+const contractLifecycleActionsSource = readSrc('app', 'actions', 'contractLifecycleActions.js');
 const systemStatusBarSource = readSrc('app', 'shell', 'SystemStatusBar.jsx');
+const tradeRoomPageSource = readSrc('app', 'contexts', 'trade-room', 'TradeRoomPage.jsx');
+const tradeRoomPanelsSource = readSrc('app', 'contexts', 'trade-room', 'TradeRoomPanels.jsx');
+const profileContextPageSource = readSrc('app', 'contexts', 'profile', 'ProfileContextPage.jsx');
+const profileContextPanelSource = readSrc('app', 'contexts', 'profile', 'ProfileContextPanel.jsx');
+const profilePanelsSource = readSrc('app', 'contexts', 'profile', 'ProfilePanels.jsx');
+const operationsCenterPageSource = readSrc('app', 'contexts', 'operations', 'OperationsCenterPage.jsx');
+const operationsPanelsSource = readSrc('app', 'contexts', 'operations', 'OperationsPanels.jsx');
 
 const providerSources = {
   SessionProvider: readSrc('app', 'providers', 'SessionProvider.jsx'),
-  ContractActionProvider: readSrc('app', 'providers', 'ContractActionProvider.jsx'),
-  ToastProvider: readSrc('app', 'providers', 'ToastProvider.jsx'),
 };
 
 const runtimeFiles = [
@@ -26,6 +32,43 @@ const runtimeFiles = [
   'app/actions/tradeNavigationActions.js',
   'app/contexts/trade-room/TradeRoomPage.jsx',
   'app/contexts/trade-room/tradeDecisionModel.js',
+];
+
+const removedPassThroughFiles = [
+  'app/providers/ToastProvider.jsx',
+  'app/shell/ContextNavigation.jsx',
+  'app/shell/ContextPanel.jsx',
+  'app/shell/ContextOutlet.jsx',
+  'app/shell/ModalHost.jsx',
+  'app/shell/MobileTopBar.jsx',
+  'app/shell/MobileBottomNav.jsx',
+  'app/providers/ContractActionProvider.jsx',
+  // RouteStateProvider was unused outside AppProviders/tests, so it is removed as dead provider scaffold.
+  'app/providers/RouteStateProvider.jsx',
+];
+
+const removedTradeRoomPanelFiles = [
+  'app/contexts/trade-room/TradeRoomContextPanel.jsx',
+  'app/contexts/trade-room/TradeSummaryCard.jsx',
+  'app/contexts/trade-room/StateGuidancePanel.jsx',
+  'app/contexts/trade-room/TimerStack.jsx',
+  'app/contexts/trade-room/TechnicalDetailsDisclosure.jsx',
+];
+
+const removedProfilePanelFiles = [
+  'app/contexts/profile/AccountPanel.jsx',
+  'app/contexts/profile/ReputationPanel.jsx',
+  'app/contexts/profile/HistoryPanel.jsx',
+  'app/contexts/profile/SecurityPanel.jsx',
+  'app/contexts/profile/ProfileNav.jsx',
+  'app/contexts/profile/profileContextModel.js',
+];
+
+const removedOperationsPanelFiles = [
+  'app/contexts/operations/OperationsSummaryBar.jsx',
+  'app/contexts/operations/OperationsContextPanel.jsx',
+  'app/contexts/operations/PendingSyncCard.jsx',
+  'app/contexts/operations/SettlementQueueCard.jsx',
 ];
 
 const extractObjectCall = (source, callName) => {
@@ -66,7 +109,7 @@ describe('frontend migration scaffold baseline', () => {
       'handleRegisterWallet',
     ].forEach((handlerName) => {
       expect(appSource, `${handlerName} should no longer be declared inline in App.jsx`).not.toContain(`const ${handlerName} = async`);
-      expect(providerSources.ContractActionProvider, `${handlerName} should be owned by ContractActionProvider actions`).toContain(`const ${handlerName} = async`);
+      expect(contractLifecycleActionsSource, `${handlerName} should be owned by contract lifecycle actions`).toContain(`const ${handlerName} = async`);
     });
     expect(appSource).not.toContain('const handleStartTrade = async');
     expect(appSource).not.toContain('const handleCreateOrder = async');
@@ -76,12 +119,13 @@ describe('frontend migration scaffold baseline', () => {
     expect(appSource).toContain('handleAuthAction,');
     expect(appSource).not.toContain('new SiweMessage');
     expect(providerSources.SessionProvider).toContain('new SiweMessage');
+    expect(appSource).toContain("from './app/actions/contractLifecycleActions';");
     expect(appSource).toContain('buildStartTradeAction({');
     expect(appSource).toContain('buildTradeRoomActions({');
     expect(appSource).toContain('buildProfileActions({');
     expect(appSource).toContain('buildOrderActions({');
-    expect(providerSources.ContractActionProvider).toContain('_pendingBackendSync: true');
-    expect(providerSources.ContractActionProvider).toContain('setActiveTrade({ ...order, id: realTradeId, onchainId: onchainTradeId })');
+    expect(contractLifecycleActionsSource).toContain('_pendingBackendSync: true');
+    expect(contractLifecycleActionsSource).toContain('setActiveTrade({ ...order, id: realTradeId, onchainId: onchainTradeId })');
   });
 
   it('keeps all contract methods sourced from the single App.jsx useArafContract instance', () => {
@@ -157,11 +201,121 @@ describe('frontend migration scaffold baseline', () => {
     });
   });
 
-  it('keeps AppShell runtime-integrated while provider files stay scaffold-compatible skeletons at this stage', () => {
+  it('keeps operations wrapper panels consolidated while preserving model and card boundaries', () => {
+    expect(operationsCenterPageSource).toContain("import { OperationsContextPanel, OperationsSummaryBar } from './OperationsPanels';");
+    expect(operationsCenterPageSource).toContain("import OperationLaneTabs from './OperationLaneTabs';");
+    expect(operationsCenterPageSource).toContain("import { buildOperationsContextModel } from './operationsContextModel';");
+    expect(appViewsSource).toContain("import { SettlementQueueCard } from './contexts/operations/OperationsPanels';");
+
+    [
+      'OperationsSummaryBar',
+      'OperationsContextPanel',
+      'PendingSyncCard',
+      'SettlementQueueCard',
+    ].forEach((exportName) => {
+      expect(operationsPanelsSource).toContain(`export const ${exportName}`);
+    });
+
+    expect(operationsPanelsSource).toContain("import OperationTradeCard from './OperationTradeCard';");
+    expect(operationsPanelsSource).toContain('data-testid="pending-sync-card"');
+    expect(operationsPanelsSource).toContain('data-testid="settlement-queue-card"');
+    expect(operationsPanelsSource).not.toContain('buildOperationsContextModel');
+    expect(operationsPanelsSource).not.toContain('buildGoToTradeRoomAction');
+
+    removedOperationsPanelFiles.forEach((relativePath) => {
+      expect(
+        fs.existsSync(path.join(srcRoot, ...relativePath.split('/'))),
+        `${relativePath} operations wrapper panel should stay consolidated`,
+      ).toBe(false);
+    });
+  });
+
+  it('keeps profile leaf panels consolidated without moving richer profile panels', () => {
+    expect(profileContextPageSource).toContain("import { ProfileNav } from './ProfilePanels';");
+    expect(profileContextPanelSource).toContain("import { AccountPanel, HistoryPanel, ReputationPanel, SecurityPanel } from './ProfilePanels';");
+    expect(profileContextPanelSource).toContain("import PaymentProfilePanel from './PaymentProfilePanel';");
+    expect(profileContextPanelSource).toContain("import MyOrdersPanel from './MyOrdersPanel';");
+    expect(profileContextPanelSource).toContain("import ActiveTradesPanel from './ActiveTradesPanel';");
+
+    [
+      'profileTabs',
+      'getProfileTabLabel',
+      'ProfileNav',
+      'AccountPanel',
+      'ReputationPanel',
+      'HistoryPanel',
+      'SecurityPanel',
+    ].forEach((exportName) => {
+      expect(profilePanelsSource).toContain(`export const ${exportName}`);
+    });
+
+    expect(profilePanelsSource).toContain("{ key: 'payment'");
+    expect(profilePanelsSource).toContain("{ key: 'active'");
+    expect(profilePanelsSource).toContain("{ key: 'security'");
+    expect(profilePanelsSource).not.toContain('PaymentProfilePanel');
+    expect(profilePanelsSource).not.toContain('ActiveTradesPanel');
+    expect(profilePanelsSource).not.toContain('MyOrdersPanel');
+
+    removedProfilePanelFiles.forEach((relativePath) => {
+      expect(
+        fs.existsSync(path.join(srcRoot, ...relativePath.split('/'))),
+        `${relativePath} tiny profile leaf panel should stay consolidated`,
+      ).toBe(false);
+    });
+  });
+
+  it('keeps trade-room leaf panels consolidated without moving action behavior', () => {
+    expect(tradeRoomPageSource).toContain("import { StateGuidancePanel, TechnicalDetailsDisclosure, TimerStack, TradeSummaryCard } from './TradeRoomPanels';");
+    expect(tradeRoomPageSource).toContain("import PrimaryActionPanel from './PrimaryActionPanel';");
+    expect(tradeRoomPageSource).toContain("import SecondaryActionsPanel from './SecondaryActionsPanel';");
+    expect(tradeRoomPageSource).toContain('<>');
+    expect(tradeRoomPageSource).toContain('</>');
+    expect(tradeRoomPageSource).not.toContain('TradeRoomContextPanel');
+
+    [
+      'TradeSummaryCard',
+      'StateGuidancePanel',
+      'TimerStack',
+      'TechnicalDetailsDisclosure',
+    ].forEach((componentName) => {
+      expect(tradeRoomPanelsSource).toContain(`export const ${componentName}`);
+    });
+
+    expect(tradeRoomPanelsSource).toContain('data-testid="trade-guidance-panel"');
+    expect(tradeRoomPanelsSource).toContain('data-testid="trade-timer-summaries"');
+    expect(tradeRoomPanelsSource).not.toContain('ActionGuidanceButton');
+    expect(tradeRoomPanelsSource).not.toContain('actionCallbacks');
+
+    removedTradeRoomPanelFiles.forEach((relativePath) => {
+      expect(
+        fs.existsSync(path.join(srcRoot, ...relativePath.split('/'))),
+        `${relativePath} tiny trade-room leaf panel should stay consolidated`,
+      ).toBe(false);
+    });
+  });
+
+  it('keeps AppShell runtime-integrated after inlining pass-through shell scaffolds', () => {
     expect(appShellSource).toContain('export const AppShell');
-    expect(appShellSource).toContain('<ContextNavigation>');
-    expect(appShellSource).toContain('<ContextOutlet>{outlet || children}</ContextOutlet>');
     expect(appShellSource).toContain('{status ? <SystemStatusBar {...status} /> : null}');
+    expect(appShellSource).toContain('{mobileTop}');
+    expect(appShellSource).toContain('<div className="flex flex-col md:flex-row min-h-0 flex-1">');
+    expect(appShellSource).toContain('{navigation}');
+    expect(appShellSource).toContain('{panel}');
+    expect(appShellSource).toContain('{outlet || children}');
+    expect(appShellSource).toContain('{mobileBottom}');
+    expect(appShellSource).toContain('{modals}');
+
+    [
+      'ContextNavigation',
+      'ContextPanel',
+      'ContextOutlet',
+      'ModalHost',
+      'MobileTopBar',
+      'MobileBottomNav',
+    ].forEach((componentName) => {
+      expect(appShellSource, `${componentName} pass-through shell wrapper should stay removed`).not.toContain(componentName);
+    });
+
     expect(appSource).toContain("import AppShell from './app/shell/AppShell';");
     expect(appSource).toContain('<AppShell');
     expect(appSource).toContain('navigation={renderSlimRail()}');
@@ -173,15 +327,27 @@ describe('frontend migration scaffold baseline', () => {
     expect(appSource).toContain('supportedChains');
     expect(appSource).toContain('onRegisterWallet: handleRegisterWallet');
 
+    expect(appProvidersSource).not.toContain('ToastProvider');
+    expect(appProvidersSource).not.toContain('ContractActionProvider');
+    expect(appProvidersSource).not.toContain('RouteStateProvider');
+    removedPassThroughFiles.forEach((relativePath) => {
+      expect(
+        fs.existsSync(path.join(srcRoot, ...relativePath.split('/'))),
+        `${relativePath} pass-through scaffold should stay deleted`,
+      ).toBe(false);
+    });
+
     expect(providerSources.SessionProvider).toContain('export const SessionProvider');
     expect(providerSources.SessionProvider).toContain('<SessionActionsContext.Provider value={value}>{children}</SessionActionsContext.Provider>');
-
-    Object.entries(providerSources)
-      .filter(([providerName]) => providerName !== 'SessionProvider')
-      .forEach(([providerName, source]) => {
-        expect(source).toContain(`export const ${providerName}`);
-        expect(source).toMatch(/return\s+<>\{children\}<\/>;/);
-      });
+    [
+      'buildStartTradeAction',
+      'buildMintAction',
+      'buildTradeRoomActions',
+      'buildProfileActions',
+      'buildOrderActions',
+    ].forEach((builderName) => {
+      expect(contractLifecycleActionsSource).toContain(`export const ${builderName}`);
+    });
   });
 });
 
@@ -214,7 +380,7 @@ describe('PR #94 frontend regression guards', () => {
       return;
     }
 
-    const combinedOutletLayout = `${contextOutletSource}\n${appSource}`;
+    const combinedOutletLayout = `${appShellSource}\n${appSource}`;
     expect(
       combinedOutletLayout,
       'Fixed SystemStatusBar overlays must use an intentional content offset/spacer, not only hardcoded pt-* padding.',

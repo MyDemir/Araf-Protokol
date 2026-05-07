@@ -1,11 +1,8 @@
 import React from 'react';
-import AccountPanel from './AccountPanel';
 import PaymentProfilePanel from './PaymentProfilePanel';
-import ReputationPanel from './ReputationPanel';
 import MyOrdersPanel from './MyOrdersPanel';
 import ActiveTradesPanel from './ActiveTradesPanel';
-import HistoryPanel from './HistoryPanel';
-import SecurityPanel from './SecurityPanel';
+import { AccountPanel, HistoryPanel, ReputationPanel, SecurityPanel } from './ProfilePanels';
 
 export const ProfileContextPanel = ({ activeTab, ...props }) => {
   if (activeTab === 'account') return <AccountPanel {...props} />;

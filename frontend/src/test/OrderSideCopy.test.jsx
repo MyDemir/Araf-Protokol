@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import orderSideCopy from '../app/copy/orderSide';
+import { orderSide as orderSideCopy } from '../app/copy';
 import { buildAppModals } from '../app/AppModals';
 import MyOrdersPanel from '../app/contexts/profile/MyOrdersPanel';
 import { getOrderSideCopy, mapApiOrderToUi } from '../app/orderUiModel';
