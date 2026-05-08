@@ -55,7 +55,7 @@ describe('AdminPanel polling auth behavior', () => {
 
   it('keeps manual refresh showToast contract wired (no dead reference)', () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), 'src/AdminPanel.jsx'), 'utf8');
-    expect(source).toContain('function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, showToast })');
+    expect(source).toContain('function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, showToast, initialTab = TAB_OVERVIEW })');
     expect(source).toContain("if (typeof showToast === 'function')");
     expect(source).toContain("showToast(lang === 'TR' ? 'Özet yenilendi.' : 'Summary refreshed.', 'info')");
   });
