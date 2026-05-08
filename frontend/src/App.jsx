@@ -9,6 +9,8 @@ import AppShell from './app/shell/AppShell';
 import { useSessionActions } from './app/providers/SessionProvider';
 import { useAppSessionData } from './app/useAppSessionData';
 import AdminPanel from './AdminPanel';
+import UiLabPage from './dev/ui-lab/UiLabPage';
+import { isUiLabEnabled } from './dev/ui-lab/isUiLabEnabled';
 import { getInitialLang, getInitialTermsAccepted, APP_LANG_STORAGE_KEY } from './app/bootstrapState';
 import { buildApiUrl, resolveApiPolicyDiagnostics } from './app/apiConfig';
 import { getSupportedChainsMap, isMintTokenEnabled, isSupportedChainId } from './app/chainPolicy';
@@ -107,7 +109,9 @@ function App() {
   // 1. EKRAN VE UI STATE YÖNETİMİ
   //    View routing + modal open/close flags
   // ═══════════════════════════════════════════
-  const [currentView, setCurrentView] = useState('home');
+  const uiLabEnabled = isUiLabEnabled();
+  const initialView = uiLabEnabled && typeof window !== 'undefined' && window.location?.pathname === '/dev/ui-lab' ? 'uiLab' : 'home';
+  const [currentView, setCurrentView] = useState(initialView);
   const [showMakerModal, setShowMakerModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
@@ -932,6 +936,7 @@ function App() {
     authenticatedFetch,
     showToast,
     settlementContractFns,
+    uiLabEnabled,
   });
 
   const {
@@ -1066,6 +1071,8 @@ function App() {
                     ? renderOperations()
                     : currentView === 'profile'
                     ? renderProfileContext()
+                    : currentView === 'uiLab' && uiLabEnabled
+                    ? <UiLabPage />
                     : currentView === 'admin'
                     ? (
                       <AdminPanel

@@ -6,6 +6,7 @@ import SettlementProposalCard, { normalizeSettlementState } from '../components/
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
 import { buildGoToTradeRoomAction } from './actions/tradeNavigationActions';
 import OperationTradeCard from './contexts/operations/OperationTradeCard';
+import UiLabNavEntry from '../dev/ui-lab/UiLabNavEntry';
 import { SettlementQueueCard } from './contexts/operations/OperationsPanels';
 import OperationsCenterPage from './contexts/operations/OperationsCenterPage';
 import ProfileContextPage from './contexts/profile/ProfileContextPage';
@@ -127,6 +128,7 @@ export const buildAppViews = (ctx) => {
   const isLikelyAdminWallet =
     Boolean(connectedWalletLower) && adminWalletAllowlist.includes(connectedWalletLower);
   const canSeeAdminEntry = Boolean(isConnected && isAuthenticated && connectedWalletLower);
+  const canSeeUiLabEntry = Boolean(ctx.uiLabEnabled);
 
   const renderSlimRail = () => (
     <div className="hidden md:flex w-16 bg-black border-r border-[#1a1a1a] flex-col items-center py-6 justify-between z-50 shrink-0 shadow-2xl">
@@ -138,6 +140,7 @@ export const buildAppViews = (ctx) => {
         <button onClick={() => setCurrentView('home')} title={lang === 'TR' ? 'Ana Sayfa' : 'Home'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'home' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🏠</button>
         <button onClick={() => setCurrentView('market')} title={lang === 'TR' ? 'Pazar Yeri' : 'Marketplace'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'market' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>🛒</button>
         <button onClick={() => setCurrentView('operations')} title={lang === 'TR' ? 'İşlem Takip Merkezi' : 'Operations Center'} className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'operations' ? 'bg-cyan-900/30 text-cyan-400' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}>📍</button>
+        <UiLabNavEntry enabled={canSeeUiLabEntry} currentView={currentView} setCurrentView={setCurrentView} />
         {/* [TR] Admin girişi authenticated kullanıcıya her zaman görünür;
             VITE_ADMIN_WALLETS yalnızca UX ipucu amaçlıdır.
             [EN] Admin entry is always visible for authenticated users;
@@ -1011,6 +1014,7 @@ export const buildAppViews = (ctx) => {
       <button onClick={() => setCurrentView('home')} className={`p-2 text-xl transition-all ${currentView === 'home' ? 'text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)] -translate-y-1' : 'text-slate-600'}`}>🏠</button>
       <button onClick={() => setCurrentView('market')} className={`p-2 text-xl transition-all ${currentView === 'market' ? 'text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.5)] -translate-y-1' : 'text-slate-600'}`}>🛒</button>
       <button onClick={() => setCurrentView('operations')} className={`p-2 text-xl transition-all ${currentView === 'operations' ? 'text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)] -translate-y-1' : 'text-slate-600'}`}>📍</button>
+      <UiLabNavEntry enabled={canSeeUiLabEntry} currentView={currentView} setCurrentView={setCurrentView} mobile />
       <button onClick={() => setCurrentView('tradeRoom')} className={`p-2 text-xl transition-all relative ${currentView === 'tradeRoom' ? 'text-orange-500 drop-shadow-[0_0_8px_rgba(249,115,22,0.5)] -translate-y-1' : 'text-slate-600'}`}>
         💼{activeEscrows.length > 0 && <span className="absolute top-2 right-1 w-2.5 h-2.5 bg-orange-500 border border-[#060608] rounded-full animate-pulse"></span>}
       </button>

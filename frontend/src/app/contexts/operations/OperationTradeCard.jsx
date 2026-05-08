@@ -3,7 +3,7 @@ import { getStateLabel } from '../../copy/states';
 
 const roleCopy = {
   maker: { TR: 'İlan Sahibi', EN: 'Listing owner' },
-  taker: { TR: 'Karşı Taraf', EN: 'Counterparty' },
+  taker: { TR: 'Alıcı', EN: 'Taker' },
 };
 
 const getRoleLabel = (role, lang = 'EN') => {
