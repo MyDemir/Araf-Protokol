@@ -1077,22 +1077,25 @@ export const buildAppViews = (ctx) => {
   );
 
 
-  const renderOperations = () => (
-    <OperationsCenterPage
-      activeEscrows={activeEscrows}
-      activeEscrowCounts={activeEscrowCounts}
-      activeTrade={activeTrade}
-      address={address}
-      lang={lang}
-      setActiveTrade={setActiveTrade}
-      setUserRole={setUserRole}
-      setTradeState={setTradeState}
-      setChargebackAccepted={setChargebackAccepted}
-      setCurrentView={setCurrentView}
-      setSidebarOpen={setSidebarOpen}
-      setShowProfileModal={setShowProfileModal}
-    />
-  );
+  const renderOperations = () => {
+    const operationSetters = ctx.operationsActionSetters || {};
+    return (
+      <OperationsCenterPage
+        activeEscrows={activeEscrows}
+        activeEscrowCounts={activeEscrowCounts}
+        activeTrade={activeTrade}
+        address={address}
+        lang={lang}
+        setActiveTrade={operationSetters.setActiveTrade || setActiveTrade}
+        setUserRole={operationSetters.setUserRole || setUserRole}
+        setTradeState={operationSetters.setTradeState || setTradeState}
+        setChargebackAccepted={operationSetters.setChargebackAccepted || setChargebackAccepted}
+        setCurrentView={operationSetters.setCurrentView || setCurrentView}
+        setSidebarOpen={operationSetters.setSidebarOpen || setSidebarOpen}
+        setShowProfileModal={operationSetters.setShowProfileModal || setShowProfileModal}
+      />
+    );
+  };
 
   return {
     renderHome,

@@ -22,14 +22,22 @@ import { buildMintAction, buildOrderActions, buildProfileActions, buildStartTrad
 // [TR] Uygulama başlangıcında kritik env değişkenlerini doğrula
 // [EN] Validate critical env variables on app start
 
-const createDevScenarioFetch = (categoryKey, scenario) => {
+const createDevScenarioFetch = (categoryKey, scenario, fallbackFetch) => {
   if (categoryKey === 'admin') return createMockAdminFetch(scenario);
-  return async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({ mock: true, trades: [], trade: null }),
-  });
+  return fallbackFetch;
 };
+
+
+const buildDevScenarioEscrowCounts = (activeEscrows = []) => ({
+  LOCKED: activeEscrows.filter((escrow) => escrow.state === 'LOCKED').length,
+  PAID: activeEscrows.filter((escrow) => escrow.state === 'PAID').length,
+  CHALLENGED: activeEscrows.filter((escrow) => escrow.state === 'CHALLENGED').length,
+  settlement: {
+    PROPOSED: activeEscrows.filter((escrow) => escrow.settlementProposal?.state === 'PROPOSED').length,
+    ACTION_REQUIRED: activeEscrows.filter((escrow) => escrow.settlementProposal?.state === 'PROPOSED' && String(escrow.settlementProposal.proposer || '').toLowerCase() !== String(escrow.viewerAddress || escrow.takerFull || '').toLowerCase()).length,
+    WAITING: activeEscrows.filter((escrow) => escrow.settlementProposal?.state === 'PROPOSED' && String(escrow.settlementProposal.proposer || '').toLowerCase() === String(escrow.viewerAddress || escrow.takerFull || '').toLowerCase()).length,
+  },
+});
 
 const ENV_ERRORS = [];
 const { errors: API_POLICY_ERRORS } = resolveApiPolicyDiagnostics(import.meta.env);
@@ -157,6 +165,7 @@ function App() {
   const [feedbackError, setFeedbackError] = useState('');
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const [devScenario, setDevScenario] = useState(null);
+  const devScenarioSnapshotRef = React.useRef(null);
   const [profileContextTab, setProfileContextTab] = useState('account');
   const devScenarioActive = Boolean(uiLabEnabled && devScenario);
 
@@ -347,16 +356,115 @@ function App() {
     };
   }, [devScenario]);
 
-  const activeAdminFetch = React.useMemo(() => (
+  const activeScenarioCategory = devScenarioActive ? devScenario?.categoryKey : null;
+  const activeScenarioPayload = devScenario?.scenario || null;
+
+  const effectiveActiveEscrows = React.useMemo(() => {
+    if (activeScenarioCategory === 'activeTrades' || activeScenarioCategory === 'operations') {
+      return activeScenarioPayload?.activeEscrows || [];
+    }
+    return activeEscrows;
+  }, [activeScenarioCategory, activeScenarioPayload, activeEscrows]);
+
+  const effectiveActiveEscrowCounts = React.useMemo(() => {
+    if (activeScenarioCategory === 'activeTrades' || activeScenarioCategory === 'operations') {
+      return activeScenarioPayload?.activeEscrowCounts || buildDevScenarioEscrowCounts(effectiveActiveEscrows);
+    }
+    return activeEscrowCounts;
+  }, [activeScenarioCategory, activeScenarioPayload, effectiveActiveEscrows, activeEscrowCounts]);
+
+  const effectiveAuthenticatedFetch = React.useMemo(() => (
     devScenarioActive
-      ? createDevScenarioFetch(devScenario.categoryKey, devScenario.scenario)
+      ? createDevScenarioFetch(devScenario.categoryKey, devScenario.scenario, authenticatedFetch)
       : authenticatedFetch
   ), [devScenarioActive, devScenario, authenticatedFetch]);
+  const activeAdminFetch = effectiveAuthenticatedFetch;
+
+  const effectiveIsAuthenticated = activeScenarioCategory === 'admin' ? true : isAuthenticated;
+  const effectiveAuthChecked = activeScenarioCategory === 'admin' ? true : authChecked;
+
+  const effectiveTradeScenarioInput = activeScenarioCategory === 'tradeRoom'
+    ? (activeScenarioPayload?.decisionInput || {})
+    : {};
+  const effectiveActiveTrade = activeScenarioCategory === 'tradeRoom'
+    ? (effectiveTradeScenarioInput.trade || activeTrade)
+    : activeTrade;
+  const effectiveResolvedTradeState = activeScenarioCategory === 'tradeRoom'
+    ? (effectiveTradeScenarioInput.tradeState || effectiveTradeScenarioInput.trade?.state || resolvedTradeState)
+    : resolvedTradeState;
+  const effectiveUserRole = activeScenarioCategory === 'tradeRoom'
+    ? (effectiveTradeScenarioInput.userRole || effectiveTradeScenarioInput.trade?.role || userRole)
+    : userRole;
+  const effectiveChargebackAccepted = activeScenarioCategory === 'tradeRoom'
+    ? (effectiveTradeScenarioInput.chargebackAccepted ?? effectiveTradeScenarioInput.trade?.chargebackAcked ?? chargebackAccepted)
+    : chargebackAccepted;
+  const effectiveTradeTimers = activeScenarioCategory === 'tradeRoom'
+    ? (effectiveTradeScenarioInput.timers || {})
+    : {};
+  const effectivePaymentIpfsHash = activeScenarioCategory === 'tradeRoom'
+    ? (effectiveTradeScenarioInput.paymentIpfsHash || '')
+    : paymentIpfsHash;
+
+  const effectiveTradeDecisionInput = React.useMemo(() => {
+    if (activeScenarioCategory !== 'tradeRoom') return null;
+    const input = activeScenarioPayload?.decisionInput || {};
+    return {
+      trade: input.trade || activeTrade,
+      tradeState: input.tradeState || input.trade?.state || resolvedTradeState,
+      userRole: input.userRole || input.trade?.role || userRole,
+      chargebackAccepted: input.chargebackAccepted ?? input.trade?.chargebackAcked ?? chargebackAccepted,
+      paymentIpfsHash: input.paymentIpfsHash ?? paymentIpfsHash,
+      timers: {
+        gracePeriod: input.timers?.gracePeriod || gracePeriodTimer,
+        makerPing: input.timers?.makerPing || makerPingTimer,
+        makerChallengePing: input.timers?.makerChallengePing || makerChallengePingTimer,
+        makerChallenge: input.timers?.makerChallenge || makerChallengeTimer,
+        bleeding: input.timers?.bleeding || bleedingTimer,
+        principalProtection: input.timers?.principalProtection || principalProtectionTimer,
+      },
+      isConnected: input.isConnected ?? isConnected,
+      isAuthenticated: input.isAuthenticated ?? isAuthenticated,
+      isSupportedChain: input.isSupportedChain ?? isSupportedChainId(chainId),
+      isPaused: input.isPaused ?? isPaused,
+      lang: input.lang || lang,
+      canBurnExpired: input.canBurnExpired ?? false,
+    };
+  }, [activeScenarioCategory, activeScenarioPayload, activeTrade, resolvedTradeState, userRole, chargebackAccepted, paymentIpfsHash, gracePeriodTimer, makerPingTimer, makerChallengePingTimer, makerChallengeTimer, bleedingTimer, principalProtectionTimer, isConnected, isAuthenticated, chainId, isPaused, lang]);
+
+  const effectiveActionCallbacks = activeScenarioCategory === 'tradeRoom'
+    ? devScenarioActions?.tradeRoom
+    : null;
+
+  const operationsActionSetters = React.useMemo(() => {
+    if (activeScenarioCategory !== 'operations' || !devScenarioActions) return null;
+    return {
+      setActiveTrade: devScenarioActions.setter('operations_set_active_trade'),
+      setUserRole: devScenarioActions.setter('operations_set_user_role'),
+      setTradeState: devScenarioActions.setter('operations_set_trade_state'),
+      setChargebackAccepted: devScenarioActions.setter('operations_set_chargeback_accepted'),
+      setCurrentView: devScenarioActions.setter('operations_set_current_view'),
+      setSidebarOpen: devScenarioActions.setter('operations_set_sidebar_open'),
+      setShowProfileModal: devScenarioActions.setter('operations_set_show_profile_modal'),
+    };
+  }, [activeScenarioCategory, devScenarioActions]);
 
   const applyDevScenario = React.useCallback((scenario) => {
     if (!uiLabEnabled || !scenario) return;
     const categoryKey = scenario.categoryKey || scenario.category;
     const appendLog = scenario.appendLog;
+    if (!devScenarioSnapshotRef.current) {
+      devScenarioSnapshotRef.current = {
+        currentView,
+        activeTrade,
+        activeEscrows,
+        tradeState,
+        userRole,
+        paymentIpfsHash,
+        chargebackAccepted,
+        activeTradesFilter,
+        profileContextTab,
+      };
+    }
     setDevScenario({ categoryKey, scenarioId: scenario.id, scenario, appendLog });
     setShowProfileModal(false);
     setShowMakerModal(false);
@@ -365,17 +473,14 @@ function App() {
     if (categoryKey === 'tradeRoom') {
       const input = scenario.decisionInput || {};
       setActiveTrade(input.trade || null);
-      setActiveEscrows(input.trade ? [input.trade] : []);
       setTradeState(input.tradeState || input.trade?.state || 'LOCKED');
       setUserRole(input.userRole || input.trade?.role || 'taker');
       setChargebackAccepted(Boolean(input.trade?.chargebackAcked ?? true));
-      setPaymentIpfsHash(input.paymentIpfsHash || '');
       setCurrentView('tradeRoom');
       return;
     }
 
     if (categoryKey === 'activeTrades') {
-      setActiveEscrows(scenario.activeEscrows || []);
       setActiveTradesFilter(scenario.initialFilter || 'ALL');
       setProfileContextTab('active');
       setCurrentView('profile');
@@ -383,7 +488,6 @@ function App() {
     }
 
     if (categoryKey === 'operations') {
-      setActiveEscrows(scenario.activeEscrows || []);
       setActiveTrade(null);
       setCurrentView('operations');
       return;
@@ -392,12 +496,25 @@ function App() {
     if (categoryKey === 'admin') {
       setCurrentView('admin');
     }
-  }, [uiLabEnabled, setActiveTrade, setActiveEscrows, setTradeState, setUserRole, setChargebackAccepted, setPaymentIpfsHash, setCurrentView]);
+  }, [uiLabEnabled, currentView, activeTrade, activeEscrows, tradeState, userRole, paymentIpfsHash, chargebackAccepted, activeTradesFilter, profileContextTab, setActiveTrade, setTradeState, setUserRole, setChargebackAccepted, setCurrentView, setActiveTradesFilter, setProfileContextTab]);
 
   const clearDevScenario = React.useCallback(() => {
+    const snapshot = devScenarioSnapshotRef.current;
     setDevScenario(null);
+    if (snapshot) {
+      setCurrentView(snapshot.currentView);
+      setActiveTrade(snapshot.activeTrade);
+      setActiveEscrows(snapshot.activeEscrows);
+      setTradeState(snapshot.tradeState);
+      setUserRole(snapshot.userRole);
+      setPaymentIpfsHash(snapshot.paymentIpfsHash);
+      setChargebackAccepted(snapshot.chargebackAccepted);
+      setActiveTradesFilter(snapshot.activeTradesFilter);
+      setProfileContextTab(snapshot.profileContextTab);
+      devScenarioSnapshotRef.current = null;
+    }
     showToast(lang === 'TR' ? 'Mock scenario kapatıldı.' : 'Mock scenario cleared.', 'info');
-  }, [lang, showToast]);
+  }, [lang, showToast, setActiveTrade, setActiveEscrows, setTradeState, setUserRole, setPaymentIpfsHash, setChargebackAccepted, setCurrentView, setActiveTradesFilter, setProfileContextTab]);
 
   // ═══════════════════════════════════════════
   // 7. YARDIMCI FONKSİYONLAR
@@ -595,7 +712,7 @@ function App() {
     createBuyOrder,
     cancelSellOrder,
     cancelBuyOrder,
-    authenticatedFetch: activeAdminFetch,
+    authenticatedFetch: effectiveAuthenticatedFetch,
     showToast,
     setIsContractLoading,
     setLoadingText,
@@ -632,8 +749,8 @@ function App() {
   const tradeRoomActions = React.useMemo(() => buildTradeRoomActions({
     lang,
     activeTrade,
-    activeEscrows,
-    paymentIpfsHash,
+    activeEscrows: effectiveActiveEscrows,
+    paymentIpfsHash: effectivePaymentIpfsHash,
     resolvedTradeState,
     chargebackAccepted,
     isContractLoading,
@@ -648,7 +765,7 @@ function App() {
     pingMaker: devScenarioActive ? devScenarioActions?.noop('ping_maker') : pingMaker,
     autoRelease: devScenarioActive ? devScenarioActions?.noop('auto_release') : autoRelease,
     burnExpired: devScenarioActive ? devScenarioActions?.noop('burn_expired') : burnExpired,
-    authenticatedFetch: activeAdminFetch,
+    authenticatedFetch: effectiveAuthenticatedFetch,
     showToast,
     fetchMyTrades,
     setIsContractLoading,
@@ -662,8 +779,8 @@ function App() {
   }), [
     lang,
     activeTrade,
-    activeEscrows,
-    paymentIpfsHash,
+    effectiveActiveEscrows,
+    effectivePaymentIpfsHash,
     resolvedTradeState,
     chargebackAccepted,
     isContractLoading,
@@ -925,12 +1042,12 @@ function App() {
     t,
     setLang,
     isConnected,
-    isAuthenticated,
+    isAuthenticated: effectiveIsAuthenticated,
     isLoggingIn,
     isContractLoading,
     loadingText,
     isPaused,
-    authChecked,
+    authChecked: effectiveAuthChecked,
     currentView,
     setCurrentView,
     toggleSidebar,
@@ -950,7 +1067,7 @@ function App() {
     setSearchAmount,
     filteredOrders,
     orders,
-    activeEscrows,
+    activeEscrows: effectiveActiveEscrows,
     setActiveEscrows,
     loading,
     SUPPORTED_TOKEN_ADDRESSES,
@@ -963,7 +1080,7 @@ function App() {
     handleOpenMakerModal,
     handleUpdatePII,
     handleLogoutAndDisconnect,
-    activeEscrowCounts,
+    activeEscrowCounts: effectiveActiveEscrowCounts,
     setShowProfileModal,
     setProfileTab,
     setConfirmDeleteId,
@@ -981,22 +1098,22 @@ function App() {
     takerFeeBps,
     socialLinks,
     faqItems,
-    activeTrade,
+    activeTrade: effectiveActiveTrade,
     setActiveTrade,
-    userRole,
+    userRole: effectiveUserRole,
     setUserRole,
-    tradeState,
+    tradeState: effectiveResolvedTradeState,
     setTradeState,
-    resolvedTradeState,
+    resolvedTradeState: effectiveResolvedTradeState,
     setCancelStatus,
     setChargebackAccepted,
-    paymentIpfsHash,
+    paymentIpfsHash: effectivePaymentIpfsHash,
     setPaymentIpfsHash,
     handleFileUpload,
     handleReportPayment,
     handleProposeCancel,
     cancelStatus,
-    chargebackAccepted,
+    chargebackAccepted: effectiveChargebackAccepted,
     handleChargebackAck,
     handleRelease,
     handleChallenge,
@@ -1004,14 +1121,14 @@ function App() {
     handleAutoRelease,
     handleBurnExpired,
     canMakerPing,
-    makerPingTimer,
+    makerPingTimer: effectiveTradeTimers.makerPing || makerPingTimer,
     canMakerStartChallengeFlow,
-    makerChallengePingTimer,
+    makerChallengePingTimer: effectiveTradeTimers.makerChallengePing || makerChallengePingTimer,
     canMakerChallenge,
-    makerChallengeTimer,
-    gracePeriodTimer,
-    bleedingTimer,
-    principalProtectionTimer,
+    makerChallengeTimer: effectiveTradeTimers.makerChallenge || makerChallengeTimer,
+    gracePeriodTimer: effectiveTradeTimers.gracePeriod || gracePeriodTimer,
+    bleedingTimer: effectiveTradeTimers.bleeding || bleedingTimer,
+    principalProtectionTimer: effectiveTradeTimers.principalProtection || principalProtectionTimer,
     bleedingAmounts,
     takerName,
     tokenDecimalsMap,
@@ -1022,10 +1139,13 @@ function App() {
     setIsContractLoading,
     setLoadingText,
     getSafeTelegramUrl,
-    authenticatedFetch: activeAdminFetch,
+    authenticatedFetch: effectiveAuthenticatedFetch,
     showToast,
     settlementContractFns,
     uiLabEnabled,
+    devTradeDecisionInput: effectiveTradeDecisionInput,
+    devTradeActionCallbacks: effectiveActionCallbacks,
+    operationsActionSetters,
   });
 
   const {
@@ -1109,7 +1229,7 @@ function App() {
     handleDeleteOrder,
     activeTradesFilter,
     setActiveTradesFilter,
-    activeEscrows,
+    activeEscrows: effectiveActiveEscrows,
     setActiveTrade,
     setUserRole,
     setTradeState,
@@ -1123,7 +1243,7 @@ function App() {
     getSafeTelegramUrl,
     handleLogoutAndDisconnect,
     isConnected,
-    isAuthenticated,
+    isAuthenticated: effectiveIsAuthenticated,
     termsAccepted,
     setTermsAccepted,
     connector,
@@ -1164,9 +1284,9 @@ function App() {
                     ? (
                       <AdminPanel
                         lang={lang}
-                        authenticatedFetch={activeAdminFetch}
-                        isAuthenticated={isAuthenticated}
-                        authChecked={authChecked}
+                        authenticatedFetch={effectiveAuthenticatedFetch}
+                        isAuthenticated={effectiveIsAuthenticated}
+                        authChecked={effectiveAuthChecked}
                         showToast={showToast}
                         initialTab={devScenarioActive && devScenario.categoryKey === 'admin' ? devScenario.scenario.initialTab : undefined}
                       />
