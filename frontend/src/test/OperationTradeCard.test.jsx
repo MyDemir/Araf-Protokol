@@ -53,7 +53,8 @@ describe('shared active trade cards', () => {
     );
 
     expect(screen.getByText(getStateLabel('CHALLENGED', 'TR'))).toBeInTheDocument();
-    expect(screen.getByText('Karşı Taraf')).toBeInTheDocument();
+    expect(screen.getByText('Alıcı')).toBeInTheDocument();
+    expect(screen.queryByText('Karşı Taraf')).not.toBeInTheDocument();
     expect(screen.queryByText('CHALLENGED')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Odaya Git/i })).toBeInTheDocument();
   });
@@ -95,6 +96,8 @@ describe('shared active trade cards', () => {
     );
 
     expect(screen.getByText('#99')).toBeInTheDocument();
+    expect(screen.getByText('Taker')).toBeInTheDocument();
+    expect(screen.queryByText('Counterparty')).not.toBeInTheDocument();
     expect(screen.getAllByText(/Room sync in progress/i).length).toBeGreaterThan(0);
     expect(screen.getByTestId('pending-sync-card')).toHaveClass('border-sky-500/40');
     expect(screen.getByRole('button', { name: /Go to Room/i })).toBeInTheDocument();
