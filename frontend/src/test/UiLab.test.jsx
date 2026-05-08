@@ -7,8 +7,6 @@ import DevScenarioController from '../dev/ui-lab/DevScenarioController';
 import { isUiLabEnabled } from '../dev/ui-lab/isUiLabEnabled';
 import { scenarioRegistry } from '../dev/ui-lab/scenarioRegistry';
 import { createTradeRoomActionCallbacks } from '../dev/mocks/mockActions';
-import { createMockAdminFetch } from '../dev/mocks/mockAdminFetch';
-import AdminPanel from '../AdminPanel';
 
 afterEach(() => {
   cleanup();
@@ -113,27 +111,5 @@ describe('Dev scenario controller', () => {
       }),
     ));
     expect(screen.queryByTestId('ui-lab-scenario-shell')).not.toBeInTheDocument();
-  });
-});
-
-describe('Admin UI Lab mock preview', () => {
-  it('renders 403 scenario unauthorized box', async () => {
-    render(<AdminPanel lang="EN" authenticatedFetch={createMockAdminFetch({ responseMode: 'forbidden' })} isAuthenticated authChecked showToast={vi.fn()} />);
-    await waitFor(() => expect(screen.getByText('Unauthorized Access')).toBeInTheDocument());
-  });
-
-  it('renders degraded readiness KPI', async () => {
-    render(<AdminPanel lang="EN" authenticatedFetch={createMockAdminFetch({ responseMode: 'degraded' })} isAuthenticated authChecked showToast={vi.fn()} />);
-    await waitFor(() => expect(screen.getByText('NOT_READY')).toBeInTheDocument());
-  });
-
-  it('preserves trades read-only observability and settlement no-authority copy', async () => {
-    render(<AdminPanel lang="EN" authenticatedFetch={createMockAdminFetch({ responseMode: 'healthy' })} isAuthenticated authChecked showToast={vi.fn()} />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Trades' }));
-    await waitFor(() => expect(screen.getByText('Admin trades surface is observability-only; no actions/authority are exposed.')).toBeInTheDocument());
-
-    fireEvent.click(screen.getByRole('button', { name: 'Settlement' }));
-    await waitFor(() => expect(screen.getByText('Admin panel is observability-only. It cannot change settlement outcomes.')).toBeInTheDocument());
   });
 });

@@ -22,13 +22,9 @@ import { buildMintAction, buildOrderActions, buildProfileActions, buildStartTrad
 // [TR] Uygulama başlangıcında kritik env değişkenlerini doğrula
 // [EN] Validate critical env variables on app start
 
-const createDevScenarioFetch = (categoryKey, scenario) => {
+const createDevScenarioFetch = (categoryKey, scenario, fallbackFetch) => {
   if (categoryKey === 'admin') return createMockAdminFetch(scenario);
-  return async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({ mock: true, trades: [], trade: null }),
-  });
+  return fallbackFetch;
 };
 
 
@@ -379,7 +375,7 @@ function App() {
 
   const effectiveAuthenticatedFetch = React.useMemo(() => (
     devScenarioActive
-      ? createDevScenarioFetch(devScenario.categoryKey, devScenario.scenario)
+      ? createDevScenarioFetch(devScenario.categoryKey, devScenario.scenario, authenticatedFetch)
       : authenticatedFetch
   ), [devScenarioActive, devScenario, authenticatedFetch]);
   const activeAdminFetch = effectiveAuthenticatedFetch;
