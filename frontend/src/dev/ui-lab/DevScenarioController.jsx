@@ -7,7 +7,7 @@ const appendEntry = (setActionLog) => (entry) => setActionLog((prev) => [entry, 
 
 const firstCategory = scenarioCategories[0];
 
-export const UiLabPage = ({ activeScenario, onApplyScenario, onClearScenario }) => {
+export const DevScenarioController = ({ activeScenario, onApplyScenario, onClearScenario }) => {
   const [open, setOpen] = React.useState(false);
   const [activeCategoryKey, setActiveCategoryKey] = React.useState(activeScenario?.categoryKey || firstCategory.key);
   const [activeScenarioId, setActiveScenarioId] = React.useState(activeScenario?.scenarioId || firstCategory.scenarios[0]?.id || '');
@@ -37,19 +37,19 @@ export const UiLabPage = ({ activeScenario, onApplyScenario, onClearScenario }) 
       timestamp: new Date().toISOString(),
       details: { category: selectedCategory.key },
     });
-    onApplyScenario?.(selectedCategory.key, selectedScenario, appendLog);
+    onApplyScenario?.({ ...selectedScenario, category: selectedCategory.key, categoryKey: selectedCategory.key, appendLog });
   };
 
   return (
     <div className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-[90] pointer-events-none">
-      <div className="flex flex-col items-end gap-3 pointer-events-auto">
+      <div className="flex flex-col items-end gap-3 pointer-events-auto" data-testid="dev-scenario-controller">
         {open && (
           <div className="w-[min(92vw,780px)] max-h-[78vh] overflow-y-auto bg-[#0b0b0f]/95 backdrop-blur-md border border-fuchsia-500/30 rounded-2xl shadow-2xl p-3 md:p-4">
             <div className="flex items-start justify-between gap-3 mb-3">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-fuchsia-300">Dev scenario controller</p>
-                <h2 className="text-lg font-bold text-white">UI Lab sandbox</h2>
-                <p className="text-xs text-slate-400">Select a scenario; the real app view renders with mock state and no-op callbacks.</p>
+                <h2 className="text-lg font-bold text-white">Scenario sandbox</h2>
+                <p className="text-xs text-slate-400">Select a scenario; the real app screen receives mock state while this panel stays control-only.</p>
                 {activeScenario && (
                   <p className="mt-1 text-xs text-emerald-300">Active: {activeScenario.categoryKey} / {activeScenario.scenarioId}</p>
                 )}
@@ -71,10 +71,10 @@ export const UiLabPage = ({ activeScenario, onApplyScenario, onClearScenario }) 
                 <p className="text-xs text-textSecondary mt-1 break-all">Scenario id: {selectedScenario?.id}</p>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <button type="button" onClick={applyScenario} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold">
-                    Render in real App view
+                    Apply to real App view
                   </button>
                   <button type="button" onClick={onClearScenario} className="px-4 py-2 rounded-xl border border-borderSubtle text-textSecondary hover:text-textPrimary text-sm font-bold">
-                    Clear mock scenario
+                    Clear scenario
                   </button>
                 </div>
                 <div className="mt-4">
@@ -89,14 +89,14 @@ export const UiLabPage = ({ activeScenario, onApplyScenario, onClearScenario }) 
           type="button"
           onClick={() => setOpen((prev) => !prev)}
           className={`h-12 px-4 rounded-full border shadow-xl font-bold text-sm transition ${activeScenario ? 'bg-fuchsia-900/70 border-fuchsia-400/50 text-fuchsia-100' : 'bg-[#111113] border-[#2a2a2e] text-slate-200 hover:text-white'}`}
-          aria-label="Open UI Lab scenario controller"
-          title="UI Lab scenario controller"
+          aria-label="Open dev scenario controller"
+          title="Dev scenario controller"
         >
-          🧪 {activeScenario ? 'Scenario active' : 'UI Lab'}
+          🧪 {activeScenario ? 'Scenario active' : 'Scenarios'}
         </button>
       </div>
     </div>
   );
 };
 
-export default UiLabPage;
+export default DevScenarioController;
