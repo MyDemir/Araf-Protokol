@@ -383,11 +383,26 @@ function App() {
   const effectiveIsAuthenticated = activeScenarioCategory === 'admin' ? true : isAuthenticated;
   const effectiveAuthChecked = activeScenarioCategory === 'admin' ? true : authChecked;
 
+  const effectiveTradeScenarioInput = activeScenarioCategory === 'tradeRoom'
+    ? (activeScenarioPayload?.decisionInput || {})
+    : {};
+  const effectiveActiveTrade = activeScenarioCategory === 'tradeRoom'
+    ? (effectiveTradeScenarioInput.trade || activeTrade)
+    : activeTrade;
+  const effectiveResolvedTradeState = activeScenarioCategory === 'tradeRoom'
+    ? (effectiveTradeScenarioInput.tradeState || effectiveTradeScenarioInput.trade?.state || resolvedTradeState)
+    : resolvedTradeState;
+  const effectiveUserRole = activeScenarioCategory === 'tradeRoom'
+    ? (effectiveTradeScenarioInput.userRole || effectiveTradeScenarioInput.trade?.role || userRole)
+    : userRole;
+  const effectiveChargebackAccepted = activeScenarioCategory === 'tradeRoom'
+    ? (effectiveTradeScenarioInput.chargebackAccepted ?? effectiveTradeScenarioInput.trade?.chargebackAcked ?? chargebackAccepted)
+    : chargebackAccepted;
   const effectiveTradeTimers = activeScenarioCategory === 'tradeRoom'
-    ? (activeScenarioPayload?.decisionInput?.timers || {})
+    ? (effectiveTradeScenarioInput.timers || {})
     : {};
   const effectivePaymentIpfsHash = activeScenarioCategory === 'tradeRoom'
-    ? (activeScenarioPayload?.decisionInput?.paymentIpfsHash || '')
+    ? (effectiveTradeScenarioInput.paymentIpfsHash || '')
     : paymentIpfsHash;
 
   const effectiveTradeDecisionInput = React.useMemo(() => {
@@ -397,7 +412,7 @@ function App() {
       trade: input.trade || activeTrade,
       tradeState: input.tradeState || input.trade?.state || resolvedTradeState,
       userRole: input.userRole || input.trade?.role || userRole,
-      chargebackAccepted: input.chargebackAccepted ?? chargebackAccepted,
+      chargebackAccepted: input.chargebackAccepted ?? input.trade?.chargebackAcked ?? chargebackAccepted,
       paymentIpfsHash: input.paymentIpfsHash ?? paymentIpfsHash,
       timers: {
         gracePeriod: input.timers?.gracePeriod || gracePeriodTimer,
@@ -1083,13 +1098,13 @@ function App() {
     takerFeeBps,
     socialLinks,
     faqItems,
-    activeTrade,
+    activeTrade: effectiveActiveTrade,
     setActiveTrade,
-    userRole,
+    userRole: effectiveUserRole,
     setUserRole,
-    tradeState,
+    tradeState: effectiveResolvedTradeState,
     setTradeState,
-    resolvedTradeState,
+    resolvedTradeState: effectiveResolvedTradeState,
     setCancelStatus,
     setChargebackAccepted,
     paymentIpfsHash: effectivePaymentIpfsHash,
@@ -1098,7 +1113,7 @@ function App() {
     handleReportPayment,
     handleProposeCancel,
     cancelStatus,
-    chargebackAccepted,
+    chargebackAccepted: effectiveChargebackAccepted,
     handleChargebackAck,
     handleRelease,
     handleChallenge,

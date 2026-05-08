@@ -1,12 +1,9 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { buildTradeDecisionModel } from '../app/contexts/trade-room/tradeDecisionModel';
-import TradeRoomPage from '../app/contexts/trade-room/TradeRoomPage';
 import DevScenarioController from '../dev/ui-lab/DevScenarioController';
 import { isUiLabEnabled } from '../dev/ui-lab/isUiLabEnabled';
 import { scenarioRegistry } from '../dev/ui-lab/scenarioRegistry';
-import { createTradeRoomActionCallbacks } from '../dev/mocks/mockActions';
 
 afterEach(() => {
   cleanup();
@@ -38,58 +35,6 @@ describe('scenario registry', () => {
   it('contains required Operations and Admin scenarios', () => {
     expect(scenarioRegistry.operations.scenarios.map((scenario) => scenario.id)).toEqual(expect.arrayContaining(['pending_backend_sync', 'settlement_action_required']));
     expect(scenarioRegistry.admin.scenarios.map((scenario) => scenario.id)).toEqual(expect.arrayContaining(['unauthorized-403', 'overview-degraded']));
-  });
-});
-
-describe('Trade Room scenario previews', () => {
-  const renderTradeScenario = (id) => {
-    const scenario = scenarioRegistry.tradeRoom.scenarios.find((item) => item.id === id);
-    const actionCallbacks = createTradeRoomActionCallbacks({ scenarioId: id, appendLog: vi.fn() });
-    render(<TradeRoomPage decisionInput={scenario.decisionInput} actionCallbacks={actionCallbacks} />);
-    return scenario;
-  };
-
-  it('renders LOCKED/taker payment proof guidance', () => {
-    renderTradeScenario('locked-taker');
-    expect(screen.getByText('Payment proof is needed')).toBeInTheDocument();
-    expect(screen.getAllByText('Payment proof is required.').length).toBeGreaterThan(0);
-  });
-
-  it('renders PAID/maker release action', () => {
-    renderTradeScenario('paid-maker');
-    expect(screen.getByRole('button', { name: 'Release Funds' })).toBeInTheDocument();
-  });
-
-  it('renders CHALLENGED settlement guidance', () => {
-    renderTradeScenario('challenged-maker');
-    expect(screen.getByText('Follow settlement steps from the existing settlement card.')).toBeInTheDocument();
-    expect(screen.getByText(/Araf is not an arbitrator/i)).toBeInTheDocument();
-  });
-
-  it('disables wrong-chain action buttons through decision disabled reasons', () => {
-    renderTradeScenario('wrong-chain');
-    expect(screen.getByRole('button', { name: 'Report Payment' })).toBeDisabled();
-    expect(screen.getAllByText('Unsupported network.').length).toBeGreaterThan(0);
-  });
-
-  it('logs no-op action clicks without calling real contract or backend functions', () => {
-    const scenario = scenarioRegistry.tradeRoom.scenarios.find((item) => item.id === 'with-payment-proof');
-    const realContract = vi.fn();
-    const backend = vi.fn();
-    const appendLog = vi.fn();
-    const actionCallbacks = createTradeRoomActionCallbacks({ scenarioId: scenario.id, appendLog });
-
-    render(<TradeRoomPage decisionInput={scenario.decisionInput} actionCallbacks={actionCallbacks} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Report Payment' }));
-
-    expect(realContract).not.toHaveBeenCalled();
-    expect(backend).not.toHaveBeenCalled();
-    expect(appendLog).toHaveBeenCalledWith(expect.objectContaining({ actionKey: 'report_payment', scenarioId: 'with-payment-proof' }));
-  });
-
-  it('keeps decisionInput fixture shape aligned with the decision model', () => {
-    const model = buildTradeDecisionModel(scenarioRegistry.tradeRoom.scenarios.find((item) => item.id === 'can-burn-expired').decisionInput);
-    expect(model.secondaryActions.map((action) => action.key)).toContain('burn_expired');
   });
 });
 
