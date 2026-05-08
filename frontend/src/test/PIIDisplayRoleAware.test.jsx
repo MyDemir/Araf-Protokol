@@ -32,7 +32,7 @@ describe('PIIDisplay role-aware and rail-aware copy', () => {
     render(<PIIDisplay tradeId="trade-copy" lang="EN" />);
 
     expect(screen.getAllByText(/Secure payment details/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Payment profile & contact/i)).toBeInTheDocument();
+    expect(screen.getByText(/Payment profile and contact/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Reveal secure payment details/i })).toBeInTheDocument();
     expect(screen.queryByText(/seller/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/seller payout/i)).not.toBeInTheDocument();

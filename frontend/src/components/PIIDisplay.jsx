@@ -128,37 +128,38 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
   // ── Kilitli görünüm ──────────────────────────────────────────────────────
   if (!revealed) {
     return (
-      <div className="bg-slate-900 p-4 rounded-xl border border-slate-700">
-        <p className="text-slate-400 text-xs mb-3 font-medium uppercase tracking-widest">
-          🛡️ {t.sectionTitle}
-        </p>
-        <div className="bg-slate-800 rounded-lg p-3 mb-3 flex items-center space-x-3">
-          <span className="text-2xl">🔒</span>
-          <div>
-            <p className="text-white font-medium text-sm">{t.lockedTitle}</p>
-            <p className="text-slate-500 text-xs mt-0.5">{t.lockedSub}</p>
-          </div>
+      <div className="bg-surface p-4 rounded-xl border border-borderStrong space-y-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-textMuted">
+            🛡️ {t.sectionTitle}
+          </p>
+          <h3 className="mt-1 text-base font-bold text-textPrimary leading-snug">{t.lockedTitle}</h3>
+        </div>
+
+        <div className="bg-elevated rounded-lg p-3 flex items-start gap-3 border border-borderSubtle">
+          <span className="text-2xl leading-none" aria-hidden="true">🔒</span>
+          <p className="text-sm text-textSecondary leading-relaxed">{t.lockedSub}</p>
         </div>
 
         {/* HTTP uyarısı — ORTA-15 */}
         {!window.isSecureContext && (
-          <div className="mb-3 p-2 bg-yellow-950/40 border border-yellow-900/50 rounded-lg">
-            <p className="text-yellow-400 text-xs">{t.noSecureContext}</p>
+          <div className="p-3 bg-yellow-950/40 border border-yellow-800/60 rounded-lg">
+            <p className="text-yellow-300 text-sm leading-relaxed">{t.noSecureContext}</p>
           </div>
         )}
 
         {error && (
-          <div className="mb-3 p-2 bg-red-950/40 border border-red-900/50 rounded-lg">
-            <p className="text-red-400 text-xs">⚠ {error}</p>
+          <div className="p-3 bg-red-950/40 border border-red-800/60 rounded-lg">
+            <p className="text-red-300 text-sm leading-relaxed">⚠ {error}</p>
           </div>
         )}
 
         <button
           onClick={handleReveal}
           disabled={loading}
-          className={`w-full py-2.5 rounded-xl font-bold text-sm transition ${
+          className={`w-full py-3 rounded-xl font-bold text-sm transition ${
             loading
-              ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+              ? 'bg-elevated text-textMuted border border-borderStrong cursor-not-allowed'
               : 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20'
           }`}
         >
@@ -170,49 +171,49 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
           ) : t.revealBtn}
         </button>
 
-        <p className="text-center text-[10px] text-slate-500 mt-2">{t.disclaimer}</p>
+        <p className="text-center text-xs text-textMuted leading-relaxed">{t.disclaimer}</p>
       </div>
     );
   }
 
   // ── Açık görünüm ─────────────────────────────────────────────────────────
   return (
-    <div className="bg-slate-900 p-4 rounded-xl border border-blue-500/40 relative overflow-hidden">
-      <div className="absolute top-0 right-0 bg-blue-600 text-white text-[10px] font-bold px-2 py-1 rounded-bl-lg">
+    <div className="bg-surface p-4 rounded-xl border border-borderStrong relative overflow-hidden">
+      <div className="absolute top-0 right-0 bg-blue-600 text-white text-xs font-bold px-2 py-1 rounded-bl-lg">
         {t.encryptedBadge}
       </div>
 
-      <p className="text-slate-400 text-xs mb-3 font-medium uppercase tracking-widest">
+      <p className="text-textMuted text-xs mb-3 font-semibold uppercase tracking-wider pr-32">
         🛡️ {t.sectionTitle}
       </p>
 
       {pii ? (
         <>
-          <p className="text-slate-400 text-[10px] mb-0.5 uppercase tracking-widest">{getFieldLabel('account_holder_name')}</p>
-          <p className="font-bold text-white text-base mb-3">{pii?.payoutProfile?.fields?.account_holder_name || '—'}</p>
+          <p className="text-textMuted text-xs mb-1 uppercase tracking-wider">{getFieldLabel('account_holder_name')}</p>
+          <p className="font-bold text-textPrimary text-lg mb-3 leading-snug">{pii?.payoutProfile?.fields?.account_holder_name || '—'}</p>
 
           {['TR_IBAN', 'SEPA_IBAN'].includes(pii?.payoutProfile?.rail) && (
             <>
-              <p className="text-slate-400 text-[10px] mb-0.5 uppercase tracking-widest">IBAN</p>
-              <p className="font-mono text-emerald-400 mb-3 break-all text-sm tracking-wider">
+              <p className="text-textMuted text-xs mb-1 uppercase tracking-wider">IBAN</p>
+              <p className="font-mono text-emerald-400 mb-3 break-all text-base tracking-wide">
                 {pii?.payoutProfile?.fields?.iban || '—'}
               </p>
             </>
           )}
 
           {pii.payoutProfile?.rail && (
-            <p className="text-[11px] text-blue-300 mb-3">
+            <p className="text-xs text-blue-300 mb-3">
               {t.railPrefix}: <span className="font-mono">{pii.payoutProfile.rail}</span>
             </p>
           )}
 
           {pii.payoutProfile?.fields && (
-            <div className="mb-3 p-2 rounded-lg border border-slate-700 bg-slate-800/40">
+            <div className="mb-3 p-3 rounded-lg border border-borderSubtle bg-elevated">
               {Object.entries(pii.payoutProfile.fields).map(([key, value]) => {
                 if (value == null || value === '' || key === 'iban' || key === 'account_holder_name') return null;
                 return (
-                  <p key={key} className="text-xs text-slate-300 break-all">
-                    <span className="text-slate-500">{getFieldLabel(key)}:</span> {String(value)}
+                  <p key={key} className="text-xs text-textSecondary break-all">
+                    <span className="text-textMuted">{getFieldLabel(key)}:</span> {String(value)}
                   </p>
                 );
               })}
@@ -228,7 +229,7 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
                     ? 'bg-emerald-900/30 text-emerald-400 border-emerald-700'
                     : copyState.status === 'error' && copyState.field === 'iban'
                     ? 'bg-red-900/30 text-red-400 border-red-700'
-                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'
+                    : 'bg-elevated hover:bg-surface text-textSecondary border-borderStrong'
                 }`}
               >
                 {copyState.status === 'success' && copyState.field === 'iban'
@@ -242,13 +243,13 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
               <>
                 <button
                   onClick={() => handleCopyField('routing_number', pii?.payoutProfile?.fields?.routing_number)}
-                  className="flex-1 text-xs font-medium py-2 rounded-lg transition border bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600"
+                  className="flex-1 text-xs font-medium py-2 rounded-lg transition border bg-elevated hover:bg-surface text-textSecondary border-borderStrong"
                 >
                   {copyState.status === 'success' && copyState.field === 'routing_number' ? t.copied : t.copyRouting}
                 </button>
                 <button
                   onClick={() => handleCopyField('account_number', pii?.payoutProfile?.fields?.account_number)}
-                  className="flex-1 text-xs font-medium py-2 rounded-lg transition border bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600"
+                  className="flex-1 text-xs font-medium py-2 rounded-lg transition border bg-elevated hover:bg-surface text-textSecondary border-borderStrong"
                 >
                   {copyState.status === 'success' && copyState.field === 'account_number' ? t.copied : t.copyAccount}
                 </button>
@@ -256,7 +257,7 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
             )}
             <button
               onClick={handleHide}
-              className="px-4 bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs py-2 rounded-lg transition border border-slate-600"
+              className="px-4 bg-elevated hover:bg-surface text-textSecondary text-xs py-2 rounded-lg transition border border-borderStrong"
             >
               {t.hideBtn}
             </button>
@@ -273,15 +274,15 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
               <span>{getContactCtaLabel(pii?.payoutProfile?.contact?.channel)}</span>
             </a>
           ) : (
-            <div className="flex items-center justify-center space-x-2 w-full py-2 rounded-xl bg-slate-800/50 border border-slate-700 text-slate-500 text-xs mb-3">
+            <div className="flex items-center justify-center space-x-2 w-full py-2 rounded-xl bg-elevated border border-borderSubtle text-textMuted text-xs mb-3">
               <span>💬</span>
               <span>{t.noContact}</span>
             </div>
           )}
 
-          <div className="p-2 bg-slate-800 rounded-lg flex items-start space-x-2 border border-slate-700">
-            <span className="text-sm shrink-0">🛡️</span>
-            <p className="text-[10px] text-slate-400 leading-tight">{t.notice}</p>
+          <div className="p-3 bg-elevated rounded-lg flex items-start space-x-2 border border-borderSubtle">
+            <span className="text-sm shrink-0" aria-hidden="true">🛡️</span>
+            <p className="text-sm text-textSecondary leading-relaxed">{t.notice}</p>
           </div>
         </>
       ) : error ? (
@@ -289,7 +290,7 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
           <p className="text-red-400 text-sm mb-2">⚠ {error}</p>
           <button
             onClick={handleHide}
-            className="px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-2 rounded-lg transition border border-slate-600"
+            className="px-4 bg-elevated hover:bg-surface text-textSecondary text-xs py-2 rounded-lg transition border border-borderStrong"
           >
             {t.hideBtn}
           </button>
@@ -297,7 +298,7 @@ export default function PIIDisplay({ tradeId, lang = 'tr', getSafeTelegramUrl, a
       ) : (
         <div className="text-center py-4">
           <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-          <p className="text-slate-400 text-sm">{t.loading}</p>
+          <p className="text-textSecondary text-sm">{t.loading}</p>
         </div>
       )}
     </div>

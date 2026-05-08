@@ -23,27 +23,58 @@ const formatTechnicalValue = (value) => {
   return JSON.stringify(value);
 };
 
+function PaymentRiskHeader({ lang, riskLevel, chipClass, compact }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-textPrimary leading-snug">
+          {getPaymentRiskSummaryCopy(compact ? 'compactTitle' : 'title', lang)}
+        </p>
+        {!compact && (
+          <p className="mt-0.5 text-xs text-textMuted leading-snug">
+            {getPaymentRiskSummaryCopy('subtitle', lang)}
+          </p>
+        )}
+      </div>
+      <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded border font-bold ${chipClass}`}>
+        {getPaymentRiskLevelLabel(riskLevel, lang)}
+      </span>
+    </div>
+  );
+}
+
 function PaymentRiskSummary({ lang, riskEntry, compact }) {
   const riskLevel = String(riskEntry.riskLevel || 'MEDIUM').toUpperCase();
-  const riskLabel = getPaymentRiskLevelLabel(riskLevel, lang);
   const chipClass = RISK_LEVEL_CLASS[riskLevel] || RISK_LEVEL_CLASS.MEDIUM;
   const isGenericSignal = riskEntry?.generic === true;
+  const isRestrictedSignal = riskLevel === 'RESTRICTED' || riskEntry.enabled === false;
   const desc = riskEntry?.description?.[lang] || riskEntry?.description?.EN || '';
+  const mainExplanation = compact
+    ? getPaymentRiskSummaryCopy('subtitle', lang)
+    : desc || getPaymentRiskSummaryCopy('operationalExplanation', lang);
 
   return (
-    <>
-      <div className={compact ? 'flex items-center justify-between gap-2' : 'flex items-center justify-between gap-2 mb-2'}>
-        <p className="text-xs text-slate-300 font-semibold">
-          {getPaymentRiskSummaryCopy('title', lang)}
+    <div className={compact ? 'space-y-1.5' : 'space-y-2'}>
+      <PaymentRiskHeader lang={lang} riskLevel={riskLevel} chipClass={chipClass} compact={compact} />
+      {mainExplanation && (
+        <p className="text-sm leading-relaxed text-textSecondary">
+          {mainExplanation}
         </p>
-        <span className={`text-[10px] px-2 py-0.5 rounded border font-bold ${chipClass}`}>{riskLabel}</span>
-      </div>
-      {!compact && desc && <p className="text-[11px] text-slate-400">{desc}</p>}
-      {isGenericSignal && <p className={`${compact ? 'text-[10px]' : 'text-[11px]'} text-amber-300 mt-1`}>{getPaymentRiskSummaryCopy('genericWarning', lang)}</p>}
-      <p className={`${compact ? 'text-[10px]' : 'text-[10px]'} text-slate-500 mt-1`}>
+      )}
+      {isGenericSignal && (
+        <p className="text-xs text-amber-300 leading-snug">
+          {getPaymentRiskSummaryCopy('genericWarning', lang)}
+        </p>
+      )}
+      {isRestrictedSignal && (
+        <p className="text-xs text-red-400 leading-snug">
+          {getPaymentRiskSummaryCopy('restrictedAvailability', lang)}
+        </p>
+      )}
+      <p className="text-xs text-textMuted leading-snug">
         {getPaymentRiskSummaryCopy('notTrustScore', lang)}
       </p>
-    </>
+    </div>
   );
 }
 
@@ -52,29 +83,32 @@ function PaymentRiskTechnicalDisclosure({ lang, riskEntry, defaultOpen = false }
   const riskLevel = String(riskEntry.riskLevel || 'MEDIUM').toUpperCase();
 
   return (
-    <div className="mt-3 border-t border-[#2a2a2e] pt-3">
+    <div className="mt-3 border-t border-borderStrong pt-3">
       <button
         type="button"
         aria-expanded={isOpen}
         onClick={() => setIsOpen((current) => !current)}
-        className="text-[11px] text-slate-300 underline decoration-dotted underline-offset-4 hover:text-white"
+        className="text-xs font-medium text-textSecondary underline decoration-dotted underline-offset-4 hover:text-textPrimary"
       >
         {isOpen ? getPaymentRiskSummaryCopy('hideDisclosureButton', lang) : getPaymentRiskSummaryCopy('disclosureButton', lang)}
       </button>
       {isOpen && (
-        <div className="mt-2 rounded-lg border border-[#2a2a2e] bg-[#0b0b0e] p-2" aria-label={getPaymentRiskSummaryCopy('disclosureTitle', lang)}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+        <div className="mt-2 rounded-lg border border-borderStrong bg-shell p-3" aria-label={getPaymentRiskSummaryCopy('disclosureTitle', lang)}>
+          <p className="mb-2 text-xs text-textMuted leading-snug">
+            {getPaymentRiskSummaryCopy('disclosureIntro', lang)}
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
             {TECHNICAL_FIELDS.map(([label, readValue]) => (
-              <p key={label} className="text-slate-400">
-                {label}: <span className="text-white font-mono break-all">{formatTechnicalValue(readValue(riskEntry))}</span>
+              <p key={label} className="text-textSecondary">
+                {label}: <span className="text-textPrimary font-mono break-all">{formatTechnicalValue(readValue(riskEntry))}</span>
               </p>
             ))}
           </div>
-          <p className="text-[10px] text-slate-500 mt-2">
+          <p className="text-xs text-textMuted mt-2">
             {getPaymentRiskSummaryCopy('previewOnly', lang)}
           </p>
           {(riskLevel === 'RESTRICTED' || riskEntry.enabled === false) && (
-            <p className="text-[10px] text-red-400 mt-2">
+            <p className="text-xs text-red-400 mt-2">
               {getPaymentRiskSummaryCopy('restrictedAvailability', lang)}
             </p>
           )}
@@ -94,14 +128,14 @@ export default function PaymentRiskBadge({
 
   if (compact) {
     return (
-      <div className="mt-2 p-2 rounded-lg border border-[#2a2a2e] bg-[#101014]">
+      <div className="mt-2 p-2 rounded-lg border border-borderStrong bg-surface">
         <PaymentRiskSummary lang={lang} riskEntry={riskEntry} compact />
       </div>
     );
   }
 
   return (
-    <div className="mt-3 p-3 rounded-xl border border-[#2a2a2e] bg-[#101014]">
+    <div className="mt-3 p-3 rounded-xl border border-borderStrong bg-surface">
       <PaymentRiskSummary lang={lang} riskEntry={riskEntry} compact={false} />
       <PaymentRiskTechnicalDisclosure lang={lang} riskEntry={riskEntry} defaultOpen={defaultTechnicalOpen} />
     </div>

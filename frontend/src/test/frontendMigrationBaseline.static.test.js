@@ -71,6 +71,13 @@ const removedOperationsPanelFiles = [
   'app/contexts/operations/SettlementQueueCard.jsx',
 ];
 
+
+const listFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+  const entryPath = path.join(dir, entry.name);
+  if (entry.isDirectory()) return listFiles(entryPath);
+  return [entryPath];
+});
+
 const extractObjectCall = (source, callName) => {
   const start = source.indexOf(`${callName}({`);
   expect(start, `${callName}({ should exist`).toBeGreaterThanOrEqual(0);
@@ -369,6 +376,17 @@ describe('PR #94 frontend regression guards', () => {
     expect(appViewsSource).toContain('onClick={toggleSidebar}');
     expect(appViewsSource).toContain('setSidebarOpen,');
     expect(readSrc('app', 'actions', 'tradeNavigationActions.js')).toContain('setSidebarOpen(false)');
+  });
+
+
+  it('keeps state and active-trade user-facing copy centralized instead of adding duplicate copy modules', () => {
+    const appCopyFiles = listFiles(path.join(srcRoot, 'app', 'copy'))
+      .map((filePath) => path.relative(path.join(srcRoot, 'app', 'copy'), filePath).replaceAll(path.sep, '/'))
+      .filter((relativePath) => /(?:state|active[-_]?trade|trade[-_]?state).*\.(?:js|jsx|ts|tsx)$/.test(relativePath));
+
+    expect(appCopyFiles).toEqual(['states.js']);
+    expect(readSrc('app', 'contexts', 'profile', 'ActiveTradesPanel.jsx')).toContain("import { getStateLabel } from '../../copy/states';");
+    expect(readSrc('app', 'contexts', 'operations', 'OperationTradeCard.jsx')).toContain("import { getStateLabel } from '../../copy/states';");
   });
 
   it('does not let a future fixed SystemStatusBar rely only on blind top padding for content safety', () => {

@@ -4,6 +4,14 @@ import { TERMS_ACCEPTED_STORAGE_KEY } from './bootstrapState';
 import { mapResolutionTypeLabel } from './useAppSessionData';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
 import { buildGoToTradeRoomAction } from './actions/tradeNavigationActions';
+import { getStateLabel } from './copy';
+
+const getActiveTradeRoleLabel = (role, lang = 'EN') => {
+  const normalized = String(role || '').toLowerCase();
+  if (normalized === 'maker') return lang === 'TR' ? 'İlan Sahibi' : 'Maker';
+  if (normalized === 'taker') return lang === 'TR' ? 'Alıcı' : 'Taker';
+  return role || '—';
+};
 
 // [TR] Eksik env değişkenleri için kapatılabilir uyarı şeridi.
 // [EN] Dismissible warning strip for missing env variables.
@@ -12,7 +20,7 @@ export const EnvWarningBanner = ({ envErrors }) => {
   if (!envErrors?.length || !visible) return null;
   return (
     <div className="fixed top-0 left-0 right-0 z-50 bg-red-950/95 border-b border-red-800/60 backdrop-blur-sm flex items-center justify-between px-4 py-1.5 shadow-lg">
-      <span className="text-red-400 text-[11px] font-mono flex items-center gap-2">
+      <span className="text-red-400 text-xs font-mono flex items-center gap-2">
         <span className="text-red-500">⚠</span>
         {envErrors.join(' · ')}
       </span>
@@ -153,7 +161,7 @@ export const buildAppModals = (ctx) => {
               </button>
             ))}
           </div>
-          <p className="mt-6 text-[10px] text-center text-slate-500 italic">
+          <p className="mt-6 text-xs text-center text-slate-500 italic">
             {lang === 'TR' ? '* Araf Protocol hiçbir zaman private key istemez.' : '* Araf Protocol never asks for private keys.'}
           </p>
         </div>
@@ -202,7 +210,7 @@ export const buildAppModals = (ctx) => {
             placeholder={lang === 'TR' ? 'Nerede sorun yaşadınız? Hangi adımda tx/revert maliyeti oluştu? Kısaca anlatın...' : 'Where did it break? Which step caused tx/revert cost? Please describe briefly...'}
             className="w-full bg-[#151518] text-white px-3 py-3 rounded-xl border border-[#2a2a2e] outline-none h-28 text-sm mb-2 resize-none"
           />
-          <div className="flex items-center justify-between text-[11px] mb-3">
+          <div className="flex items-center justify-between text-xs mb-3">
             <span className="text-slate-500">
               {lang === 'TR' ? `Minimum ${FEEDBACK_MIN_LENGTH} karakter` : `Minimum ${FEEDBACK_MIN_LENGTH} characters`}
             </span>
@@ -215,7 +223,7 @@ export const buildAppModals = (ctx) => {
             <p className="text-red-400 text-xs mb-3 bg-red-950/30 border border-red-900/40 rounded-lg p-2">{feedbackError}</p>
           )}
 
-          <p className="text-[11px] text-slate-500 mb-3">
+          <p className="text-xs text-slate-500 mb-3">
             {lang === 'TR' ? 'Not: Private key, seed phrase veya kişisel bankacılık parolanızı asla paylaşmayın.' : 'Note: Never share private keys, seed phrase, or personal banking passwords.'}
           </p>
 
@@ -226,6 +234,19 @@ export const buildAppModals = (ctx) => {
       </div>
     );
   };
+
+
+  const makerFieldClass = "w-full bg-elevated text-textPrimary px-3 py-2 rounded-xl border border-borderStrong outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/30";
+  const makerLabelClass = "block text-xs text-textMuted mb-1 font-medium";
+  const renderMakerSection = (title, children, hint = null) => (
+    <section className="rounded-xl border border-borderSubtle bg-surface p-3 space-y-3">
+      <div>
+        <h3 className="text-sm font-bold text-textPrimary">{title}</h3>
+        {hint && <p className="mt-0.5 text-xs text-textMuted leading-relaxed">{hint}</p>}
+      </div>
+      {children}
+    </section>
+  );
 
   // [TR] Maker order oluşturma modalı — side seçimi, tier validasyonu ve reserve önizlemesi
   // [EN] Maker order creation modal — side selection, tier validation and reserve preview
@@ -256,104 +277,138 @@ export const buildAppModals = (ctx) => {
             <h2 className="text-xl font-bold text-white">{t.createAd}</h2>
             <button onClick={() => setShowMakerModal(false)} className="text-slate-400 hover:text-white text-2xl">&times;</button>
           </div>
-          <div className="space-y-4">
-            <div className="flex space-x-2">
-              <div className="w-1/2">
-                <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Order Kripto' : 'Order Crypto'}</label>
-                <select value={makerToken} onChange={e => setMakerToken(e.target.value)} className="w-full bg-[#151518] text-white px-3 py-2 rounded-xl border border-[#2a2a2e] outline-none">
-                  <option value="USDT">USDT</option>
-                  <option value="USDC">USDC</option>
-                </select>
-              </div>
-              <div className="w-1/2">
-                <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'İstenecek İtibari Para' : 'Fiat Currency'}</label>
-                <select value={makerFiat} onChange={e => setMakerFiat(e.target.value)} className="w-full bg-[#151518] text-white px-3 py-2 rounded-xl border border-[#2a2a2e] outline-none">
-                  <option value="TRY">TRY</option>
-                  <option value="USD">USD</option>
-                  <option value="EUR">EUR</option>
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Order Side' : 'Order Side'}</label>
+          <div className="space-y-3">
+            {renderMakerSection(
+              lang === 'TR' ? 'Order yönü' : 'Order type',
               <div className="grid grid-cols-2 gap-2">
-                <button type="button" data-testid="maker-side-SELL_CRYPTO" onClick={() => setMakerSide('SELL_CRYPTO')} className={`py-2 rounded-xl text-xs font-bold border transition ${makerSide === 'SELL_CRYPTO' ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40' : 'bg-[#151518] text-slate-300 border-[#2a2a2e]'}`}>{getOrderSideCopy('SELL_CRYPTO', 'display', lang)}</button>
-                <button type="button" data-testid="maker-side-BUY_CRYPTO" onClick={() => setMakerSide('BUY_CRYPTO')} className={`py-2 rounded-xl text-xs font-bold border transition ${makerSide === 'BUY_CRYPTO' ? 'bg-blue-600/20 text-blue-400 border-blue-500/40' : 'bg-[#151518] text-slate-300 border-[#2a2a2e]'}`}>{getOrderSideCopy('BUY_CRYPTO', 'display', lang)}</button>
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Order Miktarı' : 'Order Amount'}</label>
-              <input type="number" placeholder="Örn: 1000" value={makerAmount} onChange={e => setMakerAmount(e.target.value)} className="w-full bg-[#151518] text-white px-3 py-2 rounded-xl border border-[#2a2a2e] outline-none" />
-            </div>
-            <div className="flex space-x-2">
-              <div className="w-1/2">
-                <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Kur (1 USDT için)' : 'Rate (per 1 USDT)'}</label>
-                <input type="number" placeholder="Örn: 33.50" value={makerRate} onChange={e => setMakerRate(e.target.value)} className="w-full bg-[#151518] text-white px-3 py-2 rounded-xl border border-[#2a2a2e] outline-none" />
-              </div>
-              <div className="w-1/2"></div>
-            </div>
-            <div className="flex space-x-2">
-              <div className="w-1/2">
-                <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Min. Limit' : 'Min Limit'}</label>
-                <input type="number" placeholder="500" value={makerMinLimit} onChange={e => setMakerMinLimit(e.target.value)} className="w-full bg-[#151518] text-white px-3 py-2 rounded-xl border border-[#2a2a2e] outline-none" />
-              </div>
-              <div className="w-1/2">
-                <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Max. Limit' : 'Max Limit'}</label>
-                <input type="number" placeholder="2500" value={makerMaxLimit} onChange={e => setMakerMaxLimit(e.target.value)} className="w-full bg-[#151518] text-white px-3 py-2 rounded-xl border border-[#2a2a2e] outline-none" />
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Order Tier Seviyesi' : 'Order Tier'}</label>
-              <select value={makerTier} onChange={e => setMakerTier(Number(e.target.value))} className="w-full bg-[#151518] text-white px-3 py-2 rounded-xl border border-[#2a2a2e] outline-none">
-                {[0, 1, 2, 3, 4].map(t => (
-                  <option key={t} value={t} disabled={t > effectiveUserTier}>
-                    {TIER_LABELS[t]} {t > effectiveUserTier ? (lang === 'TR' ? '(Yetersiz)' : '(Too Low)') : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="mt-4 p-3 bg-emerald-900/20 border border-emerald-500/30 rounded-xl">
-              <p className="text-xs text-emerald-400 mb-2 font-medium">🛡️ {modalCopy.previewTitle} • {TIER_LABELS[makerTier]}</p>
-              {bondPct > 0 ? (
-                <div className="flex justify-between text-xs text-slate-300 mb-1">
-                  <span>{modalCopy.bondRoleLabel} (%{bondPct}):</span>
-                  <span>{preview.reserveAmount > 0 ? `${preview.reserveAmount} ${makerToken}` : '—'}</span>
+                <button type="button" data-testid="maker-side-SELL_CRYPTO" onClick={() => setMakerSide('SELL_CRYPTO')} className={`py-2.5 rounded-xl text-xs font-bold border transition ${makerSide === 'SELL_CRYPTO' ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40' : 'bg-elevated text-textSecondary border-borderStrong hover:text-textPrimary'}`}>{getOrderSideCopy('SELL_CRYPTO', 'display', lang)}</button>
+                <button type="button" data-testid="maker-side-BUY_CRYPTO" onClick={() => setMakerSide('BUY_CRYPTO')} className={`py-2.5 rounded-xl text-xs font-bold border transition ${makerSide === 'BUY_CRYPTO' ? 'bg-blue-600/20 text-blue-400 border-blue-500/40' : 'bg-elevated text-textSecondary border-borderStrong hover:text-textPrimary'}`}>{getOrderSideCopy('BUY_CRYPTO', 'display', lang)}</button>
+              </div>,
+              lang === 'TR' ? 'İlanda kripto satacağınızı veya kripto alacağınızı seçin.' : 'Choose whether this listing sells crypto or buys crypto.'
+            )}
+
+            {renderMakerSection(
+              lang === 'TR' ? 'Varlık' : 'Asset',
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className={makerLabelClass}>{lang === 'TR' ? 'Kripto varlık' : 'Crypto asset'}</label>
+                  <select value={makerToken} onChange={e => setMakerToken(e.target.value)} className={makerFieldClass}>
+                    <option value="USDT">USDT</option>
+                    <option value="USDC">USDC</option>
+                  </select>
                 </div>
-              ) : (
-                <p className="text-xs text-slate-400 mb-1">{lang === 'TR' ? 'Tier 0: Teminat yok' : 'Tier 0: No bond'}</p>
-              )}
-              <div className="flex justify-between text-sm font-bold text-white border-t border-emerald-500/30 pt-2">
-                <span>{modalCopy.totalLabel}:</span>
-                <span>{preview.totalAmount > 0 ? `${preview.totalAmount} ${makerToken}` : '—'}</span>
+                <div>
+                  <label className={makerLabelClass}>{lang === 'TR' ? 'İtibari para' : 'Fiat currency'}</label>
+                  <select value={makerFiat} onChange={e => setMakerFiat(e.target.value)} className={makerFieldClass}>
+                    <option value="TRY">TRY</option>
+                    <option value="USD">USD</option>
+                    <option value="EUR">EUR</option>
+                  </select>
+                </div>
               </div>
-              <p className="text-[11px] text-slate-400 mt-2">{modalCopy.previewHint}</p>
-            </div>
-            <PaymentRiskBadge lang={lang} riskEntry={payoutRiskEntry} />
-            <p className="text-[11px] text-slate-400 mt-2">
-              {lang === 'TR'
-                ? 'Payment risk sınıfı kullanıcı güveni değil, ödeme yönteminin operasyonel karmaşıklığıdır.'
-                : 'Payment risk class describes payment-method complexity, not user trust.'}
-            </p>
-            {isCreateTemporarilyDisabledByRisk && (
-              <p className="text-[11px] text-red-400 bg-red-950/20 border border-red-900/40 rounded-lg p-2">
-                {lang === 'TR'
-                  ? 'Bu rail/country kombinasyonu şu an availability config nedeniyle kısıtlı görünüyor. Bu bir kontrat hükmü değildir.'
-                  : 'This rail/country pair is currently restricted by availability config. This is not a contract authority rule.'}
-              </p>
             )}
-            {validationError && (
-              <p className="text-red-400 text-[11px] font-medium text-center bg-red-950/30 py-2 rounded-lg border border-red-900/50 mt-2">{validationError}</p>
+
+            {renderMakerSection(
+              lang === 'TR' ? 'Miktar' : 'Amount',
+              <div>
+                <label className={makerLabelClass}>{lang === 'TR' ? 'Order miktarı' : 'Order amount'}</label>
+                <input type="number" placeholder={lang === 'TR' ? 'Örn: 1000' : 'Example: 1000'} value={makerAmount} onChange={e => setMakerAmount(e.target.value)} className={makerFieldClass} />
+              </div>
             )}
-            <button
-              onClick={handleCreateOrder}
-              disabled={isContractLoading || validationError !== null || isCreateTemporarilyDisabledByRisk}
-              className={`w-full py-3 rounded-xl font-bold mt-2 shadow-lg transition ${
-                isContractLoading || validationError !== null || isCreateTemporarilyDisabledByRisk
-                  ? 'bg-[#151518] text-slate-500 border border-[#2a2a2e] cursor-not-allowed'
-                  : 'bg-white hover:bg-slate-200 text-black shadow-white/10'
-              }`}>
-              {isContractLoading ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : modalCopy.submitLabel}
-            </button>
+
+            {renderMakerSection(
+              lang === 'TR' ? 'Kur' : 'Rate',
+              <div>
+                <label className={makerLabelClass}>{lang === 'TR' ? `Kur (1 ${makerToken} için)` : `Rate (per 1 ${makerToken})`}</label>
+                <input type="number" placeholder={lang === 'TR' ? 'Örn: 33.50' : 'Example: 33.50'} value={makerRate} onChange={e => setMakerRate(e.target.value)} className={makerFieldClass} />
+              </div>
+            )}
+
+            {renderMakerSection(
+              lang === 'TR' ? 'Limitler' : 'Limits',
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className={makerLabelClass}>{lang === 'TR' ? 'Minimum limit' : 'Minimum limit'}</label>
+                  <input type="number" placeholder="500" value={makerMinLimit} onChange={e => setMakerMinLimit(e.target.value)} className={makerFieldClass} />
+                </div>
+                <div>
+                  <label className={makerLabelClass}>{lang === 'TR' ? 'Maksimum limit' : 'Maximum limit'}</label>
+                  <input type="number" placeholder="2500" value={makerMaxLimit} onChange={e => setMakerMaxLimit(e.target.value)} className={makerFieldClass} />
+                </div>
+              </div>
+            )}
+
+            {renderMakerSection(
+              lang === 'TR' ? 'Tier' : 'Tier',
+              <div>
+                <label className={makerLabelClass}>{lang === 'TR' ? 'Kullanılacak tier seviyesi' : 'Tier level'}</label>
+                <select value={makerTier} onChange={e => setMakerTier(Number(e.target.value))} className={makerFieldClass}>
+                  {[0, 1, 2, 3, 4].map(t => (
+                    <option key={t} value={t} disabled={t > effectiveUserTier}>
+                      {TIER_LABELS[t]} {t > effectiveUserTier ? (lang === 'TR' ? '(Yetersiz)' : '(Too Low)') : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {renderMakerSection(
+              lang === 'TR' ? 'Reserve önizlemesi' : 'Reserve preview',
+              <div className="p-3 bg-emerald-900/20 border border-emerald-500/30 rounded-xl">
+                <p className="text-xs text-emerald-400 mb-2 font-medium">🛡️ {modalCopy.previewTitle} • {TIER_LABELS[makerTier]}</p>
+                {bondPct > 0 ? (
+                  <div className="flex justify-between gap-3 text-xs text-textSecondary mb-1">
+                    <span>{modalCopy.bondRoleLabel} (%{bondPct}):</span>
+                    <span className="font-mono">{preview.reserveAmount > 0 ? `${preview.reserveAmount} ${makerToken}` : '—'}</span>
+                  </div>
+                ) : (
+                  <p className="text-xs text-textMuted mb-1">{lang === 'TR' ? 'Tier 0: Teminat yok' : 'Tier 0: No bond'}</p>
+                )}
+                <div className="flex justify-between gap-3 text-sm font-bold text-textPrimary border-t border-emerald-500/30 pt-2">
+                  <span>{modalCopy.totalLabel}:</span>
+                  <span className="font-mono">{preview.totalAmount > 0 ? `${preview.totalAmount} ${makerToken}` : '—'}</span>
+                </div>
+                <p className="text-xs text-textMuted mt-2 leading-relaxed">{modalCopy.previewHint}</p>
+              </div>
+            )}
+
+            {renderMakerSection(
+              lang === 'TR' ? 'Ödeme yöntemi karmaşıklığı' : 'Payment method complexity',
+              <>
+                <PaymentRiskBadge lang={lang} riskEntry={payoutRiskEntry} />
+                <p className="text-xs text-textMuted leading-relaxed">
+                  {lang === 'TR'
+                    ? 'Payment risk sınıfı kullanıcı güveni değil, ödeme yönteminin operasyonel karmaşıklığıdır.'
+                    : 'Payment risk class describes payment-method complexity, not user trust.'}
+                </p>
+                {isCreateTemporarilyDisabledByRisk && (
+                  <p className="text-sm text-red-300 bg-red-950/20 border border-red-900/40 rounded-lg p-3 leading-relaxed">
+                    {lang === 'TR'
+                      ? 'Bu rail/country kombinasyonu şu an availability config nedeniyle kısıtlı görünüyor. Bu bir kontrat hükmü değildir.'
+                      : 'This rail/country pair is currently restricted by availability config. This is not a contract authority rule.'}
+                  </p>
+                )}
+              </>
+            )}
+
+            {renderMakerSection(
+              lang === 'TR' ? 'Onay' : 'Confirm',
+              <>
+                {validationError && (
+                  <p className="text-red-300 text-sm font-medium bg-red-950/30 p-3 rounded-lg border border-red-900/50 leading-relaxed">{validationError}</p>
+                )}
+                <button
+                  onClick={handleCreateOrder}
+                  disabled={isContractLoading || validationError !== null || isCreateTemporarilyDisabledByRisk}
+                  className={`w-full py-3 rounded-xl font-bold shadow-lg transition ${
+                    isContractLoading || validationError !== null || isCreateTemporarilyDisabledByRisk
+                      ? 'bg-elevated text-textMuted border border-borderStrong cursor-not-allowed'
+                      : 'bg-white hover:bg-slate-200 text-black shadow-white/10'
+                  }`}>
+                  {isContractLoading ? (loadingText || (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...')) : modalCopy.submitLabel}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -504,7 +559,7 @@ export const buildAppModals = (ctx) => {
                   <button type="submit" disabled={isContractLoading} className={`w-full py-2.5 rounded-xl font-bold text-sm transition ${isContractLoading ? 'bg-[#222] text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}>
                     {isContractLoading ? (lang === 'TR' ? 'Kaydediliyor...' : 'Saving...') : (lang === 'TR' ? 'Profili Kaydet' : 'Save Profile')}
                   </button>
-                  <p className="text-[10px] text-slate-500 text-center pt-3 border-t border-[#2a2a2e]">
+                  <p className="text-xs text-slate-500 text-center pt-3 border-t border-[#2a2a2e]">
                     🔒 {lang === 'TR' ? 'Payout profile bilgileriniz AES-256 ile şifrelenir ve asla on-chain kaydedilmez.' : 'Your payout profile is AES-256 encrypted and never saved on-chain.'}
                   </p>
                 </form>
@@ -584,7 +639,7 @@ export const buildAppModals = (ctx) => {
                         <div className="bg-[#151518] p-3 rounded-xl border border-[#2a2a2e] text-center col-span-2">
                           <p className="text-slate-500 text-[10px] font-bold tracking-widest">{lang === 'TR' ? 'UZLAŞMALI KAPANIŞ' : 'AGREED SETTLEMENT'}</p>
                           <p className="text-2xl font-bold text-cyan-300 mt-1">{partialSettlementCount}</p>
-                          <p className="text-[10px] text-slate-500 mt-1">
+                          <p className="text-xs text-slate-500 mt-1">
                             {lang === 'TR' ? 'Risk cezası değil, uzlaşmalı kapanış geçmişi göstergesidir.' : 'This is an event-history marker, not a risk penalty.'}
                           </p>
                         </div>
@@ -614,12 +669,12 @@ export const buildAppModals = (ctx) => {
                           <div className="bg-blue-950/20 p-4 rounded-xl border border-blue-900/40 text-center mt-4">
                             <p className="text-blue-400 text-xs font-bold mb-2">🛡️ {lang === 'TR' ? 'Temiz Sayfa Hakkı' : 'Clean Slate Right'}</p>
                             {isBanActive ? (
-                              <p className="text-slate-400 text-[11px]">
+                              <p className="text-slate-400 text-xs">
                                 {lang === 'TR' ? 'Cezanız devam ediyor. Ardışık yasak sayacınızı sıfırlamak için cezanız bittikten sonra 90 gün beklemelisiniz.' : 'Your ban is active. You must wait 90 days after your ban expires to reset your consecutive bans counter.'}
                               </p>
                             ) : isEligible ? (
                               <>
-                                <p className="text-emerald-400 text-[11px] mb-3">
+                                <p className="text-emerald-400 text-xs mb-3">
                                   {lang === 'TR' ? 'Tebrikler! Son yasağınızın üzerinden 90 gün geçti. Sicilinizi şimdi temizleyebilirsiniz.' : 'Congratulations! 90 days have passed since your last ban. You can clear your record now.'}
                                 </p>
                                 <button
@@ -644,7 +699,7 @@ export const buildAppModals = (ctx) => {
                                 </button>
                               </>
                             ) : (
-                              <p className="text-slate-400 text-[11px]">
+                              <p className="text-slate-400 text-xs">
                                 {lang === 'TR' ? 'Ardışık yasak sayacınızı sıfırlamak için son cezanızın üzerinden 90 gün geçmesi gerekir.' : 'You must wait 90 days after your last ban to reset your consecutive bans counter.'}
                                 <br/>
                                 <span className="text-slate-300 font-bold mt-1 block">
@@ -678,7 +733,7 @@ export const buildAppModals = (ctx) => {
                               <p className="text-sm font-semibold text-slate-200 mb-1">
                                 {lang === 'TR' ? 'Trust Visibility' : 'Trust Visibility'}
                               </p>
-                              <p className="text-[11px] text-slate-500">
+                              <p className="text-xs text-slate-500">
                                 {lang === 'TR'
                                   ? 'Aktif maker-bağlantılı işlemler için görüntülenecek sinyal yok. Veri yoksa alan soft-fail ile sade kalır.'
                                   : 'No signal is available for active maker-linked trades. If payload is missing, this area soft-fails gracefully.'}
@@ -697,7 +752,7 @@ export const buildAppModals = (ctx) => {
                                 {lang === 'TR' ? 'Aktif maker-bağlantılı işlemler' : 'Active maker-linked trades'}
                               </span>
                             </div>
-                            <p className="text-[11px] text-slate-500">
+                            <p className="text-xs text-slate-500">
                               {lang === 'TR'
                                 ? 'Bilgilendirme amaçlıdır: read-only, non-blocking ve protokol hükmü değildir.'
                                 : 'Informational only: read-only, non-blocking, and not a protocol verdict.'}
@@ -706,7 +761,7 @@ export const buildAppModals = (ctx) => {
                               {trustRows.map(({ escrowId, ui }) => (
                                 <div key={escrowId} className="rounded-lg border border-[#2a2a2e] bg-[#0c0c0e] p-3 space-y-2">
                                   <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <p className="text-[11px] text-slate-400 font-mono">#{escrowId}</p>
+                                    <p className="text-xs text-slate-400 font-mono">#{escrowId}</p>
                                     <span className={`text-[10px] px-2 py-0.5 rounded border ${ui.severityChipClass}`}>
                                       {ui.severityBand} · {ui.severityLabel}
                                     </span>
@@ -717,13 +772,13 @@ export const buildAppModals = (ctx) => {
                                     <span className={`text-[10px] px-2 py-0.5 rounded border ${!ui.canBlockProtocolActions ? 'text-emerald-400 border-emerald-700/50' : 'text-red-400 border-red-700/50'}`}>canBlockProtocolActions: {String(ui.canBlockProtocolActions)}</span>
                                   </div>
                                   {ui.reasonLabels.length > 0 ? (
-                                    <ul className="text-[11px] text-slate-400 list-disc pl-4 space-y-1">
+                                    <ul className="text-xs text-slate-400 list-disc pl-4 space-y-1">
                                       {ui.reasonLabels.map((reasonLabel, idx) => (
                                         <li key={`${escrowId}-reason-${idx}`}>{reasonLabel}</li>
                                       ))}
                                     </ul>
                                   ) : (
-                                    <p className="text-[11px] text-slate-500">
+                                    <p className="text-xs text-slate-500">
                                       {lang === 'TR' ? 'Ek risk nedeni raporlanmadı.' : 'No additional risk reason reported.'}
                                     </p>
                                   )}
@@ -769,9 +824,9 @@ export const buildAppModals = (ctx) => {
                     <button
                       key={f}
                       onClick={() => setActiveTradesFilter(f)}
-                      className={`flex-1 text-[10px] font-bold py-1.5 rounded transition ${activeTradesFilter === f ? 'bg-[#222] text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                      className={`flex-1 text-xs font-bold py-1.5 rounded transition ${activeTradesFilter === f ? 'bg-[#222] text-white' : 'text-slate-500 hover:text-slate-300'}`}
                     >
-                      {f === 'ALL' ? (lang === 'TR' ? 'TÜMÜ' : 'ALL') : f}
+                      {getStateLabel(f, lang)}
                     </button>
                   ))}
                 </div>
@@ -785,9 +840,9 @@ export const buildAppModals = (ctx) => {
                       <div className="flex justify-between items-start mb-2">
                         <div>
                           <span className="font-mono text-emerald-400 font-bold">{escrow.id}</span>
-                          <span className="text-[10px] text-slate-500 ml-2 uppercase border border-[#333] px-2 py-0.5 rounded">{escrow.role}</span>
+                          <span className="text-xs text-slate-500 ml-2 border border-[#333] px-2 py-0.5 rounded">{getActiveTradeRoleLabel(escrow.role, lang)}</span>
                         </div>
-                        <span className={`text-[10px] font-bold px-2 py-1 rounded-md border ${escrow.state === 'PAID' ? 'bg-emerald-900/20 border-emerald-900/50 text-emerald-400' : escrow.state === 'CHALLENGED' ? 'bg-red-900/20 border-red-900/50 text-red-500' : 'bg-slate-800 border-slate-700 text-slate-300'}`}>{escrow.state}</span>
+                        <span className={`text-xs font-bold px-2 py-1 rounded-md border ${escrow.state === 'PAID' ? 'bg-emerald-900/20 border-emerald-900/50 text-emerald-400' : escrow.state === 'CHALLENGED' ? 'bg-red-900/20 border-red-900/50 text-red-500' : 'bg-slate-800 border-slate-700 text-slate-300'}`}>{getStateLabel(escrow.state, lang)}</span>
                       </div>
                       <p className="text-white font-medium text-sm mb-1">{escrow.amount} <span className="text-slate-500 text-xs ml-1">({escrow.rawTrade.max.toFixed(2)} {escrow.rawTrade.fiat})</span></p>
                       <p className="text-xs text-slate-400 mb-3">Karşı Taraf: <span className="font-mono">{escrow.counterparty}</span></p>

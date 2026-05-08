@@ -1,10 +1,14 @@
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildAppModals } from '../app/AppModals';
+
+afterEach(() => {
+  cleanup();
+});
 
 const makeCtx = (overrides = {}) => ({
   lang: 'EN',
@@ -141,6 +145,33 @@ describe('AppModals side-aware behaviors', () => {
     expect(setMakerSide).toHaveBeenCalledWith('SELL_CRYPTO');
   });
 
+
+  it('renders maker modal as guided sections without raw TR order-side wording', () => {
+    const modals = buildAppModals(makeCtx({ lang: 'TR', t: { createAd: 'Order Oluştur' }, profileTab: 'ayarlar', showProfileModal: false }));
+
+    render(<div>{modals.renderMakerModal()}</div>);
+
+    ['Order yönü', 'Varlık', 'Miktar', 'Kur', 'Limitler', 'Tier', 'Reserve önizlemesi', 'Ödeme yöntemi karmaşıklığı', 'Onay'].forEach((label) => {
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText('Order Side')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Kripto Satıyor' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Kripto Alıyor' })).toBeInTheDocument();
+  });
+
+  it('keeps submit disabled and readable when maker validation error exists', () => {
+    const modals = buildAppModals(makeCtx({
+      profileTab: 'ayarlar',
+      showProfileModal: false,
+      makerValidationError: 'Amount is required',
+    }));
+
+    render(<div>{modals.renderMakerModal()}</div>);
+
+    const createButton = screen.getByRole('button', { name: /Open Sell Order/i });
+    expect(createButton).toBeDisabled();
+    expect(screen.getByText('Amount is required')).toBeInTheDocument();
+  });
 
   it('buy preview accounting differs from sell preview accounting', () => {
     const buyModals = buildAppModals(makeCtx({ profileTab: 'ayarlar', showProfileModal: false, makerSide: 'BUY_CRYPTO', makerAmount: '100' }));

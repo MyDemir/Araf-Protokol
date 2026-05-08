@@ -1,13 +1,13 @@
 // [TR] Operations Center lane modeli mevcut session verisinden türetilir.
 // [EN] Operations Center lane model is derived from existing session state.
 export const LANE_DEFS = [
-  { key: 'settlement_action_required', label: { TR: 'Settlement Aksiyon Gerekli', EN: 'Settlement Action Required' }, priority: 1 },
-  { key: 'pending_backend_sync', label: { TR: 'Backend Senkron Bekliyor', EN: 'Pending Backend Sync' }, priority: 2 },
-  { key: 'challenged', label: { TR: 'İtirazlı İşlemler', EN: 'Challenged Trades' }, priority: 3 },
-  { key: 'paid', label: { TR: 'Ödeme Bildirildi', EN: 'Paid Trades' }, priority: 4 },
-  { key: 'settlement_waiting', label: { TR: 'Settlement: Karşı Taraf Bekleniyor', EN: 'Active Settlement Proposal / Waiting Counterparty' }, priority: 5 },
-  { key: 'locked', label: { TR: 'Kilitli İşlemler', EN: 'Locked Trades' }, priority: 6 },
-  { key: 'informational', label: { TR: 'Bilgilendirme / Geçmiş', EN: 'Informational / History' }, priority: 7 },
+  { key: 'settlement_action_required', label: { TR: 'Yanıt Gereken Settlement', EN: 'Settlement Needs Your Response' }, priority: 1 },
+  { key: 'pending_backend_sync', label: { TR: 'Oda Senkronu Sürüyor', EN: 'Room Sync in Progress' }, priority: 2 },
+  { key: 'challenged', label: { TR: 'İtirazdaki İşlemler', EN: 'Trades in Challenge' }, priority: 3 },
+  { key: 'paid', label: { TR: 'Ödeme Bildirilenler', EN: 'Payment Reported' }, priority: 4 },
+  { key: 'settlement_waiting', label: { TR: 'Karşı Taraf Settlement Yanıtı', EN: 'Waiting on Settlement Response' }, priority: 5 },
+  { key: 'locked', label: { TR: 'Ödeme Bekleyen Kilitler', EN: 'Locked Awaiting Payment' }, priority: 6 },
+  { key: 'informational', label: { TR: 'Bilgi Amaçlı', EN: 'Informational' }, priority: 7 },
 ];
 
 
