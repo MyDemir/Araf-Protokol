@@ -9,7 +9,7 @@ import AppShell from './app/shell/AppShell';
 import { useSessionActions } from './app/providers/SessionProvider';
 import { useAppSessionData } from './app/useAppSessionData';
 import AdminPanel from './AdminPanel';
-import UiLabPage from './dev/ui-lab/UiLabPage';
+import DevScenarioController from './dev/ui-lab/DevScenarioController';
 import { isUiLabEnabled } from './dev/ui-lab/isUiLabEnabled';
 import { createMockAdminFetch } from './dev/mocks/mockAdminFetch';
 import { createSetterAction, createTradeRoomActionCallbacks } from './dev/mocks/mockActions';
@@ -353,8 +353,10 @@ function App() {
       : authenticatedFetch
   ), [devScenarioActive, devScenario, authenticatedFetch]);
 
-  const applyDevScenario = React.useCallback((categoryKey, scenario, appendLog) => {
+  const applyDevScenario = React.useCallback((scenario) => {
     if (!uiLabEnabled || !scenario) return;
+    const categoryKey = scenario.categoryKey || scenario.category;
+    const appendLog = scenario.appendLog;
     setDevScenario({ categoryKey, scenarioId: scenario.id, scenario, appendLog });
     setShowProfileModal(false);
     setShowMakerModal(false);
@@ -1186,7 +1188,7 @@ function App() {
       />
 
       {uiLabEnabled && (
-        <UiLabPage
+        <DevScenarioController
           activeScenario={devScenario}
           onApplyScenario={applyDevScenario}
           onClearScenario={clearDevScenario}

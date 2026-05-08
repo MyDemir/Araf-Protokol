@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { buildTradeDecisionModel } from '../app/contexts/trade-room/tradeDecisionModel';
 import TradeRoomPage from '../app/contexts/trade-room/TradeRoomPage';
-import UiLabPage from '../dev/ui-lab/UiLabPage';
+import DevScenarioController from '../dev/ui-lab/DevScenarioController';
 import { isUiLabEnabled } from '../dev/ui-lab/isUiLabEnabled';
 import { scenarioRegistry } from '../dev/ui-lab/scenarioRegistry';
 import { createTradeRoomActionCallbacks } from '../dev/mocks/mockActions';
@@ -18,12 +18,16 @@ afterEach(() => {
 
 describe('UI Lab gate', () => {
   it('does not enable when DEV and VITE_ENABLE_UI_LAB are false', () => {
-    expect(isUiLabEnabled({ DEV: false, VITE_ENABLE_UI_LAB: 'false' })).toBe(false);
+    expect(isUiLabEnabled({ DEV: false, PROD: false, VITE_ENABLE_UI_LAB: 'false' })).toBe(false);
   });
 
-  it('enables when DEV or VITE_ENABLE_UI_LAB is true', () => {
-    expect(isUiLabEnabled({ DEV: true, VITE_ENABLE_UI_LAB: 'false' })).toBe(true);
-    expect(isUiLabEnabled({ DEV: false, VITE_ENABLE_UI_LAB: 'true' })).toBe(true);
+  it('enables outside production when DEV or VITE_ENABLE_UI_LAB is true', () => {
+    expect(isUiLabEnabled({ DEV: true, PROD: false, VITE_ENABLE_UI_LAB: 'false' })).toBe(true);
+    expect(isUiLabEnabled({ DEV: false, PROD: false, VITE_ENABLE_UI_LAB: 'true' })).toBe(true);
+  });
+  it('never enables in production builds', () => {
+    expect(isUiLabEnabled({ DEV: false, PROD: true, VITE_ENABLE_UI_LAB: 'true' })).toBe(false);
+    expect(isUiLabEnabled({ DEV: true, PROD: true, VITE_ENABLE_UI_LAB: 'true' })).toBe(false);
   });
 });
 
@@ -91,19 +95,22 @@ describe('Trade Room scenario previews', () => {
   });
 });
 
-describe('UI Lab scenario controller', () => {
+describe('Dev scenario controller', () => {
   it('applies Active Trades scenarios through controller without rendering a preview shell', async () => {
     const onApplyScenario = vi.fn();
-    render(<UiLabPage onApplyScenario={onApplyScenario} />);
-    fireEvent.click(screen.getByRole('button', { name: /Open UI Lab scenario controller/i }));
+    render(<DevScenarioController onApplyScenario={onApplyScenario} />);
+    fireEvent.click(screen.getByRole('button', { name: /Open dev scenario controller/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Active Trades' }));
     fireEvent.click(screen.getByRole('button', { name: 'CHALLENGED filter' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Render in real App view' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to real App view' }));
 
     await waitFor(() => expect(onApplyScenario).toHaveBeenCalledWith(
-      'activeTrades',
-      expect.objectContaining({ id: 'active-trades-challenged', initialFilter: 'CHALLENGED' }),
-      expect.any(Function),
+      expect.objectContaining({
+        id: 'active-trades-challenged',
+        initialFilter: 'CHALLENGED',
+        categoryKey: 'activeTrades',
+        appendLog: expect.any(Function),
+      }),
     ));
     expect(screen.queryByTestId('ui-lab-scenario-shell')).not.toBeInTheDocument();
   });
