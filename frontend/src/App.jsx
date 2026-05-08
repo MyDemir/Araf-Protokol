@@ -936,6 +936,7 @@ function App() {
     authenticatedFetch,
     showToast,
     settlementContractFns,
+    uiLabEnabled,
   });
 
   const {

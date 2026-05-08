@@ -130,6 +130,48 @@ describe('AppViews market side-aware rendering', () => {
     }
   });
 
+
+  it('renders desktop UI Lab nav entry only when uiLabEnabled is true', async () => {
+    const user = userEvent.setup();
+    const enabledSetCurrentView = vi.fn();
+    const enabledViews = buildAppViews({
+      ...baseCtx,
+      uiLabEnabled: true,
+      setCurrentView: enabledSetCurrentView,
+    });
+    const enabledRender = render(<div>{enabledViews.renderSlimRail()}</div>);
+
+    const labButton = screen.getByTitle('UI Lab');
+    expect(labButton).toBeInTheDocument();
+    await user.click(labButton);
+    expect(enabledSetCurrentView).toHaveBeenCalledWith('uiLab');
+    enabledRender.unmount();
+
+    const disabledViews = buildAppViews({
+      ...baseCtx,
+      uiLabEnabled: false,
+    });
+    render(<div>{disabledViews.renderSlimRail()}</div>);
+    expect(screen.queryByTitle('UI Lab')).not.toBeInTheDocument();
+  });
+
+  it('renders mobile UI Lab nav entry only when uiLabEnabled is true', () => {
+    const enabledViews = buildAppViews({
+      ...baseCtx,
+      uiLabEnabled: true,
+    });
+    const enabledRender = render(<div>{enabledViews.renderMobileNav()}</div>);
+    expect(screen.getByLabelText('UI Lab')).toBeInTheDocument();
+    enabledRender.unmount();
+
+    const disabledViews = buildAppViews({
+      ...baseCtx,
+      uiLabEnabled: false,
+    });
+    render(<div>{disabledViews.renderMobileNav()}</div>);
+    expect(screen.queryByLabelText('UI Lab')).not.toBeInTheDocument();
+  });
+
   it('renders side badge and side CTA labels', () => {
     const views = buildAppViews({
       ...baseCtx,
