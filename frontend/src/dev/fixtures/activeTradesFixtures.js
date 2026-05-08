@@ -8,5 +8,6 @@ export const activeTradesFixture = [
 
 export const activeTradesScenarios = [
   { id: 'active-trades-all', label: 'ALL / LOCKED / PAID / CHALLENGED', category: 'activeTrades', activeEscrows: activeTradesFixture, activeEscrowCounts: buildActiveEscrowCounts(activeTradesFixture), initialFilter: 'ALL' },
+  { id: 'active-trades-challenged', label: 'CHALLENGED filter', category: 'activeTrades', activeEscrows: activeTradesFixture, activeEscrowCounts: buildActiveEscrowCounts(activeTradesFixture), initialFilter: 'CHALLENGED' },
   { id: 'active-trades-empty', label: 'Empty state', category: 'activeTrades', activeEscrows: [], activeEscrowCounts: buildActiveEscrowCounts([]), initialFilter: 'ALL' },
 ];

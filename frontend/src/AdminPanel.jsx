@@ -44,8 +44,13 @@ const toBoolBadgeClass = (value) => (
     : 'bg-[#1a1a1f] text-slate-300 border border-[#333]'
 );
 
-function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, showToast }) {
-  const [activeTab, setActiveTab] = React.useState(TAB_OVERVIEW);
+function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, showToast, initialTab = TAB_OVERVIEW }) {
+  const normalizeInitialTab = (tab) => ([TAB_OVERVIEW, TAB_SYNC, TAB_FEEDBACK, TAB_TRADES, TAB_SETTLEMENT].includes(tab) ? tab : TAB_OVERVIEW);
+  const [activeTab, setActiveTab] = React.useState(() => normalizeInitialTab(initialTab));
+
+  React.useEffect(() => {
+    setActiveTab(normalizeInitialTab(initialTab));
+  }, [initialTab]);
 
   const [summary, setSummary] = React.useState(null);
   const [summaryLoading, setSummaryLoading] = React.useState(false);

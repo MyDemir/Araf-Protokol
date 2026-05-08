@@ -11,6 +11,8 @@ import { useAppSessionData } from './app/useAppSessionData';
 import AdminPanel from './AdminPanel';
 import UiLabPage from './dev/ui-lab/UiLabPage';
 import { isUiLabEnabled } from './dev/ui-lab/isUiLabEnabled';
+import { createMockAdminFetch } from './dev/mocks/mockAdminFetch';
+import { createSetterAction, createTradeRoomActionCallbacks } from './dev/mocks/mockActions';
 import { getInitialLang, getInitialTermsAccepted, APP_LANG_STORAGE_KEY } from './app/bootstrapState';
 import { buildApiUrl, resolveApiPolicyDiagnostics } from './app/apiConfig';
 import { getSupportedChainsMap, isMintTokenEnabled, isSupportedChainId } from './app/chainPolicy';
@@ -19,6 +21,16 @@ import { buildMintAction, buildOrderActions, buildProfileActions, buildStartTrad
 
 // [TR] Uygulama başlangıcında kritik env değişkenlerini doğrula
 // [EN] Validate critical env variables on app start
+
+const createDevScenarioFetch = (categoryKey, scenario) => {
+  if (categoryKey === 'admin') return createMockAdminFetch(scenario);
+  return async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ mock: true, trades: [], trade: null }),
+  });
+};
+
 const ENV_ERRORS = [];
 const { errors: API_POLICY_ERRORS } = resolveApiPolicyDiagnostics(import.meta.env);
 ENV_ERRORS.push(...API_POLICY_ERRORS);
@@ -110,7 +122,7 @@ function App() {
   //    View routing + modal open/close flags
   // ═══════════════════════════════════════════
   const uiLabEnabled = isUiLabEnabled();
-  const initialView = uiLabEnabled && typeof window !== 'undefined' && window.location?.pathname === '/dev/ui-lab' ? 'uiLab' : 'home';
+  const initialView = 'home';
   const [currentView, setCurrentView] = useState(initialView);
   const [showMakerModal, setShowMakerModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -144,6 +156,9 @@ function App() {
   const [feedbackText, setFeedbackText] = useState('');
   const [feedbackError, setFeedbackError] = useState('');
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const [devScenario, setDevScenario] = useState(null);
+  const [profileContextTab, setProfileContextTab] = useState('account');
+  const devScenarioActive = Boolean(uiLabEnabled && devScenario);
 
   // [TR] Toast bildirimi gösterir — 4 sn sonra otomatik kapanır
   // [EN] Shows toast notification — auto-closes after 4s
@@ -259,6 +274,7 @@ function App() {
     setMyOrders,
     setOrders,
     activeEscrows,
+    setActiveEscrows,
     loading,
     setLoading,
     clearLocalSessionState,
@@ -317,7 +333,69 @@ function App() {
     filterTier1,
     filterToken,
     searchAmount,
+    devScenarioActive,
   });
+
+  const devScenarioActions = React.useMemo(() => {
+    if (!devScenario) return null;
+    const appendLog = devScenario.appendLog;
+    const setter = (key) => createSetterAction({ scenarioId: devScenario.scenario.id, appendLog, actionKey: key });
+    return {
+      tradeRoom: createTradeRoomActionCallbacks({ scenarioId: devScenario.scenario.id, appendLog }),
+      setter,
+      noop: (actionKey) => (...args) => setter(actionKey)(...args),
+    };
+  }, [devScenario]);
+
+  const activeAdminFetch = React.useMemo(() => (
+    devScenarioActive
+      ? createDevScenarioFetch(devScenario.categoryKey, devScenario.scenario)
+      : authenticatedFetch
+  ), [devScenarioActive, devScenario, authenticatedFetch]);
+
+  const applyDevScenario = React.useCallback((categoryKey, scenario, appendLog) => {
+    if (!uiLabEnabled || !scenario) return;
+    setDevScenario({ categoryKey, scenarioId: scenario.id, scenario, appendLog });
+    setShowProfileModal(false);
+    setShowMakerModal(false);
+    setSidebarOpen(false);
+
+    if (categoryKey === 'tradeRoom') {
+      const input = scenario.decisionInput || {};
+      setActiveTrade(input.trade || null);
+      setActiveEscrows(input.trade ? [input.trade] : []);
+      setTradeState(input.tradeState || input.trade?.state || 'LOCKED');
+      setUserRole(input.userRole || input.trade?.role || 'taker');
+      setChargebackAccepted(Boolean(input.trade?.chargebackAcked ?? true));
+      setPaymentIpfsHash(input.paymentIpfsHash || '');
+      setCurrentView('tradeRoom');
+      return;
+    }
+
+    if (categoryKey === 'activeTrades') {
+      setActiveEscrows(scenario.activeEscrows || []);
+      setActiveTradesFilter(scenario.initialFilter || 'ALL');
+      setProfileContextTab('active');
+      setCurrentView('profile');
+      return;
+    }
+
+    if (categoryKey === 'operations') {
+      setActiveEscrows(scenario.activeEscrows || []);
+      setActiveTrade(null);
+      setCurrentView('operations');
+      return;
+    }
+
+    if (categoryKey === 'admin') {
+      setCurrentView('admin');
+    }
+  }, [uiLabEnabled, setActiveTrade, setActiveEscrows, setTradeState, setUserRole, setChargebackAccepted, setPaymentIpfsHash, setCurrentView]);
+
+  const clearDevScenario = React.useCallback(() => {
+    setDevScenario(null);
+    showToast(lang === 'TR' ? 'Mock scenario kapatıldı.' : 'Mock scenario cleared.', 'info');
+  }, [lang, showToast]);
 
   // ═══════════════════════════════════════════
   // 7. YARDIMCI FONKSİYONLAR
@@ -509,13 +587,13 @@ function App() {
     getOrder,
     getAllowance,
     approveToken,
-    fillSellOrder,
-    fillBuyOrder,
+    fillSellOrder: devScenarioActive ? devScenarioActions?.noop('fill_sell_order') : fillSellOrder,
+    fillBuyOrder: devScenarioActive ? devScenarioActions?.noop('fill_buy_order') : fillBuyOrder,
     createSellOrder,
     createBuyOrder,
     cancelSellOrder,
     cancelBuyOrder,
-    authenticatedFetch,
+    authenticatedFetch: activeAdminFetch,
     showToast,
     setIsContractLoading,
     setLoadingText,
@@ -539,12 +617,14 @@ function App() {
     createBuyOrder,
     cancelSellOrder,
     cancelBuyOrder,
-    authenticatedFetch,
+    activeAdminFetch,
     showToast,
     setActiveTrade,
     setTradeState,
     setCancelStatus,
     setChargebackAccepted,
+    devScenarioActive,
+    devScenarioActions,
   ]);
 
   const tradeRoomActions = React.useMemo(() => buildTradeRoomActions({
@@ -557,16 +637,16 @@ function App() {
     isContractLoading,
     canMakerStartChallengeFlow,
     canMakerChallenge,
-    reportPayment,
-    signCancelProposal,
-    proposeOrApproveCancel,
-    releaseFunds,
-    pingTakerForChallenge,
-    challengeTrade,
-    pingMaker,
-    autoRelease,
-    burnExpired,
-    authenticatedFetch,
+    reportPayment: devScenarioActive ? devScenarioActions?.noop('report_payment') : reportPayment,
+    signCancelProposal: devScenarioActive ? devScenarioActions?.noop('propose_cancel') : signCancelProposal,
+    proposeOrApproveCancel: devScenarioActive ? devScenarioActions?.noop('propose_cancel') : proposeOrApproveCancel,
+    releaseFunds: devScenarioActive ? devScenarioActions?.noop('release_funds') : releaseFunds,
+    pingTakerForChallenge: devScenarioActive ? devScenarioActions?.noop('ping_taker_for_challenge') : pingTakerForChallenge,
+    challengeTrade: devScenarioActive ? devScenarioActions?.noop('start_challenge') : challengeTrade,
+    pingMaker: devScenarioActive ? devScenarioActions?.noop('ping_maker') : pingMaker,
+    autoRelease: devScenarioActive ? devScenarioActions?.noop('auto_release') : autoRelease,
+    burnExpired: devScenarioActive ? devScenarioActions?.noop('burn_expired') : burnExpired,
+    authenticatedFetch: activeAdminFetch,
     showToast,
     fetchMyTrades,
     setIsContractLoading,
@@ -596,7 +676,7 @@ function App() {
     pingMaker,
     autoRelease,
     burnExpired,
-    authenticatedFetch,
+    activeAdminFetch,
     showToast,
     fetchMyTrades,
     setActiveTrade,
@@ -604,6 +684,8 @@ function App() {
     setPaymentIpfsHash,
     setCancelStatus,
     setChargebackAccepted,
+    devScenarioActive,
+    devScenarioActions,
   ]);
 
   const profileActions = React.useMemo(() => buildProfileActions({
@@ -613,9 +695,9 @@ function App() {
     isWalletRegistered,
     payoutProfileDraft,
     requireSignedSessionForActiveWallet,
-    authenticatedFetch,
+    authenticatedFetch: activeAdminFetch,
     canonicalizePayoutProfileDraft,
-    registerWallet,
+    registerWallet: devScenarioActive ? devScenarioActions?.noop('register_wallet') : registerWallet,
     showToast,
     setIsContractLoading,
     setIsRegisteringWallet,
@@ -627,11 +709,13 @@ function App() {
     isWalletRegistered,
     payoutProfileDraft,
     requireSignedSessionForActiveWallet,
-    authenticatedFetch,
+    activeAdminFetch,
     registerWallet,
     showToast,
     setIsRegisteringWallet,
     setIsWalletRegistered,
+    devScenarioActive,
+    devScenarioActions,
   ]);
 
   const orderActions = React.useMemo(() => buildOrderActions({
@@ -639,12 +723,12 @@ function App() {
     address,
     isContractLoading,
     requireSignedSessionForActiveWallet,
-    fillSellOrder,
-    fillBuyOrder,
-    createSellOrder,
-    createBuyOrder,
-    cancelSellOrder,
-    cancelBuyOrder,
+    fillSellOrder: devScenarioActive ? devScenarioActions?.noop('fill_sell_order') : fillSellOrder,
+    fillBuyOrder: devScenarioActive ? devScenarioActions?.noop('fill_buy_order') : fillBuyOrder,
+    createSellOrder: devScenarioActive ? devScenarioActions?.noop('create_sell_order') : createSellOrder,
+    createBuyOrder: devScenarioActive ? devScenarioActions?.noop('create_buy_order') : createBuyOrder,
+    cancelSellOrder: devScenarioActive ? devScenarioActions?.noop('cancel_sell_order') : cancelSellOrder,
+    cancelBuyOrder: devScenarioActive ? devScenarioActions?.noop('cancel_buy_order') : cancelBuyOrder,
     showToast,
     setIsContractLoading,
     setOrders,
@@ -664,6 +748,8 @@ function App() {
     showToast,
     setOrders,
     setMyOrders,
+    devScenarioActive,
+    devScenarioActions,
   ]);
 
   const {
@@ -863,6 +949,7 @@ function App() {
     filteredOrders,
     orders,
     activeEscrows,
+    setActiveEscrows,
     loading,
     SUPPORTED_TOKEN_ADDRESSES,
     onchainTokenMap,
@@ -933,7 +1020,7 @@ function App() {
     setIsContractLoading,
     setLoadingText,
     getSafeTelegramUrl,
-    authenticatedFetch,
+    authenticatedFetch: activeAdminFetch,
     showToast,
     settlementContractFns,
     uiLabEnabled,
@@ -1071,16 +1158,15 @@ function App() {
                     ? renderOperations()
                     : currentView === 'profile'
                     ? renderProfileContext()
-                    : currentView === 'uiLab' && uiLabEnabled
-                    ? <UiLabPage />
                     : currentView === 'admin'
                     ? (
                       <AdminPanel
                         lang={lang}
-                        authenticatedFetch={authenticatedFetch}
+                        authenticatedFetch={activeAdminFetch}
                         isAuthenticated={isAuthenticated}
                         authChecked={authChecked}
                         showToast={showToast}
+                        initialTab={devScenarioActive && devScenario.categoryKey === 'admin' ? devScenario.scenario.initialTab : undefined}
                       />
                     )
                     : renderTradeRoom()}
@@ -1098,6 +1184,14 @@ function App() {
           </>
         )}
       />
+
+      {uiLabEnabled && (
+        <UiLabPage
+          activeScenario={devScenario}
+          onApplyScenario={applyDevScenario}
+          onClearScenario={clearDevScenario}
+        />
+      )}
 
       <button
         onClick={() => setShowFeedbackModal(true)}

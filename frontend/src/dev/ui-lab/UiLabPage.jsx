@@ -1,165 +1,99 @@
 import React from 'react';
-import AdminPanel from '../../AdminPanel';
-import TradeRoomPage from '../../app/contexts/trade-room/TradeRoomPage';
-import OperationsCenterPage from '../../app/contexts/operations/OperationsCenterPage';
-import ActiveTradesPanel from '../../app/contexts/profile/ActiveTradesPanel';
-import { createMockAdminFetch } from '../mocks/mockAdminFetch';
-import { createSetterAction, createTradeRoomActionCallbacks } from '../mocks/mockActions';
-import { findScenario, scenarioCategories } from './scenarioRegistry';
+import { scenarioCategories } from './scenarioRegistry';
 import ScenarioActionLog from './ScenarioActionLog';
 import ScenarioSelector from './ScenarioSelector';
-import ScenarioShell from './ScenarioShell';
 
 const appendEntry = (setActionLog) => (entry) => setActionLog((prev) => [entry, ...prev].slice(0, 30));
 
-const useUiLabScenarioState = () => {
-  const [activeCategoryKey, setActiveCategoryKey] = React.useState(scenarioCategories[0].key);
-  const [activeScenarioId, setActiveScenarioId] = React.useState(scenarioCategories[0].scenarios[0].id);
+const firstCategory = scenarioCategories[0];
 
-  const activeCategory = scenarioCategories.find((category) => category.key === activeCategoryKey) || scenarioCategories[0];
-  const activeScenario = findScenario(activeCategory.key, activeScenarioId);
+export const UiLabPage = ({ activeScenario, onApplyScenario, onClearScenario }) => {
+  const [open, setOpen] = React.useState(false);
+  const [activeCategoryKey, setActiveCategoryKey] = React.useState(activeScenario?.categoryKey || firstCategory.key);
+  const [activeScenarioId, setActiveScenarioId] = React.useState(activeScenario?.scenarioId || firstCategory.scenarios[0]?.id || '');
+  const [actionLog, setActionLog] = React.useState([]);
+  const appendLog = React.useMemo(() => appendEntry(setActionLog), []);
+
+  React.useEffect(() => {
+    if (!activeScenario) return;
+    setActiveCategoryKey(activeScenario.categoryKey);
+    setActiveScenarioId(activeScenario.scenarioId);
+  }, [activeScenario]);
 
   const selectCategory = (categoryKey) => {
-    const category = scenarioCategories.find((item) => item.key === categoryKey) || scenarioCategories[0];
+    const category = scenarioCategories.find((item) => item.key === categoryKey) || firstCategory;
     setActiveCategoryKey(category.key);
     setActiveScenarioId(category.scenarios[0]?.id || '');
   };
 
-  return { activeCategory, activeCategoryKey, activeScenario, activeScenarioId, selectCategory, setActiveScenarioId };
-};
+  const selectedCategory = scenarioCategories.find((category) => category.key === activeCategoryKey) || firstCategory;
+  const selectedScenario = selectedCategory.scenarios.find((scenario) => scenario.id === activeScenarioId) || selectedCategory.scenarios[0];
 
-const TradeRoomPreview = ({ scenario, lang, onLog }) => {
-  const decisionInput = React.useMemo(() => ({ ...scenario.decisionInput, lang }), [scenario, lang]);
-  const actionCallbacks = React.useMemo(() => createTradeRoomActionCallbacks({ scenarioId: scenario.id, appendLog: onLog }), [scenario.id, onLog]);
-  return <TradeRoomPage decisionInput={decisionInput} actionCallbacks={actionCallbacks} />;
-};
-
-const OperationsPreview = ({ scenario, lang, onLog }) => {
-  const setter = (key) => createSetterAction({ scenarioId: scenario.id, appendLog: onLog, actionKey: key });
-  return (
-    <OperationsCenterPage
-      activeEscrows={scenario.activeEscrows}
-      activeEscrowCounts={scenario.activeEscrowCounts}
-      activeTrade={null}
-      address={scenario.address}
-      lang={lang}
-      setActiveTrade={setter('setActiveTrade')}
-      setUserRole={setter('setUserRole')}
-      setTradeState={setter('setTradeState')}
-      setChargebackAccepted={setter('setChargebackAccepted')}
-      setCurrentView={setter('go_to_room')}
-      setSidebarOpen={setter('setSidebarOpen')}
-      setShowProfileModal={setter('setShowProfileModal')}
-    />
-  );
-};
-
-const ActiveTradesPreview = ({ scenario, lang, onLog }) => {
-  const [filter, setFilter] = React.useState(scenario.initialFilter || 'ALL');
-  React.useEffect(() => setFilter(scenario.initialFilter || 'ALL'), [scenario.id, scenario.initialFilter]);
-  const setter = (key) => createSetterAction({ scenarioId: scenario.id, appendLog: onLog, actionKey: key });
-  const setLoggedFilter = (nextFilter) => {
-    setFilter(nextFilter);
-    setter('setActiveTradesFilter')(nextFilter);
+  const applyScenario = () => {
+    if (!selectedScenario) return;
+    appendLog({
+      actionKey: 'apply_scenario',
+      scenarioId: selectedScenario.id,
+      timestamp: new Date().toISOString(),
+      details: { category: selectedCategory.key },
+    });
+    onApplyScenario?.(selectedCategory.key, selectedScenario, appendLog);
   };
 
   return (
-    <div className="w-full max-w-[700px]">
-      <ActiveTradesPanel
-        lang={lang}
-        activeTradesFilter={filter}
-        setActiveTradesFilter={setLoggedFilter}
-        activeEscrows={scenario.activeEscrows}
-        setActiveTrade={setter('setActiveTrade')}
-        setUserRole={setter('setUserRole')}
-        setTradeState={setter('setTradeState')}
-        setChargebackAccepted={setter('setChargebackAccepted')}
-        setCurrentView={setter('go_to_room')}
-        setShowProfileModal={setter('setShowProfileModal')}
-      />
-      {scenario.activeEscrows.length === 0 && (
-        <div className="bg-surface border border-borderSubtle rounded-xl p-4 text-sm text-textSecondary">
-          {lang === 'TR' ? 'Aktif işlem bulunmuyor.' : 'No active trades in this scenario.'}
-        </div>
-      )}
-    </div>
-  );
-};
+    <div className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-[90] pointer-events-none">
+      <div className="flex flex-col items-end gap-3 pointer-events-auto">
+        {open && (
+          <div className="w-[min(92vw,780px)] max-h-[78vh] overflow-y-auto bg-[#0b0b0f]/95 backdrop-blur-md border border-fuchsia-500/30 rounded-2xl shadow-2xl p-3 md:p-4">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-fuchsia-300">Dev scenario controller</p>
+                <h2 className="text-lg font-bold text-white">UI Lab sandbox</h2>
+                <p className="text-xs text-slate-400">Select a scenario; the real app view renders with mock state and no-op callbacks.</p>
+                {activeScenario && (
+                  <p className="mt-1 text-xs text-emerald-300">Active: {activeScenario.categoryKey} / {activeScenario.scenarioId}</p>
+                )}
+              </div>
+              <button type="button" onClick={() => setOpen(false)} className="text-slate-400 hover:text-white text-xl leading-none" aria-label="Close UI Lab controller">&times;</button>
+            </div>
 
-const AdminPreview = ({ scenario, lang, onLog }) => {
-  const authenticatedFetch = React.useMemo(() => createMockAdminFetch(scenario), [scenario]);
-  const containerRef = React.useRef(null);
-  React.useEffect(() => {
-    const tab = scenario.initialTab || 'overview';
-    onLog({ actionKey: `admin_tab:${tab}`, scenarioId: scenario.id, timestamp: new Date().toISOString(), details: {} });
-    const tabLabel = tab === 'overview' ? 'Overview' : tab === 'sync' ? 'Sync' : tab === 'feedback' ? 'Feedback' : tab === 'trades' ? 'Trades' : 'Settlement';
-    const timer = window.setTimeout(() => {
-      const button = Array.from(containerRef.current?.querySelectorAll('button') || []).find((node) => node.textContent?.trim() === tabLabel);
-      if (button && tab !== 'overview') button.click();
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [scenario.id, scenario.initialTab, onLog]);
+            <div className="grid md:grid-cols-[18rem_1fr] gap-3">
+              <ScenarioSelector
+                categories={scenarioCategories}
+                activeCategoryKey={activeCategoryKey}
+                activeScenarioId={activeScenarioId}
+                onSelectCategory={selectCategory}
+                onSelectScenario={setActiveScenarioId}
+              />
+              <section className="bg-surface border border-borderSubtle rounded-xl p-3 min-w-0">
+                <p className="text-xs font-bold uppercase tracking-wide text-textMuted mb-1">Selected scenario</p>
+                <h3 className="text-base font-bold text-textPrimary">{selectedCategory.label}: {selectedScenario?.label}</h3>
+                <p className="text-xs text-textSecondary mt-1 break-all">Scenario id: {selectedScenario?.id}</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button type="button" onClick={applyScenario} className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold">
+                    Render in real App view
+                  </button>
+                  <button type="button" onClick={onClearScenario} className="px-4 py-2 rounded-xl border border-borderSubtle text-textSecondary hover:text-textPrimary text-sm font-bold">
+                    Clear mock scenario
+                  </button>
+                </div>
+                <div className="mt-4">
+                  <ScenarioActionLog entries={actionLog} />
+                </div>
+              </section>
+            </div>
+          </div>
+        )}
 
-  return (
-    <div ref={containerRef} className="w-full" data-ui-lab-admin-initial-tab={scenario.initialTab || 'overview'}>
-      <AdminPanel
-        key={scenario.id}
-        lang={lang}
-        authenticatedFetch={authenticatedFetch}
-        isAuthenticated={true}
-        authChecked={true}
-        showToast={(message, tone) => onLog({ actionKey: 'showToast', scenarioId: scenario.id, timestamp: new Date().toISOString(), details: { message, tone } })}
-      />
-    </div>
-  );
-};
-
-const renderScenario = ({ scenario, categoryKey, lang, onLog }) => {
-  if (categoryKey === 'tradeRoom') return <TradeRoomPreview scenario={scenario} lang={lang} onLog={onLog} />;
-  if (categoryKey === 'operations') return <OperationsPreview scenario={scenario} lang={lang} onLog={onLog} />;
-  if (categoryKey === 'activeTrades') return <ActiveTradesPreview scenario={scenario} lang={lang} onLog={onLog} />;
-  if (categoryKey === 'admin') return <AdminPreview scenario={scenario} lang={lang} onLog={onLog} />;
-  return null;
-};
-
-export const UiLabPage = () => {
-  const { activeCategory, activeCategoryKey, activeScenario, activeScenarioId, selectCategory, setActiveScenarioId } = useUiLabScenarioState();
-  const [lang, setLang] = React.useState('EN');
-  const [actionLog, setActionLog] = React.useState([]);
-  const onLog = React.useMemo(() => appendEntry(setActionLog), []);
-
-  React.useEffect(() => setActionLog([]), [activeScenario?.id]);
-
-  return (
-    <div className="w-full max-w-[1400px] px-4 md:px-8" data-testid="ui-lab-page">
-      <div className="mb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-textPrimary">🧪 Scenario Preview / UI Lab</h1>
-          <p className="text-sm text-textSecondary">Dev-only fixture preview. No wallet, backend, or contract calls are made.</p>
-        </div>
-        <label className="text-sm text-textSecondary flex items-center gap-2">
-          Lang
-          <select value={lang} onChange={(event) => setLang(event.target.value)} className="bg-surface border border-borderStrong rounded-lg px-3 py-2 text-textPrimary">
-            <option value="EN">EN</option>
-            <option value="TR">TR</option>
-          </select>
-        </label>
-      </div>
-
-      <div className="flex flex-col md:flex-row gap-4 items-start">
-        <ScenarioSelector
-          categories={scenarioCategories}
-          activeCategoryKey={activeCategoryKey}
-          activeScenarioId={activeScenarioId}
-          onSelectCategory={selectCategory}
-          onSelectScenario={setActiveScenarioId}
-        />
-        <main className="flex-1 min-w-0 space-y-4">
-          <ScenarioShell title={`${activeCategory.label}: ${activeScenario.label}`} description={`Scenario id: ${activeScenario.id}`}>
-            {renderScenario({ scenario: activeScenario, categoryKey: activeCategory.key, lang, onLog })}
-          </ScenarioShell>
-          <ScenarioActionLog entries={actionLog} />
-        </main>
+        <button
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          className={`h-12 px-4 rounded-full border shadow-xl font-bold text-sm transition ${activeScenario ? 'bg-fuchsia-900/70 border-fuchsia-400/50 text-fuchsia-100' : 'bg-[#111113] border-[#2a2a2e] text-slate-200 hover:text-white'}`}
+          aria-label="Open UI Lab scenario controller"
+          title="UI Lab scenario controller"
+        >
+          🧪 {activeScenario ? 'Scenario active' : 'UI Lab'}
+        </button>
       </div>
     </div>
   );
