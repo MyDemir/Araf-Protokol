@@ -4,7 +4,6 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { buildTradeDecisionModel } from '../app/contexts/trade-room/tradeDecisionModel';
 import TradeRoomPage from '../app/contexts/trade-room/TradeRoomPage';
 import UiLabPage from '../dev/ui-lab/UiLabPage';
-import UiLabNavEntry from '../dev/ui-lab/UiLabNavEntry';
 import { isUiLabEnabled } from '../dev/ui-lab/isUiLabEnabled';
 import { scenarioRegistry } from '../dev/ui-lab/scenarioRegistry';
 import { createTradeRoomActionCallbacks } from '../dev/mocks/mockActions';
@@ -18,19 +17,6 @@ afterEach(() => {
 });
 
 describe('UI Lab gate', () => {
-  it('does not render the UI Lab entry when disabled', () => {
-    const setCurrentView = vi.fn();
-    const { container } = render(<UiLabNavEntry enabled={isUiLabEnabled({ DEV: false, VITE_ENABLE_UI_LAB: 'false' })} currentView="home" setCurrentView={setCurrentView} />);
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it('renders the UI Lab entry when DEV or the flag enables it', () => {
-    const setCurrentView = vi.fn();
-    render(<UiLabNavEntry enabled={isUiLabEnabled({ DEV: true, VITE_ENABLE_UI_LAB: 'false' })} currentView="home" setCurrentView={setCurrentView} />);
-    fireEvent.click(screen.getByTitle('UI Lab'));
-    expect(setCurrentView).toHaveBeenCalledWith('uiLab');
-  });
-
   it('does not enable when DEV and VITE_ENABLE_UI_LAB are false', () => {
     expect(isUiLabEnabled({ DEV: false, VITE_ENABLE_UI_LAB: 'false' })).toBe(false);
   });
@@ -105,23 +91,21 @@ describe('Trade Room scenario previews', () => {
   });
 });
 
-describe('UI Lab Active Trades preview', () => {
-  it('shows filters, filters to PAID only, and logs Go to Room mock action', async () => {
-    render(<UiLabPage />);
+describe('UI Lab scenario controller', () => {
+  it('applies Active Trades scenarios through controller without rendering a preview shell', async () => {
+    const onApplyScenario = vi.fn();
+    render(<UiLabPage onApplyScenario={onApplyScenario} />);
+    fireEvent.click(screen.getByRole('button', { name: /Open UI Lab scenario controller/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Active Trades' }));
+    fireEvent.click(screen.getByRole('button', { name: 'CHALLENGED filter' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Render in real App view' }));
 
-    expect(screen.getByRole('button', { name: /ALL\s+3/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Locked\s+1/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Payment Reported\s+1/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Challenge Phase\s+1/i })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /Payment Reported\s+1/i }));
-    expect(screen.getByText('#3002')).toBeInTheDocument();
-    expect(screen.queryByText('#3001')).not.toBeInTheDocument();
-    expect(screen.queryByText('#3003')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /Go to Room/i }));
-    await waitFor(() => expect(screen.getByText(/go_to_room/i)).toBeInTheDocument());
+    await waitFor(() => expect(onApplyScenario).toHaveBeenCalledWith(
+      'activeTrades',
+      expect.objectContaining({ id: 'active-trades-challenged', initialFilter: 'CHALLENGED' }),
+      expect.any(Function),
+    ));
+    expect(screen.queryByTestId('ui-lab-scenario-shell')).not.toBeInTheDocument();
   });
 });
 

@@ -163,6 +163,7 @@ export function useAppSessionData({
   filterTier1,
   filterToken,
   searchAmount,
+  devScenarioActive = false,
 }) {
   const [tradeState, setTradeState] = useState('LOCKED');
   const [userRole, setUserRole] = useState('taker');
@@ -381,6 +382,7 @@ export function useAppSessionData({
   }, []);
 
   const fetchMyTrades = React.useCallback(async () => {
+    if (devScenarioActive) return;
     if (!isAuthenticated || !isConnected) {
       setActiveEscrows([]);
       return;
@@ -760,13 +762,13 @@ export function useAppSessionData({
   }, [getPaused]);
 
   useEffect(() => {
-    if (currentView === 'tradeRoom' && ['LOCKED', 'PAID', 'CHALLENGED'].includes(resolvedTradeState) && userRole === 'maker' && activeTrade?.id && isAuthenticated) {
+    if (!devScenarioActive && currentView === 'tradeRoom' && ['LOCKED', 'PAID', 'CHALLENGED'].includes(resolvedTradeState) && userRole === 'maker' && activeTrade?.id && isAuthenticated) {
       authenticatedFetch(buildApiUrl(`pii/taker-name/${activeTrade.onchainId}`))
         .then((res) => res.json())
         .then((data) => { if (data.bankOwner) setTakerName(data.bankOwner); })
         .catch((err) => console.error('Taker name fetch error', err));
     }
-  }, [currentView, resolvedTradeState, userRole, activeTrade?.onchainId, activeTrade?.id, isAuthenticated, authenticatedFetch]);
+  }, [devScenarioActive, currentView, resolvedTradeState, userRole, activeTrade?.onchainId, activeTrade?.id, isAuthenticated, authenticatedFetch]);
 
   useEffect(() => {
     if (activeTrade?.state && activeTrade.state !== tradeState) {
@@ -1056,6 +1058,7 @@ export function useAppSessionData({
     setMyOrders,
     setOrders,
     activeEscrows,
+    setActiveEscrows,
     loading,
     setLoading,
     clearLocalSessionState,
