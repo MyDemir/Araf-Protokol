@@ -47,7 +47,7 @@ The protocol is built on a **Web2.5 Hybrid Architecture** that combines security
 
 *   **Off-Chain (Speed & Privacy):**
     *   **PII Data (IBAN, etc.):** Users' personal data is stored encrypted in the database using **Envelope Encryption (AES-256-GCM)**, ensuring GDPR/KVKK compliance and data security.
-    *   **Orderbook:** Marketplace listings are indexed in MongoDB for fast queries.
+    *   **Orderbook:** Parent orders are mirrored/indexed in MongoDB for fast read-model queries.
 
 *   **Zero-Trust Backend:** The backend server holds **no private keys**. It cannot move funds or alter dispute outcomes. Even if the backend is compromised, user funds remain safe.
 

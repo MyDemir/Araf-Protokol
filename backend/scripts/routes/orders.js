@@ -244,7 +244,7 @@ router.get("/", marketReadLimiter, async (req, res, next) => {
 
 // [TR] Kullanıcının kendi order listesi write-surface değil, paginated read-surface'tür.
 //      Bu yüzden write limiter yerine read limiter uygulanır.
-// [EN] User's own order listing is a paginated read surface, not a write surface.
+// [EN] User's own order list is a paginated read surface, not a write surface.
 //      Apply read limiter instead of write limiter.
 router.get("/my", requireAuth, requireSessionWalletMatch, ordersReadLimiter, async (req, res, next) => {
   try {
@@ -272,7 +272,7 @@ router.get("/my", requireAuth, requireSessionWalletMatch, ordersReadLimiter, asy
 });
 
 // [TR] Parent order'a bağlı child trade listesi state-changing değildir; read surface'tür.
-// [EN] Child trade listing under a parent order is non-authoritative read surface.
+// [EN] Child trade list/read surface under a parent order is non-authoritative.
 router.get("/:id/trades", requireAuth, requireSessionWalletMatch, ordersReadLimiter, async (req, res, next) => {
   try {
     const onchainOrderId = _parsePositiveOnchainId(req.params.id);

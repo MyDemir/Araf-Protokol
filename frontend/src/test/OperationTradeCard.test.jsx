@@ -30,7 +30,7 @@ describe('shared active trade cards', () => {
     );
 
     expect(screen.getByText('#42')).toBeInTheDocument();
-    expect(screen.getAllByText('Listing owner').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Order owner').length).toBeGreaterThan(0);
     expect(screen.getByText(getStateLabel(state, 'EN'))).toBeInTheDocument();
     expect(screen.getByText('Counterparty')).toBeInTheDocument();
     expect(screen.getByText('0xcafe...babe')).toBeInTheDocument();

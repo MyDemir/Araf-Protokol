@@ -8,7 +8,7 @@ import { getStateLabel } from './copy';
 
 const getActiveTradeRoleLabel = (role, lang = 'EN') => {
   const normalized = String(role || '').toLowerCase();
-  if (normalized === 'maker') return lang === 'TR' ? 'İlan Sahibi' : 'Maker';
+  if (normalized === 'maker') return lang === 'TR' ? 'Maker' : 'Maker';
   if (normalized === 'taker') return lang === 'TR' ? 'Alıcı' : 'Taker';
   return role || '—';
 };
@@ -284,7 +284,7 @@ export const buildAppModals = (ctx) => {
                 <button type="button" data-testid="maker-side-SELL_CRYPTO" onClick={() => setMakerSide('SELL_CRYPTO')} className={`py-2.5 rounded-xl text-xs font-bold border transition ${makerSide === 'SELL_CRYPTO' ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/40' : 'bg-elevated text-textSecondary border-borderStrong hover:text-textPrimary'}`}>{getOrderSideCopy('SELL_CRYPTO', 'display', lang)}</button>
                 <button type="button" data-testid="maker-side-BUY_CRYPTO" onClick={() => setMakerSide('BUY_CRYPTO')} className={`py-2.5 rounded-xl text-xs font-bold border transition ${makerSide === 'BUY_CRYPTO' ? 'bg-blue-600/20 text-blue-400 border-blue-500/40' : 'bg-elevated text-textSecondary border-borderStrong hover:text-textPrimary'}`}>{getOrderSideCopy('BUY_CRYPTO', 'display', lang)}</button>
               </div>,
-              lang === 'TR' ? 'İlanda kripto satacağınızı veya kripto alacağınızı seçin.' : 'Choose whether this listing sells crypto or buys crypto.'
+              lang === 'TR' ? 'Parent order ile kripto satacağınızı veya kripto alacağınızı seçin.' : 'Choose whether this parent order sells crypto or buys crypto.'
             )}
 
             {renderMakerSection(

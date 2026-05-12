@@ -1,15 +1,19 @@
 "use strict";
 
 /**
- * Listings Route — V3 Marketplace Feed Alias
+ * Deprecated Listings Route — read-only V3 compatibility alias
  *
- * V3'te authoritative public market nesnesi "Listing" değil, "Order"dur.
- * Bu route, eski frontend kart akışları için read-only bir uyumluluk katmanı sunar.
+ * V3 canonical market primitive is Parent Order, not Listing. This file is kept
+ * only for old read clients that still call /api/listings directly in isolated
+ * compatibility tests; it is not part of the canonical app.js mount surface.
  *
- * Önemli:
- *   - POST/DELETE listing write yolları artık authoritative değildir.
- *   - Yeni create/cancel akışları kontrat üstündeki order fonksiyonları ile yürür.
- *   - Bu route yalnız OPEN / PARTIALLY_FILLED SELL order'ları kart formatına projekte eder.
+ * Contract authority: ArafEscrow parent-order functions create/cancel orders.
+ * Backend role: mirror/read-model projection only.
+ *
+ * Compatibility guarantees:
+ *   - GET / and GET /config remain read-only projections over Order documents.
+ *   - POST/DELETE write routes are permanently deprecated and return 410.
+ *   - No route in this file is a canonical V3 write API.
  */
 
 const express = require("express");
@@ -94,11 +98,13 @@ router.get("/", marketReadLimiter, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// [TR] Listing write yüzeyi artık authoritative değildir. Frontend create/fill/cancel
-//      akışları V3 contract fonksiyonlarına taşınmalıdır.
+// [TR] Deprecated compatibility write yüzeyi: V3'te parent order create/cancel
+//      sadece kontrat otoritesiyle yürür; backend burada 410 döner.
+// [EN] Deprecated compatibility write surface: V3 parent order create/cancel
+//      is contract-authoritative; backend returns 410 here.
 router.post("/", requireAuth, requireSessionWalletMatch, ordersWriteLimiter, async (_req, res) => {
   return res.status(410).json({
-    error: "Listing create route V3'te deprecated. createSellOrder/createBuyOrder akışını kullanın.",
+    error: "Deprecated /api/listings write route. Use the canonical order-first createSellOrder/createBuyOrder flow.",
     code: "LISTINGS_WRITE_DEPRECATED_IN_V3",
   });
 });
@@ -106,7 +112,7 @@ router.post("/", requireAuth, requireSessionWalletMatch, ordersWriteLimiter, asy
 router.delete("/:id", requireAuth, requireSessionWalletMatch, ordersWriteLimiter, async (req, res) => {
   logger.warn(`[Listings] Deprecated delete çağrısı: caller=${req.wallet} id=${req.params.id}`);
   return res.status(410).json({
-    error: "Listing delete route V3'te deprecated. cancelSellOrder/cancelBuyOrder akışını kullanın.",
+    error: "Deprecated /api/listings delete route. Use the canonical order-first cancelSellOrder/cancelBuyOrder flow.",
     code: "LISTINGS_DELETE_DEPRECATED_IN_V3",
   });
 });

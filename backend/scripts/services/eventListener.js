@@ -86,6 +86,8 @@ const EVENT_NAMES = [
 
 const ARAF_ABI = [
   "event WalletRegistered(address indexed wallet, uint256 timestamp)",
+  // Deprecated direct-escrow mirror events. Kept for compatibility with historical deployments;
+  // canonical V3 child trades are mirrored from OrderFilled + getTrade().
   "event EscrowCreated(uint256 indexed tradeId, address indexed maker, address token, uint256 amount, uint8 tier, bytes32 listingRef)",
   "event EscrowLocked(uint256 indexed tradeId, address indexed taker, uint256 takerBond)",
   "event PaymentReported(uint256 indexed tradeId, string ipfsHash, uint256 timestamp)",
@@ -1226,6 +1228,7 @@ class EventWorker {
   }
 
   async _onOrderFilled(event) {
+    // childListingRef is the contract ABI field name; backend treats it as a child-trade trace ref, not a V3 Listing primitive.
     const { orderId, tradeId, filler, fillAmount, remainingAmount, childListingRef } = event.args;
     const fillEventAt = await this._getEventDate(event);
 
@@ -1293,6 +1296,8 @@ class EventWorker {
     await this._upsertOrderMirror(orderData, { canceledAt });
   }
 
+  // Deprecated compatibility handler for historical direct-escrow events.
+  // Canonical V3 order-first flow uses _onOrderFilled as contract-authoritative mirror input.
   async _onEscrowCreated(event) {
     const { tradeId, listingRef } = event.args;
     const createdAt = await this._getEventDate(event);
