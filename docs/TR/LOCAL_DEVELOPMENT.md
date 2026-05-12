@@ -151,11 +151,28 @@ npx hardhat coverage
 ```
 
 
-#### Deterministic local test komutları
+#### Root-level local test komutları
+
+Root `package.json` yalnız ince bir developer runner'dır. Testleri taşımaz ve package-local CI komutlarının yerine geçmez; her script ilgili package dizinine delegate eder.
+
 ```bash
-cd backend && npm ci && npm test
-cd ../frontend && npm ci && npm test
-cd ../contracts && npm ci && npx hardhat compile && npm run test:abi-drift && npx hardhat test
+# Repo root'tan, package bağımlılıkları kurulduktan sonra
+npm run test:backend
+npm run test:frontend
+npm run test:contracts
+npm run test:abi-drift
+
+# Deterministic aggregate sıra:
+# backend → frontend → contracts → ABI drift
+npm run test:all
+```
+
+Tek package içinde çalışırken package-local komutlar kullanılmaya devam eder:
+
+```bash
+cd backend && npm test
+cd ../frontend && npm test
+cd ../contracts && npm test
 ```
 
 ### Yerel Test Kontrol Listesi
