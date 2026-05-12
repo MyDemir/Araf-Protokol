@@ -111,8 +111,11 @@ function normalizePaymentRiskLevelInput(rawLevel) {
 
 export function normalizeTradeIdOrThrow(tradeId) {
   try {
+    if (tradeId === null || tradeId === undefined || String(tradeId).trim() === '') {
+      throw new Error('Trade ID boş olamaz.');
+    }
     const normalized = BigInt(tradeId);
-    if (normalized < 0n) throw new Error('Trade ID negatif olamaz.');
+    if (normalized <= 0n) throw new Error('Trade ID pozitif olmalı.');
     return normalized;
   } catch {
     throw new Error('Geçersiz tradeId. Lütfen işlemi yenileyin.');

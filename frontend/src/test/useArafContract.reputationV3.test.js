@@ -56,14 +56,24 @@ describe('useArafContract V3 reputation normalization', () => {
     expect(() => normalizeTokenDecimalsOrThrow(undefined)).toThrow();
   });
 
-  it('normalizes settlement tx primitives safely for BigInt-compatible writes', () => {
-    expect(normalizeTradeIdOrThrow('42')).toBe(42n);
+  it('normalizes positive settlement trade IDs safely for BigInt-compatible writes', () => {
+    expect(normalizeTradeIdOrThrow('1')).toBe(1n);
+    expect(normalizeTradeIdOrThrow(1n)).toBe(1n);
+    expect(normalizeTradeIdOrThrow('12345678901234567890')).toBe(12345678901234567890n);
+  });
+
+  it('normalizes non-trade settlement tx primitives safely', () => {
     expect(normalizeMakerShareBpsOrThrow('1500')).toBe(1500);
     expect(normalizeUnixSecondsOrThrow(1760000000.93)).toBe(1760000000n);
   });
 
-  it('fails closed on malformed settlement tx primitives', () => {
-    expect(() => normalizeTradeIdOrThrow('invalid-id')).toThrow();
+  it('fails closed on zero, negative, missing, or malformed settlement trade IDs', () => {
+    [0, '0', -1, '', null, undefined, 'invalid-id'].forEach((tradeId) => {
+      expect(() => normalizeTradeIdOrThrow(tradeId)).toThrow('Geçersiz tradeId. Lütfen işlemi yenileyin.');
+    });
+  });
+
+  it('fails closed on malformed non-trade settlement tx primitives', () => {
     expect(() => normalizeMakerShareBpsOrThrow(10001)).toThrow();
     expect(() => normalizeMakerShareBpsOrThrow(-1)).toThrow();
     expect(() => normalizeUnixSecondsOrThrow(0)).toThrow();

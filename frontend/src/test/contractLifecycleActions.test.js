@@ -89,6 +89,30 @@ describe('contract lifecycle action builders', () => {
     expect(deps.setCurrentView).toHaveBeenCalledWith('home');
   });
 
+  it('trade-room write actions fail closed for zero on-chain trade id before contract calls', async () => {
+    const deps = makeTradeRoomDeps({ activeTrade: { ...baseTrade, onchainId: '0' } });
+    const actions = buildTradeRoomActions(deps);
+
+    await actions.handleReportPayment();
+    await actions.handleProposeCancel();
+    await actions.handleRelease();
+    await actions.handleChallenge();
+    await actions.handlePingMaker('0');
+    await actions.handleAutoRelease('0');
+    await actions.handleBurnExpired();
+
+    expect(deps.reportPayment).not.toHaveBeenCalled();
+    expect(deps.signCancelProposal).not.toHaveBeenCalled();
+    expect(deps.proposeOrApproveCancel).not.toHaveBeenCalled();
+    expect(deps.releaseFunds).not.toHaveBeenCalled();
+    expect(deps.pingTakerForChallenge).not.toHaveBeenCalled();
+    expect(deps.challengeTrade).not.toHaveBeenCalled();
+    expect(deps.pingMaker).not.toHaveBeenCalled();
+    expect(deps.autoRelease).not.toHaveBeenCalled();
+    expect(deps.burnExpired).not.toHaveBeenCalled();
+    expect(deps.showToast).toHaveBeenCalledWith('On-chain trade ID not found.', 'error');
+  });
+
   it('trade-room challenge and maker ping preserve ping-path contract calls', async () => {
     const deps = makeTradeRoomDeps({
       activeTrade: { ...baseTrade, paidAt: new Date(Date.now() - 49 * 3600 * 1000).toISOString() },
