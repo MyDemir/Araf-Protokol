@@ -20,9 +20,14 @@ describe('UI Lab gate', () => {
     expect(isUiLabEnabled({ DEV: true, PROD: false, VITE_ENABLE_UI_LAB: 'false' })).toBe(true);
     expect(isUiLabEnabled({ DEV: false, PROD: false, VITE_ENABLE_UI_LAB: 'true' })).toBe(true);
   });
-  it('never enables in production builds', () => {
-    expect(isUiLabEnabled({ DEV: false, PROD: true, VITE_ENABLE_UI_LAB: 'true' })).toBe(false);
-    expect(isUiLabEnabled({ DEV: true, PROD: true, VITE_ENABLE_UI_LAB: 'true' })).toBe(false);
+
+  it('keeps regular production builds disabled without the explicit flag', () => {
+    expect(isUiLabEnabled({ DEV: false, PROD: true, VITE_ENABLE_UI_LAB: 'false' })).toBe(false);
+  });
+
+  it('allows the explicit UI Lab flag in preview/production-mode builds', () => {
+    expect(isUiLabEnabled({ DEV: false, PROD: true, VITE_ENABLE_UI_LAB: 'true' })).toBe(true);
+    expect(isUiLabEnabled({ DEV: true, PROD: true, VITE_ENABLE_UI_LAB: 'true' })).toBe(true);
   });
 });
 
