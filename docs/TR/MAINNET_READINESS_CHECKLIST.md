@@ -44,6 +44,7 @@ Kritik not:
 ### KMS / encryption
 - `KMS_PROVIDER`
 - `KMS_PROVIDER=env` production'da kullanılmamalı.
+- HKDF değişikliğinden önce yazılmış PII ciphertext'leri için migration/runbook gereksinimi ayrıca doğrulanmalı: [`docs/TR/PII_ENCRYPTION_MIGRATION.md`](./PII_ENCRYPTION_MIGRATION.md).
 - KMS seçimine göre ilgili env'ler:
   - AWS: `AWS_KMS_KEY_ARN`, `AWS_ENCRYPTED_DATA_KEY`, `AWS_REGION`
   - Vault: `VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_KEY_NAME`
