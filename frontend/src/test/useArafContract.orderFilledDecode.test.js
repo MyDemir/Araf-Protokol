@@ -48,6 +48,17 @@ describe('extractOrderFilledArgs strict filtering', () => {
     expect(result.tradeId).toBe(1234n);
   });
 
+  it('preserves OrderFilled tradeId values above Number.MAX_SAFE_INTEGER as bigint', () => {
+    const unsafeTradeId = 900719925474099312345n;
+    const receipt = { logs: [makeOrderFilledLog({ address: escrow, orderId: 55n, tradeId: unsafeTradeId })] };
+
+    const result = extractOrderFilledArgs(receipt, 55n, escrow);
+
+    expect(result).not.toBeNull();
+    expect(result.tradeId).toBe(unsafeTradeId);
+    expect(result.tradeId.toString()).toBe('900719925474099312345');
+  });
+
   it('handles malformed logs safely without throwing', () => {
     const receipt = {
       logs: [

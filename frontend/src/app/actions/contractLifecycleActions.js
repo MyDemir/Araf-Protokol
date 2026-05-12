@@ -151,7 +151,7 @@ export const buildStartTradeAction = ({
     const { keccak256, stringToHex } = await import('viem');
     const childRefHash = keccak256(stringToHex(childListingRef));
     const fillResult = await fillOrderFn(BigInt(order.onchainId), fillAmountRaw, childRefHash);
-    const onchainTradeId = fillResult?.tradeId ? Number(fillResult.tradeId) : null;
+    const onchainTradeId = fillResult?.tradeId ? fillResult.tradeId.toString() : null;
 
     // [TR] Trade odası state'i order id ile değil child trade id ile açılmalıdır.
     //      Event decode edilemediyse belirsiz state ile devam etmeyip güvenli hata veririz.
