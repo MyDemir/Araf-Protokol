@@ -2,7 +2,7 @@ import React from 'react';
 import { getStateLabel } from '../../copy/states';
 
 const roleCopy = {
-  maker: { TR: 'Order sahibi', EN: 'Order owner' },
+  maker: { TR: 'Maker', EN: 'Maker' },
   taker: { TR: 'Alıcı', EN: 'Taker' },
 };
 
