@@ -141,7 +141,7 @@ describe('start trade action', () => {
     expect(deps.fillSellOrder.mock.calls[0][1]).toBe(50_000_000n);
     expect(deps.fillSellOrder.mock.calls[0][2]).toMatch(/^0x[0-9a-f]{64}$/);
     expect(deps.fillBuyOrder).not.toHaveBeenCalled();
-    expect(deps.setActiveTrade).toHaveBeenCalledWith(expect.objectContaining({ id: 'backend-trade-77', onchainId: 77 }));
+    expect(deps.setActiveTrade).toHaveBeenCalledWith(expect.objectContaining({ id: 'backend-trade-77', onchainId: '77' }));
     expect(deps.setTradeState).toHaveBeenCalledWith('LOCKED');
     expect(deps.setCancelStatus).toHaveBeenCalledWith(null);
     expect(deps.setChargebackAccepted).toHaveBeenCalledWith(false);
@@ -206,10 +206,27 @@ describe('start trade action', () => {
     expect(deps.authenticatedFetch.mock.calls[0][0]).toContain('trades/by-escrow/77');
     expect(deps.setActiveTrade).toHaveBeenCalledWith(expect.objectContaining({
       id: null,
-      onchainId: 77,
+      onchainId: '77',
       _pendingBackendSync: true,
     }));
     expect(deps.showToast).toHaveBeenCalledWith(expect.stringContaining('backend record is not ready yet'), 'info');
+  });
+
+  it('keeps OrderFilled child trade id above Number.MAX_SAFE_INTEGER as a string identity', async () => {
+    const unsafeTradeId = 900719925474099312345n;
+    const deps = makeDeps({
+      fillSellOrder: vi.fn(async () => ({ tradeId: unsafeTradeId })),
+      authenticatedFetch: vi.fn(async () => ({ ok: false, json: async () => ({}) })),
+    });
+
+    await runAction(deps);
+
+    expect(deps.authenticatedFetch.mock.calls[0][0]).toContain(`trades/by-escrow/${unsafeTradeId.toString()}`);
+    expect(deps.setActiveTrade).toHaveBeenCalledWith(expect.objectContaining({
+      id: null,
+      onchainId: unsafeTradeId.toString(),
+      _pendingBackendSync: true,
+    }));
   });
 
   it('rolls allowance back to zero when a failure occurs after approve', async () => {

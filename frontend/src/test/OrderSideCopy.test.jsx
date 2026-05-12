@@ -66,8 +66,8 @@ const apiOrder = {
 
 describe('order side copy', () => {
   it.each([
-    ['SELL_CRYPTO', 'Kripto Satıyor', 'Selling Crypto', 'Satın Al', 'Buy', 'Satış orderı', 'Sell Order'],
-    ['BUY_CRYPTO', 'Kripto Alıyor', 'Buying Crypto', 'Sat', 'Sell', 'Alış orderı', 'Buy Order'],
+    ['SELL_CRYPTO', 'Kripto Satıyor', 'Selling Crypto', 'Satın Al', 'Buy', 'Satış emri', 'Sell Order'],
+    ['BUY_CRYPTO', 'Kripto Alıyor', 'Buying Crypto', 'Sat', 'Sell', 'Alış emri', 'Buy Order'],
   ])('maps %s display/action/order labels in TR and EN', (side, displayTR, displayEN, actionTR, actionEN, orderTR, orderEN) => {
     expect(orderSideCopy[side]).toEqual({ TR: displayTR, EN: displayEN });
     expect(getOrderSideCopy(side, 'display', 'TR')).toBe(displayTR);
@@ -104,8 +104,8 @@ describe('order side copy', () => {
 
     expect(sell.side).toBe('SELL_CRYPTO');
     expect(buy.side).toBe('BUY_CRYPTO');
-    expect(sell.sideLabel).toBe('Satış orderı');
-    expect(buy.sideLabel).toBe('Alış orderı');
+    expect(sell.sideLabel).toBe('Satış emri');
+    expect(buy.sideLabel).toBe('Alış emri');
     expect(sell.ctaLabel).toBe('Satın Al');
     expect(buy.ctaLabel).toBe('Sat');
     expect(sell.ownerSideHint).toContain('Kripto Satıyor');

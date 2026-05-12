@@ -47,6 +47,43 @@ export const StateGuidancePanel = ({ guidance = [], riskCopy }) => {
   );
 };
 
+
+export const ChallengedDecisionPanel = ({ details = null, primaryAction = null, lang = 'EN' }) => {
+  if (!details) return null;
+  const riskLines = Array.isArray(details.riskLines) && details.riskLines.length
+    ? details.riskLines
+    : [t(lang, 'Riskteki değer şu anda hesaplanamadı.', 'Risk value is currently unavailable.')];
+  const timerLines = Array.isArray(details.timerLines) && details.timerLines.length
+    ? details.timerLines
+    : [t(lang, 'Kalan süre bilgisi şu anda hesaplanamadı.', 'Remaining time is currently unavailable.')];
+  return (
+    <section className="mb-3 bg-[#160b0b] border border-red-900/40 rounded-xl p-4 text-sm text-textSecondary" data-testid="challenged-decision-panel">
+      <p className="text-xs font-bold uppercase tracking-wide text-red-300 mb-3">{t(lang, 'İtiraz karar paneli', 'Challenge decision panel')}</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="rounded-lg border border-red-900/30 bg-[#0a0505] p-3">
+          <p className="text-xs font-bold text-red-300 mb-1">{t(lang, 'Ne oluyor?', 'What is happening?')}</p>
+          <p className="text-textPrimary leading-relaxed">{details.whatHappening}</p>
+        </div>
+        <div className="rounded-lg border border-red-900/30 bg-[#0a0505] p-3">
+          <p className="text-xs font-bold text-red-300 mb-1">{t(lang, 'Riskteki değer', 'Value at risk')}</p>
+          {riskLines.map((line, idx) => <p key={idx} className="text-textPrimary leading-relaxed">{line}</p>)}
+        </div>
+        <div className="rounded-lg border border-red-900/30 bg-[#0a0505] p-3">
+          <p className="text-xs font-bold text-red-300 mb-1">{t(lang, 'Kalan süre', 'Remaining time')}</p>
+          {timerLines.map((line, idx) => <p key={idx} className="text-textPrimary leading-relaxed">{line}</p>)}
+        </div>
+        <div className="rounded-lg border border-red-900/30 bg-[#0a0505] p-3">
+          <p className="text-xs font-bold text-red-300 mb-1">{t(lang, 'Sonraki aksiyon', 'Next action')}</p>
+          <p className="font-semibold text-textPrimary">{primaryAction?.label || details.nextActionLabel}</p>
+          {(primaryAction?.description || details.nextActionDescription) && (
+            <p className="mt-1 text-textSecondary leading-relaxed">{primaryAction?.description || details.nextActionDescription}</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+};
+
 export const TimerStack = ({ timerCards = [], lang = 'EN' }) => {
   if (!Array.isArray(timerCards) || timerCards.length === 0) return null;
   return (

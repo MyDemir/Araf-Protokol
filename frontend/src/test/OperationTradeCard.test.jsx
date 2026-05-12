@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import OperationsCenterPage from '../app/contexts/operations/OperationsCenterPage';
 import OperationTradeCard from '../app/contexts/operations/OperationTradeCard';
+import ActiveTradesPanel from '../app/contexts/profile/ActiveTradesPanel';
 import { OperationsSummaryBar, PendingSyncCard, SettlementQueueCard } from '../app/contexts/operations/OperationsPanels';
 import { getStateLabel } from '../app/copy';
 
@@ -20,6 +21,7 @@ describe('shared active trade cards', () => {
           role: 'maker',
           state,
           amount: '12.5 USDT',
+          counterparty: '0xcafe...babe',
           rawTrade: { max: 410, fiat: 'TRY' },
         }}
         lang="EN"
@@ -28,8 +30,12 @@ describe('shared active trade cards', () => {
     );
 
     expect(screen.getByText('#42')).toBeInTheDocument();
-    expect(screen.getByText('Listing owner')).toBeInTheDocument();
+    expect(screen.getAllByText('Listing owner').length).toBeGreaterThan(0);
     expect(screen.getByText(getStateLabel(state, 'EN'))).toBeInTheDocument();
+    expect(screen.getByText('Counterparty')).toBeInTheDocument();
+    expect(screen.getByText('0xcafe...babe')).toBeInTheDocument();
+    expect(screen.getByText('Role')).toBeInTheDocument();
+    expect(screen.getByText('Amount')).toBeInTheDocument();
     expect(screen.queryByText(state)).not.toBeInTheDocument();
     expect(screen.getByText(/12.5 USDT/)).toBeInTheDocument();
     expect(screen.getByText('(410 TRY)')).toBeInTheDocument();
@@ -53,10 +59,39 @@ describe('shared active trade cards', () => {
     );
 
     expect(screen.getByText(getStateLabel('CHALLENGED', 'TR'))).toBeInTheDocument();
-    expect(screen.getByText('Alıcı')).toBeInTheDocument();
-    expect(screen.queryByText('Karşı Taraf')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Alıcı').length).toBeGreaterThan(0);
+    expect(screen.getByText('Karşı taraf')).toBeInTheDocument();
     expect(screen.queryByText('CHALLENGED')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Odaya Git/i })).toBeInTheDocument();
+  });
+
+
+  it('sorts profile active trades by CHALLENGED, PAID, then LOCKED priority', () => {
+    render(
+      <ActiveTradesPanel
+        lang="EN"
+        activeTradesFilter="ALL"
+        setActiveTradesFilter={vi.fn()}
+        activeEscrows={[
+          { id: '#locked', state: 'LOCKED', role: 'maker', counterparty: '0xlocked', amount: '1 USDT', rawTrade: {} },
+          { id: '#paid', state: 'PAID', role: 'taker', counterparty: '0xpaid', amount: '2 USDT', rawTrade: {} },
+          { id: '#challenged', state: 'CHALLENGED', role: 'maker', counterparty: '0xchallenged', amount: '3 USDT', rawTrade: {} },
+        ]}
+        setActiveTrade={vi.fn()}
+        setUserRole={vi.fn()}
+        setTradeState={vi.fn()}
+        setChargebackAccepted={vi.fn()}
+        setCurrentView={vi.fn()}
+        setShowProfileModal={vi.fn()}
+      />,
+    );
+
+    const cards = screen.getAllByTestId('operation-trade-card');
+    expect(cards.map((card) => card.textContent)).toEqual([
+      expect.stringContaining('#challenged'),
+      expect.stringContaining('#paid'),
+      expect.stringContaining('#locked'),
+    ]);
   });
 
   it('renders settlement proposal status through SettlementQueueCard without settlement action buttons', () => {
@@ -96,8 +131,8 @@ describe('shared active trade cards', () => {
     );
 
     expect(screen.getByText('#99')).toBeInTheDocument();
-    expect(screen.getByText('Taker')).toBeInTheDocument();
-    expect(screen.queryByText('Counterparty')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Taker').length).toBeGreaterThan(0);
+    expect(screen.getByText('Counterparty')).toBeInTheDocument();
     expect(screen.getAllByText(/Room sync in progress/i).length).toBeGreaterThan(0);
     expect(screen.getByTestId('pending-sync-card')).toHaveClass('border-sky-500/40');
     expect(screen.getByRole('button', { name: /Go to Room/i })).toBeInTheDocument();
@@ -152,7 +187,7 @@ describe('shared active trade cards', () => {
 
     expect(appViewsSource).toContain("import OperationTradeCard from './contexts/operations/OperationTradeCard';");
     expect(appViewsSource).toContain("import { SettlementQueueCard } from './contexts/operations/OperationsPanels';");
-    expect(profileSource).toContain("import OperationTradeCard from '../operations/OperationTradeCard';");
+    expect(profileSource).toContain("import OperationTradeCard, { compareActiveTradePriority } from '../operations/OperationTradeCard';");
     expect(operationsPanelSource).toContain('<SettlementQueueCard');
     expect(operationsPanelSource).toContain('<PendingSyncCard');
     expect(operationsPanelSource).toContain('<OperationTradeCard');

@@ -1,7 +1,7 @@
 import React from 'react';
 import { buildGoToTradeRoomAction } from '../../actions/tradeNavigationActions';
 import { getStateLabel } from '../../copy/states';
-import OperationTradeCard from '../operations/OperationTradeCard';
+import OperationTradeCard, { compareActiveTradePriority } from '../operations/OperationTradeCard';
 
 const ACTIVE_TRADE_FILTERS = ['ALL', 'LOCKED', 'PAID', 'CHALLENGED'];
 
@@ -17,7 +17,9 @@ export const ActiveTradesPanel = ({
   setCurrentView,
   setShowProfileModal,
 }) => {
-  const filteredEscrows = activeTradesFilter === 'ALL' ? activeEscrows : activeEscrows.filter((e) => e.state === activeTradesFilter);
+  const filteredEscrows = (activeTradesFilter === 'ALL' ? activeEscrows : activeEscrows.filter((e) => e.state === activeTradesFilter))
+    .slice()
+    .sort(compareActiveTradePriority);
   const getFilterCount = (filter) => {
     if (filter === 'ALL') return activeEscrows.length;
     return activeEscrows.filter((escrow) => escrow.state === filter).length;
@@ -34,6 +36,11 @@ export const ActiveTradesPanel = ({
         ))}
       </div>
       <div className="space-y-2">
+        {filteredEscrows.length === 0 && (
+          <p className="text-xs text-textMuted italic border border-borderSubtle rounded-xl p-3 bg-surface">
+            {lang === 'TR' ? 'Bu durumda aktif işlem yok.' : 'No active trades in this state.'}
+          </p>
+        )}
         {filteredEscrows.map((escrow, index) => (
           <OperationTradeCard
             key={`${escrow.id}-${index}`}

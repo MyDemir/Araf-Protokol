@@ -14,6 +14,41 @@ export function buildNextActiveTrade(escrow = {}) {
   return nextTrade;
 }
 
+export function getEscrowRouteId(escrow = {}) {
+  const rawTrade = escrow?.rawTrade || {};
+  return escrow?.onchainId ?? rawTrade?.onchainId ?? rawTrade?.onchain_escrow_id ?? (String(escrow?.id || '').replace(/^#/, '') || null);
+}
+
+export function writeAppHashRoute(route) {
+  if (typeof window === 'undefined' || !route) return;
+  if (window.location.hash !== route) window.location.hash = route;
+}
+
+export function parseAppHashRoute(hashValue = '') {
+  const hash = String(hashValue || '').replace(/^#/, '');
+  const params = typeof URLSearchParams !== 'undefined' ? new URLSearchParams(hash.startsWith('?') ? hash.slice(1) : '') : null;
+  if (hash === '/profile/active-trades') return { view: 'profile', profileTab: 'active' };
+  const tradeMatch = hash.match(/^\/trade\/([^/?#]+)/);
+  if (tradeMatch) return { view: 'tradeRoom', tradeId: decodeURIComponent(tradeMatch[1]) };
+  if (params?.get('view') === 'tradeRoom') return { view: 'tradeRoom', tradeId: params.get('trade') || null };
+  return null;
+}
+
+export function findEscrowByRouteTradeId(activeEscrows = [], tradeId = null) {
+  const normalized = String(tradeId || '').replace(/^#/, '');
+  if (!normalized) return null;
+  return (activeEscrows || []).find((escrow) => {
+    const candidates = [
+      escrow?.id,
+      String(escrow?.id || '').replace(/^#/, ''),
+      escrow?.onchainId,
+      escrow?.rawTrade?.onchainId,
+      escrow?.rawTrade?.onchain_escrow_id,
+    ].filter((value) => value !== null && value !== undefined);
+    return candidates.some((value) => String(value).replace(/^#/, '') === normalized);
+  }) || null;
+}
+
 export function buildGoToTradeRoomAction({
   escrow,
   setActiveTrade,
@@ -32,6 +67,8 @@ export function buildGoToTradeRoomAction({
     setTradeState(safeEscrow.state);
     setChargebackAccepted(safeEscrow.rawTrade?.chargebackAcked === true);
     setCurrentView('tradeRoom');
+    const routeId = getEscrowRouteId(safeEscrow);
+    if (routeId) writeAppHashRoute(`#/trade/${encodeURIComponent(String(routeId))}`);
     if (typeof setSidebarOpen === 'function') setSidebarOpen(false);
     if (typeof setShowProfileModal === 'function') setShowProfileModal(false);
   };

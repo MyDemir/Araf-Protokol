@@ -1,3 +1,5 @@
+import { getTradeTerm } from '../../copy/tradeTerms';
+
 const labels = {
   state: {
     LOCKED: { TR: 'Kilitli', EN: 'Locked' },
@@ -11,11 +13,11 @@ const labels = {
 };
 
 const timerLabels = {
-  gracePeriod: { TR: 'Grace period', EN: 'Grace period' },
-  makerPing: { TR: 'Maker uyarı penceresi', EN: 'Maker ping window' },
+  gracePeriod: { TR: getTradeTerm('gracePeriod', 'TR'), EN: getTradeTerm('gracePeriod', 'EN') },
+  makerPing: { TR: 'Satıcı uyarı penceresi', EN: 'Maker ping window' },
   makerChallengePing: { TR: 'Alıcı uyarı penceresi', EN: 'Buyer ping window' },
   makerChallenge: { TR: 'İtiraz penceresi', EN: 'Challenge window' },
-  bleeding: { TR: 'Bleeding escrow', EN: 'Bleeding escrow' },
+  bleeding: { TR: getTradeTerm('bleedingEscrow', 'TR'), EN: getTradeTerm('bleedingEscrow', 'EN') },
   principalProtection: { TR: 'Ana para koruması', EN: 'Principal protection' },
 };
 
@@ -96,7 +98,7 @@ const decisionCopy = {
       nowLabel: { TR: 'Şimdi', EN: 'Now' },
       nowDescription: { TR: 'Mevcut settlement kartındaki taraf aksiyonlarını takip edin. Kontrat ve taraf imzaları otoritedir.', EN: 'Follow party actions in the existing settlement card. The contract and party signatures remain authoritative.' },
       nextLabel: { TR: 'Süre / risk devam ederse', EN: 'If time or risk continues' },
-      nextDescription: { TR: 'Settlement olmazsa süre dolumu ve yakma bilgileri mevcut panellerde kalır; Araf hakemlik yapmaz.', EN: 'If settlement does not happen, expiry and burn information remains in the existing panels; Araf does not arbitrate.' },
+      nextDescription: { TR: 'Uzlaşma olmazsa süre dolumu ve yakım bilgileri mevcut panellerde kalır; Araf hakemlik yapmaz.', EN: 'If settlement does not happen, expiry and burn information remains in the existing panels; Araf does not arbitrate.' },
     },
     taker: {
       headline: { TR: 'İtiraz süreci başladı', EN: 'Challenge phase is active' },
@@ -104,7 +106,7 @@ const decisionCopy = {
       nowLabel: { TR: 'Şimdi', EN: 'Now' },
       nowDescription: { TR: 'Mevcut settlement kartındaki taraf aksiyonlarını takip edin. Kontrat ve taraf imzaları otoritedir.', EN: 'Follow party actions in the existing settlement card. The contract and party signatures remain authoritative.' },
       nextLabel: { TR: 'Süre / risk devam ederse', EN: 'If time or risk continues' },
-      nextDescription: { TR: 'Settlement olmazsa süre dolumu ve yakma bilgileri mevcut panellerde kalır; Araf hakemlik yapmaz.', EN: 'If settlement does not happen, expiry and burn information remains in the existing panels; Araf does not arbitrate.' },
+      nextDescription: { TR: 'Uzlaşma olmazsa süre dolumu ve yakım bilgileri mevcut panellerde kalır; Araf hakemlik yapmaz.', EN: 'If settlement does not happen, expiry and burn information remains in the existing panels; Araf does not arbitrate.' },
     },
   },
 };
@@ -168,27 +170,27 @@ export function buildTradeDecisionModel({
   }
 
   if (normalizedState === 'PAID' && normalizedRole === 'maker') {
-    primaryAction = action('contract', 'release_funds', t(lang, 'Fonları Serbest Bırak', 'Release Funds'), t(lang, 'Ödemeyi doğruladıysanız mevcut serbest bırakma panelini kullanın.', 'If payment checks out, use the existing release panel.'));
+    primaryAction = action('contract', 'release_funds', t(lang, 'Ödemeyi Onayla', 'Release Funds'), t(lang, 'Ödemeyi doğruladıysanız mevcut serbest bırakma panelini kullanın.', 'If payment checks out, use the existing release panel.'));
     secondaryActions = [action('contract', 'start_challenge', t(lang, 'İtiraz Akışını Başlat', 'Start Challenge Flow'), t(lang, 'Ödeme gelmediyse mevcut itiraz uyarı akışını takip edin.', 'If payment did not arrive, follow the existing challenge warning flow.'))];
     guidance.push(t(lang, 'Ödemeyi banka hesabınızda ve isim eşleşmesiyle doğrulayın.', 'Verify the payment in your bank account and confirm the sender-name match.'));
   }
 
   if (normalizedState === 'PAID' && normalizedRole === 'taker') {
-    primaryAction = action('waiting', 'waiting_for_maker', t(lang, 'Maker Bekleniyor', 'Waiting for Maker'), t(lang, 'Maker serbest bırakmasını bekleyin.', 'Wait for maker release.'));
+    primaryAction = action('waiting', 'waiting_for_maker', t(lang, 'Satıcı Bekleniyor', 'Waiting for Maker'), t(lang, 'Satıcının ödemeyi onaylamasını bekleyin.', 'Wait for maker release.'));
     secondaryActions = [
-      action('conditional', 'ping_maker', t(lang, 'Maker’ı Uyar', 'Ping Maker'), t(lang, 'Grace period dolduğunda mevcut maker uyarı akışı kullanılabilir.', 'When the grace period expires, the existing maker ping flow may be available.')),
-      action('conditional', 'auto_release', t(lang, 'Otomatik Serbest Bırak', 'Auto-Release Funds'), t(lang, 'Maker uyarısı sonrası süre dolarsa mevcut auto-release akışı kullanılabilir.', 'After maker ping expires, the existing auto-release flow may be available.')),
+      action('conditional', 'ping_maker', t(lang, 'Maker’ı Uyar', 'Ping Maker'), t(lang, 'Onay süresi dolduğunda mevcut satıcı uyarı akışı kullanılabilir.', 'When the grace period expires, the existing maker ping flow may be available.')),
+      action('conditional', 'auto_release', t(lang, 'Otomatik Serbest Bırak', 'Auto-Release Funds'), t(lang, 'Satıcı uyarısı sonrası süre dolarsa mevcut otomatik serbest bırakma akışı kullanılabilir.', 'After maker ping expires, the existing auto-release flow may be available.')),
     ];
-    guidance.push(t(lang, 'Maker pasif kalırsa zamanlayıcılar ping ve auto-release yolunu belirler.', 'If maker is inactive, timers determine the ping and auto-release path.'));
+    guidance.push(t(lang, 'Satıcı pasif kalırsa zamanlayıcılar uyarı ve otomatik serbest bırakma yolunu belirler.', 'If maker is inactive, timers determine the ping and auto-release path.'));
   }
 
   if (normalizedState === 'CHALLENGED') {
-    primaryAction = action('settlement', 'settlement_guidance', t(lang, 'Settlement Rehberi', 'Settlement Guidance'), t(lang, 'Settlement adımlarını mevcut settlement kartından takip edin.', 'Follow settlement steps from the existing settlement card.'));
+    primaryAction = action('settlement', 'settlement_guidance', t(lang, 'Uzlaşma Rehberi', 'Settlement Guidance'), t(lang, 'Uzlaşma adımlarını mevcut uzlaşma kartından takip edin.', 'Follow settlement steps from the existing settlement card.'));
     secondaryActions = [
-      action('settlement', 'counterparty_response', t(lang, 'Karşı taraf yanıtı', 'Counterparty response'), t(lang, 'Karşı taraf yanıtları settlement kartında gösterilir.', 'Counterparty responses are shown in the settlement card.')),
-      action('settlement', 'expiry_or_burn_guidance', t(lang, 'Süre / yakma bilgisi', 'Expiry / burn guidance'), t(lang, 'Süre dolumu ve yakma bilgileri mevcut işlem odası panellerinde kalır.', 'Expiry and burn information remains in the existing trade-room panels.')),
+      action('settlement', 'counterparty_response', t(lang, 'Karşı taraf yanıtı', 'Counterparty response'), t(lang, 'Karşı taraf yanıtları uzlaşma kartında gösterilir.', 'Counterparty responses are shown in the settlement card.')),
+      action('settlement', 'expiry_or_burn_guidance', t(lang, 'Süre / yakım bilgisi', 'Expiry / burn guidance'), t(lang, 'Süre dolumu ve yakım bilgileri mevcut işlem odası panellerinde kalır.', 'Expiry and burn information remains in the existing trade-room panels.')),
     ];
-    guidance.push(t(lang, 'Araf hakem değildir; settlement taraf aksiyonu gerektirir.', 'Araf is not an arbitrator; settlement requires party action.'));
+    guidance.push(t(lang, 'Araf hakem değildir; uzlaşma taraf aksiyonu gerektirir.', 'Araf is not an arbitrator; settlement requires party action.'));
   }
 
 
@@ -197,7 +199,7 @@ export function buildTradeDecisionModel({
   }
 
   if (normalizedState === 'CHALLENGED' && canBurnExpired) {
-    secondaryActions.push(action('contract', 'burn_expired', t(lang, 'Süresi Dolan İşlemi Yak', 'Burn Expired Trade'), t(lang, '10 günlük süre dolduysa mevcut yakma akışı kullanılabilir.', 'If the 10-day deadline has passed, the existing burn flow can be used.')));
+    secondaryActions.push(action('contract', 'burn_expired', t(lang, 'Süre Aşımı Yakımı', 'Burn Expired Trade'), t(lang, '10 günlük süre dolduysa mevcut süre aşımı yakımı akışı kullanılabilir.', 'If the 10-day deadline has passed, the existing burn flow can be used.')));
   }
 
   const decisionSummary = buildDecisionSummary(normalizedState, normalizedRole, lang);

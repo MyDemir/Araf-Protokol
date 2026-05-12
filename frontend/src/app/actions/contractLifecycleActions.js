@@ -15,6 +15,15 @@ const isUsableChainTokenAddress = (tokenAddress) => Boolean(
   && tokenAddress !== ZERO_ADDRESS,
 );
 
+const isPositiveOnchainId = (value) => {
+  if (value === null || value === undefined || value === '') return false;
+  try {
+    return BigInt(value) > 0n;
+  } catch {
+    return false;
+  }
+};
+
 const getConfirm = () => {
   if (typeof window !== 'undefined' && typeof window.confirm === 'function') return window.confirm.bind(window);
   return () => false;
@@ -151,7 +160,7 @@ export const buildStartTradeAction = ({
     const { keccak256, stringToHex } = await import('viem');
     const childRefHash = keccak256(stringToHex(childListingRef));
     const fillResult = await fillOrderFn(BigInt(order.onchainId), fillAmountRaw, childRefHash);
-    const onchainTradeId = fillResult?.tradeId ? Number(fillResult.tradeId) : null;
+    const onchainTradeId = fillResult?.tradeId ? fillResult.tradeId.toString() : null;
 
     // [TR] Trade odası state'i order id ile değil child trade id ile açılmalıdır.
     //      Event decode edilemediyse belirsiz state ile devam etmeyip güvenli hata veririz.
@@ -303,13 +312,22 @@ export const buildTradeRoomActions = ({
     setCurrentView('home');
   };
 
+  const invalidOnchainIdMessage = lang === 'TR' ? 'On-chain işlem ID bulunamadı.' : 'On-chain trade ID not found.';
+  const requireActiveOnchainId = () => {
+    if (isPositiveOnchainId(activeTrade?.onchainId)) return true;
+    showToast(invalidOnchainIdMessage, 'error');
+    return false;
+  };
+  const requireOnchainIdValue = (tradeId) => {
+    if (isPositiveOnchainId(tradeId)) return true;
+    showToast(invalidOnchainIdMessage, 'error');
+    return false;
+  };
+
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (!activeTrade?.onchainId) {
-      showToast(lang === 'TR' ? 'Aktif işlem bulunamadı.' : 'No active trade found.', 'error');
-      return;
-    }
+    if (!requireActiveOnchainId()) return;
     try {
       setIsContractLoading(true);
       const formData = new FormData();
@@ -336,10 +354,7 @@ export const buildTradeRoomActions = ({
   };
 
   const handleReportPayment = async () => {
-    if (!activeTrade?.onchainId) {
-      showToast(lang === 'TR' ? 'On-chain işlem ID bulunamadı.' : 'On-chain trade ID not found.', 'error');
-      return;
-    }
+    if (!requireActiveOnchainId()) return;
     if (!paymentIpfsHash.trim()) {
       showToast(lang === 'TR' ? 'Önce bir dekont yüklemelisiniz.' : 'You must upload a receipt first.', 'error');
       return;
@@ -362,10 +377,7 @@ export const buildTradeRoomActions = ({
   };
 
   const handleProposeCancel = async () => {
-    if (!activeTrade?.onchainId) {
-      showToast(lang === 'TR' ? 'On-chain işlem ID bulunamadı.' : 'On-chain trade ID not found.', 'error');
-      return;
-    }
+    if (!requireActiveOnchainId()) return;
     if (isContractLoading) return;
     try {
       setIsContractLoading(true);
@@ -411,10 +423,7 @@ export const buildTradeRoomActions = ({
       showToast(lang === 'TR' ? 'Lütfen ters ibraz riskini kabul edin.' : 'Please acknowledge the chargeback risk.', 'error');
       return;
     }
-    if (!activeTrade?.onchainId) {
-      showToast(lang === 'TR' ? 'On-chain işlem ID bulunamadı.' : 'On-chain trade ID not found.', 'error');
-      return;
-    }
+    if (!requireActiveOnchainId()) return;
     if (isContractLoading) return;
     try {
       setIsContractLoading(true);
@@ -437,7 +446,7 @@ export const buildTradeRoomActions = ({
   };
 
   const handleChallenge = async () => {
-    if (!activeTrade?.onchainId || isContractLoading) return;
+    if (!requireActiveOnchainId() || isContractLoading) return;
     const tradeDetails = activeEscrows.find((e) => e.id === `#${activeTrade.onchainId}`);
     const challengePingedAt = activeTrade?.challengePingedAt || tradeDetails?.challengePingedAt;
     if (!challengePingedAt && !canMakerStartChallengeFlow) {
@@ -483,7 +492,7 @@ export const buildTradeRoomActions = ({
   };
 
   const handlePingMaker = async (tradeId) => {
-    if (!tradeId || isContractLoading) return;
+    if (!requireOnchainIdValue(tradeId) || isContractLoading) return;
     try {
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'Uyarı işlemi cüzdanınıza gönderiliyor...' : 'Pinging maker, please confirm in wallet...', 'info');
@@ -503,7 +512,7 @@ export const buildTradeRoomActions = ({
   };
 
   const handleAutoRelease = async (tradeId) => {
-    if (!tradeId || isContractLoading) return;
+    if (!requireOnchainIdValue(tradeId) || isContractLoading) return;
     try {
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'Otomatik serbest bırakma işlemi cüzdanınıza gönderiliyor...' : 'Auto-release transaction sent to wallet...', 'info');
@@ -521,7 +530,7 @@ export const buildTradeRoomActions = ({
 
 
   const handleBurnExpired = async () => {
-    if (isContractLoading || !activeTrade?.onchainId) return;
+    if (isContractLoading || !requireActiveOnchainId()) return;
     try {
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'Yakma işlemi gönderiliyor... Cüzdanınızdan onaylayın.' : 'Burn transaction sent... Confirm in wallet.', 'info');

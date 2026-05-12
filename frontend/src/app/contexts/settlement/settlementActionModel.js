@@ -64,9 +64,8 @@ export const getSettlementActionContext = ({ activeTrade, userRole, address, now
 };
 
 export const validateSettlementProposalInput = ({ tradeId, makerShareBps, expiresAt, nowTs = Math.floor(Date.now() / 1000), lang = 'EN' }) => {
-  if (tradeId === null || tradeId === undefined || tradeId === '') {
-    return lang === 'TR' ? 'On-chain trade ID bulunamadı.' : 'Missing on-chain trade ID.';
-  }
+  const tradeIdError = validateSettlementTradeId({ tradeId, lang });
+  if (tradeIdError) return tradeIdError;
   const share = Number(makerShareBps);
   if (!Number.isInteger(share) || share < 0 || share > 10000) {
     return lang === 'TR' ? 'makerShareBps 0..10000 aralığında olmalı.' : 'makerShareBps must be in range 0..10000.';
@@ -81,6 +80,13 @@ export const validateSettlementProposalInput = ({ tradeId, makerShareBps, expire
 export const validateSettlementTradeId = ({ tradeId, lang = 'EN' }) => {
   if (tradeId === null || tradeId === undefined || tradeId === '') {
     return lang === 'TR' ? 'On-chain trade ID bulunamadı.' : 'Missing on-chain trade ID.';
+  }
+  try {
+    if (BigInt(tradeId) <= 0n) {
+      return lang === 'TR' ? 'Geçersiz on-chain trade ID.' : 'Invalid on-chain trade ID.';
+    }
+  } catch {
+    return lang === 'TR' ? 'Geçersiz on-chain trade ID.' : 'Invalid on-chain trade ID.';
   }
   return null;
 };

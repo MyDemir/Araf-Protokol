@@ -4,7 +4,7 @@ export const profileTabs = [
   { key: 'account', label: { TR: 'Hesap', EN: 'Account' } },
   { key: 'payment', label: { TR: 'Ödeme Profili', EN: 'Payment Profile' } },
   { key: 'reputation', label: { TR: 'İtibar', EN: 'Reputation' } },
-  { key: 'orders', label: { TR: 'Orderlarım', EN: 'My Orders' } },
+  { key: 'orders', label: { TR: 'Emirlerim', EN: 'My Orders' } },
   { key: 'active', label: { TR: 'Aktif İşlemler', EN: 'Active Trades' } },
   { key: 'history', label: { TR: 'Geçmiş', EN: 'History' } },
   { key: 'security', label: { TR: 'Güvenlik', EN: 'Security' } },

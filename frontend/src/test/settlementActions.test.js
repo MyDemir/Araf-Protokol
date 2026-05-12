@@ -142,6 +142,57 @@ describe('settlement action module', () => {
     expect(expiredDeps.fetchMyTrades).toHaveBeenCalledTimes(1);
   });
 
+  it('settlement actions fail closed for zero on-chain trade id before contract calls', async () => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+    const proposeDeps = makeDeps({ activeTrade: makeTrade({ onchainId: '0' }) });
+    const getProposeActions = renderSettlementActions(proposeDeps);
+    await act(async () => {
+      await getProposeActions().propose({ makerShareBps: 5000, expiresAt });
+    });
+
+    const counterpartyDeps = makeDeps({ activeTrade: makeProposedTrade({ onchainId: '0' }), userRole: 'taker', address: taker });
+    const getCounterpartyActions = renderSettlementActions(counterpartyDeps);
+    await act(async () => {
+      await getCounterpartyActions().accept();
+      await getCounterpartyActions().reject();
+    });
+
+    const proposerDeps = makeDeps({ activeTrade: makeProposedTrade({ onchainId: '0' }), userRole: 'maker', address: maker });
+    const getProposerActions = renderSettlementActions(proposerDeps);
+    await act(async () => {
+      await getProposerActions().withdraw();
+    });
+
+    const expiredDeps = makeDeps({
+      activeTrade: makeProposedTrade({
+        onchainId: '0',
+        settlementProposal: {
+          state: 'PROPOSED',
+          proposer: maker,
+          makerShareBps: 6000,
+          takerShareBps: 4000,
+          expiresAt: Math.floor(Date.now() / 1000) - 60,
+        },
+      }),
+      userRole: 'maker',
+      address: maker,
+    });
+    const getExpiredActions = renderSettlementActions(expiredDeps);
+    await act(async () => {
+      await getExpiredActions().expire();
+    });
+
+    expect(proposeDeps.contractFns.proposeSettlement).not.toHaveBeenCalled();
+    expect(counterpartyDeps.contractFns.acceptSettlement).not.toHaveBeenCalled();
+    expect(counterpartyDeps.contractFns.rejectSettlement).not.toHaveBeenCalled();
+    expect(proposerDeps.contractFns.withdrawSettlement).not.toHaveBeenCalled();
+    expect(expiredDeps.contractFns.expireSettlement).not.toHaveBeenCalled();
+    expect(proposeDeps.showToast).toHaveBeenCalledWith('Invalid on-chain trade ID.', 'error');
+    expect(counterpartyDeps.showToast).toHaveBeenCalledWith('Invalid on-chain trade ID.', 'error');
+    expect(proposerDeps.showToast).toHaveBeenCalledWith('Invalid on-chain trade ID.', 'error');
+    expect(expiredDeps.showToast).toHaveBeenCalledWith('Invalid on-chain trade ID.', 'error');
+  });
+
   it('proposer/viewer action visibility remains proposer waits and counterparty acts', () => {
     const proposerContext = getSettlementActionContext({ activeTrade: makeProposedTrade(), userRole: 'maker', address: maker });
     const counterpartyContext = getSettlementActionContext({ activeTrade: makeProposedTrade(), userRole: 'taker', address: taker });

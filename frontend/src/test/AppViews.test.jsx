@@ -286,6 +286,27 @@ describe('AppViews market side-aware rendering', () => {
   });
 
 
+  it('shows the real challenged count in the sidebar status badge without hiding it behind Araf copy', () => {
+    const views = buildAppViews({
+      ...baseCtx,
+      sidebarOpen: true,
+      expandedStatus: 'CHALLENGED',
+      activeEscrowCounts: { LOCKED: 1, PAID: 2, CHALLENGED: 3, settlement: {} },
+      activeEscrows: [
+        { id: '#c1', state: 'CHALLENGED', role: 'maker', counterparty: '0x1111...1111', amount: '1 USDT', rawTrade: {} },
+        { id: '#c2', state: 'CHALLENGED', role: 'taker', counterparty: '0x2222...2222', amount: '2 USDT', rawTrade: {} },
+        { id: '#c3', state: 'CHALLENGED', role: 'maker', counterparty: '0x3333...3333', amount: '3 USDT', rawTrade: {} },
+      ],
+    });
+
+    const { container } = render(<div>{views.renderContextSidebar()}</div>);
+    const challengedButton = screen.getByRole('button', { name: /Challenge Phase 3/i });
+    expect(challengedButton).toBeInTheDocument();
+    expect(within(challengedButton).getByText('3')).toBeInTheDocument();
+    expect(container).not.toHaveTextContent(/\bAraf\b/);
+  });
+
+
   it('toggles the desktop sidebar open and closed from the rail filter button', async () => {
     const user = userEvent.setup();
 
@@ -504,7 +525,7 @@ describe('AppViews market side-aware rendering', () => {
     render(<div>{views.renderTradeRoom()}</div>);
 
     expect(screen.getByText(/Araf is not an arbitrator/i)).toBeInTheDocument();
-    expect(screen.getByText(/Follow settlement steps from the existing settlement card/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Follow settlement steps from the existing settlement card/i).length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /settlement guidance/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /propose settlement|accept settlement|reject settlement|withdraw settlement|expire settlement/i })).not.toBeInTheDocument();
     expect(proposeSettlement).not.toHaveBeenCalled();

@@ -272,7 +272,7 @@ describe('frontend migration scaffold baseline', () => {
   });
 
   it('keeps trade-room leaf panels consolidated without moving action behavior', () => {
-    expect(tradeRoomPageSource).toContain("import { StateGuidancePanel, TechnicalDetailsDisclosure, TimerStack, TradeSummaryCard } from './TradeRoomPanels';");
+    expect(tradeRoomPageSource).toContain("import { ChallengedDecisionPanel, StateGuidancePanel, TechnicalDetailsDisclosure, TimerStack, TradeSummaryCard } from './TradeRoomPanels';");
     expect(tradeRoomPageSource).toContain("import PrimaryActionPanel from './PrimaryActionPanel';");
     expect(tradeRoomPageSource).toContain("import SecondaryActionsPanel from './SecondaryActionsPanel';");
     expect(tradeRoomPageSource).toContain('<>');
@@ -281,6 +281,7 @@ describe('frontend migration scaffold baseline', () => {
 
     [
       'TradeSummaryCard',
+      'ChallengedDecisionPanel',
       'StateGuidancePanel',
       'TimerStack',
       'TechnicalDetailsDisclosure',

@@ -1,7 +1,9 @@
 import React from 'react';
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
-import { actions as actionCopy, orderSide as orderSideCopy, pii, states as stateCopy, getPiiCopy, getStateLabel } from '../app/copy';
+import { actions as actionCopy, orderSide as orderSideCopy, pii, states as stateCopy, tradeTerms, getPiiCopy, getStateLabel } from '../app/copy';
 import { CopyProvider, getCopy, useCopy } from '../app/providers/CopyProvider';
 
 describe('copy dictionaries', () => {
@@ -43,6 +45,21 @@ describe('copy dictionaries', () => {
 
     // Unknown/internal state keys intentionally remain available as fallback values.
     expect(getStateLabel('UNKNOWN_STATE', 'EN')).toBe('UNKNOWN_STATE');
+  });
+
+
+  it('keeps Turkish user-facing copy free of selected mixed English technical leftovers', () => {
+    const forbidden = /(?:\bORDER\b|\bOrder\b|Grace period|Bleeding escrow|\bRelease\b|\bBurn\b|Settlement|Auto-release)/;
+    const dictionaries = [actionCopy, orderSideCopy, tradeTerms];
+    dictionaries.forEach((dictionary) => {
+      Object.entries(dictionary).forEach(([key, row]) => {
+        expect(row.TR, key).not.toMatch(forbidden);
+      });
+    });
+
+    const tradeDecisionSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/trade-room/tradeDecisionModel.js'), 'utf8');
+    const trStringMatches = tradeDecisionSource.match(/TR:\s*'[^']*'/g) || [];
+    trStringMatches.forEach((match) => expect(match).not.toMatch(forbidden));
   });
 
   it('missing key fails safely with fallback', () => {
