@@ -2,6 +2,10 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
+const sessionMocks = vi.hoisted(() => ({
+  authenticatedFetch: vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) })),
+}));
+
 const contractMocks = vi.hoisted(() => ({
   releaseFunds: vi.fn(),
   challengeTrade: vi.fn(),
@@ -111,7 +115,7 @@ vi.mock('../app/useAppSessionData', () => ({
     setLoading: vi.fn(),
     clearLocalSessionState: vi.fn(),
     bestEffortBackendLogout: vi.fn(),
-    authenticatedFetch: vi.fn(),
+    authenticatedFetch: sessionMocks.authenticatedFetch,
     fetchStats: vi.fn(),
     fetchMyTrades: vi.fn(),
     tradeState: 'LOCKED',
@@ -204,6 +208,7 @@ describe('App-level Trade Room dev scenarios', () => {
 
     expect(contractMocks.releaseFunds).not.toHaveBeenCalled();
     expect(contractMocks.challengeTrade).not.toHaveBeenCalled();
+    expect(sessionMocks.authenticatedFetch).not.toHaveBeenCalled();
     expect(openActionLog()).toHaveTextContent('release_funds');
     expect(openActionLog()).toHaveTextContent('paid-maker');
   });
