@@ -17,6 +17,5 @@ Bu denetim kalan `listing`, `createEscrow`, `lockEscrow` ve `legacy` referanslar
 
 ## Bu değişiklikte düzeltilen stale/incorrect terminoloji
 
-- Repo ağacı içeren UX docs dosyaları gerçek V3 UX terminoloji notlarıyla değiştirildi.
 - Frontend kullanıcı metinleri listing/listing owner yerine parent order/order owner kullanıyor.
 - Backend yorumları ve testleri `/api/listings` yüzeyini kanonik listing route’u değil deprecated compatibility alias olarak adlandırıyor.

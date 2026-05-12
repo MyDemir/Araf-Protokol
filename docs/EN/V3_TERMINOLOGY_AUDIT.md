@@ -17,6 +17,5 @@ This audit classifies remaining `listing`, `createEscrow`, `lockEscrow`, and `le
 
 ## Stale/incorrect terminology fixed here
 
-- UX docs that contained a repository tree were replaced with actual V3 UX terminology notes.
 - Frontend user-facing copy now says parent order/order owner instead of listing/listing owner.
 - Backend comments and tests now call `/api/listings` a deprecated compatibility alias rather than a canonical listing route.
