@@ -24,8 +24,9 @@ describe('frontend ↔ backend API path alignment', () => {
     [
       "buildApiUrl('orders/config')",
       "buildApiUrl('orders')",
-      "buildApiUrl('orders/my')",
-      "buildApiUrl('trades/my')",
+      'buildApiUrl(`${endpoint}?page=${requestedPage}&limit=${MY_ITEMS_PAGE_LIMIT}`)',
+      "endpoint: 'orders/my'",
+      "endpoint: 'trades/my'",
       'buildApiUrl(`trades/history?page=${page}&limit=5`)',
       'buildApiUrl(`pii/taker-name/${activeTrade.onchainId}`)',
       "buildApiUrl('auth/me')",

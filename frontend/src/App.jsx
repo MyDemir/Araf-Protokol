@@ -12,7 +12,6 @@ import AdminPanel from './AdminPanel';
 import DevScenarioController from './dev/ui-lab/DevScenarioController';
 import { isUiLabEnabled } from './dev/ui-lab/isUiLabEnabled';
 import { createMockAdminFetch } from './dev/mocks/mockAdminFetch';
-import { createMockDevScenarioFetch } from './dev/mocks/mockDevScenarioFetch';
 import { createSetterAction, createTradeRoomActionCallbacks } from './dev/mocks/mockActions';
 import { getInitialLang, getInitialTermsAccepted, APP_LANG_STORAGE_KEY } from './app/bootstrapState';
 import { buildApiUrl, resolveApiPolicyDiagnostics } from './app/apiConfig';
@@ -25,7 +24,6 @@ import { buildMintAction, buildOrderActions, buildProfileActions, buildStartTrad
 
 const createDevScenarioFetch = (categoryKey, scenario, fallbackFetch) => {
   if (categoryKey === 'admin') return createMockAdminFetch(scenario);
-  if (categoryKey) return createMockDevScenarioFetch(scenario);
   return fallbackFetch;
 };
 

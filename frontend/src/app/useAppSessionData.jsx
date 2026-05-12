@@ -6,6 +6,43 @@ import { buildApiUrl } from './apiConfig';
 
 const DEFAULT_TOKEN_DECIMALS = 6;
 
+const MY_ITEMS_PAGE_LIMIT = 50;
+const MAX_MY_ITEMS_PAGE_FETCHES = 100;
+
+const assertPaginatedPayload = (data, collectionKey, endpointLabel) => {
+  const items = data?.[collectionKey];
+  const total = Number(data?.total);
+  const page = Number(data?.page);
+  const limit = Number(data?.limit);
+
+  if (!Array.isArray(items) || !Number.isFinite(total) || !Number.isFinite(page) || !Number.isFinite(limit) || page < 1 || limit < 1) {
+    throw new Error(`${endpointLabel} response schema mismatch`);
+  }
+
+  return { items, total, page, limit };
+};
+
+const fetchAllMyPages = async ({ authenticatedFetch, endpoint, collectionKey, endpointLabel }) => {
+  const allItems = [];
+  let requestedPage = 1;
+
+  while (requestedPage <= MAX_MY_ITEMS_PAGE_FETCHES) {
+    const res = await authenticatedFetch(buildApiUrl(`${endpoint}?page=${requestedPage}&limit=${MY_ITEMS_PAGE_LIMIT}`));
+    const data = await res.json();
+    const { items, total, page, limit } = assertPaginatedPayload(data, collectionKey, endpointLabel);
+
+    allItems.push(...items);
+
+    const totalPages = Math.ceil(total / limit);
+    if (totalPages <= page || allItems.length >= total || items.length === 0) return allItems;
+
+    requestedPage += 1;
+  }
+
+  console.warn(`${endpointLabel} pagination stopped after ${MAX_MY_ITEMS_PAGE_FETCHES} pages to avoid an infinite loop.`);
+  return allItems;
+};
+
 const formatTokenAmountFromRaw = (rawAmount, decimals = DEFAULT_TOKEN_DECIMALS, maxFractionDigits = 4) => {
   try {
     const normalized = formatUnits(BigInt(rawAmount ?? 0), decimals);
@@ -389,102 +426,104 @@ export function useAppSessionData({
     }
 
     try {
-      const res = await authenticatedFetch(buildApiUrl('trades/my'));
-      const data = await res.json();
+      const trades = await fetchAllMyPages({
+        authenticatedFetch,
+        endpoint: 'trades/my',
+        collectionKey: 'trades',
+        endpointLabel: 'trades/my',
+      });
 
-      if (data.trades) {
-        setActiveEscrows(data.trades.map((t) => {
-          const cryptoAmtRaw = t.financials?.crypto_amount || '0';
-          const cryptoAsset = t.financials?.crypto_asset || 'USDT';
-          const tokenDecimals = tokenDecimalsMap[cryptoAsset] ?? DEFAULT_TOKEN_DECIMALS;
-          const cryptoAmtNum = rawTokenToDisplayNumber(cryptoAmtRaw, tokenDecimals);
-          const rate = t.financials?.exchange_rate || 1;
-          const fiatAmt = cryptoAmtNum * rate;
+      setActiveEscrows(trades.map((t) => {
+        const cryptoAmtRaw = t.financials?.crypto_amount || '0';
+        const cryptoAsset = t.financials?.crypto_asset || 'USDT';
+        const tokenDecimals = tokenDecimalsMap[cryptoAsset] ?? DEFAULT_TOKEN_DECIMALS;
+        const cryptoAmtNum = rawTokenToDisplayNumber(cryptoAmtRaw, tokenDecimals);
+        const rate = t.financials?.exchange_rate || 1;
+        const fiatAmt = cryptoAmtNum * rate;
 
-          return {
-            id: `#${t.onchain_escrow_id}`,
-            role: t.maker_address.toLowerCase() === address?.toLowerCase() ? 'maker' : 'taker',
-            counterparty: formatAddress(
-              t.maker_address.toLowerCase() === address?.toLowerCase() ? (t.taker_address || '') : t.maker_address
-            ),
-            state: t.status,
+        return {
+          id: `#${t.onchain_escrow_id}`,
+          role: t.maker_address.toLowerCase() === address?.toLowerCase() ? 'maker' : 'taker',
+          counterparty: formatAddress(
+            t.maker_address.toLowerCase() === address?.toLowerCase() ? (t.taker_address || '') : t.maker_address
+          ),
+          state: t.status,
+          paidAt: t.timers?.paid_at,
+          lockedAt: t.timers?.locked_at,
+          pingedAt: t.timers?.pinged_at,
+          challengePingedAt: t.timers?.challenge_pinged_at,
+          challengedAt: t.timers?.challenged_at,
+          resolutionType: t.resolution_type || null,
+          onchainId: t.onchain_escrow_id,
+          settlementProposal: mapSettlementProposalFromApi(t.settlement_proposal),
+          amount: `${formatTokenAmountFromRaw(cryptoAmtRaw, tokenDecimals)} ${cryptoAsset}`,
+          action: t.status === 'PAID' ? (lang === 'TR' ? 'Onay Bekliyor' : 'Pending Approval') : (lang === 'TR' ? 'İşlemde' : 'In Progress'),
+          rawTrade: {
+            id: t._id,
+            onchainId: t.onchain_escrow_id,
+            maker: formatAddress(t.maker_address),
+            makerFull: t.maker_address,
+            takerFull: t.taker_address,
+            crypto: cryptoAsset,
+            cryptoAmountRaw: cryptoAmtRaw,
+            cryptoAmountUi: cryptoAmtNum,
+            fiat: t.financials?.fiat_currency || 'TRY',
+            rate,
+            max: fiatAmt,
+            tokenDecimals,
             paidAt: t.timers?.paid_at,
             lockedAt: t.timers?.locked_at,
             pingedAt: t.timers?.pinged_at,
             challengePingedAt: t.timers?.challenge_pinged_at,
             challengedAt: t.timers?.challenged_at,
             resolutionType: t.resolution_type || null,
-            onchainId: t.onchain_escrow_id,
+            cancelProposedBy: t.cancel_proposal?.proposed_by,
+            chargebackAcked: t.chargeback_ack?.acknowledged === true,
             settlementProposal: mapSettlementProposalFromApi(t.settlement_proposal),
-            amount: `${formatTokenAmountFromRaw(cryptoAmtRaw, tokenDecimals)} ${cryptoAsset}`,
-            action: t.status === 'PAID' ? (lang === 'TR' ? 'Onay Bekliyor' : 'Pending Approval') : (lang === 'TR' ? 'İşlemde' : 'In Progress'),
-            rawTrade: {
-              id: t._id,
-              onchainId: t.onchain_escrow_id,
-              maker: formatAddress(t.maker_address),
-              makerFull: t.maker_address,
-              takerFull: t.taker_address,
-              crypto: cryptoAsset,
-              cryptoAmountRaw: cryptoAmtRaw,
-              cryptoAmountUi: cryptoAmtNum,
-              fiat: t.financials?.fiat_currency || 'TRY',
-              rate,
-              max: fiatAmt,
-              tokenDecimals,
-              paidAt: t.timers?.paid_at,
-              lockedAt: t.timers?.locked_at,
-              pingedAt: t.timers?.pinged_at,
-              challengePingedAt: t.timers?.challenge_pinged_at,
-              challengedAt: t.timers?.challenged_at,
-              resolutionType: t.resolution_type || null,
-              cancelProposedBy: t.cancel_proposal?.proposed_by,
-              chargebackAcked: t.chargeback_ack?.acknowledged === true,
-              settlementProposal: mapSettlementProposalFromApi(t.settlement_proposal),
-              // [TR] Trust Visibility Layer payload'ı backend'den read-only gelir; UI explainability için taşınır.
-              // [EN] Trust Visibility payload arrives read-only from backend; carried for UI explainability only.
-              offchainHealthScoreInput: t.offchain_health_score_input || null,
-              bankProfileRisk: t.bank_profile_risk || null,
-            },
-          };
-        }));
+            // [TR] Trust Visibility Layer payload'ı backend'den read-only gelir; UI explainability için taşınır.
+            // [EN] Trust Visibility payload arrives read-only from backend; carried for UI explainability only.
+            offchainHealthScoreInput: t.offchain_health_score_input || null,
+            bankProfileRisk: t.bank_profile_risk || null,
+          },
+        };
+      }));
 
-        setActiveTrade((prev) => {
-          if (!prev) return prev;
-          const prevOnchainId = String(prev.onchainId ?? '');
-          const updated = data.trades.find((t) => String(t.onchain_escrow_id ?? '') === prevOnchainId);
-          if (!updated) return prev;
+      setActiveTrade((prev) => {
+        if (!prev) return prev;
+        const prevOnchainId = String(prev.onchainId ?? '');
+        const updated = trades.find((t) => String(t.onchain_escrow_id ?? '') === prevOnchainId);
+        if (!updated) return prev;
 
-          const wasPendingSync = prev._pendingBackendSync && !prev.id;
-          if (wasPendingSync && updated._id) {
-            showToast(lang === 'TR' ? '✅ İşlem odası hazır!' : '✅ Trade room ready!', 'success');
-          }
+        const wasPendingSync = prev._pendingBackendSync && !prev.id;
+        if (wasPendingSync && updated._id) {
+          showToast(lang === 'TR' ? '✅ İşlem odası hazır!' : '✅ Trade room ready!', 'success');
+        }
 
-          if (updated.status !== prev.state) setTradeState(updated.status);
-          setChargebackAccepted(updated.chargeback_ack?.acknowledged === true);
+        if (updated.status !== prev.state) setTradeState(updated.status);
+        setChargebackAccepted(updated.chargeback_ack?.acknowledged === true);
 
-          return {
-            ...prev,
-            id: prev.id || updated._id,
-            _pendingBackendSync: false,
-            state: updated.status,
-            paidAt: updated.timers?.paid_at ?? prev.paidAt,
-            lockedAt: updated.timers?.locked_at ?? prev.lockedAt,
-            pingedAt: updated.timers?.pinged_at ?? prev.pingedAt,
-            challengePingedAt: updated.timers?.challenge_pinged_at ?? prev.challengePingedAt,
-            challengedAt: updated.timers?.challenged_at ?? prev.challengedAt,
-            resolutionType: updated.resolution_type ?? prev.resolutionType ?? null,
-            cancelProposedBy: updated.cancel_proposal?.proposed_by ?? prev.cancelProposedBy,
-            chargebackAcked: updated.chargeback_ack?.acknowledged === true,
-            settlementProposal: mapSettlementProposalFromApi(updated.settlement_proposal) ?? prev.settlementProposal ?? null,
-            offchainHealthScoreInput: updated.offchain_health_score_input ?? prev.offchainHealthScoreInput ?? null,
-            bankProfileRisk: updated.bank_profile_risk ?? prev.bankProfileRisk ?? null,
-          };
-        });
-      }
+        return {
+          ...prev,
+          id: prev.id || updated._id,
+          _pendingBackendSync: false,
+          state: updated.status,
+          paidAt: updated.timers?.paid_at ?? prev.paidAt,
+          lockedAt: updated.timers?.locked_at ?? prev.lockedAt,
+          pingedAt: updated.timers?.pinged_at ?? prev.pingedAt,
+          challengePingedAt: updated.timers?.challenge_pinged_at ?? prev.challengePingedAt,
+          challengedAt: updated.timers?.challenged_at ?? prev.challengedAt,
+          resolutionType: updated.resolution_type ?? prev.resolutionType ?? null,
+          cancelProposedBy: updated.cancel_proposal?.proposed_by ?? prev.cancelProposedBy,
+          chargebackAcked: updated.chargeback_ack?.acknowledged === true,
+          settlementProposal: mapSettlementProposalFromApi(updated.settlement_proposal) ?? prev.settlementProposal ?? null,
+          offchainHealthScoreInput: updated.offchain_health_score_input ?? prev.offchainHealthScoreInput ?? null,
+          bankProfileRisk: updated.bank_profile_risk ?? prev.bankProfileRisk ?? null,
+        };
+      });
     } catch (err) {
       console.error('Trades fetch error:', err);
     }
-  }, [isAuthenticated, isConnected, address, lang, authenticatedFetch, tokenDecimalsMap, showToast]);
+  }, [devScenarioActive, isAuthenticated, isConnected, address, lang, authenticatedFetch, tokenDecimalsMap, showToast]);
 
   // Protocol configuration and read models
   useEffect(() => {
@@ -655,18 +694,20 @@ export function useAppSessionData({
 
     const fetchMyOrders = async () => {
       try {
-        const res = await authenticatedFetch(buildApiUrl('orders/my'));
-        const data = await res.json();
-        if (data.orders) {
-          setMyOrders(data.orders.map((o) => mapApiOrderToUi({
-            order: o,
-            lang,
-            bondMap: onchainBondMap || {},
-            tokenMap: onchainTokenMap || {},
-            paymentRiskConfig: paymentRiskConfig || {},
-            formatAddress,
-          })));
-        }
+        const myOrdersPayload = await fetchAllMyPages({
+          authenticatedFetch,
+          endpoint: 'orders/my',
+          collectionKey: 'orders',
+          endpointLabel: 'orders/my',
+        });
+        setMyOrders(myOrdersPayload.map((o) => mapApiOrderToUi({
+          order: o,
+          lang,
+          bondMap: onchainBondMap || {},
+          tokenMap: onchainTokenMap || {},
+          paymentRiskConfig: paymentRiskConfig || {},
+          formatAddress,
+        })));
       } catch (err) {
         console.error('My orders fetch error:', err);
       }
