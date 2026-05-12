@@ -1,5 +1,7 @@
 # Mainnet Hazırlık Checklist'i (Stabilization / Runbook)
 
+> Governance notu: Owner-controlled tüm protocol yüzeyleri, pre/post-change kontrolleri ve production owner modeli için bkz. [`docs/TR/GOVERNANCE_READINESS.md`](./GOVERNANCE_READINESS.md).
+
 > Amaç: Bu doküman **mainnet deploy zorunluluğu** getirmez; production/staging güvenlik doğrulaması için kullanılır.
 
 ## 1) Zorunlu Ortam Değişkenleri (Production fail-closed)
