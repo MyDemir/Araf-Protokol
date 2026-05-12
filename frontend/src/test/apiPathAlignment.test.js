@@ -59,4 +59,16 @@ describe('frontend ↔ backend API path alignment', () => {
     expect(boundary).toContain('resolveClientErrorLogUrl');
     expect(boundary).toContain('fetch(logUrl, {');
   });
+
+  it('ci workflow requires backend/frontend tests and contract ABI drift gate', () => {
+    const workflow = readRepo('.github/workflows/ci.yml');
+    const contractsPackage = readRepo('contracts/package.json');
+
+    expect(contractsPackage).toContain('"test:abi-drift"');
+    expect(workflow).toMatch(/name: Backend tests[\s\S]*working-directory: backend[\s\S]*run: npm ci[\s\S]*run: npm test/);
+    expect(workflow).toMatch(/name: Frontend tests[\s\S]*working-directory: frontend[\s\S]*run: npm ci[\s\S]*run: npm test/);
+    expect(workflow).toMatch(/name: Contracts ABI drift gate[\s\S]*working-directory: contracts[\s\S]*run: npm ci[\s\S]*run: npm run test:abi-drift/);
+    expect(workflow).not.toContain('npx hardhat compile');
+  });
+
 });
