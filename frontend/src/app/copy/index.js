@@ -14,3 +14,4 @@ export { default as rewards, rewardsCopy } from './rewards';
 export { default as admin, adminCopy } from './admin';
 export { default as errors, errorCopy } from './errors';
 export { default as pii, piiCopy, getPiiCopy } from './pii';
+export { default as tradeTerms, tradeTermsCopy, getTradeTerm } from './tradeTerms';

@@ -66,8 +66,8 @@ describe('orderUiModel mapping', () => {
     expect(getOrderSideCopy('BUY_CRYPTO', 'display', 'EN')).toBe('Buying Crypto');
     expect(getOrderSideCopy('SELL_CRYPTO', 'action', 'TR')).toBe('Satın Al');
     expect(getOrderSideCopy('BUY_CRYPTO', 'action', 'TR')).toBe('Sat');
-    expect(getOrderSideCopy('SELL_CRYPTO', 'order', 'TR')).toBe('Satış orderı');
-    expect(getOrderSideCopy('BUY_CRYPTO', 'order', 'TR')).toBe('Alış orderı');
+    expect(getOrderSideCopy('SELL_CRYPTO', 'order', 'TR')).toBe('Satış emri');
+    expect(getOrderSideCopy('BUY_CRYPTO', 'order', 'TR')).toBe('Alış emri');
   });
 
   it('keeps tokenMap policy from /api/orders/config mirror', () => {

@@ -213,7 +213,11 @@ describe('App-level Trade Room dev scenarios', () => {
 
     await applyTradeRoomScenario('CHALLENGED / maker');
 
-    expect(screen.getByText('Follow settlement steps from the existing settlement card.')).toBeInTheDocument();
+    expect(screen.getAllByText('Follow settlement steps from the existing settlement card.').length).toBeGreaterThan(0);
     expect(screen.getByText(/Araf is not an arbitrator/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/What is happening\?/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Value at risk/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Remaining time/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Next action/i).length).toBeGreaterThan(0);
   });
 });

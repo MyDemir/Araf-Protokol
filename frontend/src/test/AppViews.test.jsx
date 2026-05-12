@@ -525,7 +525,7 @@ describe('AppViews market side-aware rendering', () => {
     render(<div>{views.renderTradeRoom()}</div>);
 
     expect(screen.getByText(/Araf is not an arbitrator/i)).toBeInTheDocument();
-    expect(screen.getByText(/Follow settlement steps from the existing settlement card/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Follow settlement steps from the existing settlement card/i).length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /settlement guidance/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /propose settlement|accept settlement|reject settlement|withdraw settlement|expire settlement/i })).not.toBeInTheDocument();
     expect(proposeSettlement).not.toHaveBeenCalled();

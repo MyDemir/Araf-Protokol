@@ -148,11 +148,11 @@ export function mapResolutionTypeLabel(resolutionType, lang = "EN") {
     },
     MANUAL_RELEASE: {
       EN: "Closed by manual release",
-      TR: "Manuel release ile kapandı",
+      TR: "Manuel onayla kapandı",
     },
     AUTO_RELEASE: {
       EN: "Closed by auto-release",
-      TR: "Auto-release ile kapandı",
+      TR: "Otomatik serbest bırakma ile kapandı",
     },
     MUTUAL_CANCEL: {
       EN: "Closed by mutual cancel",
@@ -160,7 +160,7 @@ export function mapResolutionTypeLabel(resolutionType, lang = "EN") {
     },
     BURNED: {
       EN: "Closed by burn",
-      TR: "Burn ile kapandı",
+      TR: "Yakım ile kapandı",
     },
     UNKNOWN: {
       EN: "Closed; outcome type unavailable",

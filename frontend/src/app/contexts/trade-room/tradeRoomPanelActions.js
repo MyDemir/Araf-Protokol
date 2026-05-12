@@ -59,11 +59,11 @@ export const buildTradeRoomPanelCallbacks = ({
     }),
     ping_maker: withGuard(() => handlePingMaker(activeTrade.onchainId), {
       disabled: isContractLoading || !canPanelPingMaker,
-      disabledReasons: !canPanelPingMaker ? [lang === 'TR' ? 'Maker uyarısı için grace period bekleniyor.' : 'Grace period must expire before pinging maker.'] : [],
+      disabledReasons: !canPanelPingMaker ? [lang === 'TR' ? 'Satıcı uyarısı için onay süresi bekleniyor.' : 'Grace period must expire before pinging maker.'] : [],
     }),
     auto_release: withGuard(() => handleAutoRelease(activeTrade.onchainId), {
       disabled: isContractLoading || !canPanelAutoRelease,
-      disabledReasons: !canPanelAutoRelease ? [lang === 'TR' ? 'Auto-release için maker uyarısı sonrası 24 saat bekleyin.' : 'Wait 24h after maker ping before auto-release.'] : [],
+      disabledReasons: !canPanelAutoRelease ? [lang === 'TR' ? 'Otomatik serbest bırakma için satıcı uyarısı sonrası 24 saat bekleyin.' : 'Wait 24h after maker ping before auto-release.'] : [],
     }),
     propose_cancel: withGuard(() => {
       const msg = roomState === 'LOCKED'

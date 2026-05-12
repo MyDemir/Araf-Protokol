@@ -1,6 +1,6 @@
 import React from 'react';
 import PIIDisplay from '../components/PIIDisplay';
-import { getPiiCopy, getStateLabel } from './copy';
+import { getPiiCopy, getStateLabel, getTradeTerm } from './copy';
 import ReferenceRateTicker from '../components/ReferenceRateTicker';
 import SettlementProposalCard, { normalizeSettlementState } from '../components/SettlementProposalCard';
 import PaymentRiskBadge from '../components/PaymentRiskBadge';
@@ -146,7 +146,7 @@ export const buildAppViews = (ctx) => {
           <button
             onClick={() => setCurrentView('admin')}
             title={isLikelyAdminWallet
-              ? (lang === 'TR' ? 'Admin Paneli (Settlement analytics: read-only)' : 'Admin Panel (Settlement analytics: read-only)')
+              ? (lang === 'TR' ? 'Yönetim Paneli (uzlaşma analitiği: salt okunur)' : 'Admin Panel (Settlement analytics: read-only)')
               : (lang === 'TR' ? 'Admin Gözlem (sunucu yetkisine bağlı, read-only)' : 'Admin Observability (server-authorized, read-only)')}
             className={`w-10 h-10 flex items-center justify-center rounded-xl transition ${currentView === 'admin' ? 'bg-emerald-900/30 text-emerald-400' : 'text-slate-500 hover:text-white hover:bg-[#111113]'}`}
           >
@@ -190,7 +190,7 @@ export const buildAppViews = (ctx) => {
           <p className="text-[10px] font-bold text-textMuted mb-3 tracking-widest">{lang === 'TR' ? 'PAZAR YERİ' : 'MARKETPLACE'}</p>
           <div className="space-y-1">
             <button onClick={() => { setFilterToken('ALL'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'ALL' && currentView === 'market' ? 'bg-elevated text-textPrimary border border-borderStrong' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/50'}`}>
-              <div className="flex items-center gap-2"><span className="text-slate-500">⛓️</span> {lang === 'TR' ? 'TÜM ORDERLAR' : 'ALL ORDERS'}</div>
+              <div className="flex items-center gap-2"><span className="text-slate-500">⛓️</span> {lang === 'TR' ? 'TÜM EMİRLER' : 'ALL ORDERS'}</div>
               <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textSecondary">{orders.length}</span>
             </button>
             <button onClick={() => { setFilterToken('USDT'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'USDT' && currentView === 'market' ? 'bg-elevated text-textPrimary border border-borderStrong' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/50'}`}>
@@ -307,7 +307,7 @@ export const buildAppViews = (ctx) => {
             <button onClick={() => setLang('EN')} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition ${lang === 'EN' ? 'bg-[#222] text-white' : 'text-slate-500 hover:text-white'}`}>🇬🇧 EN</button>
           </div>
           <button onClick={handleOpenMakerModal} disabled={isPaused} className={`w-full py-3 bg-gradient-to-r ${isPaused ? 'from-slate-700 to-slate-600 cursor-not-allowed text-slate-400' : 'from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:shadow-[0_0_20px_rgba(16,185,129,0.5)] text-white'} rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2`}>
-            <span className="text-lg leading-none">+</span> {lang === 'TR' ? 'YENİ ORDER AÇ' : 'CREATE ORDER'}
+            <span className="text-lg leading-none">+</span> {lang === 'TR' ? 'YENİ EMİR AÇ' : 'CREATE ORDER'}
           </button>
         </div>
       </div>
@@ -346,7 +346,7 @@ export const buildAppViews = (ctx) => {
           </div>
         </div>
         <div className="bg-[#111113] border border-[#222] p-4 md:p-5 rounded-2xl">
-          <p className="text-slate-500 text-[10px] font-bold tracking-widest uppercase mb-2">{lang === 'TR' ? 'AÇIK SELL ORDER' : 'OPEN SELL ORDERS'}</p>
+          <p className="text-slate-500 text-[10px] font-bold tracking-widest uppercase mb-2">{lang === 'TR' ? 'AÇIK SATIŞ EMİRLERİ' : 'OPEN SELL ORDERS'}</p>
           <span className="text-2xl font-bold text-white">{(protocolStats?.open_sell_orders ?? 0).toLocaleString()}</span>
         </div>
         <div className="bg-[#111113] border border-[#222] p-4 md:p-5 rounded-2xl">
@@ -380,7 +380,7 @@ export const buildAppViews = (ctx) => {
             {lang === 'TR' ? 'Kararı backend değil, kontrat verir.' : 'The contract decides, not the backend.'}
           </h3>
           <ul className="space-y-2 text-sm text-slate-300 leading-relaxed">
-            <li>• {lang === 'TR' ? 'Maker USDT/USDC + bond kilitler, Taker şartları kabul edip girer.' : 'Maker locks USDT/USDC + bond, Taker joins under clear on-chain rules.'}</li>
+            <li>• {lang === 'TR' ? 'İlan sahibi USDT/USDC + teminat kilitler, alıcı şartları kabul edip girer.' : 'Maker locks USDT/USDC + bond, Taker joins under clear on-chain rules.'}</li>
             <li>• {lang === 'TR' ? 'Uyuşmazlıkta insan hakem yok; süre uzadıkça her iki taraf için de maliyet artar.' : 'No human arbitrator in disputes; delay becomes progressively expensive for both sides.'}</li>
             <li>• {lang === 'TR' ? 'Bu yapı gereksiz tartışmayı değil, hızlı uzlaşıyı ekonomik olarak teşvik eder.' : 'This structure rewards fast settlement rather than endless argument.'}</li>
           </ul>
@@ -466,7 +466,7 @@ export const buildAppViews = (ctx) => {
                           {lang === 'TR' ? 'İŞLEM SAHİBİ ÖZETİ' : 'ORDER OWNER SUMMARY'}
                         </p>
                         <p className="text-[10px] text-slate-500 mb-3">
-                          {order.ownerSideHint || (lang === 'TR' ? 'Order sahibi taraf bilgisi' : 'Order owner side context')}
+                          {order.ownerSideHint || (lang === 'TR' ? 'Emir sahibi taraf bilgisi' : 'Order owner side context')}
                         </p>
                         <div className="grid grid-cols-2 gap-2 text-xs">
                           <div className="rounded-lg border border-[#2e2e2e] bg-[#151518] px-2.5 py-2">
@@ -552,7 +552,7 @@ export const buildAppViews = (ctx) => {
             );
           })
         ) : (
-          <div className="p-8 text-center text-slate-500">{lang === 'TR' ? 'Order bulunamadı.' : 'No orders found.'}</div>
+          <div className="p-8 text-center text-slate-500">{lang === 'TR' ? 'Emir bulunamadı.' : 'No orders found.'}</div>
         )}
       </div>
     </div>
@@ -661,7 +661,29 @@ export const buildAppViews = (ctx) => {
       handleProposeCancel,
       handleBurnExpired,
     });
-    const tradeDecisionInput = ctx.devTradeDecisionInput || {
+    const challengedDetails = isChallenged ? (() => {
+      const riskLines = bleedingAmounts
+        ? [
+            `${lang === 'TR' ? 'Yakılan toplam' : 'Total burned'}: ${formatTokenAmountFromRaw(bleedingAmounts.totalDecayed ?? 0n, tradeTokenDecimals)} ${asset}`,
+            `${lang === 'TR' ? 'Kalan teminatlar' : 'Remaining bonds'}: ${formatTokenAmountFromRaw(bleedingAmounts.makerBondRemaining ?? 0n, tradeTokenDecimals)} ${asset} / ${formatTokenAmountFromRaw(bleedingAmounts.takerBondRemaining ?? 0n, tradeTokenDecimals)} ${asset}`,
+          ]
+        : [lang === 'TR' ? 'Riskteki değer şu anda yükleniyor veya hesaplanamıyor.' : 'Value at risk is loading or unavailable.'];
+      const timerLines = [
+        `${getTradeTerm('bleedingEscrow', lang)}: ${bleedingTimer?.isFinished ? (lang === 'TR' ? 'Tamamlandı' : 'Finished') : `${String(bleedingTimer?.hours ?? 0).padStart(2, '0')}:${String(bleedingTimer?.minutes ?? 0).padStart(2, '0')}:${String(bleedingTimer?.seconds ?? 0).padStart(2, '0')}`}`,
+        `${lang === 'TR' ? 'Ana para koruması' : 'Principal protection'}: ${principalProtectionTimer?.isFinished ? (lang === 'TR' ? 'Tamamlandı' : 'Finished') : `${principalProtectionTimer?.days ?? 0}d ${principalProtectionTimer?.hours ?? 0}h`}`,
+      ];
+      return {
+        whatHappening: lang === 'TR'
+          ? 'İşlem itiraz sürecinde. Araf karar vermez; tarafların uzlaşma veya mevcut kontrat aksiyonlarıyla ilerlemesi gerekir.'
+          : 'The trade is in a challenge phase. Araf does not decide the outcome; parties proceed through settlement or available contract actions.',
+        riskLines,
+        timerLines,
+        nextActionLabel: lang === 'TR' ? 'Uzlaşma adımlarını değerlendir' : 'Review settlement steps',
+        nextActionDescription: lang === 'TR' ? 'Önce uzlaşma kartındaki taraf aksiyonlarını kontrol edin.' : 'Check party actions in the settlement card first.',
+      };
+    })() : null;
+
+    const defaultTradeDecisionInput = {
       trade: activeTrade,
       tradeState: roomState,
       userRole,
@@ -681,7 +703,11 @@ export const buildAppViews = (ctx) => {
       isPaused,
       lang,
       canBurnExpired: burnExpiredDeadlinePassed,
+      challengedDetails,
     };
+    const tradeDecisionInput = ctx.devTradeDecisionInput
+      ? { ...ctx.devTradeDecisionInput, challengedDetails: ctx.devTradeDecisionInput.challengedDetails || challengedDetails }
+      : defaultTradeDecisionInput;
 
     return (
       <div className="p-4 md:p-8 max-w-[900px] w-full mx-auto relative mt-6 md:mt-0">
@@ -697,7 +723,7 @@ export const buildAppViews = (ctx) => {
               <p className="text-slate-500 text-xs tracking-widest mb-1">{lang === 'TR' ? 'İŞLEM ODASI' : 'TRADE ROOM'}: {activeTrade?.id}</p>
               <h2 className="text-2xl font-bold text-white flex flex-col sm:flex-row items-start sm:items-center gap-3">
                 {activeTrade?.max || '0.00'} {activeTrade?.fiat}
-                <span className={`text-xs px-3 py-1 rounded-full border ${isChallenged ? 'bg-red-900/20 text-red-500 border-red-900' : 'bg-emerald-900/20 text-emerald-500 border-emerald-900'}`}>{isChallenged ? (lang === 'TR' ? 'Araf Fazı' : 'Purgatory') : roomState}</span>
+                <span className={`text-xs px-3 py-1 rounded-full border ${isChallenged ? 'bg-red-900/20 text-red-500 border-red-900' : 'bg-emerald-900/20 text-emerald-500 border-emerald-900'}`}>{isChallenged ? (lang === 'TR' ? 'İtiraz Süreci' : 'Purgatory') : roomState}</span>
               </h2>
             </div>
             <div className="text-left md:text-right w-full md:w-auto border-t border-[#222] md:border-none pt-4 md:pt-0">
@@ -706,12 +732,12 @@ export const buildAppViews = (ctx) => {
             </div>
           </div>
 
-          {/* Bleeding Escrow görsel barı — yalnızca CHALLENGED state'inde gösterilir */}
+          {/* Eriyen emanet görsel barı — yalnızca CHALLENGED state'inde gösterilir */}
           {isChallenged && (
             <div className="mb-8 md:mb-10 p-4 md:p-6 bg-[#0a0505] border border-red-950 rounded-xl relative overflow-hidden">
               <div className="flex justify-between text-xs font-bold mb-3">
-                <span className="text-red-500">MAKER BOND</span>
-                <span className="text-orange-500">TAKER BOND</span>
+                <span className="text-red-500">{lang === 'TR' ? 'İLAN SAHİBİ TEMİNATI' : 'MAKER BOND'}</span>
+                <span className="text-orange-500">{lang === 'TR' ? 'ALICI TEMİNATI' : 'TAKER BOND'}</span>
               </div>
               {(() => {
                 const myBond       = bleedingAmounts ? (isTaker ? Number(bleedingAmounts.takerBondRemaining) : Number(bleedingAmounts.makerBondRemaining)) : null;
@@ -740,7 +766,7 @@ export const buildAppViews = (ctx) => {
                         <span className="text-orange-500/50 text-[10px] font-mono">{bleedingTimer.isFinished ? '00:00:00' : `${String(bleedingTimer.hours).padStart(2,'0')}:${String(bleedingTimer.minutes).padStart(2,'0')}:${String(bleedingTimer.seconds).padStart(2,'0')}`}</span>
                       </div>
                       <div className="text-center w-full">
-                        <p className="text-red-400 font-bold text-sm drop-shadow-[0_0_5px_red]">{lang === 'TR' ? 'Yanan Toplam:' : 'Total Burned:'} {formatTokenAmountFromRaw(decayedTotal, tradeTokenDecimals)} {asset} 🔥</p>
+                        <p className="text-red-400 font-bold text-sm drop-shadow-[0_0_5px_red]">{lang === 'TR' ? 'Yakılan Toplam:' : 'Total Burned:'} {formatTokenAmountFromRaw(decayedTotal, tradeTokenDecimals)} {asset} 🔥</p>
                       </div>
                     </div>
                   </>
@@ -817,7 +843,7 @@ export const buildAppViews = (ctx) => {
                 </div>
                 {isTaker ? (
                   <div className="w-full max-w-md flex flex-col items-center">
-                    <p className="text-slate-400 text-sm mb-4">{lang === 'TR' ? 'Maker onayı bekleniyor.' : 'Waiting for maker release.'}</p>
+                    <p className="text-slate-400 text-sm mb-4">{lang === 'TR' ? 'Satıcı onayı bekleniyor.' : 'Waiting for maker release.'}</p>
                     {(() => {
                       if (!activeTrade?.paidAt) return null;
                       if (activeTrade.pingedAt) {
@@ -827,7 +853,7 @@ export const buildAppViews = (ctx) => {
                           return (
                             <div className="w-full mt-2 flex flex-col items-center">
                               <p className="text-xs text-red-400 font-bold mb-1 text-center leading-snug">
-                                {lang === 'TR' ? 'Dikkat: Maker pasif kaldığı için her iki tarafın teminatından %2 ihmal cezası kesilecektir (Maker: %2, Taker: %2).' : 'Warning: Due to maker inaction, a 2% negligence penalty will be deducted from both parties\' bonds (Maker: 2%, Taker: 2%).'}
+                                {lang === 'TR' ? 'Dikkat: Satıcı pasif kaldığı için her iki tarafın teminatından %2 ihmal cezası kesilecektir (satıcı: %2, alıcı: %2).' : 'Warning: Due to maker inaction, a 2% negligence penalty will be deducted from both parties\' bonds (Maker: 2%, Taker: 2%).'}
                               </p>
                               <button onClick={() => handleAutoRelease(activeTrade.onchainId)} disabled={isContractLoading} className="w-full text-sm font-bold py-3 rounded-xl transition bg-emerald-600/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500 hover:text-white shadow-lg">
                                 {isContractLoading ? '...' : (lang === 'TR' ? '✅ Fonları Otomatik Serbest Bırak' : '✅ Auto-Release Funds')}
@@ -835,7 +861,7 @@ export const buildAppViews = (ctx) => {
                             </div>
                           );
                         }
-                        return <div className="mt-2 text-center text-xs text-emerald-400 bg-emerald-900/20 p-3 rounded-lg border border-emerald-900/50 w-full"><p className="font-bold">✓ {lang === 'TR' ? 'Maker Uyarıldı' : 'Maker Pinged'}</p></div>;
+                        return <div className="mt-2 text-center text-xs text-emerald-400 bg-emerald-900/20 p-3 rounded-lg border border-emerald-900/50 w-full"><p className="font-bold">✓ {lang === 'TR' ? 'Satıcı Uyarıldı' : 'Maker Pinged'}</p></div>;
                       }
                       const gracePeriodEnds = new Date(new Date(activeTrade.paidAt).getTime() + 48 * 3600 * 1000);
                       const canPing = new Date() > gracePeriodEnds;
@@ -843,15 +869,15 @@ export const buildAppViews = (ctx) => {
                         return (
                           <div className="w-full mt-2 flex flex-col items-center">
                             <button disabled className="w-full text-sm font-bold py-3 rounded-xl transition bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed">
-                              {lang === 'TR' ? '🔔 Maker’ı Uyar' : '🔔 Ping Maker'}
+                              {lang === 'TR' ? '🔔 Satıcıyı Uyar' : '🔔 Ping Maker'}
                             </button>
                             <p className="text-xs text-red-400 mt-2 text-center leading-snug">
-                              ⚠️ {lang === 'TR' ? 'Maker itiraz uyarı sürecini başlattı. Artık otomatik serbest bırakma (Auto-Release) yolunu kullanamazsınız.' : 'Maker has initiated the challenge warning process. You can no longer use Auto-Release.'}
+                              ⚠️ {lang === 'TR' ? 'Satıcı itiraz uyarı sürecini başlattı. Artık otomatik serbest bırakma yolunu kullanamazsınız.' : 'Maker has initiated the challenge warning process. You can no longer use Auto-Release.'}
                             </p>
                           </div>
                         );
                       }
-                      return <button onClick={() => handlePingMaker(activeTrade.onchainId)} disabled={!canPing || isContractLoading} className={`w-full mt-2 text-sm font-bold py-3 rounded-xl transition ${!canPing || isContractLoading ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-orange-600/20 text-orange-400 border border-orange-500/40 hover:bg-orange-500 hover:text-white'}`}>{isContractLoading ? '...' : canPing ? (lang === 'TR' ? '🔔 Maker’ı Uyar' : '🔔 Ping Maker') : (lang === 'TR' ? '⏱️ Onay Bekleniyor' : '⏱️ Awaiting Confirmation')}</button>;
+                      return <button onClick={() => handlePingMaker(activeTrade.onchainId)} disabled={!canPing || isContractLoading} className={`w-full mt-2 text-sm font-bold py-3 rounded-xl transition ${!canPing || isContractLoading ? 'bg-[#1a1a1f] text-slate-500 border border-[#2a2a2e] cursor-not-allowed' : 'bg-orange-600/20 text-orange-400 border border-orange-500/40 hover:bg-orange-500 hover:text-white'}`}>{isContractLoading ? '...' : canPing ? (lang === 'TR' ? '🔔 Satıcıyı Uyar' : '🔔 Ping Maker') : (lang === 'TR' ? '⏱️ Onay Bekleniyor' : '⏱️ Awaiting Confirmation')}</button>;
                     })()}
                   </div>
                 ) : (
@@ -884,7 +910,7 @@ export const buildAppViews = (ctx) => {
                       </div>
                       <div className="flex flex-col sm:flex-row justify-center gap-3">
                         <button disabled={!chargebackAccepted || isContractLoading} onClick={handleRelease} className={`w-full sm:w-auto px-8 py-3 rounded-xl font-bold transition ${chargebackAccepted && !isContractLoading ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-[#1a1a1f] text-slate-500 cursor-not-allowed border border-[#2a2a2e]'}`}>
-                          {isContractLoading ? (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...') : (lang === 'TR' ? 'Serbest Bırak' : 'Release USDT')}
+                          {isContractLoading ? (lang === 'TR' ? '⏳ İşleniyor...' : '⏳ Processing...') : (lang === 'TR' ? 'Ödemeyi Onayla' : 'Release USDT')}
                         </button>
                       </div>
                     </div>
@@ -904,7 +930,7 @@ export const buildAppViews = (ctx) => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {isChallenged && isMaker && (
                         <button onClick={handleRelease} disabled={isContractLoading} className={`w-full bg-[#0a0a0c] border border-emerald-500/30 text-emerald-500 p-3 rounded-xl font-bold text-sm transition ${isContractLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500 hover:text-white'}`}>
-                          🤝 {lang === 'TR' ? 'Serbest Bırak' : 'Release'}
+                          🤝 {lang === 'TR' ? 'Ödemeyi Onayla' : 'Release'}
                         </button>
                       )}
                       <button onClick={() => {
@@ -978,10 +1004,10 @@ export const buildAppViews = (ctx) => {
               return (
                 <div className="mt-6 bg-[#1a0505] border border-red-950 rounded-xl p-4 text-center">
                   <p className="text-red-500 text-xs font-bold mb-2">
-                    🔥 {lang === 'TR' ? '10 Gün Süresi Doldu — Sözleşme Artık Yakılabilir' : '10-Day Deadline Passed — Contract Can Now Be Burned'}
+                    🔥 {lang === 'TR' ? '10 Gün Doldu — Süre Aşımı Yakımı Açık' : '10-Day Deadline Passed — Contract Can Now Be Burned'}
                   </p>
                   <p className="text-slate-500 text-xs mb-3">
-                    {lang === 'TR' ? 'Uyarı: Sözleşme yakıldığında içerideki kilitli tüm USDT ve her iki tarafın teminatları kalıcı olarak Protokol Hazinesine aktarılır. İade yapılmaz.' : 'Warning: When burned, all locked USDT and bonds from both parties are permanently transferred to the Treasury. No refunds.'}
+                    {lang === 'TR' ? 'Uyarı: Süre aşımı yakımı yapılırsa içerideki kilitli tüm USDT ve her iki tarafın teminatları kalıcı olarak Protokol Hazinesine aktarılır. İade yapılmaz.' : 'Warning: When burned, all locked USDT and bonds from both parties are permanently transferred to the Treasury. No refunds.'}
                   </p>
                   <p className="text-xs text-orange-300 mb-3">
                     {lang === 'TR'
@@ -992,7 +1018,7 @@ export const buildAppViews = (ctx) => {
                     onClick={handleBurnExpired}
                     disabled={isContractLoading}
                     className={`px-6 py-2.5 rounded-xl font-bold text-sm transition ${isContractLoading ? 'bg-[#1a1a1f] text-slate-500 cursor-not-allowed border border-[#2a2a2e]' : 'bg-red-900/30 text-red-400 border border-red-800/50 hover:bg-red-600 hover:text-white'}`}>
-                    {isContractLoading ? '⏳...' : (lang === 'TR' ? '🔥 Süresi Dolan İşlemi Yak' : '🔥 Burn Expired Trade')}
+                    {isContractLoading ? '⏳...' : (lang === 'TR' ? '🔥 Süre Aşımı Yakımı' : '🔥 Burn Expired Trade')}
                   </button>
                 </div>
               );

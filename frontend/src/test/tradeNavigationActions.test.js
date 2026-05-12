@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildGoToTradeRoomAction, buildNextActiveTrade } from '../app/actions/tradeNavigationActions';
+import { buildGoToTradeRoomAction, buildNextActiveTrade, findEscrowByRouteTradeId, parseAppHashRoute } from '../app/actions/tradeNavigationActions';
 
 describe('buildGoToTradeRoomAction', () => {
   it('sets active trade from escrow.rawTrade without dropping rawTrade fields', () => {
@@ -176,4 +176,17 @@ describe('buildGoToTradeRoomAction', () => {
     })();
     expect(setChargebackAccepted).toHaveBeenCalledWith(true);
   });
+
+  it('parses hash/query trade routes and resolves the active escrow by on-chain id', () => {
+    const activeEscrows = [
+      { id: '#40', onchainId: '40', state: 'LOCKED', role: 'maker', rawTrade: { onchainId: '40' } },
+      { id: '#77', onchainId: '77', state: 'CHALLENGED', role: 'taker', rawTrade: { onchainId: '77' } },
+    ];
+
+    expect(parseAppHashRoute('#/profile/active-trades')).toEqual({ view: 'profile', profileTab: 'active' });
+    expect(parseAppHashRoute('#/trade/77')).toEqual({ view: 'tradeRoom', tradeId: '77' });
+    expect(parseAppHashRoute('#?view=tradeRoom&trade=40')).toEqual({ view: 'tradeRoom', tradeId: '40' });
+    expect(findEscrowByRouteTradeId(activeEscrows, '77')).toMatchObject({ state: 'CHALLENGED', role: 'taker' });
+  });
+
 });

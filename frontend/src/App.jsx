@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAccount, useConnect, useDisconnect, useSignMessage, useChainId, usePublicClient } from 'wagmi';
 import { formatUnits } from 'viem';
 import { useArafContract } from './hooks/useArafContract';
@@ -18,6 +18,7 @@ import { buildApiUrl, resolveApiPolicyDiagnostics } from './app/apiConfig';
 import { getSupportedChainsMap, isMintTokenEnabled, isSupportedChainId } from './app/chainPolicy';
 import { useMakerOrderForm } from './app/contexts/marketplace/useMakerOrderForm';
 import { buildMintAction, buildOrderActions, buildProfileActions, buildStartTradeAction, buildTradeRoomActions } from './app/actions/contractLifecycleActions';
+import { buildNextActiveTrade, findEscrowByRouteTradeId, getEscrowRouteId, parseAppHashRoute, writeAppHashRoute } from './app/actions/tradeNavigationActions';
 
 // [TR] Uygulama başlangıcında kritik env değişkenlerini doğrula
 // [EN] Validate critical env variables on app start
@@ -365,6 +366,52 @@ function App() {
     }
     return activeEscrows;
   }, [activeScenarioCategory, activeScenarioPayload, activeEscrows]);
+
+
+  const applyHashRoute = React.useCallback(() => {
+    if (devScenarioActive) return;
+    const route = parseAppHashRoute(window.location.hash);
+    if (!route) return;
+
+    if (route.view === 'profile' && route.profileTab === 'active') {
+      setProfileContextTab('active');
+      setActiveTradesFilter('ALL');
+      setCurrentView('profile');
+      return;
+    }
+
+    if (route.view === 'tradeRoom') {
+      const escrow = findEscrowByRouteTradeId(effectiveActiveEscrows, route.tradeId);
+      if (!escrow) {
+        setActiveTrade(null);
+        setCurrentView('tradeRoom');
+        return;
+      }
+      setActiveTrade(buildNextActiveTrade(escrow));
+      setUserRole(escrow.role);
+      setTradeState(escrow.state);
+      setChargebackAccepted(escrow.rawTrade?.chargebackAcked === true);
+      setCurrentView('tradeRoom');
+    }
+  }, [devScenarioActive, effectiveActiveEscrows, setActiveTrade, setUserRole, setTradeState, setChargebackAccepted, setCurrentView, setActiveTradesFilter, setProfileContextTab]);
+
+  useEffect(() => {
+    applyHashRoute();
+    window.addEventListener('hashchange', applyHashRoute);
+    return () => window.removeEventListener('hashchange', applyHashRoute);
+  }, [applyHashRoute]);
+
+  useEffect(() => {
+    if (devScenarioActive) return;
+    if (currentView === 'profile' && profileContextTab === 'active') {
+      writeAppHashRoute('#/profile/active-trades');
+      return;
+    }
+    if (currentView === 'tradeRoom' && activeTrade) {
+      const routeId = getEscrowRouteId({ rawTrade: activeTrade, onchainId: activeTrade?.onchainId, id: activeTrade?.id });
+      if (routeId) writeAppHashRoute(`#/trade/${encodeURIComponent(String(routeId))}`);
+    }
+  }, [devScenarioActive, currentView, profileContextTab, activeTrade]);
 
   const effectiveActiveEscrowCounts = React.useMemo(() => {
     if (activeScenarioCategory === 'activeTrades' || activeScenarioCategory === 'operations') {
