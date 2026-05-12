@@ -119,10 +119,10 @@ describe("health readiness production ALLOWED_ORIGINS diagnostics", () => {
     expect(statusCode).toBe(503);
   });
 
-  it("security_docs_reference_ready_for_readiness_not_health", async () => {
+  it("security_deployment_guide_references_ready_for_readiness_not_health", async () => {
     const fs = require("fs");
-    const en = fs.readFileSync(require("path").resolve(process.cwd(), "../docs/EN/LOCAL_DEVELOPMENT.md"), "utf8");
-    const tr = fs.readFileSync(require("path").resolve(process.cwd(), "../docs/TR/LOCAL_DEVELOPMENT.md"), "utf8");
+    const en = fs.readFileSync(require("path").resolve(process.cwd(), "../docs/EN/DEPLOYMENT_GUIDE.md"), "utf8");
+    const tr = fs.readFileSync(require("path").resolve(process.cwd(), "../docs/TR/DEPLOYMENT_GUIDE.md"), "utf8");
 
     expect(en).toContain("/ready");
     expect(en).toContain("liveness");

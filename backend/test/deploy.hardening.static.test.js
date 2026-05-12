@@ -13,8 +13,8 @@ describe("deploy hardening static guards", () => {
     expect(src).not.toContain("npm install --omit=dev");
   });
 
-  it("local docs mention readiness and env policy", () => {
-    const en = fs.readFileSync(path.resolve(process.cwd(), "../docs/EN/LOCAL_DEVELOPMENT.md"), "utf8");
+  it("deployment guide mentions readiness and env policy", () => {
+    const en = fs.readFileSync(path.resolve(process.cwd(), "../docs/EN/DEPLOYMENT_GUIDE.md"), "utf8");
     expect(en).toContain("/ready");
     expect(en).toContain("VITE_*");
     expect(en).toContain("REDIS_TLS_SKIP_VERIFY=true");
