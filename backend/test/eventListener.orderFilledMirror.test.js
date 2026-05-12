@@ -109,7 +109,7 @@ describe("eventListener OrderFilled mirror hardening", () => {
     worker._getEventId = jest.fn().mockReturnValue("tx:1");
   });
 
-  it("writes childListingRef into canonical_refs.listing_ref during OrderFilled processing", async () => {
+  it("writes ABI child trace ref into compatibility canonical_refs.listing_ref during OrderFilled processing", async () => {
     await worker._onOrderFilled({
       eventName: "OrderFilled",
       blockNumber: 123,

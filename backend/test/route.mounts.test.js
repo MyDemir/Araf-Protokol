@@ -19,5 +19,9 @@ describe("backend route mount consistency", () => {
     ].forEach((line) => {
       expect(appSource).toContain(line);
     });
+
+    // /api/listings is a deprecated compatibility alias when imported directly,
+    // not part of the canonical V3 app.js mount surface.
+    expect(appSource).not.toContain('app.use("/api/listings"');
   });
 });

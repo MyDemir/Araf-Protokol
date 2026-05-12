@@ -156,9 +156,9 @@ export const buildStartTradeAction = ({
         ? 'Adım 2/2: Order fill işlemi gönderiliyor...'
         : 'Step 2/2: Submitting order fill...'
     );
-    const childListingRef = `fill:${order.onchainId}:${Date.now()}:${Math.random()}`;
+    const childTradeRef = `fill:${order.onchainId}:${Date.now()}:${Math.random()}`;
     const { keccak256, stringToHex } = await import('viem');
-    const childRefHash = keccak256(stringToHex(childListingRef));
+    const childRefHash = keccak256(stringToHex(childTradeRef));
     const fillResult = await fillOrderFn(BigInt(order.onchainId), fillAmountRaw, childRefHash);
     const onchainTradeId = fillResult?.tradeId ? fillResult.tradeId.toString() : null;
 

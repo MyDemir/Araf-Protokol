@@ -8,7 +8,7 @@ const labels = {
   },
   role: {
     taker: { TR: 'Alıcı', EN: 'Taker' },
-    maker: { TR: 'İlan Sahibi', EN: 'Maker' },
+    maker: { TR: 'Maker', EN: 'Maker' },
   },
 };
 

@@ -31,7 +31,7 @@ Korunan route’larda session-wallet eşleşmesi (`requireSessionWalletMatch`) z
 - `/health` (liveness)
 - `/ready` (readiness)
 
-`/api/listings`, `app.js` içindeki kanonik mount yüzeyinin parçası değildir.
+`/api/listings`, `app.js` içindeki kanonik mount yüzeyinin parçası değildir. Compatibility test/client tarafından doğrudan import edilirse parent-order read-model üstünde deprecated read-only alias olarak kalır; write route’ları 410 döner.
 
 ---
 

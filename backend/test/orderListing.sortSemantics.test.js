@@ -3,7 +3,7 @@
 const express = require("express");
 const request = require("supertest");
 
-describe("orders/listings sort semantics on string onchain ids", () => {
+describe("orders and deprecated listings compatibility sort semantics", () => {
   afterEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
@@ -57,7 +57,7 @@ describe("orders/listings sort semantics on string onchain ids", () => {
     expect(sortArg.onchain_order_id).toBeUndefined();
   });
 
-  it("listings route uses deterministic _id tie-break instead of onchain_order_id string sort", async () => {
+  it("deprecated listings read alias uses deterministic _id tie-break instead of onchain_order_id string sort", async () => {
     const findChain = {
       sort: jest.fn().mockReturnThis(),
       skip: jest.fn().mockReturnThis(),
@@ -96,6 +96,37 @@ describe("orders/listings sort semantics on string onchain ids", () => {
     const sortArg = findChain.sort.mock.calls[0][0];
     expect(sortArg._id).toBe(1);
     expect(sortArg.onchain_order_id).toBeUndefined();
+  });
+
+  it("deprecated listings compatibility write routes stay gone with 410", async () => {
+    let router;
+    jest.isolateModules(() => {
+      jest.doMock("../scripts/middleware/rateLimiter", () => ({
+        marketReadLimiter: (_req, _res, next) => next(),
+        ordersReadLimiter: (_req, _res, next) => next(),
+        ordersWriteLimiter: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../scripts/middleware/auth", () => ({
+        requireAuth: (req, _res, next) => { req.wallet = "0x1111111111111111111111111111111111111111"; next(); },
+        requireSessionWalletMatch: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../scripts/models/Order", () => ({ find: jest.fn(), countDocuments: jest.fn() }));
+      jest.doMock("../scripts/services/protocolConfig", () => ({ getConfig: jest.fn(() => ({ bondMap: {}, feeConfig: {}, cooldownConfig: {}, tokenMap: {} })) }));
+      jest.doMock("../scripts/utils/logger", () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }));
+      router = require("../scripts/routes/listings");
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/listings", router);
+
+    const post = await request(app).post("/api/listings").send({});
+    expect(post.status).toBe(410);
+    expect(post.body.code).toBe("LISTINGS_WRITE_DEPRECATED_IN_V3");
+
+    const del = await request(app).delete("/api/listings/compat-id");
+    expect(del.status).toBe(410);
+    expect(del.body.code).toBe("LISTINGS_DELETE_DEPRECATED_IN_V3");
   });
 
   it("trades history route uses _id tie-break instead of onchain_escrow_id lexicographic sort", async () => {

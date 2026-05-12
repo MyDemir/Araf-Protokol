@@ -1,5 +1,7 @@
 # Mainnet Hazırlık Checklist'i (Stabilization / Runbook)
 
+> Governance notu: Owner-controlled tüm protocol yüzeyleri, pre/post-change kontrolleri ve production owner modeli için bkz. [`docs/TR/GOVERNANCE_READINESS.md`](./GOVERNANCE_READINESS.md).
+
 > Amaç: Bu doküman **mainnet deploy zorunluluğu** getirmez; production/staging güvenlik doğrulaması için kullanılır.
 
 ## 1) Zorunlu Ortam Değişkenleri (Production fail-closed)
@@ -42,6 +44,7 @@ Kritik not:
 ### KMS / encryption
 - `KMS_PROVIDER`
 - `KMS_PROVIDER=env` production'da kullanılmamalı.
+- HKDF değişikliğinden önce yazılmış PII ciphertext'leri için migration/runbook gereksinimi ayrıca doğrulanmalı: [`docs/TR/PII_ENCRYPTION_MIGRATION.md`](./PII_ENCRYPTION_MIGRATION.md).
 - KMS seçimine göre ilgili env'ler:
   - AWS: `AWS_KMS_KEY_ARN`, `AWS_ENCRYPTED_DATA_KEY`, `AWS_REGION`
   - Vault: `VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_KEY_NAME`
@@ -146,3 +149,4 @@ Aşağıdaki sıra **bozulmamalıdır**:
 - Sponsor/funder recipient seçememelidir.
 - Admin reward reserve'i treasury gibi çekememelidir.
 - Reward bütçesi wash-trade maliyetiyle karşılaştırılarak kontrollü tutulmalıdır.
+- Rewards abuse için read-only observability planı dashboard/runbook olarak takip edilmelidir: [`docs/TR/REWARDS_ABUSE_OBSERVABILITY.md`](./REWARDS_ABUSE_OBSERVABILITY.md).

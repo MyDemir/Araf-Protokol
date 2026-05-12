@@ -707,7 +707,7 @@ erDiagram
 - `parent_order_id`
 - `parent_order_side`
 - `trade_origin` (`ORDER_CHILD` / `DIRECT_ESCROW`)
-- `canonical_refs.{listing_ref, order_ref}`
+- `canonical_refs.{listing_ref, order_ref}` (`listing_ref` is a legacy ABI/event trace field; `order_ref` links the parent order)
 
 ### Fill and fee linkage
 - `fill_metadata.{fill_amount, filler_address, remaining_amount_after_fill}` (+ numeric caches)
@@ -755,7 +755,7 @@ The V3 backend surface does not manufacture authority; routes apply projection, 
 
 | Route group | Surface | Meaning |
 |---|---|---|
-| Orders | parent-order read/config surfaces, owner-scoped child-trade listing route | market read-model and owner visibility |
+| Orders | parent-order read/config surfaces, owner-scoped child-trade list/read route | market read-model and owner visibility |
 | Trades | active/history/by-escrow reads, cancel-signature coordination, chargeback-ack audit surface | child-trade operations and audit helpers |
 | Auth | nonce/verify/refresh/logout/me/profile | session and wallet-bound auth boundary |
 | PII | `/my`, `taker-name`, request-token, trade-scoped retrieval | snapshot-first, role-bound sensitive-data access |
@@ -764,7 +764,7 @@ The V3 backend surface does not manufacture authority; routes apply projection, 
 
 ### 14.1 Orders routes
 - parent-order read/config surfaces
-- owner-scoped child-trade listing route
+- owner-scoped child-trade list/read route
 
 ### 14.2 Trades routes
 - active/history/by-escrow reads

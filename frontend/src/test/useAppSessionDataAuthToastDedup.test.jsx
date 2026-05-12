@@ -81,7 +81,10 @@ describe('useAppSessionData auth toast deduplication', () => {
         return { ok: true, status: 200, json: async () => ({}) };
       }
       if (target.includes('/api/orders')) {
-        return { ok: true, status: 200, json: async () => ({ orders: [] }) };
+        return { ok: true, status: 200, json: async () => ({ orders: [], total: 0, page: 1, limit: 50 }) };
+      }
+      if (target.includes('/api/trades')) {
+        return { ok: true, status: 200, json: async () => ({ trades: [], total: 0, page: 1, limit: 50 }) };
       }
       if (target.includes('/api/stats')) {
         return { ok: true, status: 200, json: async () => ({ stats: {} }) };

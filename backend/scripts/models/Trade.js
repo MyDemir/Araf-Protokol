@@ -18,10 +18,10 @@ const mongoose = require("mongoose");
 //   4. PII snapshot ve dekont alanlarını child trade bağlamında tutar.
 //
 // Not:
-//   ArafEscrow-yeni.sol hâlâ canonical direct escrow yolunu teknik olarak içerir.
-//   Ancak V3 omurgası parent order + child trade'tir.
-//   Bu model direct escrow'u "legacy authority" olarak değil,
-//   kontratın izin verdiği ikincil kaynak olarak mirror edebilir.
+//   V3 canonical path is order-first: parent order -> child trade.
+//   DIRECT_ESCROW is retained only as a deprecated/compatibility mirror value
+//   for historical data or deployments that emitted direct escrow events.
+//   Backend never treats it as a V3 authority surface.
 //
 
 const tradeSchema = new mongoose.Schema(
@@ -47,9 +47,9 @@ const tradeSchema = new mongoose.Schema(
     },
 
     // [TR] Trade kökeni. V3'te ana yol ORDER_CHILD'dır.
-    //      DIRECT_ESCROW yalnız kontratın canonical createEscrow yolu için saklanır.
-    // [EN] Trade origin. ORDER_CHILD is the primary V3 path.
-    //      DIRECT_ESCROW is retained only for the contract's canonical direct path.
+    //      DIRECT_ESCROW yalnız deprecated/compat historical mirror değeri olarak tutulur.
+    // [EN] Trade origin. ORDER_CHILD is the canonical V3 path.
+    //      DIRECT_ESCROW is retained only as deprecated/compat historical mirror state.
     trade_origin: {
       type: String,
       enum: ["ORDER_CHILD", "DIRECT_ESCROW"],
@@ -89,9 +89,10 @@ const tradeSchema = new mongoose.Schema(
       index: true,
     },
 
-    // [TR] Canonical referanslar. listing_ref authority değildir; yalnız kontrat event'inden
-    //      gelen referans izi olarak tutulur. Parent order akışında order_ref daha güçlü bağdır.
-    // [EN] Canonical references. listing_ref is NOT an authority layer; it is only an event trace.
+    // [TR] Kontrat referans izleri. listing_ref V3 primitive değildir ve authority taşımaz;
+    //      yalnız legacy ABI/event isimlerinden gelen child-trade trace alanıdır. order_ref parent order bağıdır.
+    // [EN] Contract reference traces. listing_ref is not a V3 primitive or authority layer;
+    //      it is only a child-trade trace from legacy ABI/event naming. order_ref links the parent order.
     canonical_refs: {
       listing_ref: {
         type: String,

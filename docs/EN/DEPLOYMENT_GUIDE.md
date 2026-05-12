@@ -152,11 +152,28 @@ npx hardhat coverage
 
 
 
-#### Deterministic local test commands
+#### Root-level local test commands
+
+The root `package.json` is a thin developer runner. It does not move tests or replace package-local CI commands; each script delegates to the relevant package directory.
+
 ```bash
-cd backend && npm ci && npm test
-cd ../frontend && npm ci && npm test
-cd ../contracts && npm ci && npx hardhat compile && npm run test:abi-drift && npx hardhat test
+# From the repository root, after package dependencies are installed
+npm run test:backend
+npm run test:frontend
+npm run test:contracts
+npm run test:abi-drift
+
+# Deterministic aggregate order:
+# backend → frontend → contracts → ABI drift
+npm run test:all
+```
+
+Package-local commands remain available when you are working inside one package:
+
+```bash
+cd backend && npm test
+cd ../frontend && npm test
+cd ../contracts && npm test
 ```
 
 ### Local Test Checklist

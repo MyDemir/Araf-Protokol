@@ -9,7 +9,7 @@ describe('frontend deploy hardening static guards', () => {
   });
 
   it('docs explicitly warn VITE vars are public', () => {
-    const en = fs.readFileSync(path.resolve(process.cwd(), '../docs/EN/LOCAL_DEVELOPMENT.md'), 'utf8');
+    const en = fs.readFileSync(path.resolve(process.cwd(), '../docs/EN/DEPLOYMENT_GUIDE.md'), 'utf8');
     expect(en).toContain('VITE_*');
     expect(en).toContain('public');
   });

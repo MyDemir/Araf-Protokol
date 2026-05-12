@@ -309,8 +309,8 @@ export function useArafContract() {
   );
 
   const fillSellOrder = useCallback(
-    async (orderId, fillAmount, childListingRef) => {
-      const receipt = await writeContract("fillSellOrder", [orderId, fillAmount, childListingRef]);
+    async (orderId, fillAmount, childTradeRef) => {
+      const receipt = await writeContract("fillSellOrder", [orderId, fillAmount, childTradeRef]);
       const args = extractOrderFilledArgs(receipt, orderId, ESCROW_ADDRESS);
       return {
         receipt,
@@ -332,8 +332,8 @@ export function useArafContract() {
   );
 
   const fillBuyOrder = useCallback(
-    async (orderId, fillAmount, childListingRef) => {
-      const receipt = await writeContract("fillBuyOrder", [orderId, fillAmount, childListingRef]);
+    async (orderId, fillAmount, childTradeRef) => {
+      const receipt = await writeContract("fillBuyOrder", [orderId, fillAmount, childTradeRef]);
       const args = extractOrderFilledArgs(receipt, orderId, ESCROW_ADDRESS);
       return {
         receipt,

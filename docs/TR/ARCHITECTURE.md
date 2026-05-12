@@ -704,7 +704,7 @@ erDiagram
 - `parent_order_id`
 - `parent_order_side`
 - `trade_origin` (`ORDER_CHILD` / `DIRECT_ESCROW`)
-- `canonical_refs.{listing_ref, order_ref}`
+- `canonical_refs.{listing_ref, order_ref}` (`listing_ref` legacy ABI/event trace alanıdır; `order_ref` parent order bağını taşır)
 
 #### Fill ve fee ilişkisi
 - `fill_metadata.{fill_amount, filler_address, remaining_amount_after_fill}` (+ num cache’ler)
@@ -752,7 +752,7 @@ V3 backend yüzeyi authority üretmez; route’lar projection, coordination ve g
 
 | Route grubu | Yüzey | Anlam |
 |---|---|---|
-| Orders | Parent order read/config yüzeyi, owner-scope child-trade listesi | Market read-model ve owner görünürlüğü |
+| Orders | Parent order read/config yüzeyi, owner-scope child-trade list/read yüzeyi | Market read-model ve owner görünürlüğü |
 | Trades | active/history/by-escrow, cancel signature coordination, chargeback ack | Child-trade operasyonları ve audit yardımcı yüzeyi |
 | Auth | nonce/verify/refresh/logout/me/profile | Session ve wallet-bound auth authority sınırı |
 | PII | `/my`, `taker-name`, request-token, trade-scoped retrieve | Snapshot-first, role-bound hassas veri erişimi |
@@ -761,7 +761,7 @@ V3 backend yüzeyi authority üretmez; route’lar projection, coordination ve g
 
 ### 14.1 Orders routes
 - Parent order read/config yüzeyi
-- Owner-scope child-trade listesi
+- Owner-scope child-trade list/read yüzeyi
 
 ### 14.2 Trades routes
 - active/history/by-escrow kimlikli okuma

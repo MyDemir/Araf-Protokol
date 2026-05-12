@@ -3,7 +3,7 @@
 const logger = require("../utils/logger");
 
 /**
- * Pending Listing Cleanup Job — V3 Compatibility No-Op
+ * Deprecated Pending Listing Cleanup Job — V3 compatibility no-op
  *
  * V2 dünyasında backend önce `Listing` kaydı oluşturuyor, ardından on-chain
  * `EscrowCreated` event'ini bekliyordu. Eğer zincir tarafı hiç gelmezse, saatlerce
@@ -28,7 +28,7 @@ let _loggedDeprecationOnce = false;
 async function runPendingListingCleanup() {
   if (!_loggedDeprecationOnce) {
     logger.info(
-      "[Job:PendingCleanup] V3'te pending listing cleanup deprecated — no-op çalıştırıldı."
+      "[Job:PendingCleanup] V3'te deprecated pending listing cleanup compatibility — no-op çalıştırıldı."
     );
     _loggedDeprecationOnce = true;
   }

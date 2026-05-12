@@ -31,7 +31,7 @@ Session-wallet consistency is enforced (`requireSessionWalletMatch`) on protecte
 - `/health` (liveness)
 - `/ready` (readiness)
 
-`/api/listings` is **not** part of the canonical mounted surface in `app.js`.
+`/api/listings` is **not** part of the canonical mounted surface in `app.js`. If imported directly by compatibility tests/clients, it is a deprecated read-only alias over parent-order read models; write routes return 410.
 
 ---
 

@@ -380,7 +380,7 @@ export const buildAppViews = (ctx) => {
             {lang === 'TR' ? 'Kararı backend değil, kontrat verir.' : 'The contract decides, not the backend.'}
           </h3>
           <ul className="space-y-2 text-sm text-slate-300 leading-relaxed">
-            <li>• {lang === 'TR' ? 'İlan sahibi USDT/USDC + teminat kilitler, alıcı şartları kabul edip girer.' : 'Maker locks USDT/USDC + bond, Taker joins under clear on-chain rules.'}</li>
+            <li>• {lang === 'TR' ? 'Parent order sahibi USDT/USDC + teminat kilitler, karşı taraf şartları kabul edip girer.' : 'Maker locks USDT/USDC + bond, Taker joins under clear on-chain rules.'}</li>
             <li>• {lang === 'TR' ? 'Uyuşmazlıkta insan hakem yok; süre uzadıkça her iki taraf için de maliyet artar.' : 'No human arbitrator in disputes; delay becomes progressively expensive for both sides.'}</li>
             <li>• {lang === 'TR' ? 'Bu yapı gereksiz tartışmayı değil, hızlı uzlaşıyı ekonomik olarak teşvik eder.' : 'This structure rewards fast settlement rather than endless argument.'}</li>
           </ul>

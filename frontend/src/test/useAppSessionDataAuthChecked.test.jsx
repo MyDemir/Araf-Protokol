@@ -85,7 +85,10 @@ describe('useAppSessionData authChecked lifecycle', () => {
         return Promise.resolve({ ok: true, json: async () => ({}) });
       }
       if (target.includes('/api/orders')) {
-        return Promise.resolve({ ok: true, json: async () => ({ orders: [] }) });
+        return Promise.resolve({ ok: true, json: async () => ({ orders: [], total: 0, page: 1, limit: 50 }) });
+      }
+      if (target.includes('/api/trades')) {
+        return Promise.resolve({ ok: true, json: async () => ({ trades: [], total: 0, page: 1, limit: 50 }) });
       }
       if (target.includes('/api/stats')) {
         return Promise.resolve({ ok: true, json: async () => ({ stats: {} }) });

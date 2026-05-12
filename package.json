@@ -1,0 +1,12 @@
+{
+  "name": "araf-protokol",
+  "private": true,
+  "description": "Root developer test runner for Araf Protocol packages",
+  "scripts": {
+    "test:backend": "npm --prefix backend test",
+    "test:frontend": "npm --prefix frontend test",
+    "test:contracts": "npm --prefix contracts test",
+    "test:abi-drift": "npm --prefix contracts run test:abi-drift",
+    "test:all": "npm run test:backend && npm run test:frontend && npm run test:contracts && npm run test:abi-drift"
+  }
+}
