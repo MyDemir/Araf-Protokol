@@ -60,3 +60,5 @@ jobs:
         run: npm ci
       - name: Run ABI drift gate
         run: npm run test:abi-drift
+      - name: Run contract tests
+        run: npm test
