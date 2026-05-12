@@ -149,3 +149,4 @@ Aşağıdaki sıra **bozulmamalıdır**:
 - Sponsor/funder recipient seçememelidir.
 - Admin reward reserve'i treasury gibi çekememelidir.
 - Reward bütçesi wash-trade maliyetiyle karşılaştırılarak kontrollü tutulmalıdır.
+- Rewards abuse için read-only observability planı dashboard/runbook olarak takip edilmelidir: [`docs/TR/REWARDS_ABUSE_OBSERVABILITY.md`](./REWARDS_ABUSE_OBSERVABILITY.md).
