@@ -286,6 +286,27 @@ describe('AppViews market side-aware rendering', () => {
   });
 
 
+  it('shows the real challenged count in the sidebar status badge without hiding it behind Araf copy', () => {
+    const views = buildAppViews({
+      ...baseCtx,
+      sidebarOpen: true,
+      expandedStatus: 'CHALLENGED',
+      activeEscrowCounts: { LOCKED: 1, PAID: 2, CHALLENGED: 3, settlement: {} },
+      activeEscrows: [
+        { id: '#c1', state: 'CHALLENGED', role: 'maker', counterparty: '0x1111...1111', amount: '1 USDT', rawTrade: {} },
+        { id: '#c2', state: 'CHALLENGED', role: 'taker', counterparty: '0x2222...2222', amount: '2 USDT', rawTrade: {} },
+        { id: '#c3', state: 'CHALLENGED', role: 'maker', counterparty: '0x3333...3333', amount: '3 USDT', rawTrade: {} },
+      ],
+    });
+
+    const { container } = render(<div>{views.renderContextSidebar()}</div>);
+    const challengedButton = screen.getByRole('button', { name: /Challenge Phase 3/i });
+    expect(challengedButton).toBeInTheDocument();
+    expect(within(challengedButton).getByText('3')).toBeInTheDocument();
+    expect(container).not.toHaveTextContent(/\bAraf\b/);
+  });
+
+
   it('toggles the desktop sidebar open and closed from the rail filter button', async () => {
     const user = userEvent.setup();
 

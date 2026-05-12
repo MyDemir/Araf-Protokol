@@ -526,9 +526,9 @@ describe('frontend transition regression invariants', () => {
 
     const cards = screen.getAllByTestId('operation-trade-card');
     expect(cards).toHaveLength(3);
-    expect(within(cards[0]).getByText(getStateLabel('LOCKED', 'EN'))).toBeInTheDocument();
+    expect(within(cards[0]).getByText(getStateLabel('CHALLENGED', 'EN'))).toBeInTheDocument();
     expect(within(cards[1]).getByText(getStateLabel('PAID', 'EN'))).toBeInTheDocument();
-    expect(within(cards[2]).getByText(getStateLabel('CHALLENGED', 'EN'))).toBeInTheDocument();
+    expect(within(cards[2]).getByText(getStateLabel('LOCKED', 'EN'))).toBeInTheDocument();
     cards.forEach((card) => {
       expect(card).not.toHaveTextContent(/\b(?:LOCKED|PAID|CHALLENGED)\b/);
     });
@@ -563,7 +563,7 @@ describe('frontend transition regression invariants', () => {
     await user.click(within(allCards[1]).getByRole('button', { name: /Go to Room/i }));
     await user.click(within(allCards[2]).getByRole('button', { name: /Go to Room/i }));
 
-    expect(setters.setTradeState.mock.calls.map(([state]) => state)).toEqual(['LOCKED', 'PAID', 'CHALLENGED']);
+    expect(setters.setTradeState.mock.calls.map(([state]) => state)).toEqual(['CHALLENGED', 'PAID', 'LOCKED']);
     expect(setters.setCurrentView).toHaveBeenCalledWith('tradeRoom');
 
     const panelSource = fs.readFileSync(path.resolve(process.cwd(), 'src/app/contexts/profile/ActiveTradesPanel.jsx'), 'utf8');

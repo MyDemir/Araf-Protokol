@@ -224,7 +224,7 @@ export const buildAppViews = (ctx) => {
                     </div>
                     {count > 0 && (
                       <span className={status === 'CHALLENGED' ? 'bg-red-900/40 text-red-400 text-[10px] font-bold px-2 py-0.5 rounded border border-red-900/50' : 'bg-elevated text-[10px] px-2 py-0.5 rounded text-textSecondary'}>
-                        {status === 'CHALLENGED' ? 'Araf' : count}
+                        {count}
                       </span>
                     )}
                   </button>
@@ -250,7 +250,7 @@ export const buildAppViews = (ctx) => {
                       </div>
                     ) : (
                       <div className="pl-3 ml-3 border-l-2 border-borderSubtle py-2 text-xs text-slate-600 italic">
-                        {lang === 'TR' ? 'Bu duruma ait işlem yok.' : 'No trades in this status.'}
+                        {lang === 'TR' ? 'Bu durumda aktif işlem yok.' : 'No active trades in this state.'}
                       </div>
                     )}
                   </div>

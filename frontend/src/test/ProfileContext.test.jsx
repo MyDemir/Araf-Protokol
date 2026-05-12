@@ -78,7 +78,7 @@ describe('ProfileContextPage', () => {
     fireEvent.click(screen.getAllByText('Active Trades')[0]);
     fireEvent.click(screen.getByText('Go to Room →'));
 
-    expect(setActiveTrade).toHaveBeenCalled();
+    expect(setActiveTrade).toHaveBeenCalledWith(expect.objectContaining({ chargebackAcked: true }));
     expect(setUserRole).toHaveBeenCalledWith('maker');
     expect(setTradeState).toHaveBeenCalledWith('LOCKED');
     expect(setChargebackAccepted).toHaveBeenCalledWith(true);
