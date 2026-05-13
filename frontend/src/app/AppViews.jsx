@@ -179,7 +179,7 @@ export const buildAppViews = (ctx) => {
     <>
       {sidebarOpen && <div className="md:hidden fixed inset-0 max-w-full overflow-x-hidden bg-black/60 z-[55] backdrop-blur-sm transition-opacity" onClick={() => setSidebarOpen(false)} />}
       <div
-        className={`fixed md:relative inset-y-0 left-0 h-dvh md:h-full max-w-full bg-shell border-r border-borderSubtle flex flex-col z-[60] md:z-40 shrink-0 overflow-x-hidden overflow-y-auto overscroll-contain transition-all duration-300 ease-in-out ${sidebarOpen ? 'w-[260px] max-w-[calc(100vw_-_env(safe-area-inset-left)_-_env(safe-area-inset-right))] pl-[calc(1.25rem_+_env(safe-area-inset-left))] pr-5 pt-[calc(1.25rem_+_env(safe-area-inset-top))] pb-[calc(1.25rem_+_env(safe-area-inset-bottom))] opacity-100' : 'w-0 p-0 opacity-0'}`}
+        className={`fixed md:relative inset-y-0 left-0 box-border h-dvh md:h-full max-w-full bg-shell border-r border-borderSubtle flex flex-col z-[60] md:z-40 shrink-0 overflow-x-hidden overflow-y-auto overscroll-contain transition-all duration-300 ease-in-out ${sidebarOpen ? 'w-[260px] max-w-[calc(100vw_-_env(safe-area-inset-left)_-_env(safe-area-inset-right))] pl-[calc(1.25rem_+_env(safe-area-inset-left))] pr-5 pt-[calc(1.25rem_+_env(safe-area-inset-top))] pb-[calc(1.25rem_+_env(safe-area-inset-bottom))] opacity-100' : 'w-0 p-0 opacity-0'}`}
       >
         <div className="relative mb-6">
           <span className="absolute left-3 top-2.5 text-textMuted text-sm">🔍</span>
@@ -1033,7 +1033,7 @@ export const buildAppViews = (ctx) => {
   // [TR] Mobil alt navigasyon çubuğu — yalnızca mobil cihazlarda görünür
   // [EN] Mobile bottom navigation bar — visible only on mobile devices
   const renderMobileNav = () => (
-    <div className="md:hidden fixed inset-x-0 bottom-0 h-[calc(4rem_+_env(safe-area-inset-bottom))] max-w-full bg-shell border-t border-borderSubtle z-[45] flex items-center gap-1 overflow-x-auto overscroll-x-contain px-[calc(0.5rem_+_env(safe-area-inset-left))] pr-[calc(0.5rem_+_env(safe-area-inset-right))] pb-[env(safe-area-inset-bottom)] shadow-[0_-10px_30px_rgba(0,0,0,0.12)]">
+    <div className="md:hidden fixed inset-x-0 bottom-0 box-border h-[calc(4rem_+_env(safe-area-inset-bottom))] max-w-full bg-shell border-t border-borderSubtle z-[45] flex items-center gap-1 overflow-x-auto overscroll-x-contain px-[calc(0.5rem_+_env(safe-area-inset-left))] pr-[calc(0.5rem_+_env(safe-area-inset-right))] pb-[env(safe-area-inset-bottom)] shadow-[0_-10px_30px_rgba(0,0,0,0.12)]">
       <button onClick={() => setCurrentView('home')} className={`h-10 w-10 shrink-0 rounded-xl text-xl transition-all ${currentView === 'home' ? 'bg-elevated text-textPrimary -translate-y-1' : 'text-textMuted'}`}>🏠</button>
       <button onClick={() => setCurrentView('market')} className={`h-10 w-10 shrink-0 rounded-xl text-xl transition-all ${currentView === 'market' ? 'bg-elevated text-textPrimary -translate-y-1' : 'text-textMuted'}`}>🛒</button>
       <button onClick={() => setCurrentView('operations')} className={`h-10 w-10 shrink-0 rounded-xl text-xl transition-all ${currentView === 'operations' ? 'bg-elevated text-info -translate-y-1' : 'text-textMuted'}`}>📍</button>
@@ -1085,7 +1085,7 @@ export const buildAppViews = (ctx) => {
   );
 
   const renderFooter = () => (
-    <footer className="w-full max-w-[1200px] px-4 md:px-8 pb-24 md:pb-8 mt-2">
+    <footer className="w-full max-w-[1200px] px-4 md:px-8 pb-6 md:pb-8 mt-2">
       <div className="border border-borderSubtle bg-surface rounded-2xl px-4 py-4 md:px-6 md:py-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div>
           <p className="text-sm font-semibold text-textPrimary">Araf © 2026</p>

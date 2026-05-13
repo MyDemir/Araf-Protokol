@@ -41,10 +41,10 @@ export const DevScenarioController = ({ activeScenario, onApplyScenario, onClear
   };
 
   return (
-    <div className="fixed bottom-[calc(5rem_+_env(safe-area-inset-bottom))] right-[calc(0.5rem_+_env(safe-area-inset-right))] md:bottom-6 md:right-6 z-[50] md:z-[90] pointer-events-none max-w-[calc(100vw_-_1rem_-_env(safe-area-inset-left)_-_env(safe-area-inset-right))]">
+    <div className="fixed bottom-[calc(4.75rem_+_env(safe-area-inset-bottom))] right-[calc(0.5rem_+_env(safe-area-inset-right))] md:bottom-6 md:right-6 z-[50] md:z-[90] pointer-events-none max-w-[calc(100vw_-_1rem_-_env(safe-area-inset-left)_-_env(safe-area-inset-right))]">
       <div className="flex max-w-full flex-col items-end gap-2 md:gap-3 pointer-events-auto" data-testid="dev-scenario-controller">
         {open && (
-          <div className="w-[calc(100vw_-_1rem_-_env(safe-area-inset-left)_-_env(safe-area-inset-right))] max-w-[780px] max-h-[calc(100dvh_-_8rem_-_env(safe-area-inset-bottom)_-_env(safe-area-inset-top))] overflow-x-hidden overflow-y-auto overscroll-contain bg-[#0b0b0f]/95 backdrop-blur-md border border-fuchsia-500/30 rounded-2xl shadow-2xl p-3 md:p-4">
+          <div className="box-border w-[calc(100vw_-_1rem_-_env(safe-area-inset-left)_-_env(safe-area-inset-right))] max-w-[780px] max-h-[calc(100dvh_-_8rem_-_env(safe-area-inset-bottom)_-_env(safe-area-inset-top))] overflow-x-hidden overflow-y-auto overscroll-contain bg-[#0b0b0f]/95 backdrop-blur-md border border-fuchsia-500/30 rounded-2xl shadow-2xl p-3 md:p-4">
             <div className="flex min-w-0 items-start justify-between gap-3 mb-3">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-fuchsia-300">Dev scenario controller</p>

@@ -1310,7 +1310,7 @@ function App() {
   //     Root layout: rail + sidebar + content + modals + toast
   // ═══════════════════════════════════════════
   return (
-    <div className="flex h-dvh min-h-dvh w-full max-w-full flex-col overflow-hidden bg-app text-textPrimary font-sans selection:bg-emerald-500/30 pb-[calc(4rem_+_env(safe-area-inset-bottom))] md:pb-0 relative">
+    <div className="flex h-dvh min-h-dvh max-h-dvh w-full max-w-full flex-col overflow-hidden bg-app text-textPrimary font-sans selection:bg-emerald-500/30 relative">
       <AppShell
         status={systemStatus}
         navigation={renderSlimRail()}
@@ -1318,7 +1318,7 @@ function App() {
         mobileBottom={renderMobileNav()}
         outlet={(
           <div className="flex-1 min-w-0 w-full max-w-full overflow-y-auto overflow-x-hidden relative bg-app">
-            <div className="min-h-full w-full max-w-full min-w-0 flex flex-col pt-4 md:pt-10 pb-24 md:pb-10 items-center">
+            <div className="min-h-full w-full max-w-full min-w-0 flex flex-col pt-4 md:pt-10 pb-[calc(6rem_+_env(safe-area-inset-bottom))] md:pb-10 items-center">
               {currentView === 'home'
                 ? renderHome()
                 : currentView === 'market'
@@ -1339,7 +1339,7 @@ function App() {
                       />
                     )
                     : renderTradeRoom()}
-              {renderFooter()}
+              {currentView === 'home' && renderFooter()}
             </div>
           </div>
         )}
