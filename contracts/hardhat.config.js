@@ -100,7 +100,7 @@ const config = {
   },
   paths: {
     sources:   "./src",
-    tests:     "./test",
+    tests:     "../test/contracts",
     cache:     "./cache",
     artifacts: "./artifacts",
   },

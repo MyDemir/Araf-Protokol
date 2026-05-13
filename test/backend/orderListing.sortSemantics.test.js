@@ -1,0 +1,177 @@
+"use strict";
+
+const express = require("express");
+const request = require("supertest");
+
+describe("orders and deprecated listings compatibility sort semantics", () => {
+  afterEach(() => {
+    jest.resetModules();
+    jest.clearAllMocks();
+  });
+
+  it("orders market route does not use lexicographic onchain_order_id tie-break", async () => {
+    const findChain = {
+      select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    };
+    const Order = {
+      find: jest.fn(() => findChain),
+      countDocuments: jest.fn().mockResolvedValue(0),
+      findOne: jest.fn(),
+    };
+
+    let router;
+    jest.isolateModules(() => {
+      jest.doMock("../../backend/scripts/middleware/auth", () => ({
+        requireAuth: (_req, _res, next) => next(),
+        requireSessionWalletMatch: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../../backend/scripts/middleware/rateLimiter", () => ({
+        marketReadLimiter: (_req, _res, next) => next(),
+        ordersReadLimiter: (_req, _res, next) => next(),
+        ordersWriteLimiter: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../../backend/scripts/models/Order", () => Order);
+      jest.doMock("../../backend/scripts/models/Trade", () => ({ find: jest.fn(), aggregate: jest.fn().mockResolvedValue([]) }));
+      jest.doMock("../../backend/scripts/models/User", () => ({
+        find: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+        }),
+      }));
+      jest.doMock("../../backend/scripts/services/protocolConfig", () => ({ getConfig: jest.fn(() => ({ bondMap: {}, feeConfig: {}, cooldownConfig: {}, tokenMap: {} })) }));
+      router = require("../../backend/scripts/routes/orders");
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/orders", router);
+
+    const res = await request(app).get("/api/orders");
+    expect(res.status).toBe(200);
+
+    const sortArg = findChain.sort.mock.calls[0][0];
+    expect(sortArg._id).toBe(-1);
+    expect(sortArg.onchain_order_id).toBeUndefined();
+  });
+
+  it("deprecated listings read alias uses deterministic _id tie-break instead of onchain_order_id string sort", async () => {
+    const findChain = {
+      sort: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    };
+    const Order = {
+      find: jest.fn(() => findChain),
+      countDocuments: jest.fn().mockResolvedValue(0),
+    };
+
+    let router;
+    jest.isolateModules(() => {
+      jest.doMock("../../backend/scripts/middleware/rateLimiter", () => ({
+        marketReadLimiter: (_req, _res, next) => next(),
+        ordersReadLimiter: (_req, _res, next) => next(),
+        ordersWriteLimiter: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../../backend/scripts/middleware/auth", () => ({
+        requireAuth: (_req, _res, next) => next(),
+        requireSessionWalletMatch: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../../backend/scripts/models/Order", () => Order);
+      jest.doMock("../../backend/scripts/services/protocolConfig", () => ({ getConfig: jest.fn(() => ({ bondMap: {}, feeConfig: {}, cooldownConfig: {}, tokenMap: {} })) }));
+      jest.doMock("../../backend/scripts/utils/logger", () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }));
+      router = require("../../backend/scripts/routes/listings");
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/listings", router);
+
+    const res = await request(app).get("/api/listings");
+    expect(res.status).toBe(200);
+
+    const sortArg = findChain.sort.mock.calls[0][0];
+    expect(sortArg._id).toBe(1);
+    expect(sortArg.onchain_order_id).toBeUndefined();
+  });
+
+  it("deprecated listings compatibility write routes stay gone with 410", async () => {
+    let router;
+    jest.isolateModules(() => {
+      jest.doMock("../../backend/scripts/middleware/rateLimiter", () => ({
+        marketReadLimiter: (_req, _res, next) => next(),
+        ordersReadLimiter: (_req, _res, next) => next(),
+        ordersWriteLimiter: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../../backend/scripts/middleware/auth", () => ({
+        requireAuth: (req, _res, next) => { req.wallet = "0x1111111111111111111111111111111111111111"; next(); },
+        requireSessionWalletMatch: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../../backend/scripts/models/Order", () => ({ find: jest.fn(), countDocuments: jest.fn() }));
+      jest.doMock("../../backend/scripts/services/protocolConfig", () => ({ getConfig: jest.fn(() => ({ bondMap: {}, feeConfig: {}, cooldownConfig: {}, tokenMap: {} })) }));
+      jest.doMock("../../backend/scripts/utils/logger", () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }));
+      router = require("../../backend/scripts/routes/listings");
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/listings", router);
+
+    const post = await request(app).post("/api/listings").send({});
+    expect(post.status).toBe(410);
+    expect(post.body.code).toBe("LISTINGS_WRITE_DEPRECATED_IN_V3");
+
+    const del = await request(app).delete("/api/listings/compat-id");
+    expect(del.status).toBe(410);
+    expect(del.body.code).toBe("LISTINGS_DELETE_DEPRECATED_IN_V3");
+  });
+
+  it("trades history route uses _id tie-break instead of onchain_escrow_id lexicographic sort", async () => {
+    const findChain = {
+      select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    };
+    const Trade = {
+      find: jest.fn(() => findChain),
+      countDocuments: jest.fn().mockResolvedValue(0),
+    };
+
+    let router;
+    jest.isolateModules(() => {
+      jest.doMock("../../backend/scripts/middleware/auth", () => ({
+        requireAuth: (req, _res, next) => { req.wallet = "0x1111111111111111111111111111111111111111"; next(); },
+        requireSessionWalletMatch: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../../backend/scripts/middleware/rateLimiter", () => ({
+        roomReadLimiter: (_req, _res, next) => next(),
+        coordinationWriteLimiter: (_req, _res, next) => next(),
+      }));
+      jest.doMock("../../backend/scripts/models/Trade", () => Trade);
+      jest.doMock("../../backend/scripts/models/User", () => ({
+        find: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+        }),
+      }));
+      jest.doMock("../../backend/scripts/utils/logger", () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }));
+      router = require("../../backend/scripts/routes/trades");
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/trades", router);
+
+    const res = await request(app).get("/api/trades/history");
+    expect(res.status).toBe(200);
+
+    const sortArg = findChain.sort.mock.calls[0][0];
+    expect(sortArg["timers.resolved_at"]).toBe(-1);
+    expect(sortArg._id).toBe(-1);
+    expect(sortArg.onchain_escrow_id).toBeUndefined();
+  });
+});

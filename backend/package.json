@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "nodemon scripts/app.js",
     "start": "node scripts/app.js",
-    "test": "jest --forceExit",
+    "test": "jest --config ./jest.config.cjs --forceExit",
     "lint": "eslint scripts/",
     "migrate:identity:dry": "node scripts/migrations/normalizeIdentityFields.js --dry-run",
     "migrate:identity": "node scripts/migrations/normalizeIdentityFields.js"

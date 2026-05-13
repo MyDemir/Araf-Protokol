@@ -7,11 +7,28 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(packageRoot, '..');
+const rootFrontendTestPrefix = 'test/frontend/';
+const legacyFrontendTestPrefix = 'frontend/src/test/';
+
+const toPackageRelative = (repoRelative) => path.relative(packageRoot, path.resolve(repoRoot, repoRelative)).replace(/\\/g, '/');
 
 const normalizeFrontendPathArg = (arg) => {
   if (typeof arg !== 'string' || arg.startsWith('-')) return arg;
 
   const normalized = arg.replace(/\\/g, '/');
+
+  if (normalized === 'test/frontend' || normalized.startsWith(rootFrontendTestPrefix)) {
+    return toPackageRelative(normalized);
+  }
+
+  if (normalized === 'frontend/src/test') {
+    return toPackageRelative('test/frontend');
+  }
+
+  if (normalized.startsWith(legacyFrontendTestPrefix)) {
+    return toPackageRelative(`${rootFrontendTestPrefix}${normalized.slice(legacyFrontendTestPrefix.length)}`);
+  }
+
   if (!normalized.startsWith('frontend/')) return arg;
 
   const repoRelativePath = path.resolve(repoRoot, normalized);
