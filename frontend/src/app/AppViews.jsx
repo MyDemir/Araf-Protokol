@@ -451,11 +451,11 @@ export const buildAppViews = (ctx) => {
             const sideBadgeClass = isSellSide ? 'bg-emerald-900/20 text-emerald-400 border-emerald-800/40' : 'bg-blue-900/20 text-blue-400 border-blue-800/40';
 
             return (
-              <div key={order.id} className="min-w-0 overflow-hidden bg-surface hover:bg-elevated border border-borderSubtle p-4 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between transition-colors group relative gap-4 md:gap-0">
+              <div key={order.id} className="min-w-0 overflow-visible bg-surface hover:bg-elevated border border-borderSubtle p-4 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between transition-colors group relative gap-4 md:gap-0">
                 <div className="flex min-w-0 items-center gap-4 w-full md:w-1/3">
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500/20 to-emerald-900/20 border border-emerald-500/30 flex items-center justify-center text-emerald-500 shrink-0">₮</div>
-                  <div className="relative min-w-0 group/tooltip">
-                    <p className="break-all text-textPrimary font-medium text-sm cursor-help">{order.maker}</p>
+                  <div className="relative min-w-0 max-w-full group/tooltip">
+                    <p className="max-w-full truncate text-textPrimary font-medium text-sm cursor-help">{order.maker}</p>
                     <p className="text-xs text-textMuted">{order.rate} {order.fiat} / 1 {order.crypto}</p>
                     <span className={`inline-flex mt-1 text-[10px] px-2 py-0.5 rounded border ${sideBadgeClass}`}>{order.sideLabel || getOrderSideCopy(order.side, 'order', lang) || order.side}</span>
                     <div className="absolute left-0 sm:-left-4 md:left-1/2 md:-translate-x-1/2 bottom-full mb-2 hidden group-hover/tooltip:block z-50">
