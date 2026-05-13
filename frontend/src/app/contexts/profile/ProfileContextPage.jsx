@@ -15,8 +15,8 @@ export const ProfileContextPage = (props) => {
 
   return (
     <div className="w-full max-w-[1200px] px-4 md:px-8">
-      <h1 className="text-2xl font-bold text-white mb-1">{lang === 'TR' ? 'Profil Merkezi' : 'Profile Center'}</h1>
-      <p className="text-sm text-slate-400 mb-4">{lang === 'TR' ? 'Profil ve işlem ayarlarınızı yönetin.' : 'Manage your profile and trade settings.'}</p>
+      <h1 className="text-2xl font-bold text-textPrimary mb-1">{lang === 'TR' ? 'Profil Merkezi' : 'Profile Center'}</h1>
+      <p className="text-sm text-textSecondary mb-4">{lang === 'TR' ? 'Profil ve işlem ayarlarınızı yönetin.' : 'Manage your profile and trade settings.'}</p>
       <ProfileNav lang={lang} activeTab={activeTab} setActiveTab={setActiveTab} />
       <ProfileContextPanel activeTab={activeTab} {...props} />
     </div>

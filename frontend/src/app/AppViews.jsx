@@ -424,8 +424,8 @@ export const buildAppViews = (ctx) => {
 
       <ReferenceRateTicker lang={lang} />
 
-      <div className="mb-4 p-3 rounded-xl border border-orange-700/40 bg-orange-900/20">
-        <p className="text-xs text-orange-200 leading-relaxed">
+      <div className="mb-4 p-3 rounded-xl border border-warning/40 bg-warning/10">
+        <p className="text-xs text-warning leading-relaxed">
           {lang === 'TR'
             ? `Bilgi: ${getStateLabel('CHALLENGED', lang)} durumunda 10 gün dolunca burnExpired fonksiyonu kontratta herkese açıktır; üçüncü taraflar da çağırabilir.`
             : `Info: In ${getStateLabel('CHALLENGED', lang)}, once 10 days pass, burnExpired is permissionless on-chain and can be called by third parties.`}
