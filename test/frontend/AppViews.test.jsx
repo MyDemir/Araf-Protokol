@@ -362,14 +362,17 @@ describe('AppViews market side-aware rendering', () => {
     const { container } = render(<div>{views.renderMobileNav()}</div>);
     const mobileNav = container.querySelector('.bg-shell.border-t.border-borderSubtle');
     expect(mobileNav).not.toBeNull();
-    expect(mobileNav.className).toContain('overflow-x-auto');
+    expect(mobileNav.className).not.toContain('overflow-x-auto');
+    expect(mobileNav.className).toContain('overflow-hidden');
 
     const buttons = within(mobileNav).getAllByRole('button');
     expect(buttons.length).toBeGreaterThan(0);
     buttons.forEach((button) => {
       expect(button.className).toContain('h-10');
-      expect(button.className).toContain('w-10');
-      expect(button.className).toContain('shrink-0');
+      expect(button.className).toContain('min-w-0');
+      expect(button.className).toContain('flex-1');
+      expect(button.className).toContain('basis-0');
+      expect(button.className).not.toContain('shrink-0');
     });
   });
 

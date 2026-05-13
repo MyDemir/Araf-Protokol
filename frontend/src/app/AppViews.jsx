@@ -1033,21 +1033,21 @@ export const buildAppViews = (ctx) => {
   // [TR] Mobil alt navigasyon çubuğu — yalnızca mobil cihazlarda görünür
   // [EN] Mobile bottom navigation bar — visible only on mobile devices
   const renderMobileNav = () => (
-    <div className="md:hidden fixed inset-x-0 bottom-0 box-border h-[calc(4rem_+_env(safe-area-inset-bottom))] max-w-full bg-shell border-t border-borderSubtle z-[45] flex items-center gap-1 overflow-x-auto overscroll-x-contain px-[calc(0.5rem_+_env(safe-area-inset-left))] pr-[calc(0.5rem_+_env(safe-area-inset-right))] pb-[env(safe-area-inset-bottom)] shadow-[0_-10px_30px_rgba(0,0,0,0.12)]">
-      <button onClick={() => setCurrentView('home')} className={`h-10 w-10 shrink-0 rounded-xl text-xl transition-all ${currentView === 'home' ? 'bg-elevated text-textPrimary -translate-y-1' : 'text-textMuted'}`}>🏠</button>
-      <button onClick={() => setCurrentView('market')} className={`h-10 w-10 shrink-0 rounded-xl text-xl transition-all ${currentView === 'market' ? 'bg-elevated text-textPrimary -translate-y-1' : 'text-textMuted'}`}>🛒</button>
-      <button onClick={() => setCurrentView('operations')} className={`h-10 w-10 shrink-0 rounded-xl text-xl transition-all ${currentView === 'operations' ? 'bg-elevated text-info -translate-y-1' : 'text-textMuted'}`}>📍</button>
-      <button onClick={() => setCurrentView('tradeRoom')} className={`h-10 w-10 shrink-0 rounded-xl text-xl transition-all relative ${currentView === 'tradeRoom' ? 'bg-elevated text-warning -translate-y-1' : 'text-textMuted'}`}>
+    <div className="md:hidden fixed inset-x-0 bottom-0 box-border h-[calc(4rem_+_env(safe-area-inset-bottom))] max-w-full bg-shell border-t border-borderSubtle z-[45] flex items-center justify-around gap-0 overflow-hidden px-[calc(0.25rem_+_env(safe-area-inset-left))] pr-[calc(0.25rem_+_env(safe-area-inset-right))] pb-[env(safe-area-inset-bottom)] shadow-[0_-10px_30px_rgba(0,0,0,0.12)]">
+      <button onClick={() => setCurrentView('home')} className={`h-10 min-w-0 flex-1 basis-0 rounded-xl text-lg transition-all flex items-center justify-center ${currentView === 'home' ? 'bg-elevated text-textPrimary -translate-y-1' : 'text-textMuted'}`}>🏠</button>
+      <button onClick={() => setCurrentView('market')} className={`h-10 min-w-0 flex-1 basis-0 rounded-xl text-lg transition-all flex items-center justify-center ${currentView === 'market' ? 'bg-elevated text-textPrimary -translate-y-1' : 'text-textMuted'}`}>🛒</button>
+      <button onClick={() => setCurrentView('operations')} className={`h-10 min-w-0 flex-1 basis-0 rounded-xl text-lg transition-all flex items-center justify-center ${currentView === 'operations' ? 'bg-elevated text-info -translate-y-1' : 'text-textMuted'}`}>📍</button>
+      <button onClick={() => setCurrentView('tradeRoom')} className={`h-10 min-w-0 flex-1 basis-0 rounded-xl text-lg transition-all relative flex items-center justify-center ${currentView === 'tradeRoom' ? 'bg-elevated text-warning -translate-y-1' : 'text-textMuted'}`}>
         💼{activeEscrows.length > 0 && <span className="absolute top-2 right-1 w-2.5 h-2.5 bg-orange-500 border border-shell rounded-full animate-pulse"></span>}
       </button>
       {/* [TR] Mobil admin girişi authenticated kullanıcıya açık kalır; backend nihai otoritedir.
           [EN] Mobile admin entry remains reachable for authenticated users; backend is authoritative. */}
       {canSeeAdminEntry && (
-        <button onClick={() => setCurrentView('admin')} className={`h-10 w-10 shrink-0 rounded-xl text-xl transition-all ${currentView === 'admin' ? 'bg-elevated text-success -translate-y-1' : 'text-textMuted'}`}>🧭</button>
+        <button onClick={() => setCurrentView('admin')} className={`h-10 min-w-0 flex-1 basis-0 rounded-xl text-lg transition-all flex items-center justify-center ${currentView === 'admin' ? 'bg-elevated text-success -translate-y-1' : 'text-textMuted'}`}>🧭</button>
       )}
-      <button onClick={toggleSidebar} className={`h-10 w-10 shrink-0 rounded-xl text-xl transition-all ${sidebarOpen ? 'bg-elevated text-textPrimary -translate-y-1' : 'text-textMuted'}`}>☰</button>
-      <button onClick={() => setCurrentView('profile')} className={`h-10 w-10 shrink-0 rounded-xl text-xl transition-all ${currentView === 'profile' ? 'bg-elevated text-success -translate-y-1' : 'text-textMuted'}`}>👤</button>
-      <button onClick={handleAuthAction} className={`h-10 w-10 shrink-0 rounded-xl text-xl transition-all ${isConnected && isAuthenticated ? 'bg-elevated text-success -translate-y-1' : 'text-textMuted'}`}>
+      <button onClick={toggleSidebar} className={`h-10 min-w-0 flex-1 basis-0 rounded-xl text-lg transition-all flex items-center justify-center ${sidebarOpen ? 'bg-elevated text-textPrimary -translate-y-1' : 'text-textMuted'}`}>☰</button>
+      <button onClick={() => setCurrentView('profile')} className={`h-10 min-w-0 flex-1 basis-0 rounded-xl text-lg transition-all flex items-center justify-center ${currentView === 'profile' ? 'bg-elevated text-success -translate-y-1' : 'text-textMuted'}`}>👤</button>
+      <button onClick={handleAuthAction} className={`h-10 min-w-0 flex-1 basis-0 rounded-xl text-lg transition-all flex items-center justify-center ${isConnected && isAuthenticated ? 'bg-elevated text-success -translate-y-1' : 'text-textMuted'}`}>
         {isConnected && isAuthenticated ? '👤' : '👛'}
       </button>
     </div>
