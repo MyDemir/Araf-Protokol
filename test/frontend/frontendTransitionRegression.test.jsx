@@ -199,13 +199,13 @@ describe('frontend transition regression invariants', () => {
 
     render(<SidebarHarness />);
     const toggle = screen.getByTitle('Filters');
-    expect(toggle).toHaveClass('text-slate-500');
+    expect(toggle).toHaveClass('text-textMuted');
 
     await user.click(toggle);
-    expect(screen.getByTitle('Filters')).toHaveClass('text-white');
+    expect(screen.getByTitle('Filters')).toHaveClass('text-textPrimary');
 
     await user.click(screen.getByTitle('Filters'));
-    expect(screen.getByTitle('Filters')).toHaveClass('text-slate-500');
+    expect(screen.getByTitle('Filters')).toHaveClass('text-textMuted');
 
     const appSource = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
     expect(appSource).not.toContain('sidebarTimerRef');

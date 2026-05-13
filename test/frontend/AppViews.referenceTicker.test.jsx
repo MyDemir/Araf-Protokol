@@ -7,7 +7,7 @@ describe('AppViews reference ticker placement', () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), 'src/app/AppViews.jsx'), 'utf8');
 
     const marketStart = source.indexOf('const renderMarket = () => (');
-    const headerLine = source.indexOf('<h2 className="text-xl font-bold text-white">', marketStart);
+    const headerLine = source.indexOf('<h2 className="text-xl font-bold text-textPrimary">', marketStart);
     const tickerLine = source.indexOf('<ReferenceRateTicker lang={lang} />', marketStart);
     const listLine = source.indexOf('<div className="space-y-3">', marketStart);
 
