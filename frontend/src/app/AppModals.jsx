@@ -140,8 +140,8 @@ export const buildAppModals = (ctx) => {
   const renderWalletModal = () => {
     if (!showWalletModal) return null;
     return (
-      <div className="fixed inset-0 bg-[#060608]/90 backdrop-blur-md flex items-center justify-center p-4 z-[100]">
-        <div className="bg-[#111113] border border-[#222] rounded-2xl p-6 w-full max-w-sm shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div className="fixed inset-0 max-w-full overflow-x-hidden bg-[#060608]/90 backdrop-blur-md flex items-center justify-center p-4 safe-area-x z-[100]">
+        <div className="bg-[#111113] border border-[#222] rounded-2xl p-6 w-full max-w-sm shadow-2xl max-h-[calc(100dvh_-_2rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] overflow-x-hidden overflow-y-auto overscroll-contain">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-bold text-white">{lang === 'TR' ? 'Cüzdan Seçin' : 'Select Wallet'}</h2>
             <button onClick={() => setShowWalletModal(false)} className="text-slate-400 hover:text-white text-2xl leading-none">&times;</button>
@@ -174,8 +174,8 @@ export const buildAppModals = (ctx) => {
   const renderFeedbackModal = () => {
     if (!showFeedbackModal) return null;
     return (
-      <div className="fixed inset-0 bg-[#060608]/70 backdrop-blur-sm flex items-start justify-end p-4 md:p-6 z-[100]">
-        <div className="bg-[#111113] border border-[#222] rounded-2xl p-5 md:p-6 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto animate-in slide-in-from-top-8 slide-in-from-right-8 duration-300">
+      <div className="fixed inset-0 max-w-full overflow-x-hidden bg-[#060608]/70 backdrop-blur-sm flex items-start justify-end p-4 md:p-6 safe-area-x z-[100]">
+        <div className="bg-[#111113] border border-[#222] rounded-2xl p-5 md:p-6 w-full max-w-md shadow-2xl max-h-[calc(100dvh_-_2rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] overflow-x-hidden overflow-y-auto overscroll-contain animate-in slide-in-from-top-8 slide-in-from-right-8 duration-300">
           <div className="flex justify-between items-center mb-3">
             <h2 className="text-xl font-bold text-white">{lang === 'TR' ? 'Geri Bildirim' : 'Feedback'}</h2>
             <button
@@ -271,8 +271,8 @@ export const buildAppModals = (ctx) => {
     const validationError = makerValidationError || null;
 
     return (
-      <div className="fixed inset-0 bg-[#060608]/80 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
-        <div className="bg-[#111113] border border-[#222] rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div className="fixed inset-0 max-w-full overflow-x-hidden bg-[#060608]/80 backdrop-blur-sm flex items-center justify-center p-4 safe-area-x z-[100]">
+        <div className="bg-[#111113] border border-[#222] rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[calc(100dvh_-_2rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] overflow-x-hidden overflow-y-auto overscroll-contain">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-bold text-white">{t.createAd}</h2>
             <button onClick={() => setShowMakerModal(false)} className="text-slate-400 hover:text-white text-2xl">&times;</button>
@@ -428,14 +428,14 @@ export const buildAppModals = (ctx) => {
     const resolvedMyOrders = myOrders || (address ? orders.filter(o => o.ownerAddress?.toLowerCase() === address.toLowerCase()) : []);
 
     return (
-      <div className="fixed inset-0 bg-[#060608]/90 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 z-[100]">
-        <div className="bg-[#111113] border-t sm:border border-[#222] rounded-t-3xl sm:rounded-2xl w-full max-w-2xl shadow-2xl h-[85vh] sm:h-auto sm:max-h-[90vh] flex flex-col pb-16 sm:pb-0">
+      <div className="fixed inset-0 max-w-full overflow-x-hidden bg-[#060608]/90 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 safe-area-x z-[100]">
+        <div className="bg-[#111113] border-t sm:border border-[#222] rounded-t-3xl sm:rounded-2xl w-full max-w-2xl shadow-2xl h-[min(85dvh,calc(100dvh_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom)))] sm:h-auto sm:max-h-[calc(100dvh_-_2rem_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] flex flex-col pb-[calc(4rem_+_env(safe-area-inset-bottom))] sm:pb-0">
           <div className="flex justify-between items-center p-5 sm:p-6 border-b border-[#222] shrink-0">
             <h2 className="text-2xl font-bold text-white">{lang === 'TR' ? 'Profil Merkezi' : 'Profile Center'}</h2>
             <button onClick={() => setShowProfileModal(false)} className="text-slate-400 hover:text-white text-2xl leading-none">&times;</button>
           </div>
 
-          <div className="flex border-b border-[#222] shrink-0 overflow-x-auto hide-scrollbar">
+          <div className="flex border-b border-[#222] shrink-0 overflow-x-auto overscroll-x-contain hide-scrollbar">
             {['ayarlar', 'itibar', 'ilanlarim', 'aktif', 'gecmis'].map(tab => (
               <button key={tab} onClick={() => setProfileTab(tab)} className={`px-4 py-3 text-sm font-medium capitalize transition whitespace-nowrap ${profileTab === tab ? 'text-emerald-400 border-b-2 border-emerald-400 bg-[#1a1a1f]/50' : 'text-slate-400 hover:text-white'}`}>
                 {tab === 'ayarlar' ? (lang === 'TR' ? 'Ayarlar' : 'Settings') : tab === 'itibar' ? (lang === 'TR' ? 'İtibar' : 'Reputation') : tab === 'ilanlarim' ? (lang === 'TR' ? 'Orderlarım' : 'My Orders') : tab === 'aktif' ? (lang === 'TR' ? 'Aktif İşlemler' : 'Active Trades') : (lang === 'TR' ? 'Geçmiş' : 'History')}
@@ -443,7 +443,7 @@ export const buildAppModals = (ctx) => {
             ))}
           </div>
 
-          <div className="overflow-y-auto p-6 flex-1">
+          <div className="min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain p-6 safe-area-x flex-1">
             {profileTab === 'ayarlar' && (
               <div className="space-y-4 text-sm">
                 {isBanned && (

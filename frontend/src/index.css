@@ -4,6 +4,30 @@
 
 /* ARAF PROTOCOL CUSTOM CSS */
 
+html, body, #root {
+    width: 100%;
+    max-width: 100%;
+    min-height: 100%;
+    overflow-x: clip;
+}
+
+@supports not (overflow-x: clip) {
+    html, body, #root {
+        overflow-x: hidden;
+    }
+}
+
+body {
+    margin: 0;
+    overscroll-behavior-x: none;
+}
+
+.safe-area-x {
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+}
+
+
 /* Scrollbar Gizleme Sınıfı (Yatay menüler için) */
 .hide-scrollbar::-webkit-scrollbar {
     display: none;

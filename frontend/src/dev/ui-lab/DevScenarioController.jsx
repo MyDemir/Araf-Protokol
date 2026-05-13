@@ -41,11 +41,11 @@ export const DevScenarioController = ({ activeScenario, onApplyScenario, onClear
   };
 
   return (
-    <div className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-[90] pointer-events-none">
-      <div className="flex flex-col items-end gap-3 pointer-events-auto" data-testid="dev-scenario-controller">
+    <div className="fixed bottom-[calc(5rem_+_env(safe-area-inset-bottom))] right-[calc(0.5rem_+_env(safe-area-inset-right))] md:bottom-6 md:right-6 z-[50] md:z-[90] pointer-events-none max-w-[calc(100vw_-_1rem_-_env(safe-area-inset-left)_-_env(safe-area-inset-right))]">
+      <div className="flex max-w-full flex-col items-end gap-2 md:gap-3 pointer-events-auto" data-testid="dev-scenario-controller">
         {open && (
-          <div className="w-[min(92vw,780px)] max-h-[78vh] overflow-y-auto bg-[#0b0b0f]/95 backdrop-blur-md border border-fuchsia-500/30 rounded-2xl shadow-2xl p-3 md:p-4">
-            <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="w-[calc(100vw_-_1rem_-_env(safe-area-inset-left)_-_env(safe-area-inset-right))] max-w-[780px] max-h-[calc(100dvh_-_8rem_-_env(safe-area-inset-bottom)_-_env(safe-area-inset-top))] overflow-x-hidden overflow-y-auto overscroll-contain bg-[#0b0b0f]/95 backdrop-blur-md border border-fuchsia-500/30 rounded-2xl shadow-2xl p-3 md:p-4">
+            <div className="flex min-w-0 items-start justify-between gap-3 mb-3">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-fuchsia-300">Dev scenario controller</p>
                 <h2 className="text-lg font-bold text-white">Scenario sandbox</h2>
@@ -57,7 +57,7 @@ export const DevScenarioController = ({ activeScenario, onApplyScenario, onClear
               <button type="button" onClick={() => setOpen(false)} className="text-slate-400 hover:text-white text-xl leading-none" aria-label="Close UI Lab controller">&times;</button>
             </div>
 
-            <div className="grid md:grid-cols-[18rem_1fr] gap-3">
+            <div className="grid min-w-0 grid-cols-1 md:grid-cols-[18rem_minmax(0,1fr)] gap-3">
               <ScenarioSelector
                 categories={scenarioCategories}
                 activeCategoryKey={activeCategoryKey}
@@ -88,7 +88,7 @@ export const DevScenarioController = ({ activeScenario, onApplyScenario, onClear
         <button
           type="button"
           onClick={() => setOpen((prev) => !prev)}
-          className={`h-12 px-4 rounded-full border shadow-xl font-bold text-sm transition ${activeScenario ? 'bg-fuchsia-900/70 border-fuchsia-400/50 text-fuchsia-100' : 'bg-[#111113] border-[#2a2a2e] text-slate-200 hover:text-white'}`}
+          className={`h-10 md:h-12 max-w-[calc(100vw_-_1rem)] px-3 md:px-4 rounded-full border shadow-xl font-bold text-xs md:text-sm transition ${activeScenario ? 'bg-fuchsia-900/70 border-fuchsia-400/50 text-fuchsia-100' : 'bg-[#111113] border-[#2a2a2e] text-slate-200 hover:text-white'}`}
           aria-label="Open dev scenario controller"
           title="Dev scenario controller"
         >

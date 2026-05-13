@@ -177,9 +177,9 @@ export const buildAppViews = (ctx) => {
   //      Contains filters, status accordion and create-order button.
   const renderContextSidebar = () => (
     <>
-      {sidebarOpen && <div className="md:hidden fixed inset-0 bg-black/60 z-[55] backdrop-blur-sm transition-opacity" onClick={() => setSidebarOpen(false)} />}
+      {sidebarOpen && <div className="md:hidden fixed inset-0 max-w-full overflow-x-hidden bg-black/60 z-[55] backdrop-blur-sm transition-opacity" onClick={() => setSidebarOpen(false)} />}
       <div
-        className={`fixed md:relative top-0 left-0 h-full bg-shell border-r border-borderSubtle flex flex-col z-[60] md:z-40 shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${sidebarOpen ? 'w-[260px] p-5 opacity-100' : 'w-0 p-0 opacity-0'}`}
+        className={`fixed md:relative inset-y-0 left-0 h-dvh md:h-full max-w-full bg-shell border-r border-borderSubtle flex flex-col z-[60] md:z-40 shrink-0 overflow-x-hidden overflow-y-auto overscroll-contain transition-all duration-300 ease-in-out ${sidebarOpen ? 'w-[260px] max-w-[calc(100vw_-_env(safe-area-inset-left)_-_env(safe-area-inset-right))] pl-[calc(1.25rem_+_env(safe-area-inset-left))] pr-5 pt-[calc(1.25rem_+_env(safe-area-inset-top))] pb-[calc(1.25rem_+_env(safe-area-inset-bottom))] opacity-100' : 'w-0 p-0 opacity-0'}`}
       >
         <div className="relative mb-6">
           <span className="absolute left-3 top-2.5 text-textMuted text-sm">🔍</span>
@@ -190,15 +190,15 @@ export const buildAppViews = (ctx) => {
           <p className="text-[10px] font-bold text-textMuted mb-3 tracking-widest">{lang === 'TR' ? 'PAZAR YERİ' : 'MARKETPLACE'}</p>
           <div className="space-y-1">
             <button onClick={() => { setFilterToken('ALL'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'ALL' && currentView === 'market' ? 'bg-elevated text-textPrimary border border-borderStrong' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/50'}`}>
-              <div className="flex items-center gap-2"><span className="text-textMuted">⛓️</span> {lang === 'TR' ? 'TÜM EMİRLER' : 'ALL ORDERS'}</div>
+              <div className="flex min-w-0 items-center gap-2"><span className="text-textMuted">⛓️</span> {lang === 'TR' ? 'TÜM EMİRLER' : 'ALL ORDERS'}</div>
               <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textSecondary">{orders.length}</span>
             </button>
             <button onClick={() => { setFilterToken('USDT'); setCurrentView('market'); }} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterToken === 'USDT' && currentView === 'market' ? 'bg-elevated text-textPrimary border border-borderStrong' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/50'}`}>
-              <div className="flex items-center gap-2"><span className="text-emerald-500">₮</span> USDT</div>
+              <div className="flex min-w-0 items-center gap-2"><span className="text-emerald-500">₮</span> USDT</div>
               <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textSecondary">{orders.filter(o => o.crypto === 'USDT').length}</span>
             </button>
             <button onClick={() => setFilterTier1(!filterTier1)} className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition ${filterTier1 ? 'bg-elevated text-yellow-500 border border-yellow-500/20' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/50'}`}>
-              <div className="flex items-center gap-2"><span className="text-yellow-500/70">🛡️</span> {lang === 'TR' ? 'Tier 0-1 Düşük Risk Filtresi' : 'Tier 0-1 Low-Risk Filter'}</div>
+              <div className="flex min-w-0 items-center gap-2"><span className="text-yellow-500/70">🛡️</span> {lang === 'TR' ? 'Tier 0-1 Düşük Risk Filtresi' : 'Tier 0-1 Low-Risk Filter'}</div>
             </button>
           </div>
         </div>
@@ -264,16 +264,16 @@ export const buildAppViews = (ctx) => {
             {lang === 'TR' ? 'SETTLEMENT' : 'SETTLEMENT'}
           </p>
           <div className="space-y-1">
-            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-textSecondary border border-borderStrong bg-surface">
-              <span className="flex items-center gap-2"><span className="text-emerald-400">🧩</span>{lang === 'TR' ? 'Aktif Teklif' : 'Active Proposals'}</span>
+            <div className="w-full min-w-0 flex justify-between items-center gap-2 px-3 py-2 rounded-lg text-sm text-textSecondary border border-borderStrong bg-surface">
+              <span className="flex min-w-0 items-center gap-2"><span className="text-emerald-400">🧩</span>{lang === 'TR' ? 'Aktif Teklif' : 'Active Proposals'}</span>
               <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textPrimary">{activeEscrowCounts?.settlement?.PROPOSED ?? 0}</span>
             </div>
-            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-textSecondary border border-borderStrong bg-surface">
-              <span className="flex items-center gap-2"><span className="text-yellow-400">⏳</span>{lang === 'TR' ? 'Benden Aksiyon Bekliyor' : 'Action Required'}</span>
+            <div className="w-full min-w-0 flex justify-between items-center gap-2 px-3 py-2 rounded-lg text-sm text-textSecondary border border-borderStrong bg-surface">
+              <span className="flex min-w-0 items-center gap-2"><span className="text-yellow-400">⏳</span>{lang === 'TR' ? 'Benden Aksiyon Bekliyor' : 'Action Required'}</span>
               <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textPrimary">{activeEscrowCounts?.settlement?.ACTION_REQUIRED ?? 0}</span>
             </div>
-            <div className="w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm text-textSecondary border border-borderStrong bg-surface">
-              <span className="flex items-center gap-2"><span className="text-sky-400">🕒</span>{lang === 'TR' ? 'Karşı Taraftan Yanıt Bekliyorum' : 'Waiting Counterparty'}</span>
+            <div className="w-full min-w-0 flex justify-between items-center gap-2 px-3 py-2 rounded-lg text-sm text-textSecondary border border-borderStrong bg-surface">
+              <span className="flex min-w-0 items-center gap-2"><span className="text-sky-400">🕒</span>{lang === 'TR' ? 'Karşı Taraftan Yanıt Bekliyorum' : 'Waiting Counterparty'}</span>
               <span className="bg-elevated text-[10px] px-2 py-0.5 rounded text-textPrimary">{activeEscrowCounts?.settlement?.WAITING ?? 0}</span>
             </div>
             {activeEscrows
@@ -322,7 +322,7 @@ export const buildAppViews = (ctx) => {
   // [TR] Ana sayfa — protokol açıklaması ve istatistik kartları
   // [EN] Home page — protocol description and stats cards
   const renderHome = () => (
-    <div className="p-4 md:p-8 max-w-[1200px] w-full">
+    <div className="w-full max-w-[1200px] min-w-0 p-4 md:p-8">
       <div className="mb-12">
         <h1 className="text-4xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-textPrimary via-textSecondary to-textMuted tracking-tight mb-3">
           {lang === 'TR' ? <>Sistem yargılamaz. <br/>Dürüstsüzlüğü pahalıya mal eder.</> : <>The system does not judge. <br/>It makes dishonesty expensive.</>}
@@ -330,34 +330,34 @@ export const buildAppViews = (ctx) => {
         <p className="text-textMuted text-sm max-w-lg">{lang === 'TR' ? 'Merkeziyetsiz, emanet tutmayan ve oracle-bağımsız eşten eşe escrow protokolü. Hakem yok, sadece matematik.' : 'Decentralized, non-custodial, and oracle-free P2P escrow protocol. No arbitrators, just math.'}</p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4 mb-10">
-        <div className="bg-surface border border-borderSubtle p-4 md:p-5 rounded-2xl">
+      <div className="grid min-w-0 grid-cols-2 md:grid-cols-5 gap-3 md:gap-4 mb-10">
+        <div className="min-w-0 overflow-hidden bg-surface border border-borderSubtle p-4 md:p-5 rounded-2xl">
           <p className="text-textMuted text-[10px] font-bold tracking-widest uppercase mb-2">{lang === 'TR' ? 'TOPLAM HACİM' : 'TOTAL VOL'}</p>
-          <div className="flex items-baseline">
-            <span className="text-2xl font-bold text-textPrimary">${((protocolStats?.total_volume_usdt ?? 0) / 1000).toFixed(1)}K</span>
+          <div className="flex min-w-0 flex-wrap items-baseline">
+            <span className="max-w-full truncate text-2xl font-bold text-textPrimary">${((protocolStats?.total_volume_usdt ?? 0) / 1000).toFixed(1)}K</span>
             <StatChange value={protocolStats?.changes_30d?.total_volume_usdt_pct} />
           </div>
         </div>
-        <div className="bg-surface border border-borderSubtle p-4 md:p-5 rounded-2xl">
+        <div className="min-w-0 overflow-hidden bg-surface border border-borderSubtle p-4 md:p-5 rounded-2xl">
           <p className="text-textMuted text-[10px] font-bold tracking-widest uppercase mb-2">{lang === 'TR' ? 'BAŞARILI İŞLEM' : 'SUCCESS TRADES'}</p>
-          <div className="flex items-baseline">
-            <span className="text-2xl font-bold text-textPrimary">{(protocolStats?.completed_trades ?? 0).toLocaleString()}</span>
+          <div className="flex min-w-0 flex-wrap items-baseline">
+            <span className="max-w-full truncate text-2xl font-bold text-textPrimary">{(protocolStats?.completed_trades ?? 0).toLocaleString()}</span>
             <StatChange value={protocolStats?.changes_30d?.completed_trades_pct} />
           </div>
         </div>
-        <div className="bg-surface border border-borderSubtle p-4 md:p-5 rounded-2xl">
+        <div className="min-w-0 overflow-hidden bg-surface border border-borderSubtle p-4 md:p-5 rounded-2xl">
           <p className="text-textMuted text-[10px] font-bold tracking-widest uppercase mb-2">{lang === 'TR' ? 'AÇIK SATIŞ EMİRLERİ' : 'OPEN SELL ORDERS'}</p>
-          <span className="text-2xl font-bold text-textPrimary">{(protocolStats?.open_sell_orders ?? 0).toLocaleString()}</span>
+          <span className="max-w-full truncate text-2xl font-bold text-textPrimary">{(protocolStats?.open_sell_orders ?? 0).toLocaleString()}</span>
         </div>
-        <div className="bg-surface border border-borderSubtle p-4 md:p-5 rounded-2xl">
+        <div className="min-w-0 overflow-hidden bg-surface border border-borderSubtle p-4 md:p-5 rounded-2xl">
           <p className="text-textMuted text-[10px] font-bold tracking-widest uppercase mb-2">{lang === 'TR' ? 'ORT. SÜRE' : 'AVG TIME'}</p>
-          <span className="text-2xl font-bold text-yellow-500">{protocolStats?.avg_trade_hours ?? '—'}h</span>
+          <span className="max-w-full truncate text-2xl font-bold text-yellow-500">{protocolStats?.avg_trade_hours ?? '—'}h</span>
         </div>
-        <div className="bg-[#1a0a0a] border border-[#4a1010] p-4 md:p-5 rounded-2xl relative overflow-hidden group">
+        <div className="min-w-0 bg-[#1a0a0a] border border-[#4a1010] p-4 md:p-5 rounded-2xl relative overflow-hidden group">
           <div className="absolute -right-4 -bottom-4 text-red-500/10 text-6xl group-hover:scale-110 transition-transform">🔥</div>
           <p className="text-red-500 text-[10px] font-bold tracking-widest uppercase mb-2">{lang === 'TR' ? 'ERİYEN HAZİNE' : 'BURNED BONDS'}</p>
-          <div className="flex items-baseline relative z-10">
-            <span className="text-2xl font-bold text-red-400 drop-shadow-[0_0_8px_rgba(248,113,113,0.5)]">${(protocolStats?.burned_bonds_usdt ?? 0).toFixed(0)}</span>
+          <div className="flex min-w-0 flex-wrap items-baseline relative z-10">
+            <span className="max-w-full truncate text-2xl font-bold text-red-400 drop-shadow-[0_0_8px_rgba(248,113,113,0.5)]">${(protocolStats?.burned_bonds_usdt ?? 0).toFixed(0)}</span>
           </div>
         </div>
       </div>
@@ -388,7 +388,7 @@ export const buildAppViews = (ctx) => {
 
         <section className="bg-surface border border-borderSubtle rounded-2xl p-5 md:p-6">
           <p className="text-[11px] tracking-[0.2em] uppercase text-textMuted mb-3">FAQ</p>
-          <div className="space-y-3">
+          <div className="min-w-0 space-y-3">
             {faqItems.map((item) => (
               <details key={item.q} className="group border border-borderSubtle rounded-xl p-3 bg-elevated">
                 <summary className="cursor-pointer list-none text-sm font-semibold text-textPrimary flex items-center justify-between gap-3">
@@ -407,11 +407,11 @@ export const buildAppViews = (ctx) => {
   // [TR] Pazar yeri — side-aware order listesi, filtreler, test faucet butonları
   // [EN] Marketplace — side-aware order list, filters, test faucet buttons
   const renderMarket = () => (
-    <div className="p-4 md:p-8 max-w-[1200px] w-full">
-      <div className="mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+    <div className="w-full max-w-[1200px] min-w-0 p-4 md:p-8">
+      <div className="mb-6 flex min-w-0 flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <h2 className="text-xl font-bold text-textPrimary">{lang === 'TR' ? 'Pazar Yeri' : 'Marketplace'}</h2>
         {isFaucetEnabled && (
-          <div className="flex gap-3 w-full md:w-auto">
+          <div className="flex min-w-0 flex-wrap gap-3 w-full md:w-auto">
             <button onClick={() => handleMint('USDT')} disabled={isContractLoading} className="flex-1 md:flex-none px-4 py-2 bg-surface border border-borderSubtle hover:bg-elevated rounded-xl text-xs sm:text-sm font-bold text-emerald-400 transition shadow-lg flex items-center justify-center gap-2">
               {isContractLoading && loadingText.includes('USDT') ? '⏳' : '🚰'} {lang === 'TR' ? 'Test USDT Al' : 'Get Test USDT'}
             </button>
@@ -451,11 +451,11 @@ export const buildAppViews = (ctx) => {
             const sideBadgeClass = isSellSide ? 'bg-emerald-900/20 text-emerald-400 border-emerald-800/40' : 'bg-blue-900/20 text-blue-400 border-blue-800/40';
 
             return (
-              <div key={order.id} className="bg-surface hover:bg-elevated border border-borderSubtle p-4 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between transition-colors group relative gap-4 md:gap-0">
-                <div className="flex items-center gap-4 w-full md:w-1/3">
+              <div key={order.id} className="min-w-0 overflow-hidden bg-surface hover:bg-elevated border border-borderSubtle p-4 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between transition-colors group relative gap-4 md:gap-0">
+                <div className="flex min-w-0 items-center gap-4 w-full md:w-1/3">
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500/20 to-emerald-900/20 border border-emerald-500/30 flex items-center justify-center text-emerald-500 shrink-0">₮</div>
-                  <div className="relative group/tooltip">
-                    <p className="text-textPrimary font-medium text-sm cursor-help">{order.maker}</p>
+                  <div className="relative min-w-0 group/tooltip">
+                    <p className="break-all text-textPrimary font-medium text-sm cursor-help">{order.maker}</p>
                     <p className="text-xs text-textMuted">{order.rate} {order.fiat} / 1 {order.crypto}</p>
                     <span className={`inline-flex mt-1 text-[10px] px-2 py-0.5 rounded border ${sideBadgeClass}`}>{order.sideLabel || getOrderSideCopy(order.side, 'order', lang) || order.side}</span>
                     <div className="absolute left-0 sm:-left-4 md:left-1/2 md:-translate-x-1/2 bottom-full mb-2 hidden group-hover/tooltip:block z-50">
@@ -721,7 +721,7 @@ export const buildAppViews = (ctx) => {
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 border-b border-borderSubtle pb-6 gap-4 md:gap-0">
             <div>
               <p className="text-textMuted text-xs tracking-widest mb-1">{lang === 'TR' ? 'İŞLEM ODASI' : 'TRADE ROOM'}: {activeTrade?.id}</p>
-              <h2 className="text-2xl font-bold text-textPrimary flex flex-col sm:flex-row items-start sm:items-center gap-3">
+              <h2 className="max-w-full min-w-0 text-2xl font-bold text-textPrimary flex flex-col sm:flex-row items-start sm:items-center gap-3">
                 {activeTrade?.max || '0.00'} {activeTrade?.fiat}
                 <span className={`text-xs px-3 py-1 rounded-full border ${isChallenged ? 'bg-red-900/20 text-red-500 border-red-900' : 'bg-emerald-900/20 text-emerald-500 border-emerald-900'}`}>{isChallenged ? (lang === 'TR' ? 'İtiraz Süreci' : 'Purgatory') : roomState}</span>
               </h2>
@@ -1033,7 +1033,7 @@ export const buildAppViews = (ctx) => {
   // [TR] Mobil alt navigasyon çubuğu — yalnızca mobil cihazlarda görünür
   // [EN] Mobile bottom navigation bar — visible only on mobile devices
   const renderMobileNav = () => (
-    <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-shell border-t border-borderSubtle z-[45] flex items-center gap-1 overflow-x-auto px-2 pb-safe shadow-[0_-10px_30px_rgba(0,0,0,0.12)]">
+    <div className="md:hidden fixed inset-x-0 bottom-0 h-[calc(4rem_+_env(safe-area-inset-bottom))] max-w-full bg-shell border-t border-borderSubtle z-[45] flex items-center gap-1 overflow-x-auto overscroll-x-contain px-[calc(0.5rem_+_env(safe-area-inset-left))] pr-[calc(0.5rem_+_env(safe-area-inset-right))] pb-[env(safe-area-inset-bottom)] shadow-[0_-10px_30px_rgba(0,0,0,0.12)]">
       <button onClick={() => setCurrentView('home')} className={`h-10 w-10 shrink-0 rounded-xl text-xl transition-all ${currentView === 'home' ? 'bg-elevated text-textPrimary -translate-y-1' : 'text-textMuted'}`}>🏠</button>
       <button onClick={() => setCurrentView('market')} className={`h-10 w-10 shrink-0 rounded-xl text-xl transition-all ${currentView === 'market' ? 'bg-elevated text-textPrimary -translate-y-1' : 'text-textMuted'}`}>🛒</button>
       <button onClick={() => setCurrentView('operations')} className={`h-10 w-10 shrink-0 rounded-xl text-xl transition-all ${currentView === 'operations' ? 'bg-elevated text-info -translate-y-1' : 'text-textMuted'}`}>📍</button>

@@ -1310,15 +1310,15 @@ function App() {
   //     Root layout: rail + sidebar + content + modals + toast
   // ═══════════════════════════════════════════
   return (
-    <div className="flex flex-col h-screen bg-app text-textPrimary font-sans overflow-hidden selection:bg-emerald-500/30 pb-16 md:pb-0 relative">
+    <div className="flex h-dvh min-h-dvh w-full max-w-full flex-col overflow-hidden bg-app text-textPrimary font-sans selection:bg-emerald-500/30 pb-[calc(4rem_+_env(safe-area-inset-bottom))] md:pb-0 relative">
       <AppShell
         status={systemStatus}
         navigation={renderSlimRail()}
         panel={renderContextSidebar()}
         mobileBottom={renderMobileNav()}
         outlet={(
-          <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden relative bg-app">
-            <div className="min-h-full flex flex-col pt-4 md:pt-10 pb-24 md:pb-10 items-center">
+          <div className="flex-1 min-w-0 w-full max-w-full overflow-y-auto overflow-x-hidden relative bg-app">
+            <div className="min-h-full w-full max-w-full min-w-0 flex flex-col pt-4 md:pt-10 pb-24 md:pb-10 items-center">
               {currentView === 'home'
                 ? renderHome()
                 : currentView === 'market'
@@ -1365,14 +1365,14 @@ function App() {
       <button
         onClick={() => setShowFeedbackModal(true)}
         title={lang === 'TR' ? 'Geri Bildirim' : 'Feedback'}
-        className="fixed top-5 right-5 md:top-6 md:right-6 z-40 h-11 px-4 bg-surface hover:bg-elevated border border-borderSubtle rounded-2xl flex items-center justify-center gap-2 text-sm font-semibold text-textPrimary shadow-[0_0_15px_rgba(0,0,0,0.18)] transition-transform hover:scale-[1.02] hover:border-borderStrong"
+        className="fixed top-[calc(1.25rem_+_env(safe-area-inset-top))] right-[calc(1.25rem_+_env(safe-area-inset-right))] md:top-6 md:right-6 z-40 h-11 max-w-[calc(100vw_-_2rem)] px-4 bg-surface hover:bg-elevated border border-borderSubtle rounded-2xl flex items-center justify-center gap-2 text-sm font-semibold text-textPrimary shadow-[0_0_15px_rgba(0,0,0,0.18)] transition-transform hover:scale-[1.02] hover:border-borderStrong"
       >
         <span>💬</span>
         <span>{lang === 'TR' ? 'Geri Bildirim' : 'Feedback'}</span>
       </button>
 
       {toast && (
-        <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 md:left-auto md:-translate-x-0 md:right-6 z-[100] animate-bounce-in w-[90%] sm:w-auto">
+        <div className="fixed bottom-[calc(5rem_+_env(safe-area-inset-bottom))] md:bottom-6 left-1/2 -translate-x-1/2 md:left-auto md:-translate-x-0 md:right-6 z-[100] animate-bounce-in w-[90%] max-w-[calc(100vw_-_2rem)] sm:w-auto">
           <div className={`px-4 md:px-6 py-3 md:py-4 rounded-xl shadow-2xl border text-sm font-bold backdrop-blur-md text-center md:text-left ${toast.type === 'error' ? 'bg-[#1a0f0f]/90 border-red-900/50 text-red-400' : toast.type === 'info' ? 'bg-[#0a1a2a]/90 border-blue-900/50 text-blue-400' : 'bg-[#0a1a10]/90 border-emerald-900/50 text-emerald-400'}`}>
             {toast.message}
           </div>
