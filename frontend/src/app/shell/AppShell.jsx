@@ -15,7 +15,7 @@ export const AppShell = ({
     <>
       {status ? <SystemStatusBar {...status} /> : null}
       {mobileTop}
-      <div className="flex flex-col md:flex-row min-h-0 flex-1">
+      <div className="flex min-w-0 flex-col md:flex-row min-h-0 flex-1">
         {navigation}
         {panel}
         {outlet || children}

@@ -306,7 +306,7 @@ describe('frontend migration scaffold baseline', () => {
     expect(appShellSource).toContain('export const AppShell');
     expect(appShellSource).toContain('{status ? <SystemStatusBar {...status} /> : null}');
     expect(appShellSource).toContain('{mobileTop}');
-    expect(appShellSource).toContain('<div className="flex flex-col md:flex-row min-h-0 flex-1">');
+    expect(appShellSource).toContain('<div className="flex min-w-0 flex-col md:flex-row min-h-0 flex-1">');
     expect(appShellSource).toContain('{navigation}');
     expect(appShellSource).toContain('{panel}');
     expect(appShellSource).toContain('{outlet || children}');

@@ -57,23 +57,23 @@ export const ChallengedDecisionPanel = ({ details = null, primaryAction = null, 
     ? details.timerLines
     : [t(lang, 'Kalan süre bilgisi şu anda hesaplanamadı.', 'Remaining time is currently unavailable.')];
   return (
-    <section className="mb-3 bg-[#160b0b] border border-red-900/40 rounded-xl p-4 text-sm text-textSecondary" data-testid="challenged-decision-panel">
-      <p className="text-xs font-bold uppercase tracking-wide text-red-300 mb-3">{t(lang, 'İtiraz karar paneli', 'Challenge decision panel')}</p>
+    <section className="mb-3 bg-surface border border-danger/40 rounded-xl p-4 text-sm text-textSecondary" data-testid="challenged-decision-panel">
+      <p className="text-xs font-bold uppercase tracking-wide text-danger mb-3">{t(lang, 'İtiraz karar paneli', 'Challenge decision panel')}</p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="rounded-lg border border-red-900/30 bg-[#0a0505] p-3">
-          <p className="text-xs font-bold text-red-300 mb-1">{t(lang, 'Ne oluyor?', 'What is happening?')}</p>
+        <div className="rounded-lg border border-danger/30 bg-elevated p-3">
+          <p className="text-xs font-bold text-danger mb-1">{t(lang, 'Ne oluyor?', 'What is happening?')}</p>
           <p className="text-textPrimary leading-relaxed">{details.whatHappening}</p>
         </div>
-        <div className="rounded-lg border border-red-900/30 bg-[#0a0505] p-3">
-          <p className="text-xs font-bold text-red-300 mb-1">{t(lang, 'Riskteki değer', 'Value at risk')}</p>
+        <div className="rounded-lg border border-danger/30 bg-elevated p-3">
+          <p className="text-xs font-bold text-danger mb-1">{t(lang, 'Riskteki değer', 'Value at risk')}</p>
           {riskLines.map((line, idx) => <p key={idx} className="text-textPrimary leading-relaxed">{line}</p>)}
         </div>
-        <div className="rounded-lg border border-red-900/30 bg-[#0a0505] p-3">
-          <p className="text-xs font-bold text-red-300 mb-1">{t(lang, 'Kalan süre', 'Remaining time')}</p>
+        <div className="rounded-lg border border-danger/30 bg-elevated p-3">
+          <p className="text-xs font-bold text-danger mb-1">{t(lang, 'Kalan süre', 'Remaining time')}</p>
           {timerLines.map((line, idx) => <p key={idx} className="text-textPrimary leading-relaxed">{line}</p>)}
         </div>
-        <div className="rounded-lg border border-red-900/30 bg-[#0a0505] p-3">
-          <p className="text-xs font-bold text-red-300 mb-1">{t(lang, 'Sonraki aksiyon', 'Next action')}</p>
+        <div className="rounded-lg border border-danger/30 bg-elevated p-3">
+          <p className="text-xs font-bold text-danger mb-1">{t(lang, 'Sonraki aksiyon', 'Next action')}</p>
           <p className="font-semibold text-textPrimary">{primaryAction?.label || details.nextActionLabel}</p>
           {(primaryAction?.description || details.nextActionDescription) && (
             <p className="mt-1 text-textSecondary leading-relaxed">{primaryAction?.description || details.nextActionDescription}</p>
@@ -106,7 +106,7 @@ export const TechnicalDetailsDisclosure = ({ technicalDetails, lang = 'EN' }) =>
   return (
     <details className="mb-3 text-xs text-textMuted">
       <summary className="cursor-pointer">{t(lang, 'Teknik detaylar', 'Technical details')}</summary>
-      <pre className="mt-2 bg-surface border border-borderSubtle rounded-lg p-2 overflow-auto">{JSON.stringify(technicalDetails, null, 2)}</pre>
+      <pre className="mt-2 max-w-full overflow-x-auto whitespace-pre-wrap break-words bg-surface border border-borderSubtle rounded-lg p-2">{JSON.stringify(technicalDetails, null, 2)}</pre>
     </details>
   );
 };

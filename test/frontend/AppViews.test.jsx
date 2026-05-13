@@ -351,6 +351,28 @@ describe('AppViews market side-aware rendering', () => {
     expect(setSidebarOpen).toHaveBeenCalledWith(false);
   });
 
+
+  it('keeps mobile navigation controls touch-sized and scoped to semantic shell colors', () => {
+    const views = buildAppViews({
+      ...baseCtx,
+      currentView: 'market',
+      activeEscrows: [{ id: 'active-1' }],
+    });
+
+    const { container } = render(<div>{views.renderMobileNav()}</div>);
+    const mobileNav = container.querySelector('.bg-shell.border-t.border-borderSubtle');
+    expect(mobileNav).not.toBeNull();
+    expect(mobileNav.className).toContain('overflow-x-auto');
+
+    const buttons = within(mobileNav).getAllByRole('button');
+    expect(buttons.length).toBeGreaterThan(0);
+    buttons.forEach((button) => {
+      expect(button.className).toContain('h-10');
+      expect(button.className).toContain('w-10');
+      expect(button.className).toContain('shrink-0');
+    });
+  });
+
   it('shows explicit empty-state instead of broken trade room when activeTrade is missing', async () => {
     const user = userEvent.setup();
     const setCurrentView = vi.fn();

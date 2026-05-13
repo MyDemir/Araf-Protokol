@@ -1310,14 +1310,14 @@ function App() {
   //     Root layout: rail + sidebar + content + modals + toast
   // ═══════════════════════════════════════════
   return (
-    <div className="flex flex-col h-screen bg-[#060608] text-slate-100 font-sans overflow-hidden selection:bg-emerald-500/30 pb-16 md:pb-0 relative">
+    <div className="flex flex-col h-screen bg-app text-textPrimary font-sans overflow-hidden selection:bg-emerald-500/30 pb-16 md:pb-0 relative">
       <AppShell
         status={systemStatus}
         navigation={renderSlimRail()}
         panel={renderContextSidebar()}
         mobileBottom={renderMobileNav()}
         outlet={(
-          <div className="flex-1 overflow-y-auto relative bg-[#060608]">
+          <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden relative bg-app">
             <div className="min-h-full flex flex-col pt-4 md:pt-10 pb-24 md:pb-10 items-center">
               {currentView === 'home'
                 ? renderHome()
@@ -1365,7 +1365,7 @@ function App() {
       <button
         onClick={() => setShowFeedbackModal(true)}
         title={lang === 'TR' ? 'Geri Bildirim' : 'Feedback'}
-        className="fixed top-5 right-5 md:top-6 md:right-6 z-40 h-11 px-4 bg-[#111113] hover:bg-[#1a1a1f] border border-[#222] rounded-2xl flex items-center justify-center gap-2 text-sm font-semibold text-white shadow-[0_0_15px_rgba(0,0,0,0.45)] transition-transform hover:scale-[1.02] hover:border-slate-600"
+        className="fixed top-5 right-5 md:top-6 md:right-6 z-40 h-11 px-4 bg-surface hover:bg-elevated border border-borderSubtle rounded-2xl flex items-center justify-center gap-2 text-sm font-semibold text-textPrimary shadow-[0_0_15px_rgba(0,0,0,0.18)] transition-transform hover:scale-[1.02] hover:border-borderStrong"
       >
         <span>💬</span>
         <span>{lang === 'TR' ? 'Geri Bildirim' : 'Feedback'}</span>
