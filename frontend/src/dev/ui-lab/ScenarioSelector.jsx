@@ -1,7 +1,7 @@
 import React from 'react';
 
 export const ScenarioSelector = ({ categories, activeCategoryKey, activeScenarioId, onSelectCategory, onSelectScenario }) => (
-  <aside className="w-full md:w-72 shrink-0 bg-surface border border-borderSubtle rounded-xl p-3" data-testid="ui-lab-selector">
+  <aside className="w-full md:w-72 min-w-0 md:shrink-0 bg-surface border border-borderSubtle rounded-xl p-3" data-testid="ui-lab-selector">
     <p className="text-xs font-bold uppercase tracking-wide text-textMuted mb-3">Scenario categories</p>
     <div className="space-y-3">
       {categories.map((category) => (

@@ -95,10 +95,10 @@ export default function ReferenceRateTicker({ lang = 'TR' }) {
               className="inline-flex min-h-8 shrink-0 items-center gap-2 rounded-full border border-borderSubtle bg-elevated px-3 py-1 text-xs text-textPrimary"
             >
               <span className="rounded-md bg-surface px-1.5 py-0.5 text-[10px] font-semibold text-textSecondary">{item.symbol}</span>
-              <span className="font-mono text-emerald-300">{formatRate(item.rate)}</span>
+              <span className="font-mono text-brand">{formatRate(item.rate)}</span>
               <span className="text-[10px] text-textMuted">{sourceLabel(item, lang)}</span>
               {item.stale && (
-                <span className="rounded border border-amber-600/60 bg-amber-950/40 px-1.5 py-0.5 text-[10px] text-amber-300">
+                <span className="rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[10px] text-warning">
                   {lang === 'TR' ? 'gecikmiş' : 'stale'}
                 </span>
               )}
