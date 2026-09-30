@@ -19,10 +19,39 @@
  */
 
 import { Lock, LockOpen, MessageCircle, ShieldCheck, TriangleAlert } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { usePII } from '../hooks/usePII';
 import { getPiiCopy } from '../app/copy';
 
+// [TR] F19.2 — İletişim değeri karşı tarafça girilir; doğrulanmadan href'e konmaz.
+// [EN] The contact value is counterparty-supplied; it is validated before it reaches an href.
+const EMAIL_RE = /^[^\s@<>"',;:()[\]\\]+@[^\s@<>"',;:()[\]\\]+\.[A-Za-z]{2,}$/;
+const PHONE_RE = /^\+?[0-9][0-9\s().-]{5,22}$/;
+
+export const buildTelegramHref = (handle) => {
+  const clean = String(handle || '').replace(/^@/, '').replace(/[^a-zA-Z0-9_]/g, '');
+  return clean ? `https://t.me/${encodeURIComponent(clean)}` : null;
+};
+
+export const buildContactHref = (channel, value) => {
+  if (!channel || value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (channel === 'telegram') return buildTelegramHref(raw);
+  if (channel === 'email') {
+    if (raw.length > 254 || !EMAIL_RE.test(raw)) return null;
+    // [TR] '@' mailto adres biçiminde geçerlidir; geri kalan her şey kaçışlanır.
+    return `mailto:${encodeURIComponent(raw).replace(/%40/g, '@')}`;
+  }
+  if (channel === 'phone') {
+    if (!PHONE_RE.test(raw)) return null;
+    const digits = raw.replace(/\D/g, '');
+    if (digits.length < 7 || digits.length > 15) return null;
+    // [TR] Baştaki '+' tel: URI'sinde geçerlidir; kalan yalnız rakamdır.
+    return `tel:${raw.startsWith('+') ? '+' : ''}${encodeURIComponent(digits)}`;
+  }
+  return null;
+};
 
 /**
  * @param {string}   tradeId             Backend trade ID (Trade koleksiyonunun MongoDB _id'si)
@@ -34,23 +63,33 @@ export default function PIIDisplay({ tradeId, lang = 'tr', authenticatedFetch })
   const t = getPiiCopy(normalizedLang);
 
   const { pii, loading, error, fetchPII, clearPII } = usePII(tradeId, authenticatedFetch);
-  const [revealed, setRevealed] = useState(false);
+  // [TR] F19.3 — Açık durum, hangi işlem için açıldığını tutar; tradeId değişince otomatik kapanır
+  //      (önceki işlemin "açık" durumu yeni işlemin kilitli görünümünü atlamasın).
+  // [EN] The revealed flag remembers which trade it was opened for, so a tradeId change re-locks the view.
+  const [revealedTradeId, setRevealedTradeId] = useState(null);
+  const revealed = tradeId != null && revealedTradeId === tradeId;
   // [TR] copied: 'idle' | 'success' | 'error'
   const [copyState, setCopyState] = useState({ status: 'idle', field: null });
 
+  // [TR] A→B→A geçişinde eski "açık" durum geri gelmesin; tradeId her değiştiğinde kilitle.
+  useEffect(() => {
+    setRevealedTradeId(null);
+    setCopyState({ status: 'idle', field: null });
+  }, [tradeId]);
+
   const handleReveal = async () => {
     if (pii?.payoutProfile) {
-      setRevealed(true);
+      setRevealedTradeId(tradeId);
       return;
     }
     const payload = await fetchPII();
     if (payload?.payoutProfile) {
-      setRevealed(true);
+      setRevealedTradeId(tradeId);
     }
   };
 
   const handleHide = () => {
-    setRevealed(false);
+    setRevealedTradeId(null);
     clearPII();
     setCopyState({ status: 'idle', field: null });
   };
@@ -92,17 +131,6 @@ export default function PIIDisplay({ tradeId, lang = 'tr', authenticatedFetch })
     }
   };
 
-  const buildTelegramUrl = (handle) => {
-    if (!handle) return '#';
-    return `https://t.me/${handle.replace(/[^a-zA-Z0-9_]/g, '')}`;
-  };
-  const buildContactHref = (channel, value) => {
-    if (!channel || !value) return null;
-    if (channel === 'telegram') return buildTelegramUrl(value);
-    if (channel === 'email') return `mailto:${value}`;
-    if (channel === 'phone') return `tel:${value}`;
-    return null;
-  };
   const getContactCtaLabel = (channel) => {
     if (channel === 'telegram') return t.telegramBtn;
     if (channel === 'email') return t.emailBtn;
@@ -121,6 +149,8 @@ export default function PIIDisplay({ tradeId, lang = 'tr', authenticatedFetch })
     };
     return map[key] || key;
   };
+
+  const contactHref = buildContactHref(pii?.payoutProfile?.contact?.channel, pii?.payoutProfile?.contact?.value);
 
   // ── Kilitli görünüm ──────────────────────────────────────────────────────
   if (!revealed) {
@@ -257,9 +287,9 @@ export default function PIIDisplay({ tradeId, lang = 'tr', authenticatedFetch })
             </button>
           </div>
 
-          {buildContactHref(pii?.payoutProfile?.contact?.channel, pii?.payoutProfile?.contact?.value) ? (
+          {contactHref ? (
             <a
-              href={buildContactHref(pii?.payoutProfile?.contact?.channel, pii?.payoutProfile?.contact?.value)}
+              href={contactHref}
               target={pii?.payoutProfile?.contact?.channel === 'telegram' ? "_blank" : undefined}
               rel={pii?.payoutProfile?.contact?.channel === 'telegram' ? "noopener noreferrer" : undefined}
               className="flex items-center justify-center space-x-2 w-full py-2.5 rounded-xl bg-[#24A1DE]/10 border border-[#24A1DE]/30 text-[#24A1DE] hover:bg-[#24A1DE]/20 text-sm font-bold transition-all mb-3"

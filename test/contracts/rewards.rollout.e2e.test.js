@@ -1,6 +1,7 @@
 const { expect } = require('chai');
 const { ethers } = require('hardhat');
 const { loadFixture, time } = require('@nomicfoundation/hardhat-network-helpers');
+const { deployRevenueEscrow, pushRevenue } = require("./helpers/revenue");
 
 describe('Proof of Peace Rewards rollout safety e2e', function () {
   const DECIMALS = 6;
@@ -17,7 +18,7 @@ describe('Proof of Peace Rewards rollout safety e2e', function () {
     const mockEscrow = await MockEscrow.deploy();
 
     const Vault = await ethers.getContractFactory('ArafRevenueVault');
-    const vault = await Vault.deploy(escrowSigner.address, owner.address, owner.address);
+    const vault = await Vault.deploy(await (await deployRevenueEscrow()).getAddress(), owner.address, owner.address);
     await vault.setSupportedToken(await token.getAddress(), true);
 
     const Rewards = await ethers.getContractFactory('ArafRewards');
@@ -57,9 +58,7 @@ describe('Proof of Peace Rewards rollout safety e2e', function () {
     await setTrade(mockEscrow, 1, maker.address, taker.address, OUTCOME.CLEAN_RELEASE, terminalAt);
     await rewards.recordTradeOutcome(1);
 
-    await vault.connect(escrowSigner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 1);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(escrowSigner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 1);
+    await pushRevenue(vault, token, NOTIONAL, 0, 1, NOTIONAL);
 
     const allocation = (NOTIONAL * 4000n) / 10000n;
     await rewards.connect(owner).allocateEpochRewards(epoch, await token.getAddress(), allocation);
@@ -86,9 +85,7 @@ describe('Proof of Peace Rewards rollout safety e2e', function () {
     await setTrade(mockEscrow, 2, maker.address, taker.address, OUTCOME.AUTO_RELEASE, terminalAt);
     await rewards.recordTradeOutcome(2);
 
-    await vault.connect(escrowSigner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 1, 2);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(escrowSigner).onArafRevenue(await token.getAddress(), NOTIONAL, 1, 2);
+    await pushRevenue(vault, token, NOTIONAL, 1, 2, NOTIONAL);
     const allocation = (NOTIONAL * 4000n) / 10000n;
     await rewards.connect(owner).allocateEpochRewards(epoch, await token.getAddress(), allocation);
 
@@ -126,9 +123,7 @@ describe('Proof of Peace Rewards rollout safety e2e', function () {
 
   it('end_to_end_admin_cannot_drain_reward_reserve', async function () {
     const { owner, escrowSigner, outsider, token, vault } = await loadFixture(fixture);
-    await vault.connect(escrowSigner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 77);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(escrowSigner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 77);
+    await pushRevenue(vault, token, NOTIONAL, 0, 77, NOTIONAL);
     const rewardReserve = await vault.rewardReserve(await token.getAddress());
     const treasuryReserve = await vault.treasuryReserve(await token.getAddress());
 

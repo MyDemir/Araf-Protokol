@@ -51,7 +51,7 @@ const {
 } = require("./jobs/cleanupUserBankRiskMetadata");
 
 const { refreshReferenceTicker } = require("./services/referenceTicker");
-const { getReadiness, getLiveness } = require("./services/health");
+const { createReadyHandler, createHealthHandler } = require("./services/health");
 const { verifyIdentityNormalization } = require("./services/identityNormalizationGuard");
 const { parsePositiveTimerMs } = require("./utils/timeEnv");
 const { didScheduledJobSucceed } = require("./utils/schedulerSuccess");
@@ -375,12 +375,10 @@ async function bootstrap() {
     // [EN] V3 mutable protocol config mirror is loaded here.
     await loadProtocolConfig();
 
-    await worker.start();
-    if (worker.isRunning) {
-      logger.info("Event Listener aktif: V3 Order + Child Trade topology izleniyor.");
-    } else {
-      logger.warn(`[Worker] Event Listener aktif değil. state=${worker._state || "unknown"}`);
-    }
+    // [TR] B19: worker.start() (bağlan + replay) burada AWAIT EDİLMEZ; HTTP önce dinlemeye başlar, replay arka
+    //      planda sürer ve /ready "replaying" raporlar. Başlatma app.listen'den sonra yapılır.
+    // [EN] B19: worker.start() (connect + replay) is NOT awaited here; HTTP starts listening first, the replay
+    //      continues in the background and /ready reports "replaying". Startup happens after app.listen.
 
     // [TR] DLQ monitörü — her 60 saniyede başarısız event'leri kontrol eder
     // [EN] DLQ monitor — checks failed events every 60 seconds
@@ -536,12 +534,13 @@ async function bootstrap() {
     app.use("/api/reference-rates", referenceRatesRoutes);
     app.use("/api/rewards", rewardsRoutes);
 
-    app.get("/health", (_req, res) => res.json(getLiveness()));
+    // [TR] /health: worker "son blok görülme" eşiğine bağlı liveness (B6). /ready: önbellekli, kimliksiz
+    //      görünüm redakte; ayrıntı yalnız READY_INTERNAL_TOKEN ile (B27).
+    // [EN] /health: liveness tied to the worker last-block threshold (B6). /ready: cached, redacted for
+    //      unauthenticated callers; full detail only with READY_INTERNAL_TOKEN (B27).
+    app.get("/health", createHealthHandler({ worker }));
 
-    app.get("/ready", async (_req, res) => {
-      const readiness = await getReadiness({ worker, provider: worker.provider });
-      return res.status(readiness.ok ? 200 : 503).json(readiness);
-    });
+    app.get("/ready", createReadyHandler({ worker, getProvider: () => worker.provider }));
 
     app.use((_req, res) => res.status(404).json({ error: "İstenen endpoint bulunamadı" }));
     app.use(globalErrorHandler);
@@ -555,6 +554,16 @@ async function bootstrap() {
       logger.info("🛡️  Güvenlik: Non-custodial backend (opsiyonel automation signer olabilir).");
       logger.info("🧹 Retention: receipt / PII snapshot / bank risk metadata cleanup aktif");
       logger.info("===========================================================");
+    });
+
+    worker.startInBackground({
+      onFatal: (err) => shutdown({ signal: "workerStart", exitCode: 1, reason: { message: err.message, stack: err.stack } }),
+    }).then(() => {
+      if (worker.isRunning) {
+        logger.info("Event Listener aktif: V3 Order + Child Trade topology izleniyor.");
+      } else {
+        logger.warn(`[Worker] Event Listener aktif değil. state=${worker._state || "unknown"}`);
+      }
     });
 
     process.on("SIGTERM", () => shutdown({ signal: "SIGTERM", exitCode: 0 }));

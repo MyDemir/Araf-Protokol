@@ -18,7 +18,7 @@ describe("PII taker-name identity guard + big id parsing", () => {
         requireSessionWalletMatch: (_req, _res, next) => next(),
         requirePIIToken: (_req, _res, next) => next(),
       }));
-      jest.doMock("../../backend/scripts/middleware/rateLimiter", () => ({ piiLimiter: (_req, _res, next) => next() }));
+      jest.doMock("../../backend/scripts/middleware/rateLimiter", () => ({ piiProfileLimiter: (_req, _res, next) => next(), piiTakerNameLimiter: (_req, _res, next) => next(), piiTokenRequestLimiter: (_req, _res, next) => next(), piiFetchLimiter: (_req, _res, next) => next() }));
       jest.doMock("../../backend/scripts/services/identityNormalizationGuard", () => ({
         verifyIdentityNormalization: jest.fn().mockRejectedValue(new Error("mixed ids")),
       }));
@@ -68,7 +68,7 @@ describe("PII taker-name identity guard + big id parsing", () => {
         requireSessionWalletMatch: (_req, _res, next) => next(),
         requirePIIToken: (_req, _res, next) => next(),
       }));
-      jest.doMock("../../backend/scripts/middleware/rateLimiter", () => ({ piiLimiter: (_req, _res, next) => next() }));
+      jest.doMock("../../backend/scripts/middleware/rateLimiter", () => ({ piiProfileLimiter: (_req, _res, next) => next(), piiTakerNameLimiter: (_req, _res, next) => next(), piiTokenRequestLimiter: (_req, _res, next) => next(), piiFetchLimiter: (_req, _res, next) => next() }));
       jest.doMock("../../backend/scripts/services/identityNormalizationGuard", () => ({
         verifyIdentityNormalization: verifyMock,
       }));
@@ -120,7 +120,7 @@ describe("PII taker-name identity guard + big id parsing", () => {
         requireSessionWalletMatch: (_req, _res, next) => next(),
         requirePIIToken: (_req, _res, next) => next(),
       }));
-      jest.doMock("../../backend/scripts/middleware/rateLimiter", () => ({ piiLimiter: (_req, _res, next) => next() }));
+      jest.doMock("../../backend/scripts/middleware/rateLimiter", () => ({ piiProfileLimiter: (_req, _res, next) => next(), piiTakerNameLimiter: (_req, _res, next) => next(), piiTokenRequestLimiter: (_req, _res, next) => next(), piiFetchLimiter: (_req, _res, next) => next() }));
       jest.doMock("../../backend/scripts/services/identityNormalizationGuard", () => ({
         verifyIdentityNormalization: jest.fn().mockResolvedValue({ ok: true }),
       }));

@@ -1,13 +1,14 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { time } = require("@nomicfoundation/hardhat-network-helpers");
+const { deployEscrowWithLibraries } = require("../../contracts/scripts/deploy");
 
 // [TR] Cüzdan yaşı şartı: registerWallet sonrası 2 gün. [EN] Wallet age gate: 2 days after registerWallet.
 describe("ArafEscrow wallet age gate", function () {
   it("blocks taker entry until 2 days after registration, then allows it", async function () {
     const [owner, treasury, maker, taker] = await ethers.getSigners();
     const token = await (await ethers.getContractFactory("MockERC20")).deploy("Mock USDT", "USDT", 6);
-    const escrow = await (await ethers.getContractFactory("ArafEscrow")).deploy(treasury.address);
+    const escrow = (await deployEscrowWithLibraries(treasury.address)).escrow;
     const u = (v) => ethers.parseUnits(String(v), 6);
     await escrow.connect(owner).setTokenConfig(await token.getAddress(), true, true, true, 6, [u(150), u(1500), u(7500), u(30000)]);
     for (const w of [maker, taker]) {

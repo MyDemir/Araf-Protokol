@@ -148,7 +148,7 @@ The contract is the single authoritative V3 state machine surface. The following
 | Surface | Functions | Architectural meaning |
 |---|---|---|
 | Parent-order write surface | `createSellOrder`, `fillSellOrder`, `cancelSellOrder`, `createBuyOrder`, `fillBuyOrder`, `cancelBuyOrder` | Public market and fill primitive |
-| Child-trade lifecycle write surface | `reportPayment`, `releaseFunds`, `challengeTrade`, `autoRelease`, `burnExpired`, `proposeOrApproveCancel`, `expirePaymentWindow` | Real escrow lifecycle and economic state transitions |
+| Child-trade lifecycle write surface | `reportPayment`, `releaseFunds`, `challengeTrade`, `autoRelease`, `burnExpired`, `proposeOrApproveCancel`, `revokeCancel`, `expirePaymentWindow`, `proposeSettlement`, `acceptSettlement(tradeId, expectedProposalId)` | Real escrow lifecycle and economic state transitions |
 | Liveness / auxiliary write surface | `registerWallet`, `pingMaker`, `pingTakerForChallenge`, `decayReputation` | Entry gate, liveness, and clean-slate maintenance |
 | Governance / mutable admin surface | `setTreasury`, `setFeeConfig`, `setCooldownConfig`, `setTokenConfig`, `pause`, `unpause` | Runtime policy and governance control surface |
 | Read surface | `getOrder`, `getTrade`, `getReputation`, `getFeeConfig`, `getCooldownConfig`, `getCurrentAmounts`, `antiSybilCheck`, `getCooldownRemaining`, `getFirstSuccessfulTradeAt` | Verification, observability, and runtime read surface |
@@ -160,6 +160,7 @@ The contract is the single authoritative V3 state machine surface. The following
 - `createBuyOrder`
 - `fillBuyOrder`
 - `cancelBuyOrder`
+- At fill time both the filler and the order owner must still qualify for the order tier (`TierNotAllowed`); the maker-role party is re-checked for an active ban (`MakerBanActive`) and the taker-role party passes the entry gate (ban/age/dust/cooldown). An owner penalized after create can no longer have their open order filled.
 
 ### 3.2 Child-trade lifecycle write surface
 - `reportPayment`
@@ -167,7 +168,14 @@ The contract is the single authoritative V3 state machine surface. The following
 - `challengeTrade`
 - `autoRelease`
 - `burnExpired`
-- `proposeOrApproveCancel`
+- `proposeOrApproveCancel` / `revokeCancel`
+- `proposeSettlement` / `acceptSettlement(tradeId, expectedProposalId)` / `rejectSettlement` / `withdrawSettlement` / `expireSettlement`
+
+> **Bytecode split (EIP-170):** `ArafEscrow` links two external libraries: `ArafReputationLib` (outcome recording, risk
+> points, ban/tier ceiling, reputation policy validation) and `ArafSettlementLib` (terminal payout + treasury hooks,
+> settlement proposal management). They run via DELEGATECALL on escrow storage; events are emitted from the escrow
+> address with identical signatures, access control stays in the escrow, addresses are baked into the bytecode at deploy
+> (no upgrade path). Deploy order: `ArafReputationLib` → `ArafSettlementLib` → linked `ArafEscrow` (`contracts/scripts/deploy.js`).
 
 ### 3.3 Liveness / auxiliary write surface
 - `registerWallet`
@@ -332,10 +340,10 @@ stateDiagram-v2
 
 ### 7.1 Resolution paths after `PAID`
 - **Normal close:** maker `releaseFunds`
-- **Dispute path:** maker `pingTakerForChallenge` → wait window → `challengeTrade`
+- **Dispute path:** maker `pingTakerForChallenge` → 24h wait window → `challengeTrade`. After the window either the maker or the taker may open the challenge, so a maker who pings and goes silent cannot lock a PAID trade forever (bleeding starts; `burnExpired` after `MAX_BLEEDING` at the latest).
 - **Liveness path:** taker `pingMaker` → wait window → `autoRelease`
-- **Mutual cancel:** each party sends its own `proposeOrApproveCancel(tradeId)` tx (no separate signature)
-- **Payment window expiry:** if no payment is reported within 48h of LOCKED, either party calls `expirePaymentWindow`; the maker is refunded in full, the taker bond pays a 2% liveness penalty and the taker gets a negative reputation signal
+- **Mutual cancel:** each party sends its own `proposeOrApproveCancel(tradeId)` tx (no separate signature); before the second consent a party may withdraw its own consent with `revokeCancel(tradeId)` (`CancelRevoked`)
+- **Payment window expiry:** `reportPayment` is only accepted before `lockedAt + 48h` (`PaymentWindowClosed` from the boundary second). If no payment is reported within 48h of LOCKED, either party calls `expirePaymentWindow`; the maker is refunded in full, the taker bond pays a 2% liveness penalty and the taker gets a negative reputation signal
 - **Terminal burn:** `burnExpired` after challenge timeout
 
 ### 7.2 Bleeding components
@@ -351,7 +359,7 @@ Exact timeline (all times from `challengedAt`, matching `getCurrentAmounts`):
 | 48h–240h | maker bond | 0.26% / hour | ≈ 49.9% |
 | 48h–240h | taker bond | 0.42% / hour | ≈ 80.6% |
 | 144h–240h | principal (crypto) | 0.68% / hour | ≈ 65.3% |
-| 240h | `burnExpired` becomes callable; everything left goes to treasury | — | 100% |
+| 240h | `burnExpired` becomes callable; the trade's full balance (decayed part included: `cryptoAmount + makerBond + takerBond`) goes to treasury | — | 100% |
 
 `MAX_BLEEDING` (240h) is the total time from the challenge, not the length of principal decay: the principal
 only decays for the final 96 hours, so ≈ 34.7% of it is still there to settle on until the burn.
@@ -364,11 +372,14 @@ only decays for the final 96 hours, so ≈ 34.7% of it is still there to settle 
 
 ### 7.4 Burn semantics
 - `burnExpired` finalizes stale challenged trades once max window elapses.
-- Remaining value is routed to treasury according to contract rules.
+- The trade's entire escrow balance (decayed part included) goes to treasury; nothing of that trade stays in the escrow. `EscrowBurned.burnedAmount` is that total; `burnExpired` emits no `BleedingDecayed`.
 
 ### 7.5 Cancel semantics
 - `proposeOrApproveCancel` consent is proven by msg.sender; consents are valid only for the state they were given in (`reportPayment` / `challengeTrade` reset them).
-- Cancel finalization requires both party approvals.
+- Cancel finalization requires both party approvals; a consent can be withdrawn with `revokeCancel` before that.
+
+### 7.6 Settlement acceptance semantics
+- `acceptSettlement(tradeId, expectedProposalId)`: the counterparty passes the `id` of the proposal it saw. If the proposer withdraws and re-proposes, the `id` changes and acceptance reverts with `SettlementProposalMismatch`.
 
 <details>
 <summary>📄 Technical notes</summary>
@@ -380,7 +391,7 @@ only decays for the final 96 hours, so ≈ 34.7% of it is still there to settle 
 - Ping paths are mutually exclusive (conflict guard).  
 - Required wait windows are enforced by state guards.  
 - `burnExpired` finalizes stale challenged trades once max window elapses.  
-- Remaining value is routed to treasury according to contract rules.  
+- The trade's entire escrow balance (decayed part included) goes to treasury.  
 - `proposeOrApproveCancel` consent is proven by msg.sender; consents are valid only for the state they were given in (`reportPayment` / `challengeTrade` reset them).  
 - Cancel finalization requires both party approvals.
 

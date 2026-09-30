@@ -16,7 +16,7 @@
  */
 
 import { useCallback } from 'react';
-import { usePublicClient, useWalletClient, useChainId } from 'wagmi';
+import { usePublicClient, useWalletClient, useChainId, useAccount } from 'wagmi';
 import { parseAbi, getAddress, decodeEventLog } from 'viem';
 import { resolveClientErrorLogUrl } from '../app/apiConfig';
 import { getSupportedChainsMap, isMintTokenEnabled } from '../app/chainPolicy';
@@ -246,25 +246,54 @@ export function extractOrderFilledArgs(receipt, expectedOrderId, escrowAddress =
 //Kontrat adresi geçerlilik kontrolü — hem write hem read fonksiyonları için
 const _isValidAddress = ESCROW_ADDRESS && ESCROW_ADDRESS !== "0x0000000000000000000000000000000000000000";
 
-export function useArafContract() {
+/**
+ * [TR] Ağ kontrolü CÜZDANIN gerçek zincirine bakar. wagmi useChainId() cüzdanın değil yapılandırmanın (config)
+ *      aktif zincirini döndürür; cüzdan yanlış ağdayken bile "doğru" görünürdü. useAccount().chainId cüzdanın
+ *      zinciridir. Backend deployment zinciri biliniyorsa onunla da eşleşmelidir.
+ * [EN] The network guard checks the WALLET's real chain. useChainId() returns the config's chain, so a wallet on
+ *      the wrong network still looked fine. Also compares with the backend deployment chain when known.
+ * @returns {string|null} hata mesajı; null = uygun
+ */
+export function resolveChainMismatch({ walletChainId, expectedChainId = null, supportedChains = {} }) {
+  const chain = Number(walletChainId);
+  const supportedNames = Object.values(supportedChains).join(' veya ');
+  if (walletChainId === null || walletChainId === undefined || !Number.isFinite(chain) || !supportedChains[chain]) {
+    return `Yanlış ağ! Cüzdanınız şu an Chain ID ${walletChainId ?? 'bilinmiyor'} üzerinde. ` +
+      `Araf Protocol sadece ${supportedNames} üzerinde çalışır. ` +
+      `Lütfen cüzdanınızdan ağı değiştirin.`;
+  }
+  const expected = Number(expectedChainId);
+  if (Number.isFinite(expected) && expected > 0 && expected !== chain) {
+    return `Yanlış ağ! Bu dağıtım Chain ID ${expected} üzerinde çalışıyor, cüzdanınız ${chain} üzerinde. ` +
+      `Lütfen cüzdanınızdan ağı değiştirin.`;
+  }
+  return null;
+}
+
+/**
+ * [TR] Okuma hataları varsayılan değerle maskelenmez: bilinmeyen durum çağırana hata olarak iletilir.
+ * [EN] Read failures are surfaced to the caller instead of being masked by defaults.
+ */
+const requireEscrowConfigured = () => {
+  if (!_isValidAddress) throw new Error('VITE_ESCROW_ADDRESS tanımlı değil.');
+};
+
+export function useArafContract({ expectedChainId = null } = {}) {
   const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
-  const chainId = useChainId();
+  const configChainId = useChainId();
+  const account = useAccount();
+  // [TR] Cüzdan bağlı değilse (chainId yok) config zincirine düşülür; yazma zaten walletClient ister.
+  const chainId = account?.chainId ?? configChainId;
   const supportedChains = getSupportedChainsMap();
 
   /*
    * @throws {Error} Desteklenmeyen ağ algılandığında
    */
   const _validateChain = useCallback(() => {
-    if (!supportedChains[chainId]) {
-      const supportedNames = Object.values(supportedChains).join(" veya ");
-      throw new Error(
-        `Yanlış ağ! Cüzdanınız şu an Chain ID ${chainId} üzerinde. ` +
-        `Araf Protocol sadece ${supportedNames} üzerinde çalışır. ` +
-        `Lütfen cüzdanınızdan ağı değiştirin.`
-      );
-    }
-  }, [chainId, supportedChains]);
+    const message = resolveChainMismatch({ walletChainId: chainId, expectedChainId, supportedChains });
+    if (message) throw new Error(message);
+  }, [chainId, expectedChainId, supportedChains]);
 
   /**
    * @dev Temel kontrat çağrısı yardımcisi ve Her işlem öncesi chain ID doğrulanır.
@@ -286,6 +315,7 @@ export function useArafContract() {
       _validateChain();
     };
 
+    let submittedHash = null;
     try {
       // İşlem göndermeden önce tüm kontrolleri yap
       preflightChecks();
@@ -298,6 +328,7 @@ export function useArafContract() {
         args,
       });
 
+      submittedHash = hash;
       // [TR] Pending tx hash'ini sakla — sayfa yenilense bile işlem izi kaybolmasın
       // [EN] Persist pending tx hash so refresh does not lose transaction trace
       if (typeof window !== "undefined") {
@@ -317,6 +348,18 @@ export function useArafContract() {
       }
       return assertReceiptSucceeded(receipt, functionName);
     } catch (error) {
+      // [TR] Kesin başarısız olan işlemin izi silinir; aksi halde yenilemede "bekleyen işlem onaylandı" kurtarması
+      //      başarısız işlemi de başarı gibi gösterirdi. Yalnız bu çağrının kaydı silinir; sonucu belirsiz
+      //      (zaman aşımı) işlemler kurtarma için saklanır.
+      // [EN] Definitively failed txs drop their pending record; timeouts keep it (outcome unknown).
+      if (submittedHash && typeof window !== "undefined" && !/Timeout|NotFound/i.test(String(error?.name || ''))) {
+        try {
+          const stored = JSON.parse(localStorage.getItem("araf_pending_tx") || 'null');
+          if (stored?.hash === submittedHash) localStorage.removeItem("araf_pending_tx");
+        } catch {
+          localStorage.removeItem("araf_pending_tx");
+        }
+      }
       decorateContractError(error);
       //Revert hatalarını daha okunabilir hale getir
       const errorMessage = error.shortMessage || error.reason || error.message || "Bilinmeyen Kontrat Hatası";
@@ -690,54 +733,42 @@ export function useArafContract() {
     ),
     getCooldownRemaining: useCallback(
       async (address) => {
-        if (!_isValidAddress) return 0n;
-        try {
-          return await publicClient.readContract({
-            address: getAddress(ESCROW_ADDRESS),
-            abi: ArafEscrowABI,
-            functionName: 'getCooldownRemaining',
-            args: [getAddress(address)],
-          });
-        } catch {
-          return 0n;
-        }
+        requireEscrowConfigured();
+        return publicClient.readContract({
+          address: getAddress(ESCROW_ADDRESS),
+          abi: ArafEscrowABI,
+          functionName: 'getCooldownRemaining',
+          args: [getAddress(address)],
+        });
       },
       [publicClient]
     ),
     getWalletRegisteredAt: useCallback(
       async (address) => {
-        if (!_isValidAddress) return 0n;
-        try {
-          return await publicClient.readContract({
-            address: getAddress(ESCROW_ADDRESS),
-            abi: ArafEscrowABI,
-            functionName: 'walletRegisteredAt',
-            args: [getAddress(address)],
-          });
-        } catch {
-          return 0n;
-        }
+        // [TR] Hata 0n'e çevrilmez: 0n "kayıtsız" demektir; okunamayan durum çağırana fırlatılır.
+        requireEscrowConfigured();
+        return publicClient.readContract({
+          address: getAddress(ESCROW_ADDRESS),
+          abi: ArafEscrowABI,
+          functionName: 'walletRegisteredAt',
+          args: [getAddress(address)],
+        });
       },
       [publicClient]
     ),
     getTakerFeeBps: useCallback(
       async () => {
-        if (!_isValidAddress) return 15n;
-        try {
-          const feeConfig = await publicClient.readContract({
-            address: getAddress(ESCROW_ADDRESS),
-            abi: ArafEscrowABI,
-            functionName: 'getFeeConfig',
-          });
-          const takerFee = typeof feeConfig.currentTakerFeeBps !== 'undefined'
-            ? feeConfig.currentTakerFeeBps
-            : feeConfig[0];
-          return BigInt(takerFee ?? 15);
-        } catch {
-          // [TR] Kontrat varsayılanı DEFAULT_TAKER_FEE_BPS = 15.
-          // [EN] Contract default DEFAULT_TAKER_FEE_BPS = 15.
-          return 15n;
-        }
+        requireEscrowConfigured();
+        const feeConfig = await publicClient.readContract({
+          address: getAddress(ESCROW_ADDRESS),
+          abi: ArafEscrowABI,
+          functionName: 'getFeeConfig',
+        });
+        const takerFee = typeof feeConfig?.currentTakerFeeBps !== 'undefined'
+          ? feeConfig.currentTakerFeeBps
+          : feeConfig?.[0];
+        if (takerFee === undefined || takerFee === null) throw new Error('getFeeConfig yanıtı geçersiz.');
+        return BigInt(takerFee);
       },
       [publicClient]
     ),
@@ -774,18 +805,13 @@ export function useArafContract() {
     
     getFirstSuccessfulTradeAt: useCallback(
       async (address) => {
-        if (!_isValidAddress) return 0n;
-        try {
-          return await publicClient.readContract({
-            address: getAddress(ESCROW_ADDRESS),
-            abi: ArafEscrowABI,
-            functionName: 'getFirstSuccessfulTradeAt',
-            args: [getAddress(address)],
-          });
-        } catch (err) {
-          console.error("[ArafContract] getFirstSuccessfulTradeAt hatası:", err.message);
-          return 0n;
-        }
+        requireEscrowConfigured();
+        return publicClient.readContract({
+          address: getAddress(ESCROW_ADDRESS),
+          abi: ArafEscrowABI,
+          functionName: 'getFirstSuccessfulTradeAt',
+          args: [getAddress(address)],
+        });
       },
       [publicClient]
     ),

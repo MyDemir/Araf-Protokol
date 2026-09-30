@@ -172,6 +172,38 @@ async function deployMockToken(name, symbol, decimals) {
   return token;
 }
 
+// [TR] ArafEscrow iki external library'ye linklenir (EIP-170 bütçesi). Deploy sırası:
+//      1) ArafReputationLib  2) ArafSettlementLib  (bağımsız, sırası önemsiz)  3) ArafEscrow (linkli).
+//      Library adresleri escrow bytecode'una gömülür; sonradan değiştirilemez.
+// [EN] ArafEscrow links two external libraries. Order: ReputationLib, SettlementLib, then the linked escrow.
+const ESCROW_LIBRARIES = ["ArafReputationLib", "ArafSettlementLib"];
+
+async function deployEscrowLibraries(signer) {
+  const libraries = {};
+  const deployTxs = {};
+  for (const name of ESCROW_LIBRARIES) {
+    const factory = await ethers.getContractFactory(name, signer);
+    const lib = await factory.deploy();
+    await lib.waitForDeployment();
+    libraries[name] = await lib.getAddress();
+    deployTxs[name] = lib.deploymentTransaction()?.hash ?? null;
+  }
+  return { libraries, deployTxs };
+}
+
+async function getEscrowFactory(signer) {
+  const { libraries, deployTxs } = await deployEscrowLibraries(signer);
+  const factory = await ethers.getContractFactory("ArafEscrow", { signer, libraries });
+  return { factory, libraries, deployTxs };
+}
+
+async function deployEscrowWithLibraries(treasuryAddress, signer) {
+  const { factory, libraries, deployTxs } = await getEscrowFactory(signer);
+  const escrow = await factory.deploy(treasuryAddress);
+  await escrow.waitForDeployment();
+  return { escrow, libraries, libraryDeployTxs: deployTxs };
+}
+
 async function getTokenConfigSnapshot(escrow, tokenAddress) {
   // Authoritative read path: explicit getter.
   // Not: Solidity mapping auto-getter'ı struct içindeki fixed array alanını güvenilir döndürmeyebilir.
@@ -348,10 +380,9 @@ async function main() {
     }
   }
 
-  console.log("⏳ ArafEscrow deploy ediliyor...");
-  const ArafEscrow = await ethers.getContractFactory("ArafEscrow");
-  const escrow = await ArafEscrow.deploy(treasuryAddress);
-  await escrow.waitForDeployment();
+  console.log("⏳ ArafEscrow library'leri + ArafEscrow deploy ediliyor (ReputationLib -> SettlementLib -> Escrow)...");
+  const { escrow, libraries, libraryDeployTxs } = await deployEscrowWithLibraries(treasuryAddress, deployer);
+  for (const [name, addr] of Object.entries(libraries)) console.log(`✅ ${name}: ${addr}`);
   const escrowAddress = await escrow.getAddress();
   const deployTx = escrow.deploymentTransaction();
 
@@ -426,6 +457,8 @@ async function main() {
     deployMode,
     contractName: "ArafEscrow",
     escrowAddress,
+    libraries,
+    libraryDeployTxHashes: libraryDeployTxs,
     treasuryAddress,
     finalOwnerAddress,
     deployer: deployer.address,
@@ -470,6 +503,10 @@ if (require.main === module) {
 module.exports = {
   main,
   getDeployMode,
+  ESCROW_LIBRARIES,
+  deployEscrowLibraries,
+  getEscrowFactory,
+  deployEscrowWithLibraries,
   resolveProductionTokenConfig,
   resolveExternalTokenConfig,
   resolveFinalOwnerAddress,

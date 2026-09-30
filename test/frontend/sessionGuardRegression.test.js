@@ -11,7 +11,7 @@ describe('session guard regression checks', () => {
 
   it('does not force home navigation on every session clear', () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), 'src/app/useAppSessionData.jsx'), 'utf8');
-    expect(source).toContain('const { navigateHome = false, closeModals = true } = options;');
+    expect(source).toContain('const { navigateHome = false, closeModals = true, clearPendingTx = false } = options;');
     expect(source).toContain('if (navigateHome) {');
   });
 

@@ -1,6 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { time, loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
+const { getEscrowFactory } = require("../../contracts/scripts/deploy");
 
 describe("ArafEscrow V3", function () {
   const USDT_DECIMALS = 6;
@@ -55,7 +56,7 @@ describe("ArafEscrow V3", function () {
     const MockERC20 = await ethers.getContractFactory("MockERC20");
     const token = await MockERC20.deploy("Mock USDT", "USDT", USDT_DECIMALS);
 
-    const ArafEscrow = await ethers.getContractFactory("ArafEscrow");
+    const { factory: ArafEscrow } = await getEscrowFactory();
     const escrow = await ArafEscrow.deploy(treasury.address);
 
     const tokenAddress = await token.getAddress();

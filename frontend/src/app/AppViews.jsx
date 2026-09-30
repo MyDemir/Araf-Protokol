@@ -30,6 +30,46 @@ const StatChange = ({ value }) => {
   return <span className={`text-[10px] ml-2 font-bold ${isPositive ? 'text-success' : 'text-danger'}`}>{isPositive ? '▲' : '▼'}{Math.abs(value).toFixed(1)}%</span>;
 };
 
+// [TR] P2 — Modül düzeyi bileşenler: render içinde tanımlanınca her render'da yeni tip oluşur, alt ağaç yeniden
+//      mount olur (odak/kaydırma kaybı). Burada kimlikleri sabit.
+// [EN] P2 — Module-level components: defining them inside render creates a new type per render and remounts the
+//      subtree (lost focus/scroll). Here their identity is stable.
+// [TR] Tek satır bileşeni: ikon + etiket + sayaç. Tüm drawer aynı ritimde görünür.
+// [EN] One row primitive (icon + label + count) so every drawer row shares one rhythm.
+const Row = ({ icon, label, count, active, tone = 'default', onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    aria-pressed={active ? 'true' : undefined}
+    className={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition ${active ? 'bg-elevated text-textPrimary' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/60'}`}
+  >
+    <span className={`shrink-0 flex items-center justify-center w-5 ${tone === 'danger' ? 'text-danger' : active ? 'text-textPrimary' : 'text-textMuted'}`}>{icon}</span>
+    <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+    {count != null && (
+      <span className={`min-w-[1.5rem] h-5 px-1.5 rounded-md text-[11px] font-semibold tabular-nums flex items-center justify-center ${typeof count === 'number' && count > 0 ? (tone === 'danger' ? 'bg-danger/15 text-danger' : 'bg-elevated text-textPrimary') : 'text-textMuted'}`}>{count}</span>
+    )}
+  </button>
+);
+const SectionLabel = ({ children }) => (
+  <p className="px-3 mb-1.5 text-[11px] font-semibold tracking-wider text-textMuted">{children}</p>
+);
+
+const Segmented = ({ items, value, onChange, label }) => (
+  <div role="tablist" aria-label={label} className="flex min-w-0 bg-surface border border-borderSubtle rounded-lg p-1">
+    {items.map((it) => (
+      <span
+        key={it.value}
+        role="tab"
+        tabIndex={0}
+        aria-selected={value === it.value}
+        onClick={() => onChange(it.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onChange(it.value); } }}
+        className={`flex-1 min-w-0 md:flex-none cursor-pointer select-none text-center px-2 md:px-3 h-8 leading-8 rounded-md text-xs font-semibold transition ${value === it.value ? (it.activeClass || 'bg-elevated text-textPrimary shadow-sm') : 'text-textMuted hover:text-textPrimary'}`}
+      >{it.label}</span>
+    ))}
+  </div>
+);
+
 // [TR] Ayarlanmamış sosyal linkler gösterilmez (önceden github.com / x.com ana sayfasına gidiyordu).
 // [EN] Unconfigured social links are hidden (they used to point at bare github.com / x.com).
 const SOCIAL_LINKS = {
@@ -154,17 +194,27 @@ export const buildAppViews = (ctx) => {
     settlementContractFns,
   } = ctx;
 
-  // [TR] Frontend admin menü görünürlüğü yalnız UX katmanıdır.
-  //      Nihai yetki doğrulaması backend ADMIN_WALLETS + auth chain tarafındadır.
-  // [EN] Frontend admin menu visibility is UX-only; backend remains authority.
+  // [TR] Admin menü görünürlüğü yalnız UX katmanıdır; nihai yetki backend ADMIN_WALLETS + auth zincirindedir.
+  //      F19.5 — Sunucu yanıtı (ctx.isAdmin: boolean) varsa tek doğrudur: true → göster, false → gizle.
+  //      Şu an backend'de böyle bir uç yok (yalnız 403'lü /api/admin/*); yanıt yoksa geçiş dönemi davranışı:
+  //      VITE_ADMIN_WALLETS doluysa yalnız listedeki cüzdanlara, boşsa imzalı her kullanıcıya gösterilir.
+  //      NOT: env listesi istemci paketine girer; sunucu bayrağı bağlanınca bu yedek kaldırılmalı.
+  // [EN] Admin menu visibility is UX-only. A server answer (ctx.isAdmin: boolean) is authoritative. No such endpoint
+  //      exists yet (only 403-gated /api/admin/*), so without one: a non-empty VITE_ADMIN_WALLETS narrows the entry to
+  //      listed wallets; an empty list keeps it visible to signed-in users. The env list ships in the bundle;
+  //      drop this fallback once the server flag is wired.
   const adminWalletAllowlist = String(import.meta.env.VITE_ADMIN_WALLETS || "")
     .split(",")
     .map((w) => w.trim().toLowerCase())
     .filter(Boolean);
   const connectedWalletLower = typeof address === "string" ? address.toLowerCase() : null;
-  const isLikelyAdminWallet =
-    Boolean(connectedWalletLower) && adminWalletAllowlist.includes(connectedWalletLower);
-  const canSeeAdminEntry = Boolean(isConnected && isAuthenticated && connectedWalletLower);
+  const serverAdminAnswer = typeof ctx.isAdmin === "boolean" ? ctx.isAdmin : null;
+  const inEnvAllowlist = Boolean(connectedWalletLower) && adminWalletAllowlist.includes(connectedWalletLower);
+  const isLikelyAdminWallet = serverAdminAnswer === true || (serverAdminAnswer === null && inEnvAllowlist);
+  const adminAllowedByPolicy = serverAdminAnswer !== null
+    ? serverAdminAnswer
+    : (adminWalletAllowlist.length === 0 || inEnvAllowlist);
+  const canSeeAdminEntry = Boolean(isConnected && isAuthenticated && connectedWalletLower && adminAllowedByPolicy);
   // [TR] İşlem Odası, Takip, Profil ve Geçmiş yalnız imzalı oturumla anlamlıdır; oturum yokken gezinmede
   //      gösterilmez (App.jsx de bu görünümlerden ana sayfaya yönlendirir). UI Lab senaryoları istisnadır.
   // [EN] Trade room, tracking, profile and history need a signed session; hidden from navigation otherwise.
@@ -224,25 +274,6 @@ export const buildAppViews = (ctx) => {
     const goToRoom = (escrow) => buildGoToTradeRoomAction({
       escrow, setActiveTrade, setUserRole, setTradeState, setChargebackAccepted, setCurrentView, setSidebarOpen,
     });
-    // [TR] Tek satır bileşeni: ikon + etiket + sayaç. Tüm drawer aynı ritimde görünür.
-    // [EN] One row primitive (icon + label + count) so every drawer row shares one rhythm.
-    const Row = ({ icon, label, count, active, tone = 'default', onClick }) => (
-      <button
-        type="button"
-        onClick={onClick}
-        aria-pressed={active ? 'true' : undefined}
-        className={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition ${active ? 'bg-elevated text-textPrimary' : 'text-textSecondary hover:text-textPrimary hover:bg-elevated/60'}`}
-      >
-        <span className={`shrink-0 flex items-center justify-center w-5 ${tone === 'danger' ? 'text-danger' : active ? 'text-textPrimary' : 'text-textMuted'}`}>{icon}</span>
-        <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-        {count != null && (
-          <span className={`min-w-[1.5rem] h-5 px-1.5 rounded-md text-[11px] font-semibold tabular-nums flex items-center justify-center ${typeof count === 'number' && count > 0 ? (tone === 'danger' ? 'bg-danger/15 text-danger' : 'bg-elevated text-textPrimary') : 'text-textMuted'}`}>{count}</span>
-        )}
-      </button>
-    );
-    const SectionLabel = ({ children }) => (
-      <p className="px-3 mb-1.5 text-[11px] font-semibold tracking-wider text-textMuted">{children}</p>
-    );
     const tokenMark = (letter, cls) => (
       <span className={`w-4 h-4 rounded-full text-[9px] font-bold text-white flex items-center justify-center ${cls}`} aria-hidden="true">{letter}</span>
     );
@@ -535,22 +566,6 @@ export const buildAppViews = (ctx) => {
         <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-textMuted" strokeWidth={1.8} aria-hidden="true" />
       </label>
     );
-    const Segmented = ({ items, value, onChange, label }) => (
-      <div role="tablist" aria-label={label} className="flex min-w-0 bg-surface border border-borderSubtle rounded-lg p-1">
-        {items.map((it) => (
-          <span
-            key={it.value}
-            role="tab"
-            tabIndex={0}
-            aria-selected={value === it.value}
-            onClick={() => onChange(it.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onChange(it.value); } }}
-            className={`flex-1 min-w-0 md:flex-none cursor-pointer select-none text-center px-2 md:px-3 h-8 leading-8 rounded-md text-xs font-semibold transition ${value === it.value ? (it.activeClass || 'bg-elevated text-textPrimary shadow-sm') : 'text-textMuted hover:text-textPrimary'}`}
-          >{it.label}</span>
-        ))}
-      </div>
-    );
-
     return (
       <div className="w-full max-w-[1200px] min-w-0 p-4 md:p-8">
         <div className="mb-4 flex items-center justify-between gap-3">
@@ -677,10 +692,16 @@ export const buildAppViews = (ctx) => {
               const tokenAddr    = SUPPORTED_TOKEN_ADDRESSES[order.crypto || 'USDT'];
               const isTokenConfigured = Boolean(tokenAddr);
               const isCorrectChain    = isSupportedChainId(chainId);
-              const isFunded          = sybilStatus ? sybilStatus.funded : true;
-              const isCooldownOk      = sybilStatus ? sybilStatus.cooldownOk : true;
-              const finalCanTakeOrder = canTakeOrder && isCooldownOk && isFunded && !isPaused && isTokenConfigured && isCorrectChain;
               const isSellSide = order.side === 'SELL_CRYPTO';
+              // [TR] F13 — Taker giriş kapıları (yaş / dust / cooldown) yalnız SATIŞ emrini dolduran kişiye uygulanır:
+              //      alış emrini dolduran kontratta maker'dır (_enforceTakerEntry emir sahibine bakar). Tier kilidi iki yönde de geçerli.
+              //      Cooldown yalnız Tier 0/1 emirlerinde zorlanır (_getCooldownForTier).
+              // [EN] F13 — Taker entry gates (age / dust / cooldown) apply only when filling a SELL order; the filler of a
+              //      BUY order is the maker on-chain. The tier lock stays in both directions. Cooldown is enforced for tier 0/1 only.
+              const isFunded          = !isSellSide || (sybilStatus ? sybilStatus.funded !== false : true);
+              const isAged            = !isSellSide || (sybilStatus ? sybilStatus.aged !== false : true);
+              const isCooldownOk      = !isSellSide || Number(order.tier) >= 2 || (sybilStatus ? sybilStatus.cooldownOk !== false : true);
+              const finalCanTakeOrder = canTakeOrder && isCooldownOk && isFunded && isAged && !isPaused && isTokenConfigured && isCorrectChain;
               // [TR] Renk kullanıcının yapacağı işi anlatır: "Satın Al" yeşil, "Sat" kırmızı. Emir yönü rozeti nötrdür;
               //      renkli rozet (ör. yeşil "Satış emri") yanındaki butonla çelişiyordu.
               // [EN] Colour follows the viewer's action (buy green, sell red); the order-side badge stays neutral.
@@ -699,6 +720,7 @@ export const buildAppViews = (ctx) => {
                 isMyOwnAd           ? <>{tr ? 'Sizin emriniz' : 'Your order'}</> :
                 isTierLocked        ? <>{icon(Lock)} {tr ? `Tier ${order.tier} gerekli` : `Tier ${order.tier} required`}</> :
                 !canTakeOrder       ? <>{icon(Lock)} {tr ? 'Kilitli' : 'Locked'}</> :
+                !isAged             ? <>{icon(Hourglass)} {tr ? 'Cüzdan çok yeni' : 'Wallet too new'}</> :
                 !isFunded           ? <>{icon(TriangleAlert)} {tr ? 'Bakiye yetersiz' : 'Low balance'}</> :
                 !isCooldownOk       ? <>{icon(Hourglass)} {tr ? `${Math.ceil((sybilStatus?.cooldownRemaining || 0) / 60)} dk` : `${Math.ceil((sybilStatus?.cooldownRemaining || 0) / 60)} min`}</> :
                 isContractLoading   ? <>{icon(LoaderCircle, true)}{loadingText || (tr ? 'İşleniyor…' : 'Processing…')}</> :
@@ -1004,7 +1026,7 @@ export const buildAppViews = (ctx) => {
             const showTakerPii = isTaker && ['LOCKED', 'PAID'].includes(roomState);
             const beforeActions = showTakerPii ? (
               <div className="mb-4">
-                <PIIDisplay tradeId={activeTrade?.id} lang={lang} authenticatedFetch={authenticatedFetch} />
+                <PIIDisplay key={activeTrade?.id} tradeId={activeTrade?.id} lang={lang} authenticatedFetch={authenticatedFetch} />
               </div>
             ) : null;
 

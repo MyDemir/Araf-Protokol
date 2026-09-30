@@ -1,6 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { loadFixture, time } = require("@nomicfoundation/hardhat-network-helpers");
+const { getEscrowFactory } = require("../../contracts/scripts/deploy");
 
 describe("ArafEscrow V3 reputation authority", () => {
   const USDT_DECIMALS = 6;
@@ -38,7 +39,7 @@ describe("ArafEscrow V3 reputation authority", () => {
     const [owner, treasury, maker, taker, stranger] = await ethers.getSigners();
     const MockERC20 = await ethers.getContractFactory("MockERC20");
     const mockUSDT = await MockERC20.deploy("Mock USDT", "USDT", USDT_DECIMALS);
-    const Escrow = await ethers.getContractFactory("ArafEscrow");
+    const { factory: Escrow } = await getEscrowFactory();
     const escrow = await Escrow.deploy(treasury.address);
 
     const token = await mockUSDT.getAddress();

@@ -1,6 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { loadFixture, time } = require("@nomicfoundation/hardhat-network-helpers");
+const { getEscrowFactory } = require("../../contracts/scripts/deploy");
 
 describe("ArafEscrow protocol revenue classification", function () {
   const USDT_DECIMALS = 6;
@@ -57,7 +58,7 @@ describe("ArafEscrow protocol revenue classification", function () {
     const MockERC20 = await ethers.getContractFactory("MockERC20");
     const token = await MockERC20.deploy("Mock USDT", "USDT", USDT_DECIMALS);
 
-    const Escrow = await ethers.getContractFactory("ArafEscrow");
+    const { factory: Escrow } = await getEscrowFactory();
     const escrow = await Escrow.deploy(treasury.address);
 
     const tokenAddress = await token.getAddress();
@@ -87,7 +88,7 @@ describe("ArafEscrow protocol revenue classification", function () {
     const Receiver = await ethers.getContractFactory("MockRevenueReceiver");
     const receiver = await Receiver.deploy();
 
-    const Escrow = await ethers.getContractFactory("ArafEscrow");
+    const { factory: Escrow } = await getEscrowFactory();
     const escrow = await Escrow.deploy(await receiver.getAddress());
 
     const tokenAddress = await token.getAddress();
@@ -116,7 +117,7 @@ describe("ArafEscrow protocol revenue classification", function () {
     const Reverter = await ethers.getContractFactory("MockRevenueReceiverReverter");
     const reverter = await Reverter.deploy();
 
-    const Escrow = await ethers.getContractFactory("ArafEscrow");
+    const { factory: Escrow } = await getEscrowFactory();
     const escrow = await Escrow.deploy(await reverter.getAddress());
 
     const tokenAddress = await token.getAddress();
@@ -228,7 +229,7 @@ describe("ArafEscrow protocol revenue classification", function () {
 
     const now = await time.latest();
     await escrow.connect(maker).proposeSettlement(tradeId, 5000, now + 3600);
-    const tx = await escrow.connect(taker).acceptSettlement(tradeId);
+    const tx = await escrow.connect(taker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id);
     const receipt = await tx.wait();
     const revenueEvent = await firstEventArgs(receipt, escrow.interface, "ProtocolRevenueSent");
     expect(revenueEvent.kind).to.equal(REVENUE_KIND.PARTIAL_SETTLEMENT_FEE);
@@ -345,7 +346,7 @@ describe("ArafEscrow protocol revenue classification", function () {
     const makerBefore = await token.balanceOf(maker.address);
     const takerBefore = await token.balanceOf(taker.address);
 
-    await escrow.connect(taker).acceptSettlement(tradeId);
+    await escrow.connect(taker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id);
 
     const treasuryAfter = await token.balanceOf(treasury.address);
     const makerAfter = await token.balanceOf(maker.address);

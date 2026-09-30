@@ -26,6 +26,7 @@ const ALGORITHM  = "aes-256-gcm";
 const IV_LENGTH  = 12;    // GCM recommended
 const TAG_LENGTH = 16;
 const KEY_LENGTH = 32;    // 256-bit
+const VAULT_TIMEOUT_MS = 10_000;
 
 // Node.js native hkdf — callback tabanlı, promisify ile async kullanılır
 const hkdfAsync = promisify(crypto.hkdf);
@@ -123,37 +124,47 @@ async function _getMasterKey() {
   }
 
   // ── HashiCorp Vault Provider ─────────────────────────────────────────────
-  // Vault Transit Secret Engine:
+  // Vault Transit Secret Engine (AWS yoluyla aynı envelope modeli):
   //   1. Vault'ta transit engine enable edin: vault secrets enable transit
   //   2. Bir key oluşturun: vault write -f transit/keys/araf-master-key
-  //   3. Data key oluşturun: vault write transit/datakey/plaintext/araf-master-key
-  //   4. Plaintext (base64) key'i döner — bunu runtime'da her seferinde çağırın
+  //   3. BİR KEZ data key üretin: vault write transit/datakey/wrapped/araf-master-key
+  //      (wrapped modu yalnız ciphertext döner; plaintext döndüren `datakey/plaintext`
+  //       ilk üretimde alınıp ciphertext ile birlikte saklanabilir ama runtime'da ÇAĞRILMAZ.)
+  //   4. Dönen "vault:v1:..." ciphertext'i VAULT_ENCRYPTED_DATA_KEY olarak env'e koyun.
+  //   5. Runtime'da transit/decrypt ile bu SABİT wrapped key açılır → restart sonrası aynı
+  //      master key elde edilir, PII çözülebilir kalır.
   //
   // .env'de gerekli değişkenler:
   //   KMS_PROVIDER=vault
   //   VAULT_ADDR=https://vault.araf.xyz:8200
   //   VAULT_TOKEN=<vault-token>
-  //   VAULT_KEY_NAME=araf-master-key
+  //   VAULT_KEY_NAME=araf-master-key           (opsiyonel, varsayılan araf-master-key)
+  //   VAULT_ENCRYPTED_DATA_KEY=vault:v1:<...>  (ZORUNLU — eksikse fail-closed)
   if (provider === "vault") {
     try {
-      const https     = require("https");
-      const vaultAddr = process.env.VAULT_ADDR;
-      const vaultToken= process.env.VAULT_TOKEN;
-      const keyName   = process.env.VAULT_KEY_NAME || "araf-master-key";
+      const vaultAddr    = process.env.VAULT_ADDR;
+      const vaultToken   = process.env.VAULT_TOKEN;
+      const keyName      = process.env.VAULT_KEY_NAME || "araf-master-key";
+      const wrappedKey   = process.env.VAULT_ENCRYPTED_DATA_KEY;
 
       if (!vaultAddr || !vaultToken) {
         throw new Error("VAULT_ADDR ve VAULT_TOKEN .env'de tanımlı olmalı");
       }
+      if (!wrappedKey) {
+        // [TR] Sabit wrapped data key olmadan her çağrıda farklı anahtar üretilirdi;
+        //      restart sonrası tüm PII çözülemez hale gelirdi. Bu yüzden fail-closed.
+        throw new Error("VAULT_ENCRYPTED_DATA_KEY .env'de tanımlı değil");
+      }
 
-      // Vault Transit: datakey endpoint'inden yeni plaintext key al
-      const url = `${vaultAddr}/v1/transit/datakey/plaintext/${keyName}`;
+      const url = `${vaultAddr.replace(/\/+$/, "")}/v1/transit/decrypt/${encodeURIComponent(keyName)}`;
       const response = await fetch(url, {
         method: "POST",
         headers: {
           "X-Vault-Token": vaultToken,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ ciphertext: wrappedKey }),
+        signal: AbortSignal.timeout(VAULT_TIMEOUT_MS),
       });
 
       if (!response.ok) {
@@ -161,11 +172,15 @@ async function _getMasterKey() {
       }
 
       const data = await response.json();
-            const vaultPlaintext = Buffer.from(data.data.plaintext, "base64");
+      const b64 = data?.data?.plaintext;
+      if (typeof b64 !== "string" || !b64) {
+        throw new Error("Vault decrypt yanıtında plaintext yok");
+      }
+      const vaultPlaintext = Buffer.from(b64, "base64");
       _assertMasterKeyLengthOrThrow(vaultPlaintext, "VAULT");
-      _masterKeyCache = Buffer.from(vaultPlaintext);
+      _masterKeyCache = vaultPlaintext;
 
-      logger.info("[Encryption] ✅ Master key HashiCorp Vault'tan başarıyla alındı.");
+      logger.info("[Encryption] ✅ Master key HashiCorp Vault transit/decrypt ile çözüldü.");
       return _masterKeyCache;
     } catch (err) {
       throw new Error(`Vault master key alma hatası: ${err.message}`);
@@ -200,6 +215,9 @@ async function runProductionKmsStartupSelfTest() {
   if (provider === "vault") {
     if (!process.env.VAULT_ADDR || !process.env.VAULT_TOKEN) {
       throw new Error("VAULT_ADDR ve VAULT_TOKEN production'da zorunlu");
+    }
+    if (!process.env.VAULT_ENCRYPTED_DATA_KEY) {
+      throw new Error("VAULT_ENCRYPTED_DATA_KEY production'da zorunlu");
     }
   }
 
@@ -311,9 +329,67 @@ function _normalizeGenericDetailsForHash(details = {}) {
   return JSON.stringify(sorted);
 }
 
+/**
+ * LEGACY (scheme "sha256"): tuzsuz SHA-256. Düşük entropili IBAN'lar için brute-force ile
+ * tersine çevrilebildiğinden yeni kayıtlar için KULLANILMAZ; yalnız eski kayıtlarla
+ * karşılaştırma yolu olarak korunur.
+ */
 function buildPayoutFingerprint(details = {}) {
   const normalized = _normalizeGenericDetailsForHash(details);
   return crypto.createHash("sha256").update(normalized).digest("hex");
+}
+
+const FINGERPRINT_SCHEME_LEGACY = "sha256";
+const FINGERPRINT_SCHEME_HMAC = "hmac-v1";
+
+/**
+ * Master key'den amaç-ayrımlı HMAC anahtarı türetir (HKDF). Master key sızmadan
+ * fingerprint/ip_hash değerlerinden girdi geri çıkarılamaz.
+ */
+async function _deriveHmacKey(purpose) {
+  const masterKey = await _getMasterKey();
+  const salt = crypto.createHash("sha256").update("araf-hmac-salt-v1").digest();
+  const key = await hkdfAsync("sha256", masterKey, salt, Buffer.from(`araf-hmac:${purpose}`), KEY_LENGTH);
+  return Buffer.from(key);
+}
+
+/**
+ * Master-key-türevli HMAC-SHA256 (hex). purpose: "payout-fingerprint" | "chargeback-ip" | ...
+ * @param {string} purpose
+ * @param {string} value
+ */
+async function hmacDigest(purpose, value) {
+  const key = await _deriveHmacKey(purpose);
+  try {
+    return crypto.createHmac("sha256", key).update(String(value)).digest("hex");
+  } finally {
+    key.fill(0);
+  }
+}
+
+/** Yeni fingerprint (scheme "hmac-v1"). */
+async function buildPayoutFingerprintHmac(details = {}) {
+  return hmacDigest("payout-fingerprint", _normalizeGenericDetailsForHash(details));
+}
+
+/**
+ * Saklı fingerprint ile verilen detayları, saklı kaydın şemasına göre karşılaştırır.
+ * Şeması olmayan (eski) kayıtlar "sha256" kabul edilir.
+ *
+ * @param {Record<string, any>} details
+ * @param {{ hash?: string|null, hash_scheme?: string|null }|null|undefined} storedFingerprint
+ * @returns {Promise<boolean>}
+ */
+async function payoutFingerprintMatches(details, storedFingerprint) {
+  const storedHash = storedFingerprint?.hash;
+  if (!storedHash) return false;
+  const scheme = storedFingerprint?.hash_scheme || FINGERPRINT_SCHEME_LEGACY;
+  const candidate = scheme === FINGERPRINT_SCHEME_HMAC
+    ? await buildPayoutFingerprintHmac(details)
+    : buildPayoutFingerprint(details);
+  const a = Buffer.from(candidate);
+  const b = Buffer.from(String(storedHash));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 /**
@@ -347,7 +423,8 @@ async function encryptPayoutProfile(rawProfile, walletAddress) {
     },
     payout_details_enc,
     fingerprint: {
-      hash: buildPayoutFingerprint(safeDetails),
+      hash: await buildPayoutFingerprintHmac(safeDetails),
+      hash_scheme: FINGERPRINT_SCHEME_HMAC,
       version: Number.isInteger(rawProfile?.fingerprintVersion) ? rawProfile.fingerprintVersion : 0,
       last_changed_at: new Date(),
     },
@@ -398,6 +475,11 @@ module.exports = {
   encryptPayoutProfile,
   decryptPayoutProfile,
   buildPayoutFingerprint,
+  buildPayoutFingerprintHmac,
+  payoutFingerprintMatches,
+  hmacDigest,
+  FINGERPRINT_SCHEME_HMAC,
+  FINGERPRINT_SCHEME_LEGACY,
   encryptField,
   decryptField,
   clearMasterKeyCache,

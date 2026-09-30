@@ -164,7 +164,7 @@ describe('frontend migration scaffold baseline', () => {
       'antiSybilCheck',
     ];
 
-    expect(appSource).toContain('} = useArafContract();');
+    expect(appSource).toContain('} = useArafContract({ expectedChainId: deploymentChainId });');
     requiredContractMethods.forEach((method) => {
       expect(appSource, `${method} must remain destructured in App.jsx`).toMatch(new RegExp(`\\b${method}\\b`));
     });

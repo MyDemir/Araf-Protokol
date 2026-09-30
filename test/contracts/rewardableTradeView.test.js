@@ -1,6 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { loadFixture, time } = require("@nomicfoundation/hardhat-network-helpers");
+const { getEscrowFactory } = require("../../contracts/scripts/deploy");
 
 describe("ArafEscrow rewardable trade view", function () {
   const USDT_DECIMALS = 6;
@@ -48,7 +49,7 @@ describe("ArafEscrow rewardable trade view", function () {
     const MockERC20 = await ethers.getContractFactory("MockERC20");
     const token = await MockERC20.deploy("Mock USDT", "USDT", USDT_DECIMALS);
 
-    const Escrow = await ethers.getContractFactory("ArafEscrow");
+    const { factory: Escrow } = await getEscrowFactory();
     const escrow = await Escrow.deploy(treasury.address);
 
     const tokenAddress = await token.getAddress();
@@ -163,7 +164,7 @@ describe("ArafEscrow rewardable trade view", function () {
 
     const now = await time.latest();
     await escrow.connect(maker).proposeSettlement(tradeId, 6000, now + 3600);
-    const tx = await escrow.connect(taker).acceptSettlement(tradeId);
+    const tx = await escrow.connect(taker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id);
     const receipt = await tx.wait();
     const finalized = await firstEventArgs(receipt, escrow.interface, "SettlementFinalized");
 

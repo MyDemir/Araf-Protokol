@@ -48,6 +48,23 @@ const SAFE_ORDER_PROJECTION_FIELDS = Object.fromEntries(SAFE_ORDER_PROJECTION.sp
 // [TR] min_amount token birimindedir; her token için kendi ondalığıyla ham birime çevrilir.
 //      Ondalık bilinmiyorsa null döner (filtre güvenle uygulanamaz).
 // [EN] min_amount is in token units, converted per token with its own decimals; null if unknown.
+// [TR] Float çarpımı (x * 10**d) yerine ondalık metin üstünden tam sayı (BigInt) dönüşümü.
+//      Ondalıktan fazla basamak varsa yukarı yuvarlanır (tutar en az istenen kadar olmalı).
+// [EN] Integer-safe decimal→raw-unit conversion; extra fractional digits round up.
+function _toRawUnits(amount, decimals) {
+  const text = typeof amount === "string"
+    ? amount.trim()
+    : Number(amount).toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 20 });
+  const m = /^(\d+)(?:\.(\d+))?$/.exec(text);
+  if (!m) return null;
+  const frac = m[2] || "";
+  const kept = frac.slice(0, decimals).padEnd(decimals, "0");
+  let raw = BigInt(m[1] + kept);
+  if (/[1-9]/.test(frac.slice(decimals))) raw += 1n;
+  const asNumber = Number(raw);
+  return Number.isFinite(asNumber) ? asNumber : null;
+}
+
 function _buildMinRemainingClauses(minAmount, tokenAddress) {
   let tokenMap;
   try {
@@ -63,7 +80,8 @@ function _buildMinRemainingClauses(minAmount, tokenAddress) {
     if (!Number.isInteger(decimals) || decimals < 0) continue;
     // [TR] Tutar bu emirle tek fill'de alınabilmeli: kalan >= tutar ve (min fill <= tutar ya da tutar kalanın tamamı).
     // [EN] The amount must be fillable in one go: remaining >= amount and (min fill <= amount or it is the remainder).
-    const raw = minAmount * 10 ** decimals;
+    const raw = _toRawUnits(minAmount, decimals);
+    if (raw === null) return null;
     clauses.push({
       token_address: token,
       "amounts.remaining_amount_num": { $gte: raw },
@@ -106,6 +124,8 @@ const SAFE_ORDER_TRADES_PROJECTION = [
 
 const DEFAULT_MY_ORDERS_LIMIT = 20;
 const MAX_MY_ORDERS_LIMIT = 50;
+const DEFAULT_ORDER_TRADES_LIMIT = 50;
+const MAX_ORDER_TRADES_LIMIT = 100;
 const LOCK_OR_SNAPSHOT_CAPTURED_MATCH = {
   $or: [
     { "timers.locked_at": { $exists: true, $ne: null } },
@@ -154,40 +174,55 @@ async function _attachMarketTrustVisibilitySummary(orders = []) {
   const makerAddresses = [...new Set(orders.map((o) => o?.owner_address).filter(Boolean))];
   if (makerAddresses.length === 0) return orders;
 
-  const [makerUsers, latestTradesByMaker] = await Promise.all([
+  // [TR] B39: güven özeti "fiat alan / payout profili gösteren" tarafı anlatır. SELL_CRYPTO emrinde bu
+  //      taraf emir sahibi = child trade MAKER'ıdır; BUY_CRYPTO emrinde sahip child trade'de TAKER olur
+  //      (maker = doldurandır). Bu yüzden rol emrin yönüne göre seçilir.
+  // [EN] B39: for BUY_CRYPTO orders the owner is the child-trade taker, so use taker-side trades/snapshot.
+  const sellOwners = [...new Set(orders.filter((o) => o?.owner_address && o.side !== "BUY_CRYPTO").map((o) => o.owner_address))];
+  const buyOwners = [...new Set(orders.filter((o) => o?.owner_address && o.side === "BUY_CRYPTO").map((o) => o.owner_address))];
+
+  const latestByRole = (role, owners) => {
+    if (owners.length === 0) return Promise.resolve([]);
+    const addrField = `${role}_address`;
+    const snapField = `payout_snapshot.${role}`;
+    return Trade.aggregate([
+      { $match: { [addrField]: { $in: owners }, ...LOCK_OR_SNAPSHOT_CAPTURED_MATCH } },
+      { $sort: { [addrField]: 1, created_at: -1, _id: -1 } },
+      { $project: { [addrField]: 1, "payout_snapshot.is_complete": 1, [snapField]: 1 } },
+      { $unset: [`${snapField}.payout_details_enc`, `${snapField}.contact_value_enc`] },
+      { $group: { _id: `$${addrField}`, trade: { $first: "$$ROOT" } } },
+    ]);
+  };
+
+  const [makerUsers, latestSellRows, latestBuyRows] = await Promise.all([
+    // [TR] B25: şifreli payout_profile blob'u çekilmez; risk sinyali yalnız fingerprint.version ister.
     User.find({ wallet_address: { $in: makerAddresses } })
-      .select("wallet_address profileVersion payout_profile reputation_cache is_banned banned_until consecutive_bans")
+      .select("wallet_address profileVersion payout_profile.fingerprint.version reputation_cache is_banned banned_until consecutive_bans")
       .lean(),
     // [TR] Güven sinyali trade'den yalnız payout_snapshot (maker özeti) okur. Tam belge ($$ROOT) yerine yalnız
     //      bu alanlar taşınır; şifreli ödeme alanları hiç çekilmez. Sıralama {maker_address, created_at}
     //      indeksine uyar, böylece $group her maker'ın ilk belgesini indeks sırasıyla alır.
     // [EN] The trust signal only reads payout_snapshot (maker summary). Carry just those fields (never the
     //      encrypted payout fields) instead of $$ROOT; the sort matches the {maker_address, created_at} index.
-    Trade.aggregate([
-      {
-        $match: {
-          maker_address: { $in: makerAddresses },
-          ...LOCK_OR_SNAPSHOT_CAPTURED_MATCH,
-        },
-      },
-      { $sort: { maker_address: 1, created_at: -1, _id: -1 } },
-      { $project: { maker_address: 1, "payout_snapshot.is_complete": 1, "payout_snapshot.maker": 1 } },
-      { $unset: ["payout_snapshot.maker.payout_details_enc", "payout_snapshot.maker.contact_value_enc"] },
-      { $group: { _id: "$maker_address", trade: { $first: "$$ROOT" } } },
-    ]),
+    latestByRole("maker", sellOwners),
+    latestByRole("taker", buyOwners),
   ]);
 
   const userMap = new Map(makerUsers.map((u) => [u.wallet_address, u]));
-  const tradeMap = new Map(
-    latestTradesByMaker
-      .filter((row) => row?._id && row?.trade)
-      .map((row) => [row._id, row.trade])
+  const toMap = (rows) => new Map(rows.filter((row) => row?._id && row?.trade).map((row) => [row._id, row.trade]));
+  const sellTradeMap = toMap(latestSellRows);
+  // [TR] Taker tarafı snapshot'ı, health-signal fonksiyonunun beklediği "maker" anahtarına taşınır.
+  const buyTradeMap = new Map(
+    [...toMap(latestBuyRows)].map(([addr, trade]) => [
+      addr,
+      { ...trade, payout_snapshot: { ...trade.payout_snapshot, maker: trade.payout_snapshot?.taker } },
+    ])
   );
 
   return orders.map((order) => {
     const maker = order?.owner_address;
     const makerUser = userMap.get(maker) || null;
-    const latestTrade = tradeMap.get(maker) || null;
+    const latestTrade = (order.side === "BUY_CRYPTO" ? buyTradeMap : sellTradeMap).get(maker) || null;
     const signal = latestTrade ? buildTradeHealthSignals(latestTrade, makerUser, null) : null;
     return {
       ...order,
@@ -450,11 +485,24 @@ router.get("/:id/trades", requireAuth, requireSessionWalletMatch, ordersReadLimi
     if (!order) return res.status(404).json({ error: "Order bulunamadı." });
     if (order.owner_address !== req.wallet) return res.status(403).json({ error: "Bu order sana ait değil." });
 
-    const trades = await Trade.find(_buildIdentityLookup("parent_order_id", onchainOrderId))
-      .select(SAFE_ORDER_TRADES_PROJECTION)
-      .sort({ created_at: -1, _id: -1 })
-      .lean();
-    return res.json({ trades });
+    const pageSchema = Joi.object({
+      page: Joi.number().integer().min(1).default(1),
+      limit: Joi.number().integer().min(1).max(MAX_ORDER_TRADES_LIMIT).default(DEFAULT_ORDER_TRADES_LIMIT),
+    });
+    const { error, value } = pageSchema.validate(req.query);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const tradeFilter = _buildIdentityLookup("parent_order_id", onchainOrderId);
+    const [trades, total] = await Promise.all([
+      Trade.find(tradeFilter)
+        .select(SAFE_ORDER_TRADES_PROJECTION)
+        .sort({ created_at: -1, _id: -1 })
+        .skip((value.page - 1) * value.limit)
+        .limit(value.limit)
+        .lean(),
+      Trade.countDocuments(tradeFilter),
+    ]);
+    return res.json({ trades, total, page: value.page, limit: value.limit });
   } catch (err) { next(err); }
 });
 

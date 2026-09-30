@@ -1,6 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { loadFixture, time } = require("@nomicfoundation/hardhat-network-helpers");
+const { getEscrowFactory } = require("../../contracts/scripts/deploy");
 
 describe("ArafEscrow partial settlement core", () => {
   const USDT_DECIMALS = 6;
@@ -35,7 +36,7 @@ describe("ArafEscrow partial settlement core", () => {
     const [owner, treasury, maker, taker, outsider] = await ethers.getSigners();
     const MockERC20 = await ethers.getContractFactory("MockERC20");
     const mockUSDT = await MockERC20.deploy("Mock USDT", "USDT", USDT_DECIMALS);
-    const Escrow = await ethers.getContractFactory("ArafEscrow");
+    const { factory: Escrow } = await getEscrowFactory();
     const escrow = await Escrow.deploy(treasury.address);
 
     const token = await mockUSDT.getAddress();
@@ -87,7 +88,7 @@ describe("ArafEscrow partial settlement core", () => {
     const treasuryBefore = await mockUSDT.balanceOf(treasury.address);
     const makerBefore = await mockUSDT.balanceOf(maker.address);
     const takerBefore = await mockUSDT.balanceOf(taker.address);
-    const acceptTx = await escrow.connect(taker).acceptSettlement(tradeId);
+    const acceptTx = await escrow.connect(taker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id);
     const acceptReceipt = await acceptTx.wait();
     const decayedEvent = await firstEventArgs(acceptReceipt, escrow.interface, "BleedingDecayed");
     const finalizedEvent = await firstEventArgs(acceptReceipt, escrow.interface, "SettlementFinalized");
@@ -126,7 +127,7 @@ describe("ArafEscrow partial settlement core", () => {
     const takerRepBefore = await escrow.getReputation(taker.address);
 
     await escrow.connect(maker).proposeSettlement(tradeId, 7000, now + 3600);
-    await escrow.connect(taker).acceptSettlement(tradeId);
+    await escrow.connect(taker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id);
 
     const makerRepAfter = await escrow.getReputation(maker.address);
     const takerRepAfter = await escrow.getReputation(taker.address);
@@ -155,7 +156,7 @@ describe("ArafEscrow partial settlement core", () => {
 
     const makerBefore = await mockUSDT.balanceOf(maker.address);
     const takerBefore = await mockUSDT.balanceOf(taker.address);
-    const acceptTx = await escrow.connect(maker).acceptSettlement(tradeId);
+    const acceptTx = await escrow.connect(maker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id);
     const acceptReceipt = await acceptTx.wait();
     const decayedEvent = await firstEventArgs(acceptReceipt, escrow.interface, "BleedingDecayed");
     const eventDecayed = decayedEvent.decayedAmount;
@@ -179,11 +180,11 @@ describe("ArafEscrow partial settlement core", () => {
     const now = await time.latest();
     await escrow.connect(maker).proposeSettlement(tradeId, 5000, now + 3600);
 
-    await expect(escrow.connect(maker).acceptSettlement(tradeId))
+    await expect(escrow.connect(maker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id))
       .to.be.revertedWithCustomError(escrow, "OnlySettlementCounterparty");
     await expect(escrow.connect(maker).rejectSettlement(tradeId))
       .to.be.revertedWithCustomError(escrow, "OnlySettlementCounterparty");
-    await expect(escrow.connect(outsider).acceptSettlement(tradeId))
+    await expect(escrow.connect(outsider).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id))
       .to.be.revertedWithCustomError(escrow, "NotTradeParty");
     await expect(escrow.connect(outsider).rejectSettlement(tradeId))
       .to.be.revertedWithCustomError(escrow, "NotTradeParty");
@@ -235,7 +236,7 @@ describe("ArafEscrow partial settlement core", () => {
     await escrow.connect(maker).proposeSettlement(tradeId, 5000, now + 601);
     await time.increase(700);
 
-    await expect(escrow.connect(taker).acceptSettlement(tradeId))
+    await expect(escrow.connect(taker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id))
       .to.be.revertedWithCustomError(escrow, "SettlementProposalExpired");
   });
 
@@ -292,7 +293,7 @@ describe("ArafEscrow partial settlement core", () => {
 
     const now = await time.latest();
     await escrow.connect(maker).proposeSettlement(tradeId, 5000, now + 3600);
-    await escrow.connect(taker).acceptSettlement(tradeId);
+    await escrow.connect(taker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id);
 
     await expect(escrow.connect(maker).releaseFunds(tradeId))
       .to.be.revertedWithCustomError(escrow, "CannotReleaseInState");
@@ -313,7 +314,7 @@ describe("ArafEscrow partial settlement core", () => {
     const now = await time.latest();
     await escrow.connect(maker).proposeSettlement(tradeId, 7000, now + 3600);
 
-    await expect(escrow.connect(owner).acceptSettlement(tradeId))
+    await expect(escrow.connect(owner).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id))
       .to.be.revertedWithCustomError(escrow, "NotTradeParty");
     await expect(escrow.connect(owner).rejectSettlement(tradeId))
       .to.be.revertedWithCustomError(escrow, "NotTradeParty");
@@ -334,7 +335,7 @@ describe("ArafEscrow partial settlement core", () => {
     const makerBefore = await mockUSDT.balanceOf(maker.address);
     const takerBefore = await mockUSDT.balanceOf(taker.address);
 
-    const acceptTx = await escrow.connect(taker).acceptSettlement(tradeId);
+    const acceptTx = await escrow.connect(taker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id);
     const acceptReceipt = await acceptTx.wait();
     const decayedEvent = await firstEventArgs(acceptReceipt, escrow.interface, "BleedingDecayed");
     const finalizedEvent = await firstEventArgs(acceptReceipt, escrow.interface, "SettlementFinalized");
@@ -366,7 +367,7 @@ describe("ArafEscrow partial settlement core", () => {
     const treasuryBefore = await mockUSDT.balanceOf(treasury.address);
     const makerBefore = await mockUSDT.balanceOf(maker.address);
     const takerBefore = await mockUSDT.balanceOf(taker.address);
-    const acceptTx = await escrow.connect(maker).acceptSettlement(tradeId);
+    const acceptTx = await escrow.connect(maker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id);
     const acceptReceipt = await acceptTx.wait();
     const decayedEvent = await firstEventArgs(acceptReceipt, escrow.interface, "BleedingDecayed");
     const finalizedEvent = await firstEventArgs(acceptReceipt, escrow.interface, "SettlementFinalized");
@@ -441,7 +442,7 @@ describe("ArafEscrow partial settlement core", () => {
     await escrow.connect(maker).releaseFunds(tradeId);
     expect((await escrow.getTrade(tradeId)).state).to.equal(4); // RESOLVED
 
-    await expect(escrow.connect(taker).acceptSettlement(tradeId))
+    await expect(escrow.connect(taker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id))
       .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
     await expect(escrow.connect(taker).rejectSettlement(tradeId))
       .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
@@ -458,11 +459,11 @@ describe("ArafEscrow partial settlement core", () => {
     const now = await time.latest();
 
     await escrow.connect(maker).proposeSettlement(tradeId, 5000, now + 3600);
-    await escrow.connect(taker).acceptSettlement(tradeId);
+    await escrow.connect(taker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id);
     expect((await escrow.getTrade(tradeId)).state).to.equal(4); // RESOLVED
     expect((await escrow.getSettlementProposal(tradeId)).state).to.equal(5); // FINALIZED
 
-    await expect(escrow.connect(taker).acceptSettlement(tradeId))
+    await expect(escrow.connect(taker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id))
       .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
     await expect(escrow.connect(taker).rejectSettlement(tradeId))
       .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
@@ -477,7 +478,7 @@ describe("ArafEscrow partial settlement core", () => {
     const token = await mockUSDT.getAddress();
     const tradeId = await openLockedTrade({ escrow, maker, taker, token, label: "paid-no-decay" });
     await escrow.connect(taker).reportPayment(tradeId, "Qm-paid-no-decay");
-    await expect(escrow.connect(taker).acceptSettlement(tradeId))
+    await expect(escrow.connect(taker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id))
       .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
   });
 
@@ -485,7 +486,7 @@ describe("ArafEscrow partial settlement core", () => {
     const { escrow, mockUSDT, maker, taker } = await loadFixture(deployFixture);
     const token = await mockUSDT.getAddress();
     const tradeId = await openLockedTrade({ escrow, maker, taker, token, label: "locked-accept-revert" });
-    await expect(escrow.connect(taker).acceptSettlement(tradeId))
+    await expect(escrow.connect(taker).acceptSettlement(tradeId, (await escrow.getSettlementProposal(tradeId)).id))
       .to.be.revertedWithCustomError(escrow, "SettlementNotAllowedInState");
   });
 });

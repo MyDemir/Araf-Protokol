@@ -16,6 +16,14 @@ describe("ABI drift: off-chain fragments match compiled contracts", function () 
     "Transfer", "owner", "EscrowCreated", "EscrowLocked",
   ]);
 
+  // [TR] Kasıtlı kontrat ABI değişikliği (K5: acceptSettlement(uint256,uint256)); frontend/backend senkronu ayrı
+  //      aşamada yapılacak. Yalnız bu birebir eski parçalar geçici olarak tolere edilir; senkron sonrası SİLİN.
+  // [EN] Intentional ABI change (K5); off-chain sync is a separate stage. Only these exact stale fragments are
+  //      tolerated temporarily. REMOVE after the frontend/backend ABI sync.
+  const PENDING_OFFCHAIN_SYNC = new Set([
+    "frontend/src/hooks/useArafContract.js: acceptSettlement(uint256)",
+  ]);
+
   function walk(dir, out = []) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
@@ -49,6 +57,7 @@ describe("ABI drift: off-chain fragments match compiled contracts", function () 
             .find(Boolean);
           const where = path.relative(repoRoot, file);
           if (!match) {
+            if (PENDING_OFFCHAIN_SYNC.has(`${where}: ${sig}`)) continue;
             problems.push(`${where}: ${sig} not found in any Araf contract`);
           } else if (frag.type === "function" && frag.outputs.length) {
             const want = match.outputs.map((o) => o.format()).join(",");

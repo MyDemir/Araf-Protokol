@@ -107,7 +107,7 @@ const orderSchema = new mongoose.Schema(
         lowercase: true,
         required: true,
         match: /^0x[a-f0-9]{64}$/,
-        index: true,
+        // [TR] index:true kaldırıldı: aşağıda ayrı {unique:true} index var (çift tanım uyarısı).
       },
     },
 
@@ -140,6 +140,10 @@ orderSchema.index({ side: 1, status: 1, tier: 1 });
 orderSchema.index({ status: 1, side: 1, "market.exchange_rate": 1 });
 orderSchema.index({ token_address: 1, side: 1, status: 1 });
 orderSchema.index({ "refs.order_ref": 1 }, { unique: true });
+// [TR] Pazar listesi varsayılan sıralaması ({status, remaining_amount_num desc, _id desc}); side eşitliği
+//      ile ve side'sız iki biçim. [EN] Indexes backing the default market-feed sort.
+orderSchema.index({ side: 1, status: 1, "amounts.remaining_amount_num": -1, _id: -1 });
+orderSchema.index({ status: 1, "amounts.remaining_amount_num": -1, _id: -1 });
 orderSchema.index({ "timers.last_filled_at": -1 });
 
 module.exports = mongoose.model("Order", orderSchema);

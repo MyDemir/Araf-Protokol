@@ -11,6 +11,33 @@ const TOKEN_ADDRESSES = {
   USDC: import.meta.env.VITE_USDC_ADDRESS || '',
 };
 const EPOCHS_BACK = 5;
+const NOT_CONFIGURED = 'rewards_not_configured';
+
+// [TR] Toplu okuma varsa (canlı hook: multicall) onu kullanır; yoksa (UI Lab okuyucusu, testler) tek tek okur.
+// [EN] Uses the batched reader when present (live hook: multicall); otherwise per-call reads (UI Lab reader, tests).
+export const loadRewardsSnapshot = async (rewards, address, tokens) => {
+  if (typeof rewards.readSnapshot === 'function') {
+    return rewards.readSnapshot({ user: address, tokens: tokens.map(([, addr]) => addr), epochsBack: EPOCHS_BACK });
+  }
+  const [cur, epochDuration, claimDelay, claimWindow] = await Promise.all([
+    rewards.currentEpoch(), rewards.epochDuration(), rewards.claimDelay(), rewards.claimWindow(),
+  ]);
+  const current = BigInt(cur);
+  const timing = { epochDuration: BigInt(epochDuration), claimDelay: BigInt(claimDelay), claimWindow: BigInt(claimWindow) };
+  const epochNumbers = [];
+  for (let i = 0n; i <= BigInt(EPOCHS_BACK) && current - i >= 0n; i += 1n) epochNumbers.push(current - i);
+  const epochs = await Promise.all(epochNumbers.map(async (epoch) => {
+    const [totalWeight, userWeight] = await Promise.all([rewards.totalWeight(epoch), rewards.userWeight(epoch, address)]);
+    const perToken = await Promise.all(tokens.map(async ([, token]) => {
+      const [pool, finalized, claimed] = await Promise.all([
+        rewards.epochRewardPool(epoch, token), rewards.epochTokenFinalized(epoch, token), rewards.hasClaimed(epoch, address, token),
+      ]);
+      return { token, pool, finalized, claimed };
+    }));
+    return { epoch, totalWeight, userWeight, tokens: perToken };
+  }));
+  return { current, timing, chainNow: null, epochs };
+};
 
 const fmtAmount = (raw, decimals = 6) => formatTokenAmount(raw, decimals, 2);
 const fmtPct = (bps, lang) => fmtBps(bps, lang, Number(bps) < 100 ? 2 : 1);
@@ -52,38 +79,34 @@ export const RewardsPanel = ({ lang = 'EN', address, showToast, tokenDecimalsMap
     return hit ? hit[0] : null;
   }, [tokens]);
 
+  // [TR] P4 — `lang` bağımlılıkta değil: dil değişince zincir okuması tekrarlanmasın; hata metni render'da çevrilir.
+  //      Okuma toplu (multicall) yapılır; dönem/talep penceresi tarayıcı saatine değil zincir saatine göre hesaplanır.
+  // [EN] P4 — `lang` is not a dependency: switching language must not refetch chain data (the error text is translated
+  //      at render time). Reads are batched (multicall); epoch/claim windows use chain time, not the browser clock.
   React.useEffect(() => {
     let cancelled = false;
     if (!address) return undefined;
-    if (!rewards.isConfigured) { setState({ status: 'error', rows: [], error: tx(lang, 'Ödül kontratı yapılandırılmadı.', 'Rewards contract not configured.') }); return undefined; }
+    if (!rewards.isConfigured) { setState({ status: 'error', rows: [], error: NOT_CONFIGURED }); return undefined; }
     if (!rewards.isSupportedChain) { setState({ status: 'blocked', rows: [], error: null }); return undefined; }
     (async () => {
       try {
         setState((s) => ({ ...s, status: s.rows.length ? 'refreshing' : 'loading', error: null }));
-        const [cur, epochDuration, claimDelay, claimWindow] = await Promise.all([
-          rewards.currentEpoch(), rewards.epochDuration(), rewards.claimDelay(), rewards.claimWindow(),
-        ]);
-        const current = BigInt(cur);
-        const timing = { epochDuration: BigInt(epochDuration), claimDelay: BigInt(claimDelay), claimWindow: BigInt(claimWindow) };
-        const now = nowOverride ?? Math.floor(Date.now() / 1000);
-        const epochs = [];
-        for (let i = 0n; i <= BigInt(EPOCHS_BACK) && current - i >= 0n; i += 1n) epochs.push(current - i);
-        const rows = (await Promise.all(epochs.map(async (epoch) => {
-          const [totalWeight, userWeight] = await Promise.all([rewards.totalWeight(epoch), rewards.userWeight(epoch, address)]);
-          return Promise.all(tokens.map(async ([symbol, token]) => {
-            const [pool, finalized, claimed] = await Promise.all([
-              rewards.epochRewardPool(epoch, token), rewards.epochTokenFinalized(epoch, token), rewards.hasClaimed(epoch, address, token),
-            ]);
-            return { symbol, token, ...deriveEpochReward({ epoch, now, timing, totalWeight, userWeight, pool, finalized, claimed }) };
-          }));
-        }))).flat();
-        if (!cancelled) setState({ status: 'ready', rows, currentEpoch: current, timing, error: null });
+        const snapshot = await loadRewardsSnapshot(rewards, address, tokens);
+        const localNow = Math.floor(Date.now() / 1000);
+        const chainNow = nowOverride ?? snapshot.chainNow ?? localNow;
+        const rows = snapshot.epochs.flatMap((e) => tokens.map(([symbol, token], ti) => {
+          const t = e.tokens[ti];
+          return { symbol, token, ...deriveEpochReward({ epoch: e.epoch, now: chainNow, timing: snapshot.timing, totalWeight: e.totalWeight, userWeight: e.userWeight, pool: t.pool, finalized: t.finalized, claimed: t.claimed }) };
+        }));
+        // [TR] Zincir-yerel saat farkı: render sırasında "kalan gün" hesabı da zincir saatine dayansın.
+        const clockOffsetSec = nowOverride != null ? 0 : chainNow - localNow;
+        if (!cancelled) setState({ status: 'ready', rows, currentEpoch: snapshot.current, timing: snapshot.timing, clockOffsetSec, error: null });
       } catch (err) {
         if (!cancelled) setState((s) => ({ ...s, status: 'error', error: err?.shortMessage || err?.message || 'read_failed' }));
       }
     })();
     return () => { cancelled = true; };
-  }, [rewards, address, tokens, lang, refreshKey, nowOverride]);
+  }, [rewards, address, tokens, refreshKey, nowOverride]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -125,7 +148,7 @@ export const RewardsPanel = ({ lang = 'EN', address, showToast, tokenDecimalsMap
   // [TR] Havuzu boş ve alınmamış token satırı ("≥ 0 USDC · havuz 0") bilgi taşımaz; gizlenir.
   const visible = (r) => r.pool > 0n || r.status === REWARD_STATUS.CLAIMED;
   // [TR] Talep kalemleri ayrı listelenir; geçmiş yalnız bilgi amaçlıdır (alındı / süresi doldu / pay yok).
-  const nowSec = nowOverride ?? Math.floor(Date.now() / 1000);
+  const nowSec = nowOverride ?? (Math.floor(Date.now() / 1000) + (state.clockOffsetSec || 0));
   const claimableRows = pastRows.filter((r) => r.status === REWARD_STATUS.CLAIMABLE && r.amount > 0n);
   const recordingRows = pastRows.filter((r) => r.status === REWARD_STATUS.RECORDING && visible(r));
   const HISTORY_STATES = new Set([REWARD_STATUS.CLAIMED, REWARD_STATUS.EXPIRED, REWARD_STATUS.NONE]);
@@ -152,7 +175,7 @@ export const RewardsPanel = ({ lang = 'EN', address, showToast, tokenDecimalsMap
         </div>
 
         {state.status === 'blocked' && <p className="mt-3 text-sm text-warning">{tx(lang, 'Bu ağda ödüller kullanılamıyor. Cüzdanı doğru ağa geçirin.', 'Rewards are unavailable on this network. Switch your wallet network.')}</p>}
-        {state.status === 'error' && <p className="mt-3 text-sm text-danger bg-danger/10 border border-danger/40 rounded-lg p-2">{tx(lang, 'Ödül verisi okunamadı', 'Could not read rewards')}: {String(state.error)}</p>}
+        {state.status === 'error' && <p className="mt-3 text-sm text-danger bg-danger/10 border border-danger/40 rounded-lg p-2">{tx(lang, 'Ödül verisi okunamadı', 'Could not read rewards')}: {state.error === NOT_CONFIGURED ? tx(lang, 'Ödül kontratı yapılandırılmadı.', 'Rewards contract not configured.') : String(state.error)}</p>}
 
         {(state.status === 'ready' || state.status === 'refreshing' || state.status === 'loading') && (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-4" data-testid="rewards-summary">

@@ -28,7 +28,7 @@ describe('frontend ↔ backend API path alignment', () => {
       "endpoint: 'orders/my'",
       "endpoint: 'trades/my'",
       'buildApiUrl(`trades/history?page=${page}&limit=5`)',
-      'buildApiUrl(`pii/taker-name/${activeTrade.onchainId}`)',
+      "buildApiUrl(`pii/taker-name/${onchainId}`)",
       "buildApiUrl('auth/me')",
       "buildApiUrl('auth/refresh')",
     ].forEach((pathPart) => expect(session).toContain(pathPart));

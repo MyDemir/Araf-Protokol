@@ -137,7 +137,9 @@ describe("SIWE login requires signed acceptance of the terms", () => {
     termsUpdateOne.mockRejectedValueOnce(new Error("db down"));
     const message = buildMessage(`I accept the Araf Terms of Use v${CURRENT_TERMS_VERSION} and sign in.`);
     const res = await request(app).post("/api/auth/verify").send({ message, signature: SIG });
-    expect(res.status).toBe(401);
+    // [TR] Beklenmeyen (DB) hata artık 401 değil 500 + genel mesajdır (B31); oturum yine açılmaz.
+    expect(res.status).toBe(500);
+    expect(res.body.error).not.toContain("db down");
     expect(findOneAndUpdate).not.toHaveBeenCalled();
   });
 
@@ -162,18 +164,30 @@ describe("refresh rotation requires the current terms version (Redis only, no DB
   function loadSiwe(stored) {
     process.env.JWT_SECRET = "k7Q2vX9pL4mZ8rT1wB6nY3cF5hJ0dS2gA7eU9iO4qW1xR8tV6yN3bM5zK2jH0lP9sD4fG7aC1";
     const store = new Map([["refresh:tok", JSON.stringify(stored)]]);
+    const sets = new Map();
     const multi = () => {
       const ops = [];
       const m = {
         setEx: (k, _t, v) => { ops.push(() => store.set(k, v)); return m; },
-        sAdd: () => m, expire: () => m, del: (k) => { ops.push(() => store.delete(k)); return m; },
+        sAdd: (k, v) => { ops.push(() => { sets.set(k, (sets.get(k) || new Set()).add(v)); }); return m; },
+        sRem: (k, v) => { ops.push(() => sets.get(k)?.delete(v)); return m; },
+        expire: () => m,
+        del: (k) => { ops.push(() => { store.delete(k); sets.delete(k); }); return m; },
         exec: async () => ops.forEach((f) => f()),
       };
       return m;
     };
     const redis = {
-      getDel: async (k) => { const v = store.get(k) ?? null; store.delete(k); return v; },
-      sMembers: async () => [], multi,
+      get: async (k) => store.get(k) ?? null,
+      set: async (k, v, opts) => {
+        if (opts?.NX && store.has(k)) return null;
+        store.set(k, v);
+        return "OK";
+      },
+      exists: async (k) => (store.has(k) || (sets.get(k)?.size > 0) ? 1 : 0),
+      sMembers: async (k) => [...(sets.get(k) || [])],
+      scan: async () => ({ cursor: 0, keys: [] }),
+      multi,
     };
     let svc;
     jest.isolateModules(() => {
@@ -194,7 +208,7 @@ describe("refresh rotation requires the current terms version (Redis only, no DB
     const { svc, store } = loadSiwe({ familyId: "f1", wallet: WALLET, termsVersion: CURRENT_TERMS_VERSION });
     const out = await svc.rotateRefreshToken("tok");
     expect(out.wallet).toBe(WALLET);
-    const next = JSON.parse([...store.values()].find((v) => v.includes("termsVersion")));
+    const next = JSON.parse([...store.entries()].find(([k, v]) => k.startsWith("refresh:") && v.includes("termsVersion"))[1]);
     expect(next.termsVersion).toBe(CURRENT_TERMS_VERSION);
   });
 });

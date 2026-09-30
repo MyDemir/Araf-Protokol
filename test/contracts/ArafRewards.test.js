@@ -1,6 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { loadFixture, time } = require("@nomicfoundation/hardhat-network-helpers");
+const { deployRevenueEscrow, pushRevenue } = require("./helpers/revenue");
 
 describe("ArafRewards global epoch weight accounting", function () {
   const DECIMALS = 6;
@@ -39,7 +40,7 @@ describe("ArafRewards global epoch weight accounting", function () {
     const mockEscrow = await MockEscrow.deploy();
 
     const Vault = await ethers.getContractFactory("ArafRevenueVault");
-    const vault = await Vault.deploy(owner.address, owner.address, owner.address);
+    const vault = await Vault.deploy(await (await deployRevenueEscrow()).getAddress(), owner.address, owner.address);
     const MockERC20 = await ethers.getContractFactory("MockERC20");
     const token = await MockERC20.deploy("Mock USDT", "USDT", DECIMALS);
     await vault.connect(owner).setSupportedToken(await token.getAddress(), true);
@@ -316,9 +317,7 @@ describe("ArafRewards global epoch weight accounting", function () {
 
   it("test_allocateEpochRewards_onlyAuthorized", async function () {
     const { rewards, vault, token, owner, caller } = await loadFixture(deployFixture);
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 999);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 999);
+    await pushRevenue(vault, token, NOTIONAL, 0, 999, NOTIONAL);
 
     await expect(rewards.connect(caller).allocateEpochRewards(1, await token.getAddress(), 1))
       .to.be.revertedWithCustomError(rewards, "OwnableUnauthorizedAccount");
@@ -326,9 +325,7 @@ describe("ArafRewards global epoch weight accounting", function () {
 
   it("test_allocateEpochRewards_increases_epochPool", async function () {
     const { rewards, vault, token, owner } = await loadFixture(deployFixture);
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 1000);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 1000);
+    await pushRevenue(vault, token, NOTIONAL, 0, 1000, NOTIONAL);
 
     const alloc = (NOTIONAL * 4000n) / 10000n;
     await expect(rewards.connect(owner).allocateEpochRewards(2, await token.getAddress(), alloc))
@@ -356,9 +353,7 @@ describe("ArafRewards global epoch weight accounting", function () {
     await setTrade(mockEscrow, trade);
     await rewards.connect(caller).recordTradeOutcome(18);
 
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 1001);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 1001);
+    await pushRevenue(vault, token, NOTIONAL, 0, 1001, NOTIONAL);
     await rewards.connect(owner).allocateEpochRewards(currentEpoch, await token.getAddress(), (NOTIONAL * 4000n) / 10000n);
 
     const epochEndPlusOne = ((currentEpoch + 1) * epochDuration) + 1;
@@ -397,9 +392,7 @@ describe("ArafRewards global epoch weight accounting", function () {
     const trade = mkTrade({ tradeId: 19, maker: maker.address, taker: taker.address, tier: 1, terminalAt, paidAt: terminalAt - 100 });
     await setTrade(mockEscrow, trade);
     await rewards.connect(caller).recordTradeOutcome(19);
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 1002);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 1002);
+    await pushRevenue(vault, token, NOTIONAL, 0, 1002, NOTIONAL);
     await rewards.connect(owner).allocateEpochRewards(epoch, await token.getAddress(), (NOTIONAL * 4000n) / 10000n);
     await gotoClaimOpen(epoch);
     await rewards.connect(owner).finalizeEpochToken(epoch, await token.getAddress());
@@ -418,9 +411,7 @@ describe("ArafRewards global epoch weight accounting", function () {
     await setTrade(mockEscrow, trade);
     await rewards.connect(caller).recordTradeOutcome(20);
     const alloc = (NOTIONAL * 4000n) / 10000n;
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 1003);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 1003);
+    await pushRevenue(vault, token, NOTIONAL, 0, 1003, NOTIONAL);
     await rewards.connect(owner).allocateEpochRewards(epoch, await token.getAddress(), alloc);
     await gotoClaimOpen(epoch);
     await rewards.connect(owner).finalizeEpochToken(epoch, await token.getAddress());
@@ -439,9 +430,7 @@ describe("ArafRewards global epoch weight accounting", function () {
     await setTrade(mockEscrow, mkTrade({ tradeId: 40, maker: maker.address, taker: taker.address, tier: 1, terminalAt, paidAt: terminalAt - 100 }));
     await rewards.connect(caller).recordTradeOutcome(40);
     const alloc = (NOTIONAL * 4000n) / 10000n;
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 1040);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 1040);
+    await pushRevenue(vault, token, NOTIONAL, 0, 1040, NOTIONAL);
     await rewards.connect(owner).allocateEpochRewards(epoch, await token.getAddress(), alloc);
     await gotoClaimOpen(epoch);
     await rewards.connect(owner).finalizeEpochToken(epoch, await token.getAddress());
@@ -476,9 +465,7 @@ describe("ArafRewards global epoch weight accounting", function () {
     await rewards.connect(caller).recordTradeOutcome(21);
     await rewards.connect(caller).recordTradeOutcome(22);
 
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), ethers.parseUnits("1000", DECIMALS), 0, 1004);
-    await token.mint(await vault.getAddress(), ethers.parseUnits("1000", DECIMALS));
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), ethers.parseUnits("1000", DECIMALS), 0, 1004);
+    await pushRevenue(vault, token, ethers.parseUnits("1000", DECIMALS), 0, 1004, ethers.parseUnits("1000", DECIMALS));
     const alloc = (ethers.parseUnits("1000", DECIMALS) * 4000n) / 10000n;
     await rewards.connect(owner).allocateEpochRewards(epoch, await token.getAddress(), alloc);
     await gotoClaimOpen(epoch);
@@ -504,9 +491,7 @@ describe("ArafRewards global epoch weight accounting", function () {
     const t = mkTrade({ tradeId: 23, maker: maker.address, taker: taker.address, tier: 1, terminalAt, paidAt: terminalAt - 100 });
     await setTrade(mockEscrow, t);
     await rewards.connect(caller).recordTradeOutcome(23);
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 1005);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 1005);
+    await pushRevenue(vault, token, NOTIONAL, 0, 1005, NOTIONAL);
     await rewards.connect(owner).allocateEpochRewards(epoch, await token.getAddress(), (NOTIONAL * 4000n) / 10000n);
     await gotoClaimOpen(epoch);
     await rewards.connect(owner).finalizeEpochToken(epoch, await token.getAddress());
@@ -526,9 +511,7 @@ describe("ArafRewards global epoch weight accounting", function () {
     const t = mkTrade({ tradeId: 24, maker: maker.address, taker: taker.address, tier: 1, terminalAt, paidAt: terminalAt - 100 });
     await setTrade(mockEscrow, t);
     await rewards.connect(caller).recordTradeOutcome(24);
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 1006);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 1006);
+    await pushRevenue(vault, token, NOTIONAL, 0, 1006, NOTIONAL);
     await rewards.connect(owner).allocateEpochRewards(epoch, await token.getAddress(), (NOTIONAL * 4000n) / 10000n);
     await gotoClaimOpen(epoch);
     await rewards.connect(owner).finalizeEpochToken(epoch, await token.getAddress());
@@ -546,9 +529,7 @@ describe("ArafRewards global epoch weight accounting", function () {
     const t = mkTrade({ tradeId: 25, maker: maker.address, taker: taker.address, tier: 1, terminalAt, paidAt: terminalAt - 100 });
     await setTrade(mockEscrow, t);
     await rewards.connect(caller).recordTradeOutcome(25);
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 1007);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 1007);
+    await pushRevenue(vault, token, NOTIONAL, 0, 1007, NOTIONAL);
     await rewards.connect(owner).allocateEpochRewards(epoch, await token.getAddress(), (NOTIONAL * 4000n) / 10000n);
     await gotoClaimOpen(epoch);
     await rewards.connect(owner).finalizeEpochToken(epoch, await token.getAddress());
@@ -641,9 +622,7 @@ describe("ArafRewards global epoch weight accounting", function () {
 
   it("test_rewardReserve_cannot_be_admin_drained", async function () {
     const { vault, token, owner } = await loadFixture(deployFixture);
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 2000);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 2000);
+    await pushRevenue(vault, token, NOTIONAL, 0, 2000, NOTIONAL);
     await expect(
       vault.connect(owner).withdrawTreasuryShare(await token.getAddress(), (NOTIONAL * 7000n) / 10000n, owner.address)
     ).to.be.revertedWithCustomError(vault, "InsufficientTreasuryReserve");
@@ -658,9 +637,7 @@ describe("ArafRewards global epoch weight accounting", function () {
     const t = mkTrade({ tradeId: 27, maker: maker.address, taker: taker.address, tier: 1, terminalAt, paidAt: terminalAt - 100 });
     await setTrade(mockEscrow, t);
     await rewards.connect(caller).recordTradeOutcome(27);
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 3000);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 3000);
+    await pushRevenue(vault, token, NOTIONAL, 0, 3000, NOTIONAL);
     const alloc = (NOTIONAL * 4000n) / 10000n;
     await rewards.connect(owner).allocateEpochRewards(epoch, await token.getAddress(), alloc);
     await gotoClaimOpen(epoch);
@@ -683,9 +660,7 @@ describe("ArafRewards global epoch weight accounting", function () {
     await rewards.connect(caller).recordTradeOutcome(31);
     await rewards.connect(caller).recordTradeOutcome(32);
 
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), 20n, 0, 4000);
-    await token.mint(await vault.getAddress(), 20n);
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), 20n, 0, 4000);
+    await pushRevenue(vault, token, 20n, 0, 4000, 20n);
     const epochPool = 5n;
     await rewards.connect(owner).allocateEpochRewards(epoch, await token.getAddress(), epochPool);
 
@@ -735,9 +710,7 @@ describe("ArafRewards global epoch weight accounting", function () {
     const terminalAt = epoch * EPOCH + 100;
     await setTrade(mockEscrow, mkTrade({ tradeId: 90, maker: maker.address, taker: taker.address, tier: 1, terminalAt, paidAt: terminalAt - 100 }));
     await rewards.connect(caller).recordTradeOutcome(90);
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), NOTIONAL, 0, 9090);
-    await token.mint(await vault.getAddress(), NOTIONAL);
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), NOTIONAL, 0, 9090);
+    await pushRevenue(vault, token, NOTIONAL, 0, 9090, NOTIONAL);
     await rewards.connect(owner).allocateEpochRewards(epoch, await token.getAddress(), (NOTIONAL * 4000n) / 10000n);
     await gotoClaimOpen(epoch);
     await rewards.connect(caller).finalizeEpochToken(epoch, await token.getAddress());

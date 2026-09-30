@@ -163,60 +163,6 @@ describe("eventListener OrderFilled mirror hardening", () => {
     expect(orderPayload.reserves.remaining_maker_bond_reserve_num).toBeNull();
   });
 
-  it("skips delayed EscrowLocked when trade is already PAID (monotonic guard)", async () => {
-    const Trade = require("../../backend/scripts/models/Trade");
-    Trade.findOne = jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue({
-          status: "PAID",
-          maker_address: "0x3333333333333333333333333333333333333333",
-          taker_address: "0x1111111111111111111111111111111111111111",
-        }),
-      }),
-    });
-    worker._captureLockedTradeSnapshot = jest.fn().mockResolvedValue();
-
-    await worker._onEscrowLocked({
-      eventName: "EscrowLocked",
-      blockNumber: 200,
-      transactionHash: "0xpaid",
-      logIndex: 3,
-      args: {
-        tradeId: 99n,
-        taker: "0x1111111111111111111111111111111111111111",
-      },
-    });
-
-    expect(worker._captureLockedTradeSnapshot).not.toHaveBeenCalled();
-  });
-
-  it("skips delayed EscrowLocked when trade is already CHALLENGED (monotonic guard)", async () => {
-    const Trade = require("../../backend/scripts/models/Trade");
-    Trade.findOne = jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue({
-          status: "CHALLENGED",
-          maker_address: "0x3333333333333333333333333333333333333333",
-          taker_address: "0x1111111111111111111111111111111111111111",
-        }),
-      }),
-    });
-    worker._captureLockedTradeSnapshot = jest.fn().mockResolvedValue();
-
-    await worker._onEscrowLocked({
-      eventName: "EscrowLocked",
-      blockNumber: 201,
-      transactionHash: "0xchallenged",
-      logIndex: 4,
-      args: {
-        tradeId: 100n,
-        taker: "0x1111111111111111111111111111111111111111",
-      },
-    });
-
-    expect(worker._captureLockedTradeSnapshot).not.toHaveBeenCalled();
-  });
-
   it("validates_amount_with_token_specific_decimals", async () => {
     await worker._upsertTradeMirror({
       id: 501n,

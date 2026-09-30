@@ -62,9 +62,9 @@ async function main() {
 
     if (!escrowAddress) {
       const treasury = reqEnv('TREASURY_ADDRESS');
-      const Escrow = await ethers.getContractFactory('ArafEscrow');
-      const escrow = await Escrow.deploy(treasury);
-      await escrow.waitForDeployment();
+      // ArafEscrow library linkli deploy edilir (ArafReputationLib + ArafSettlementLib); bkz. deploy.js.
+      const { deployEscrowWithLibraries } = require('./deploy');
+      const { escrow } = await deployEscrowWithLibraries(treasury);
       escrowAddress = await escrow.getAddress();
     }
   } else {

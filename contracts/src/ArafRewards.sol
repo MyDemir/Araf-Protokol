@@ -98,9 +98,11 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
     //      Süresi dolan pay sweepEpochDust ile içinde bulunulan döneme devredilir.
     // [EN] Monthly epochs with a one-week claim window: the window is shorter than an epoch, so only one
     //      epoch is claimable at a time; expired shares roll into the current epoch via sweepEpochDust.
-    uint256 public epochDuration = 30 days;
-    uint256 public claimDelay = 24 hours;
-    uint256 public claimWindow = 7 days;
+    // [TR] G3: setter'ı olmayan süreler constant (SLOAD yok); public getter'lar aynı ABI ile durur.
+    // [EN] G3: durations without setters are constants (no SLOAD); public getters keep the same ABI.
+    uint256 public constant epochDuration = 30 days;
+    uint256 public constant claimDelay = 24 hours;
+    uint256 public constant claimWindow = 7 days;
 
     mapping(uint256 => uint256) public totalWeight;
     mapping(uint256 => mapping(address => uint256)) public userWeight;
@@ -169,8 +171,10 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
      * @notice Batch recording; ids that cannot be recorded (non-terminal, Tier 0, recorded, window closed) are skipped.
      */
     function recordTradeOutcomes(uint256[] calldata tradeIds) external nonReentrant {
-        for (uint256 i = 0; i < tradeIds.length; i++) {
+        uint256 n = tradeIds.length;
+        for (uint256 i; i < n; ) {
             _recordTradeOutcome(tradeIds[i], false);
+            unchecked { ++i; }
         }
     }
 
@@ -314,11 +318,11 @@ contract ArafRewards is Ownable, ReentrancyGuard, Pausable {
     function pause() external onlyOwner { _pause(); }
     function unpause() external onlyOwner { _unpause(); }
 
-    function _recordingDeadline(uint256 epoch) internal view returns (uint256) {
+    function _recordingDeadline(uint256 epoch) internal pure returns (uint256) {
         return (epoch + 1) * epochDuration + claimDelay;
     }
 
-    function _claimWindowEnd(uint256 epochEnd) internal view returns (uint256) {
+    function _claimWindowEnd(uint256 epochEnd) internal pure returns (uint256) {
         return epochEnd + claimDelay + claimWindow;
     }
 

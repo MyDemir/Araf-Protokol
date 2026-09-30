@@ -90,12 +90,24 @@ async function loadProtocolConfig() {
     logger.warn(`[Config] Redis önbellek okuma hatası, on-chain load devam ediyor: ${err.message}`);
   }
 
+  const next = await _buildConfigFromChain({ strictTokens: false });
+  protocolConfig = next;
+  return protocolConfig;
+}
+
+/**
+ * [TR] Yeni config'i YEREL olarak kurar; modül durumuna dokunmaz. Env eksikse null döner (çağıran karar verir).
+ *      strictTokens=true iken tek bir token okuması bile başarısızsa throw eder (refresh eskiyi korusun).
+ * [EN] Builds a new config LOCALLY without touching module state. Returns null when env is missing (the caller
+ *      decides). With strictTokens=true a single failed token read throws so a refresh keeps the old config.
+ */
+async function _buildConfigFromChain({ strictTokens }) {
+  const redis = getRedisClient();
   const rpcUrl = process.env.BASE_RPC_URL;
   const contractAddress = process.env.ARAF_ESCROW_ADDRESS;
 
   if (!contractAddress || contractAddress === "0x0000000000000000000000000000000000000000") {
     logger.warn("[Config] ARAF_ESCROW_ADDRESS tanımsız — CONFIG_UNAVAILABLE.");
-    protocolConfig = null;
     return null;
   }
 
@@ -104,7 +116,6 @@ async function loadProtocolConfig() {
       throw new Error("[Config] CRITICAL: BASE_RPC_URL production'da zorunludur.");
     }
     logger.warn("[Config] BASE_RPC_URL tanımsız — CONFIG_UNAVAILABLE.");
-    protocolConfig = null;
     return null;
   }
 
@@ -152,6 +163,7 @@ async function loadProtocolConfig() {
       };
     } catch (err) {
       logger.warn(`[Config] tokenConfig load başarısız: token=${token} err=${err.message}`);
+      if (strictTokens) throw err;
       tokenMap[token] = {
         supported: false,
         allowSellOrders: false,
@@ -167,7 +179,7 @@ async function loadProtocolConfig() {
   // [EN] Reputation policy has no on-chain getter; it is learned from events only, so a reload must keep it.
   const previousReputationPolicy = protocolConfig?.reputationPolicy || null;
 
-  protocolConfig = {
+  const built = {
     loaded_at: new Date().toISOString(),
     bondMap: {
       0: _bondEntry(makerT0, takerT0),
@@ -189,20 +201,23 @@ async function loadProtocolConfig() {
     reputationPolicy: previousReputationPolicy,
   };
 
-  await _writeCache(redis, protocolConfig);
+  await _writeCache(redis, built);
   logger.info(`[Config] V3 on-chain parametreler yüklendi ve cache'lendi (TTL=${CONFIG_CACHE_TTL}s).`);
-  return protocolConfig;
+  return built;
 }
 
+/**
+ * [TR] B8: Yeni config yerelde kurulur; yalnız BAŞARILIYSA atanır ve cache üzerine yazılır. Hatada eski config
+ *      korunur (eskiden önce null yapılıp cache siliniyordu; RPC hatası kalıcı CONFIG_UNAVAILABLE/503 doğururdu).
+ * [EN] B8: The new config is built locally and only assigned (and cached) on SUCCESS. On failure the old config
+ *      is kept (previously it was nulled and the cache deleted first, so one RPC error caused a permanent
+ *      CONFIG_UNAVAILABLE/503).
+ */
 async function refreshProtocolConfig() {
-  protocolConfig = null;
-  const redis = getRedisClient();
-  try {
-    await redis.del(CONFIG_CACHE_KEY);
-  } catch (_) {
-    // cache silme hatası refresh akışını durdurmaz
-  }
-  return loadProtocolConfig();
+  const next = await _buildConfigFromChain({ strictTokens: true });
+  if (!next) return protocolConfig;
+  protocolConfig = next;
+  return protocolConfig;
 }
 
 async function _patchAndPersist(mutator) {

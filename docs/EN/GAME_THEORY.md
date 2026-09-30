@@ -43,7 +43,7 @@ flowchart TD
     auto_release --> resolved_penalty[RESOLVED via auto-release]
 
     paid_state --> ping_taker[Maker calls pingTakerForChallenge]
-    ping_taker --> challenge_call[Maker calls challengeTrade after window]
+    ping_taker --> challenge_call[After window maker or, if maker is silent, taker calls challengeTrade]
     challenge_call --> challenged_state[CHALLENGED]
 
     challenged_state --> release_after_challenge[Maker still may releaseFunds]
@@ -71,10 +71,10 @@ flowchart TD
 | Fast clean release | Taker marked payment and maker confirms quickly | `releaseFunds` | `RESOLVED` | Best cooperative equilibrium | Highest positive weight |
 | Slow clean release | Taker marked payment and maker eventually confirms | `releaseFunds` | `RESOLVED` | Acceptable but delayed cooperation | Lower positive weight |
 | Liveness release | Maker is inactive after `PAID` | `pingMaker` -> wait -> `autoRelease` | `RESOLVED` | Penalize inactivity and unblock honest taker | Zero weight |
-| Dispute escalation | Maker claims payment issue after `PAID` | `pingTakerForChallenge` -> wait -> `challengeTrade` | `CHALLENGED` | Move conflict into deterministic decay window | No terminal reward yet |
+| Dispute escalation | Maker claims payment issue after `PAID` | `pingTakerForChallenge` -> 24h -> `challengeTrade` (maker; the taker may open it too if the maker goes silent, so there is no ping-and-ghost lock) | `CHALLENGED` | Move conflict into deterministic decay window | No terminal reward yet |
 | Disputed release | Maker releases after challenge | `releaseFunds` from `CHALLENGED` | `RESOLVED` | Late correction after conflict | Zero weight in MVP |
-| Partial settlement | Both parties agree on split inside dispute | `proposeSettlement` -> `acceptSettlement` | `RESOLVED` | Humanless negotiated exit | Low positive weight |
-| Mutual cancel | Both parties agree to unwind | `proposeOrApproveCancel` by both sides | `CANCELED` | Bilateral exit without oracle judgment | Zero weight |
+| Partial settlement | Both parties agree on split inside dispute | `proposeSettlement` -> `acceptSettlement(tradeId, proposalId)` (bound to the proposal seen) | `RESOLVED` | Humanless negotiated exit | Low positive weight |
+| Mutual cancel | Both parties agree to unwind | `proposeOrApproveCancel` by both sides (revocable with `revokeCancel` before the second consent) | `CANCELED` | Bilateral exit without oracle judgment | Zero weight |
 | Payment window expiry | No payment reported within 48h of `LOCKED` | either party calls `expirePaymentWindow` | `CANCELED` | End, by time, a bond-free taker holding maker funds hostage | Zero weight + taker negative signal |
 | Terminal burn | No settlement by end of challenge horizon | `burnExpired` | `BURNED` | Permissionless deadlock closure | Zero weight |
 

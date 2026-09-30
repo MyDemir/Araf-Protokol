@@ -139,7 +139,7 @@ async function _attachAdminTradeRisk(trades) {
   const users = await User.find({ wallet_address: { $in: participantAddresses } })
     .select(
       "wallet_address profileVersion bankChangeCount7d bankChangeCount30d " +
-      "payout_profile reputation_cache reputation_breakdown is_banned banned_until consecutive_bans"
+      "payout_profile.fingerprint.version reputation_cache reputation_breakdown is_banned banned_until consecutive_bans"
     )
     .lean();
 

@@ -145,7 +145,7 @@ Kontrat, V3’ün tek authoritative state machine yüzeyidir. Aşağıdaki fonks
 | Surface | Fonksiyonlar | Mimari anlam |
 |---|---|---|
 | Parent-order write surface | `createSellOrder`, `fillSellOrder`, `cancelSellOrder`, `createBuyOrder`, `fillBuyOrder`, `cancelBuyOrder` | Kamusal market ve fill primitive’i |
-| Child-trade lifecycle write surface | `reportPayment`, `releaseFunds`, `challengeTrade`, `autoRelease`, `burnExpired`, `proposeOrApproveCancel`, `expirePaymentWindow` | Gerçek escrow lifecycle ve ekonomik state geçişleri |
+| Child-trade lifecycle write surface | `reportPayment`, `releaseFunds`, `challengeTrade`, `autoRelease`, `burnExpired`, `proposeOrApproveCancel`, `revokeCancel`, `expirePaymentWindow`, `proposeSettlement`, `acceptSettlement(tradeId, expectedProposalId)` | Gerçek escrow lifecycle ve ekonomik state geçişleri |
 | Liveness / yardımcı write surface | `registerWallet`, `pingMaker`, `pingTakerForChallenge`, `decayReputation` | Entry gate, liveness ve clean-slate bakım yüzeyi |
 | Governance / mutable admin surface | `setTreasury`, `setFeeConfig`, `setCooldownConfig`, `setTokenConfig`, `pause`, `unpause` | Runtime policy ve governance kontrol yüzeyi |
 | Read surface | `getOrder`, `getTrade`, `getReputation`, `getFeeConfig`, `getCooldownConfig`, `getCurrentAmounts`, `antiSybilCheck`, `getCooldownRemaining`, `getFirstSuccessfulTradeAt` | Doğrulama, görünürlük ve runtime read yüzeyi |
@@ -157,6 +157,7 @@ Kontrat, V3’ün tek authoritative state machine yüzeyidir. Aşağıdaki fonks
 - `createBuyOrder`
 - `fillBuyOrder`
 - `cancelBuyOrder`
+- Fill anında hem filler'ın hem order sahibinin efektif tier'ı order tier'ına yetmeli (`TierNotAllowed`); maker rolündeki taraf için aktif ban `MakerBanActive` ile, taker rolündeki için giriş kapısı (ban/yaş/dust/cooldown) ile yeniden kontrol edilir. Create sonrası ceza alan sahibin açık order'ı böylece doldurulamaz.
 
 ### 3.2 Child-trade lifecycle write surface
 - `reportPayment`
@@ -164,7 +165,14 @@ Kontrat, V3’ün tek authoritative state machine yüzeyidir. Aşağıdaki fonks
 - `challengeTrade`
 - `autoRelease`
 - `burnExpired`
-- `proposeOrApproveCancel`
+- `proposeOrApproveCancel` / `revokeCancel`
+- `proposeSettlement` / `acceptSettlement(tradeId, expectedProposalId)` / `rejectSettlement` / `withdrawSettlement` / `expireSettlement`
+
+> **Bytecode ayrımı (EIP-170):** `ArafEscrow` iki external library'ye linklenir: `ArafReputationLib` (sonuç kaydı, risk puanı,
+> ban/tier tavanı, reputation politika setter doğrulaması) ve `ArafSettlementLib` (terminal payout + treasury hook'ları,
+> settlement teklif yönetimi). Library'ler DELEGATECALL ile escrow storage'ında çalışır; event'ler escrow adresinden aynı
+> imzalarla yayınlanır, yetki kontrolleri escrow'da kalır, adresler deploy anında bytecode'a gömülür (upgrade yolu yok).
+> Deploy sırası: `ArafReputationLib` → `ArafSettlementLib` → linkli `ArafEscrow` (`contracts/scripts/deploy.js`).
 
 ### 3.3 Liveness / yardımcı write surface
 - `registerWallet`
@@ -329,10 +337,10 @@ stateDiagram-v2
 
 ### 7.1 `PAID` sonrası çözüm yolları
 - **Normal kapanış:** maker `releaseFunds`
-- **Dispute hattı:** maker `pingTakerForChallenge` → bekleme → `challengeTrade`
+- **Dispute hattı:** maker `pingTakerForChallenge` → 24 saat bekleme → `challengeTrade`. Pencereden sonra challenge'ı maker da taker da açabilir; böylece ping atıp susan maker PAID trade'i süresiz kilitleyemez (bleeding başlar, en geç `MAX_BLEEDING` sonunda `burnExpired`).
 - **Liveness hattı:** taker `pingMaker` → bekleme → `autoRelease`
-- **Mutual cancel:** her iki taraf kendi `proposeOrApproveCancel(tradeId)` işlemini gönderir (ayrı imza yok)
-- **Ödeme penceresi aşımı:** LOCKED'da 48 saat içinde ödeme bildirilmezse taraflardan biri `expirePaymentWindow` çağırır; maker tam iade alır, taker bond'undan %2 liveness cezası + negatif itibar sinyali
+- **Mutual cancel:** her iki taraf kendi `proposeOrApproveCancel(tradeId)` işlemini gönderir (ayrı imza yok); ikinci onay gelmeden önce taraf kendi onayını `revokeCancel(tradeId)` ile geri çekebilir (`CancelRevoked`)
+- **Ödeme penceresi aşımı:** `reportPayment` yalnız `lockedAt + 48 saat`'ten önce kabul edilir (sınır saniyesinde `PaymentWindowClosed`). LOCKED'da 48 saat içinde ödeme bildirilmezse taraflardan biri `expirePaymentWindow` çağırır; maker tam iade alır, taker bond'undan %2 liveness cezası + negatif itibar sinyali
 - **Terminal burn:** challenge sonrası süre dolunca `burnExpired`
 
 ### 7.2 Bleeding bileşenleri
@@ -348,7 +356,7 @@ Kesin zaman çizelgesi (tüm süreler `challengedAt`'ten itibaren, `getCurrentAm
 | 48–240 saat | maker bond | saatte %0,26 | ≈ %49,9 |
 | 48–240 saat | taker bond | saatte %0,42 | ≈ %80,6 |
 | 144–240 saat | ana para (kripto) | saatte %0,68 | ≈ %65,3 |
-| 240. saat | `burnExpired` çağrılabilir; kalan her şey hazineye gider | — | %100 |
+| 240. saat | `burnExpired` çağrılabilir; trade'in tüm bakiyesi (erimiş kısım dahil: `cryptoAmount + makerBond + takerBond`) hazineye gider | — | %100 |
 
 `MAX_BLEEDING` (240 saat) challenge'dan itibaren toplam süredir, ana paranın erime süresi değildir: ana para
 yalnız son 96 saatte erir; bu yüzden yakılma anına kadar yaklaşık %34,7'si uzlaşmaya konu olarak durur.
@@ -361,11 +369,14 @@ yalnız son 96 saatte erir; bu yüzden yakılma anına kadar yaklaşık %34,7'si
 
 ### 7.4 Burn semantiği
 - `burnExpired` permissionless pattern’e yakındır: challenge süresi dolan state’i finalize eder.
-- Kalan ekonomik değer treasury yönüne gider.
+- Trade'in escrow'daki tüm bakiyesi (erimiş kısım dahil) treasury'ye gider; burn sonrası escrow'da o trade'e ait bakiye kalmaz. `EscrowBurned.burnedAmount` bu toplamdır; `burnExpired` `BleedingDecayed` yaymaz.
 
 ### 7.5 Cancel semantiği
 - `proposeOrApproveCancel` onayı msg.sender ile kanıtlanır; onaylar yalnız verildikleri state için geçerlidir (`reportPayment` / `challengeTrade` sıfırlar).
-- Her iki taraf imzası tamamlanmadan cancel finalize edilmez.
+- Her iki taraf imzası tamamlanmadan cancel finalize edilmez; tamamlanmadan önce verilen onay `revokeCancel` ile geri alınabilir.
+
+### 7.6 Settlement kabul semantiği
+- `acceptSettlement(tradeId, expectedProposalId)`: karşı taraf gördüğü teklifin `id`'sini verir. Teklif sahibi withdraw + yeniden teklif ile oranı değiştirirse `id` değişir ve kabul `SettlementProposalMismatch` ile revert eder.
 
 <details>
 <summary>📄 Teknik notlar</summary>
@@ -377,7 +388,7 @@ yalnız son 96 saatte erir; bu yüzden yakılma anına kadar yaklaşık %34,7'si
 - Ping yolları birbirini dışlayan şekilde tasarlanır (conflicting path koruması).  
 - Bekleme pencereleri state-guard ile enforce edilir.  
 - `burnExpired` permissionless pattern’e yakındır: challenge süresi dolan state’i finalize eder.  
-- Kalan ekonomik değer treasury yönüne gider.  
+- Trade'in escrow'daki tüm bakiyesi (erimiş kısım dahil) treasury'ye gider.  
 - `proposeOrApproveCancel` onayı msg.sender ile kanıtlanır; onaylar yalnız verildikleri state için geçerlidir (`reportPayment` / `challengeTrade` sıfırlar).  
 - Her iki taraf imzası tamamlanmadan cancel finalize edilmez.
 

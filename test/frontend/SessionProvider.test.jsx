@@ -150,7 +150,7 @@ describe('SessionProvider session actions', () => {
     await createSessionActions(deps).handleLogoutAndDisconnect();
 
     expect(order).toEqual(['backend', 'clear', 'disconnect']);
-    expect(deps.clearLocalSessionState).toHaveBeenCalledWith({ navigateHome: true, closeModals: true });
+    expect(deps.clearLocalSessionState).toHaveBeenCalledWith({ navigateHome: true, closeModals: true, clearPendingTx: true });
   });
 
   it('require_signed_session_blocks_when_auth_check_pending_or_active_wallet_has_no_valid_session', () => {

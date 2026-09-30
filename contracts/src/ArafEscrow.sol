@@ -22,67 +22,10 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./ArafErrors.sol";
+import "./ArafReputationLib.sol";
+import "./ArafSettlementLib.sol";
 
-// ═══════════════════════════════════════════════════
-//  ÖZEL HATALAR — require() string'lerine göre daha az gaz harcar
-//  CUSTOM ERRORS — cheaper gas than require() strings
-// ═══════════════════════════════════════════════════
-error NotTradeParty();
-error InvalidState();
-error TakerBanActive();
-error MakerBanActive();
-error PaymentWindowActive(uint256 expiresAt);
-error OnlyMaker();
-error OnlyTaker();
-error AlreadyRegistered();
-error ZeroAmount();
-error InvalidTier();
-error InvalidListingRef();
-error TierNotAllowed();
-error AmountExceedsTierLimit();
-error SelfTradeForbidden();
-error WalletTooYoung();
-error InsufficientNativeBalance();
-error TierCooldownActive();
-error EmptyIpfsHash();
-error CannotReleaseInState();
-error PingCooldownNotElapsed(uint256 requiredTime);
-error AlreadyPinged();
-error MustPingFirst();
-error ResponseWindowActive();
-error BurnPeriodNotReached();
-error NoPriorBanHistory();
-error CleanPeriodNotElapsed();
-error NoBansToReset();
-error ConflictingPingPath();
-error InvalidSettlementSplit();
-error SettlementNotAllowedInState();
-error ActiveSettlementProposalExists();
-error NoActiveSettlementProposal();
-error OnlySettlementProposer();
-error OnlySettlementCounterparty();
-error SettlementProposalExpired();
-error SettlementProposalNotExpired();
-error InvalidSettlementDeadline();
-error RevenueHookFailed();
-
-// [TR] V3 Order katmanı için yeni özel hatalar
-// [EN] New custom errors for the V3 Order layer
-error InvalidOrderRef();
-error InvalidOrderState();
-error OnlyOrderOwner();
-error FillAmountExceedsRemaining();
-error FillAmountBelowMinimum();
-error InvalidMinFill();
-error OrderSideMismatch();
-error TokenDirectionNotAllowed();
-error FeeBpsExceedsUint16(uint256 value);
-error FeeBpsExceedsEconomicLimit(uint256 value);
-error InvalidTransferAmount();
-error InvalidDecimals();
-error CooldownTooHigh();
-error DecayTooHigh();
-error BanTooHigh();
 
 interface IArafRevenueReceiver {
     function noteEscrowRevenueIntent(
@@ -100,7 +43,7 @@ interface IArafRevenueReceiver {
     ) external;
 }
 
-contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
+contract ArafEscrow is IArafEscrowErrors, ReentrancyGuard, Ownable, Pausable {
     using SafeERC20 for IERC20;
 
     // ═══════════════════════════════════════════════════
@@ -233,24 +176,6 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         bytes32 orderRef;
     }
 
-    struct Reputation {
-        uint64 successfulTrades;
-        uint32 failedDisputes;
-        uint64 bannedUntil;
-        uint16 consecutiveBans;
-        uint32 manualReleaseCount;
-        uint32 autoReleaseCount;
-        uint32 mutualCancelCount;
-        uint32 disputedResolvedCount;
-        uint32 burnCount;
-        uint32 disputeWinCount;
-        uint32 disputeLossCount;
-        uint32 partialSettlementCount;
-        uint32 riskPoints;
-        uint64 lastPositiveEventAt;
-        uint64 lastNegativeEventAt;
-    }
-
     // [TR] Trade taraflarının tamamen on-chain iradeyle kurduğu split anlaşması.
     //      Backend/admin yalnız izleyebilir; ekonomik authority kontrattadır.
     // [EN] Split agreement formed by trade parties with fully on-chain consent.
@@ -268,12 +193,13 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
 
     // [TR] Terminalized trade için minimal fee/outcome snapshot.
     // [EN] Minimal fee/outcome snapshot for terminalized trades.
-    // [TR] 3 slot: outcome+terminalAt | takerFeePaid | makerFeePaid. [EN] outcome and terminalAt share a slot.
+    // [TR] 2 slot: outcome+terminalAt | takerFeePaid+makerFeePaid (uint128, doygun yazım). Getter'lar uint256 döndürür.
+    // [EN] 2 slots: outcome+terminalAt | both fees as uint128 (saturating write). Getters still return uint256.
     struct TerminalTradeSnapshot {
         TerminalOutcome outcome;
         uint64  terminalAt;
-        uint256 takerFeePaid;
-        uint256 makerFeePaid;
+        uint128 takerFeePaid;
+        uint128 makerFeePaid;
     }
 
     struct RewardableTradeView {
@@ -360,8 +286,8 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
     // [TR] Governance yanlış konfigürasyon riskine karşı süre üst sınırları.
     // [EN] Duration upper bounds against governance misconfiguration risk.
     uint256 internal constant MAX_TRADE_COOLDOWN = 30 days;
-    uint256 internal constant MAX_REPUTATION_DECAY_PERIOD = 365 days;
-    uint256 private constant MAX_BAN_DURATION = 365 days;
+    // [TR] Reputation politika sınırları (MAX_REPUTATION_DECAY_PERIOD, MAX_BAN_DURATION) ArafReputationLib'dedir.
+    // [EN] Reputation policy bounds live in ArafReputationLib.
 
     uint256 private constant BPS_DENOMINATOR  = 10_000;
     // [TR] Fee modeli (taker/maker ayrı + snapshot) korunur.
@@ -372,17 +298,6 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
     //      the owner-adjustable economic ceiling (admin authority restriction).
     uint256 private constant MAX_FEE_CONFIG_BPS = 2_000;
     uint256 private constant SECONDS_PER_HOUR = 3_600;
-    uint256 public cleanPeriod;
-    uint32 internal manualReleaseRewardPts;
-    uint32 internal autoReleasePenaltyPts;
-    uint32 internal disputeWinRewardPts;
-    uint32 internal disputeLossPenaltyPts;
-    uint32 internal burnPenaltyPts;
-    uint32 internal mutualCancelPenaltyPts;
-    uint32 internal baseBanDuration;
-    uint32 internal banRiskPointsThreshold;
-    uint32[5] internal tierMinSuccessfulTrades;
-    uint32[5] internal tierMaxRiskPoints;
 
     // ═══════════════════════════════════════════════════
     //  DURUM DEĞİŞKENLERİ / STATE VARIABLES
@@ -401,15 +316,14 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
     mapping(uint256 => SettlementProposal) internal settlementProposalsByTrade;
     mapping(uint256 => TerminalTradeSnapshot) internal terminalTradeSnapshots;
     mapping(uint256 => uint256) internal settlementProposalNonceByTrade;
-    mapping(address => Reputation) internal reputation;
+    // [TR] Reputation state'i (kayıtlar, ban/tier tavanı, politika, tier eşikleri) tek kökte; ArafReputationLib
+    //      DELEGATECALL ile bu kök üzerinde çalışır. cleanPeriod() ve maxAllowedTier(address) getter'ları aşağıda.
+    // [EN] Reputation state under one root; ArafReputationLib operates on it via DELEGATECALL.
+    ArafReputationLib.Store internal rs;
 
     mapping(address => uint256) public walletRegisteredAt;
     mapping(address => uint256) internal lastTradeAt;
 
-    mapping(address => uint8) public maxAllowedTier;
-    mapping(address => bool)  internal hasTierPenalty;
-
-    mapping(address => uint256) internal firstSuccessfulTradeAt;
     mapping(address => TokenConfig) internal tokenConfigs;
 
     // [TR] Owner kontrollü mutable fee / cooldown alanları (getFeeConfig / getCooldownConfig ile okunur).
@@ -428,6 +342,8 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
     event EscrowReleased(uint256 indexed tradeId, address indexed maker, address indexed taker, uint256 takerFee, uint256 makerFee);
     event DisputeOpened(uint256 indexed tradeId, address indexed challenger, uint256 timestamp);
     event CancelProposed(uint256 indexed tradeId, address indexed proposer);
+    // [TR] K11: iptal onayı geri çekildi. [EN] K11: cancel consent revoked.
+    event CancelRevoked(uint256 indexed tradeId, address indexed revoker);
     event EscrowCanceled(uint256 indexed tradeId, uint256 makerRefund, uint256 takerRefund);
     event MakerPinged(uint256 indexed tradeId, address indexed pinger, uint256 timestamp);
     event BleedingDecayed(uint256 indexed tradeId, uint256 decayedAmount, uint256 timestamp);
@@ -574,23 +490,23 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
 
         // [TR] Reputation policy defaults (yalnız ileriye dönük etkiler).
         // [EN] Reputation policy defaults (future effect only).
-        cleanPeriod = 90 days;
-        manualReleaseRewardPts = 8;
-        autoReleasePenaltyPts = 60;
-        disputeWinRewardPts = 10;
-        disputeLossPenaltyPts = 60;
-        burnPenaltyPts = 90;
-        mutualCancelPenaltyPts = 20;
-        baseBanDuration = uint32(30 days);
-        banRiskPointsThreshold = 100;
+        rs.cleanPeriod = 90 days;
+        rs.manualReleaseRewardPts = 8;
+        rs.autoReleasePenaltyPts = 60;
+        rs.disputeWinRewardPts = 10;
+        rs.disputeLossPenaltyPts = 60;
+        rs.burnPenaltyPts = 90;
+        rs.mutualCancelPenaltyPts = 20;
+        rs.baseBanDuration = uint32(30 days);
+        rs.banRiskPointsThreshold = 100;
 
-        tierMinSuccessfulTrades = [uint32(0), uint32(15), uint32(50), uint32(100), uint32(200)];
-        tierMaxRiskPoints = [uint32(100), uint32(80), uint32(50), uint32(30), uint32(15)];
+        rs.tierMinSuccessfulTrades = [uint32(0), uint32(15), uint32(50), uint32(100), uint32(200)];
+        rs.tierMaxRiskPoints = [uint32(100), uint32(80), uint32(50), uint32(30), uint32(15)];
 
         // [TR] Politika değerleri runtime getter yerine event ile şeffaf tutulur (EIP-170 bütçesi); ilk değerler de yayınlanır.
         // [EN] Policy values stay transparent via events instead of runtime getters (EIP-170 budget); initial values are emitted too.
         emit ReputationPolicyUpdated(90 days, 8, 60, 10, 60, 90, 20, 30 days, 100);
-        emit ReputationTierThresholdsUpdated(tierMinSuccessfulTrades, tierMaxRiskPoints);
+        emit ReputationTierThresholdsUpdated(rs.tierMinSuccessfulTrades, rs.tierMaxRiskPoints);
     }
 
     // ═══════════════════════════════════════════════════
@@ -653,7 +569,13 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
     ) external nonReentrant whenNotPaused returns (uint256 tradeId) {
         Order storage o = _validateFill(_orderId, OrderSide.SELL_CRYPTO, _fillAmount, _childListingRef);
 
+        // [TR] K6: order sahibi child trade'de maker olur; create sonrası ban yemişse fill edilemez (fillBuyOrder simetriği).
+        // [EN] K6: the order owner becomes maker; a ban received after create blocks fills (mirrors fillBuyOrder).
+        _enforceNotBanned(o.owner, true);
         _enforceTakerEntry(msg.sender, o.tier);
+        // [TR] K3 + K6: filler (taker) ve order sahibi (maker) order tier'ına fill anında hâlâ yetkili olmalı.
+        // [EN] K3 + K6: both the filler (taker) and the owner (maker) must still qualify for the order tier at fill time.
+        _enforceFillTiers(o.tier, o.owner);
 
         uint256 takerBond      = (_fillAmount * _getTakerBondBps(msg.sender, o.tier)) / BPS_DENOMINATOR;
         uint256 makerBondSlice = _proportionalSlice(o.remainingMakerBondReserve, o.remainingAmount, _fillAmount);
@@ -725,7 +647,9 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         //      is re-applied at fill time. The filler is the maker.
         _enforceTakerEntry(o.owner, o.tier);
         _enforceNotBanned(msg.sender, true);
-        if (o.tier > _getEffectiveTier(msg.sender)) revert TierNotAllowed();
+        // [TR] K6: order sahibinin (taker) tier tavanı create sonrası düşmüşse de fill reddedilir.
+        // [EN] K6: also rejects the fill when the owner's (taker) tier ceiling dropped after create.
+        _enforceFillTiers(o.tier, o.owner);
 
         uint256 makerBond      = (_fillAmount * _getMakerBondBps(msg.sender, o.tier)) / BPS_DENOMINATOR;
         uint256 takerBondSlice = _proportionalSlice(o.remainingTakerBondReserve, o.remainingAmount, _fillAmount);
@@ -818,6 +742,16 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         if (_fillAmount < o.minFillAmount && _fillAmount != o.remainingAmount) revert FillAmountBelowMinimum();
     }
 
+    /**
+     * @notice Order tier'ının hem order sahibi hem filler (msg.sender) için fill anındaki efektif tier'ı aşmadığını zorlar.
+     *         Create anındaki kontrol tek başına yetmez: sahibinin tavanı sonradan cezayla düşebilir.
+     * @notice Enforces that the order tier does not exceed the fill-time effective tier of both the owner and the filler.
+     */
+    function _enforceFillTiers(uint8 _tier, address _owner) internal view {
+        if (_tier == 0) return;
+        if (_tier > _getEffectiveTier(_owner) || _tier > _getEffectiveTier(msg.sender)) revert TierNotAllowed();
+    }
+
     function _consumeFill(Order storage o, uint256 _fillAmount) internal {
         o.remainingAmount -= _fillAmount;
         o.state = o.remainingAmount == 0 ? OrderState.FILLED : OrderState.PARTIALLY_FILLED;
@@ -906,6 +840,12 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         Trade storage t = trades[_tradeId];
         if (msg.sender != t.taker) revert OnlyTaker();
         if (bytes(_ipfsHash).length == 0) revert EmptyIpfsHash();
+        // [TR] K10: bildirim yalnız PAYMENT_WINDOW içinde kabul edilir. Sınır saniyesi expirePaymentWindow'a aittir
+        //      (orada `>= expiresAt` geçerli), böylece iki yol aynı saniyede çakışmaz.
+        // [EN] K10: reports are only accepted inside PAYMENT_WINDOW. The boundary second belongs to
+        //      expirePaymentWindow (valid at `>= expiresAt`), so the two paths never overlap.
+        uint256 windowEnd = t.lockedAt + PAYMENT_WINDOW;
+        if (block.timestamp >= windowEnd) revert PaymentWindowClosed(windowEnd);
 
         t.state           = TradeState.PAID;
         t.paidAt          = uint64(block.timestamp);
@@ -945,11 +885,7 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         _payout(t, _tradeId, makerRefund, takerRefund, takerPenalty, 0, RevenueKind.AUTO_RELEASE_FEE_OR_PENALTY);
 
         _recordTerminalOutcome(_tradeId, TerminalOutcome.PAYMENT_WINDOW_EXPIRED, takerPenalty, 0);
-
-        Reputation storage takerRep = reputation[t.taker];
-        takerRep.failedDisputes++;
-        _applyNegativeSignal(t.taker, takerRep, autoReleasePenaltyPts);
-        _emitReputationUpdated(t.taker, takerRep);
+        _recordReputation(t, ArafReputationLib.Outcome.PAYMENT_WINDOW_EXPIRED);
 
         emit PaymentWindowExpired(_tradeId, makerRefund, takerRefund, takerPenalty);
     }
@@ -971,7 +907,15 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         (uint256 currentCrypto, uint256 currentMakerBond, uint256 currentTakerBond, uint256 decayed) =
             _calculateCurrentAmounts(_tradeId);
 
-        bool makerOpenedDispute = (t.state == TradeState.CHALLENGED);
+        // [TR] Sınıflama challenge'ı kimin açtığına değil state'e bağlıdır. CHALLENGED'a yalnız maker'ın
+        //      pingTakerForChallenge ("ödeme gelmedi" iddiası) sonrasında girilir; challengeTrade'i maker da, maker
+        //      susunca taker da (K2) açabilir. Her iki durumda maker'ın CHALLENGED'dan serbest bırakması o iddiadan
+        //      vazgeçmesidir: DISPUTED_RELEASE + maker dispute kaybı doğru sınıftır.
+        // [EN] Classification depends on state, not on who opened the challenge. CHALLENGED is only reachable after
+        //      the maker's pingTakerForChallenge ("not paid" claim); challengeTrade may be opened by the maker or, once
+        //      the maker goes silent, by the taker (K2). Either way, a maker release from CHALLENGED abandons that claim:
+        //      DISPUTED_RELEASE + maker dispute loss is the correct class.
+        bool disputed = (t.state == TradeState.CHALLENGED);
 
         t.state = TradeState.RESOLVED;
 
@@ -986,17 +930,17 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
             currentCrypto - takerFee + currentTakerBond,
             decayed + takerFee + actualMakerFee,
             decayed,
-            makerOpenedDispute ? RevenueKind.DISPUTED_RELEASE_FEE : RevenueKind.MANUAL_RELEASE_FEE
+            disputed ? RevenueKind.DISPUTED_RELEASE_FEE : RevenueKind.MANUAL_RELEASE_FEE
         );
 
-        if (makerOpenedDispute) {
+        if (disputed) {
             // [TR] CHALLENGED→RESOLVED yolu maker'ın challenge iddiasının başarısızlığı olarak sınıflanır.
             // [EN] CHALLENGED→RESOLVED path is classified as maker challenge-loss semantics.
-            _recordDisputeResolution(t, false);
             _recordTerminalOutcome(_tradeId, TerminalOutcome.DISPUTED_RELEASE, takerFee, actualMakerFee);
+            _recordReputation(t, ArafReputationLib.Outcome.DISPUTED_RELEASE);
         } else {
-            _recordManualRelease(t);
             _recordTerminalOutcome(_tradeId, TerminalOutcome.CLEAN_RELEASE, takerFee, actualMakerFee);
+            _recordReputation(t, ArafReputationLib.Outcome.MANUAL_RELEASE);
         }
 
         emit EscrowReleased(_tradeId, t.maker, t.taker, takerFee, actualMakerFee);
@@ -1025,9 +969,15 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
     }
 
     /**
-     * @notice Maker dispute akışını başlatır.
+     * @notice Dispute (bleeding) akışını başlatır. Maker'ın pingTakerForChallenge çağrısı şarttır; cevap penceresi
+     *         (ping + 24 saat) dolduktan sonra challenge'ı maker ya da taker açabilir. Taker'ın bu yolu, maker ping
+     *         atıp susarsa (pingMaker/autoRelease ConflictingPingPath ile kapalıyken) PAID trade'in sonsuza dek
+     *         kilitli kalmasını önler: bleeding başlar ve en geç MAX_BLEEDING sonunda burnExpired garantilidir.
      *         Contract bu aşamada kimin haklı olduğunu söylemez; yalnız oyun teorik yolu açar.
-     * @notice Opens the dispute path for the maker.
+     * @notice Opens the dispute (bleeding) path. Requires the maker's pingTakerForChallenge; once the response window
+     *         (ping + 24h) has elapsed, either the maker or the taker may open it. The taker path prevents a PAID trade
+     *         from being locked forever when the maker pings and goes silent (pingMaker/autoRelease are blocked by
+     *         ConflictingPingPath): bleeding starts and burnExpired is guaranteed after MAX_BLEEDING at the latest.
      *         At this stage the contract does not decide who is right; it only opens the game-theoretic path.
      */
     function challengeTrade(uint256 _tradeId)
@@ -1036,7 +986,7 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         inState(_tradeId, TradeState.PAID)
     {
         Trade storage t = trades[_tradeId];
-        if (msg.sender != t.maker) revert OnlyMaker();
+        if (msg.sender != t.maker && msg.sender != t.taker) revert NotTradeParty();
         if (!t.challengePingedByMaker) revert MustPingFirst();
         if (block.timestamp < t.challengePingedAt + 24 hours) revert ResponseWindowActive();
 
@@ -1074,6 +1024,32 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
     }
 
     /**
+     * @notice K11: Taraf, karşı taraf ikinci onayı vererek iptali yürütmeden önce kendi iptal onayını geri çeker.
+     *         Yalnız açık (LOCKED/PAID/CHALLENGED) trade'de ve verilmiş bir onay varsa çalışır.
+     * @notice K11: A party withdraws its own cancel consent before the counterparty executes the cancel with
+     *         the second consent. Only for live (LOCKED/PAID/CHALLENGED) trades with an outstanding consent.
+     */
+    function revokeCancel(uint256 _tradeId) external nonReentrant {
+        Trade storage t = trades[_tradeId];
+
+        if (t.state != TradeState.LOCKED &&
+            t.state != TradeState.PAID &&
+            t.state != TradeState.CHALLENGED) revert CannotReleaseInState();
+
+        if (msg.sender == t.maker) {
+            if (!t.cancelProposedByMaker) revert NoCancelConsent();
+            t.cancelProposedByMaker = false;
+        } else if (msg.sender == t.taker) {
+            if (!t.cancelProposedByTaker) revert NoCancelConsent();
+            t.cancelProposedByTaker = false;
+        } else {
+            revert NotTradeParty();
+        }
+
+        emit CancelRevoked(_tradeId, msg.sender);
+    }
+
+    /**
      * @notice Bleeding süresi dolduğunda kalan her şey burn edilir.
      *         Bu, anlaşmazlığı yorumlayarak değil zaman ve maliyet üzerinden çözen son çıkıştır.
      * @notice Burns all remaining value when the bleeding window is exhausted.
@@ -1087,17 +1063,22 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         Trade storage t = trades[_tradeId];
         if (block.timestamp < t.challengedAt + MAX_BLEEDING) revert BurnPeriodNotReached();
 
-        (uint256 currentCrypto, uint256 currentMakerBond, uint256 currentTakerBond,) =
-            _calculateCurrentAmounts(_tradeId);
-
-        uint256 totalBurn = currentCrypto + currentMakerBond + currentTakerBond;
+        // [TR] K1: Trade'e ait kalan her şey (erimiş kısım dahil) hazineye gider. Eskiden yalnız current (post-decay)
+        //      tutarlar gönderiliyor, erimiş kısım escrow'da kalıcı kilitli kalıyordu. Decay tavanları orijinal
+        //      tutarlar olduğundan current + decayed == cryptoAmount + makerBond + takerBond; trade bakiyesi 0'a iner.
+        //      burnExpired BleedingDecayed yaymaz (backend sözleşmesi); yakılan toplam EscrowBurned'dedir.
+        // [EN] K1: everything left for the trade (decayed part included) goes to treasury. Previously only the
+        //      current (post-decay) amounts were sent and the decayed part stayed locked in the escrow forever.
+        //      Since decay is capped at the original amounts, current + decayed == crypto + makerBond + takerBond.
+        //      burnExpired emits no BleedingDecayed (backend contract); the burned total is in EscrowBurned.
+        uint256 totalBurn = t.cryptoAmount + t.makerBond + t.takerBond;
 
         t.state = TradeState.BURNED;
 
-        _sendProtocolRevenue(t.tokenAddress, totalBurn, RevenueKind.BURN_RESIDUAL, _tradeId);
+        _payout(t, _tradeId, 0, 0, totalBurn, 0, RevenueKind.BURN_RESIDUAL);
 
         _recordTerminalOutcome(_tradeId, TerminalOutcome.BURNED, 0, 0);
-        _recordBurn(t.maker, t.taker);
+        _recordReputation(t, ArafReputationLib.Outcome.BURN);
 
         emit EscrowBurned(_tradeId, totalBurn);
     }
@@ -1158,7 +1139,7 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         );
 
         _recordTerminalOutcome(_tradeId, TerminalOutcome.AUTO_RELEASE, takerPenalty, makerPenalty);
-        _recordAutoRelease(t);
+        _recordReputation(t, ArafReputationLib.Outcome.AUTO_RELEASE);
 
         // Event payload order must stay aligned with EscrowReleased(takerFee, makerFee)
         // so off-chain listeners book penalties to the correct party.
@@ -1180,40 +1161,16 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         uint16 _makerShareBps,
         uint64 _expiresAt
     ) external nonReentrant {
-        Trade storage t = trades[_tradeId];
-        // [TR] Split/partial settlement yalnız aktif uyuşmazlık (CHALLENGED) safhasında mümkündür.
-        // [EN] Split/partial settlement is only possible during an active dispute (CHALLENGED).
-        if (t.state != TradeState.CHALLENGED) revert SettlementNotAllowedInState();
-        if (msg.sender != t.maker && msg.sender != t.taker) revert NotTradeParty();
-
-        // [TR] Süresi dolmuş teklif yenisiyle doğrudan üzerine yazılır (FINALIZED burada ulaşılamaz: trade RESOLVED olur).
-        // [EN] An expired proposal is simply overwritten (FINALIZED is unreachable here: the trade is RESOLVED).
-        SettlementProposal storage current = settlementProposalsByTrade[_tradeId];
-        if (current.state == SettlementProposalState.PROPOSED && block.timestamp <= current.expiresAt) {
-            revert ActiveSettlementProposalExists();
-        }
-
-        if (_makerShareBps > BPS_DENOMINATOR) revert InvalidSettlementSplit();
-        uint16 takerShareBps = uint16(BPS_DENOMINATOR - _makerShareBps);
-
-        uint256 nowTs = block.timestamp;
-        if (_expiresAt <= nowTs) revert InvalidSettlementDeadline();
-        if (_expiresAt < nowTs + MIN_SETTLEMENT_EXPIRY) revert InvalidSettlementDeadline();
-        if (_expiresAt > nowTs + MAX_CANCEL_DEADLINE) revert InvalidSettlementDeadline();
-
-        uint256 proposalId = ++settlementProposalNonceByTrade[_tradeId];
-        settlementProposalsByTrade[_tradeId] = SettlementProposal({
-            id: proposalId,
-            tradeId: _tradeId,
-            proposer: msg.sender,
-            makerShareBps: _makerShareBps,
-            takerShareBps: takerShareBps,
-            proposedAt: uint64(nowTs),
-            expiresAt: _expiresAt,
-            state: SettlementProposalState.PROPOSED
-        });
-
-        emit SettlementProposed(_tradeId, proposalId, msg.sender, _makerShareBps, takerShareBps, _expiresAt);
+        // [TR] Doğrulama + kayıt + SettlementProposed ArafSettlementLib'de (DELEGATECALL, escrow storage/adresi).
+        // [EN] Validation + storage + SettlementProposed live in ArafSettlementLib (DELEGATECALL).
+        ArafSettlementLib.propose(
+            trades[_tradeId],
+            settlementProposalsByTrade[_tradeId],
+            settlementProposalNonceByTrade,
+            _tradeId,
+            _makerShareBps,
+            _expiresAt
+        );
     }
 
     /**
@@ -1221,9 +1178,7 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
      * @notice Counterparty rejects an active settlement proposal.
      */
     function rejectSettlement(uint256 _tradeId) external nonReentrant {
-        SettlementProposal storage sp = _counterpartyProposal(_tradeId);
-        sp.state = SettlementProposalState.REJECTED;
-        emit SettlementRejected(_tradeId, sp.id, msg.sender);
+        _closeProposal(_tradeId, ArafSettlementLib.OP_REJECT);
     }
 
     /**
@@ -1231,11 +1186,7 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
      * @notice Proposal owner withdraws an active settlement proposal.
      */
     function withdrawSettlement(uint256 _tradeId) external nonReentrant {
-        SettlementProposal storage sp = _liveProposal(_tradeId);
-        if (sp.proposer != msg.sender) revert OnlySettlementProposer();
-
-        sp.state = SettlementProposalState.WITHDRAWN;
-        emit SettlementWithdrawn(_tradeId, sp.id, msg.sender);
+        _closeProposal(_tradeId, ArafSettlementLib.OP_WITHDRAW);
     }
 
     /**
@@ -1243,13 +1194,11 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
      * @notice Anyone can expire a settlement proposal once its deadline passes.
      */
     function expireSettlement(uint256 _tradeId) external nonReentrant {
-        SettlementProposal storage sp = settlementProposalsByTrade[_tradeId];
-        if (trades[_tradeId].state != TradeState.CHALLENGED) revert SettlementNotAllowedInState();
-        if (sp.state != SettlementProposalState.PROPOSED) revert NoActiveSettlementProposal();
-        if (block.timestamp <= sp.expiresAt) revert SettlementProposalNotExpired();
+        _closeProposal(_tradeId, ArafSettlementLib.OP_EXPIRE);
+    }
 
-        sp.state = SettlementProposalState.EXPIRED;
-        emit SettlementExpired(_tradeId, sp.id);
+    function _closeProposal(uint256 _tradeId, uint8 _op) internal {
+        ArafSettlementLib.close(trades[_tradeId], settlementProposalsByTrade[_tradeId], _tradeId, _op);
     }
 
     /**
@@ -1257,10 +1206,15 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
      *         Trade terminal state olarak RESOLVED'a çekilir.
      * @notice Counterparty accepts active split settlement proposal and executes payouts.
      *         Trade transitions to RESOLVED as terminal state.
+     * @param  _expectedProposalId [TR] K5: kabul edilen teklifin kimliği (SettlementProposed.proposalId /
+     *         getSettlementProposal().id). Teklif sahibi withdraw + yeniden teklif ile oranı değiştirirse id değişir
+     *         ve kabul SettlementProposalMismatch ile revert eder. [EN] K5: id of the proposal being accepted; a
+     *         withdraw + re-propose changes the id and the acceptance reverts with SettlementProposalMismatch.
      */
-    function acceptSettlement(uint256 _tradeId) external nonReentrant {
+    function acceptSettlement(uint256 _tradeId, uint256 _expectedProposalId) external nonReentrant {
         Trade storage t = trades[_tradeId];
         SettlementProposal storage sp = _counterpartyProposal(_tradeId);
+        if (sp.id != _expectedProposalId) revert SettlementProposalMismatch(_expectedProposalId, sp.id);
 
         // [TR] Settlement matematiği kabul anındaki current (post-decay) değerlerle hesaplanır.
         //      Önce decayed tutar treasury'ye alınır, kalan current havuz split edilir.
@@ -1290,7 +1244,7 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         _payout(t, _tradeId, makerPayout, takerPayout, decayed + makerFee + takerFee, decayed, RevenueKind.PARTIAL_SETTLEMENT_FEE);
 
         _recordTerminalOutcome(_tradeId, TerminalOutcome.PARTIAL_SETTLEMENT, takerFee, makerFee);
-        _recordPartialSettlement(t);
+        _recordReputation(t, ArafReputationLib.Outcome.PARTIAL_SETTLEMENT);
 
         emit SettlementFinalized(_tradeId, sp.id, makerPayout, takerPayout, takerFee, makerFee);
     }
@@ -1335,7 +1289,7 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         );
 
         _recordTerminalOutcome(_tradeId, TerminalOutcome.MUTUAL_CANCEL, takerFee, makerFee);
-        _recordMutualCancel(t.maker, t.taker);
+        _recordReputation(t, ArafReputationLib.Outcome.MUTUAL_CANCEL);
 
         emit EscrowCanceled(_tradeId, makerRefund, takerRefund);
     }
@@ -1353,10 +1307,18 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         uint256 _decayed,
         RevenueKind _kind
     ) internal {
-        if (_decayed > 0) emit BleedingDecayed(_tradeId, _decayed, block.timestamp);
-        _sendProtocolRevenue(t.tokenAddress, _toTreasury, _kind, _tradeId);
-        if (_toMaker > 0) IERC20(t.tokenAddress).safeTransfer(t.maker, _toMaker);
-        if (_toTaker > 0) IERC20(t.tokenAddress).safeTransfer(t.taker, _toTaker);
+        ArafSettlementLib.payout(
+            t.tokenAddress,
+            t.maker,
+            t.taker,
+            treasury,
+            _tradeId,
+            _toMaker,
+            _toTaker,
+            _toTreasury,
+            _decayed,
+            uint8(_kind)
+        );
     }
 
     /**
@@ -1406,41 +1368,6 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         totalDecayed  = makerBondDecayed + takerBondDecayed + cryptoDecayed;
     }
 
-    /**
-     * @notice Protokol gelirini treasury'ye gönderir ve sınıfını yayınlar.
-     * @dev    Transferden sonra treasury kontrat ise revenue hook tetiklenir.
-     *         Hook revert ederse tüm işlem RevenueHookFailed ile geri alınır.
-     */
-    function _sendProtocolRevenue(
-        address _token,
-        uint256 _amount,
-        RevenueKind _kind,
-        uint256 _tradeId
-    ) internal {
-        if (_amount == 0) return;
-
-        // [TR] Treasury vault destekliyorsa same-path exact-in doğrulaması için niyet kaydı bırakılır.
-        // [EN] If treasury vault supports it, register intent for same-path exact-in verification.
-        if (treasury.code.length > 0) {
-            try IArafRevenueReceiver(treasury).noteEscrowRevenueIntent(_token, _amount, uint8(_kind), _tradeId) {
-                // no-op
-            } catch {
-                // Backward compatibility: legacy treasury receivers may not implement intent hook.
-            }
-        }
-
-        IERC20(_token).safeTransfer(treasury, _amount);
-
-        if (treasury.code.length > 0) {
-            try IArafRevenueReceiver(treasury).onArafRevenue(_token, _amount, uint8(_kind), _tradeId) {
-                // no-op
-            } catch {
-                revert RevenueHookFailed();
-            }
-        }
-
-        emit ProtocolRevenueSent(_token, _amount, _kind, _tradeId, treasury);
-    }
 
     /**
      * @notice Terminal outcome + fee snapshot bilgisini trade bazında sabitler.
@@ -1457,8 +1384,15 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
 
         snapshot.outcome = _outcome;
         snapshot.terminalAt = uint64(block.timestamp);
-        snapshot.takerFeePaid = _takerFeePaid;
-        snapshot.makerFeePaid = _makerFeePaid;
+        // [TR] G1: iki ücret tek slotta (uint128). Ücret ≤ trade tutarı olduğundan pratikte taşmaz; yine de terminal
+        //      yolu asla revert etmesin diye doygun (saturating) yazılır. Yalnız reward read-model'i etkiler.
+        // [EN] G1: both fees share one slot (uint128). Saturating write so a terminal path can never revert.
+        snapshot.takerFeePaid = _toUint128Saturating(_takerFeePaid);
+        snapshot.makerFeePaid = _toUint128Saturating(_makerFeePaid);
+    }
+
+    function _toUint128Saturating(uint256 _v) internal pure returns (uint128) {
+        return _v > type(uint128).max ? type(uint128).max : uint128(_v);
     }
 
     /**
@@ -1478,7 +1412,7 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         else if (_tier == 3) bondBps = MAKER_BOND_TIER3_BPS;
         else                 bondBps = MAKER_BOND_TIER4_BPS;
 
-        Reputation storage rep = reputation[_maker];
+        ArafReputationLib.Reputation storage rep = rs.reputation[_maker];
         if (rep.riskPoints == 0 && rep.successfulTrades > 0) {
             bondBps = bondBps > GOOD_REP_DISCOUNT_BPS ? bondBps - GOOD_REP_DISCOUNT_BPS : 0;
         } else if (rep.riskPoints > 0) {
@@ -1503,7 +1437,7 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         else if (_tier == 3) bondBps = TAKER_BOND_TIER3_BPS;
         else                 bondBps = TAKER_BOND_TIER4_BPS;
 
-        Reputation storage rep = reputation[_taker];
+        ArafReputationLib.Reputation storage rep = rs.reputation[_taker];
         if (rep.riskPoints == 0 && rep.successfulTrades > 0) {
             bondBps = bondBps > GOOD_REP_DISCOUNT_BPS ? bondBps - GOOD_REP_DISCOUNT_BPS : 0;
         } else if (rep.riskPoints > 0) {
@@ -1521,185 +1455,14 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         return _toStableUnits(t.cryptoAmount, tokenConfigs[t.tokenAddress].decimals) >= MIN_REPUTATION_NOTIONAL;
     }
 
-    function _recordManualRelease(Trade storage t) internal {
-        address _maker = t.maker;
-        address _taker = t.taker;
-        bool q = _repUnit(t);
-        Reputation storage makerRep = reputation[_maker];
-        Reputation storage takerRep = reputation[_taker];
-        makerRep.manualReleaseCount++;
-        takerRep.manualReleaseCount++;
-
-        _applyPositiveSignal(_maker, makerRep, manualReleaseRewardPts, q);
-        _applyPositiveSignal(_taker, takerRep, manualReleaseRewardPts, q);
-        _emitReputationUpdated(_maker, makerRep);
-        _emitReputationUpdated(_taker, takerRep);
-    }
-
-    function _recordAutoRelease(Trade storage t) internal {
-        address _maker = t.maker;
-        address _taker = t.taker;
-        bool q = _repUnit(t);
-        Reputation storage makerRep = reputation[_maker];
-        Reputation storage takerRep = reputation[_taker];
-        makerRep.autoReleaseCount++;
-        takerRep.autoReleaseCount++;
-        makerRep.failedDisputes++;
-
-        _applyNegativeSignal(_maker, makerRep, autoReleasePenaltyPts);
-        _applyPositiveSignal(_taker, takerRep, manualReleaseRewardPts, q);
-        _emitReputationUpdated(_maker, makerRep);
-        _emitReputationUpdated(_taker, takerRep);
-    }
-
-    function _recordMutualCancel(address _maker, address _taker) internal {
-        Reputation storage makerRep = reputation[_maker];
-        Reputation storage takerRep = reputation[_taker];
-        makerRep.mutualCancelCount++;
-        takerRep.mutualCancelCount++;
-
-        _applyNegativeSignal(_maker, makerRep, mutualCancelPenaltyPts);
-        _applyNegativeSignal(_taker, takerRep, mutualCancelPenaltyPts);
-        _emitReputationUpdated(_maker, makerRep);
-        _emitReputationUpdated(_taker, takerRep);
-    }
-
-    function _recordDisputeResolution(Trade storage t, bool makerWon) internal {
-        address _maker = t.maker;
-        address _taker = t.taker;
-        bool q = _repUnit(t);
-        Reputation storage makerRep = reputation[_maker];
-        Reputation storage takerRep = reputation[_taker];
-        makerRep.disputedResolvedCount++;
-        takerRep.disputedResolvedCount++;
-
-        if (makerWon) {
-            makerRep.disputeWinCount++;
-            takerRep.disputeLossCount++;
-            takerRep.failedDisputes++;
-            _applyPositiveSignal(_maker, makerRep, disputeWinRewardPts, q);
-            _applyNegativeSignal(_taker, takerRep, disputeLossPenaltyPts);
-        } else {
-            takerRep.disputeWinCount++;
-            makerRep.disputeLossCount++;
-            makerRep.failedDisputes++;
-            _applyPositiveSignal(_taker, takerRep, disputeWinRewardPts, q);
-            _applyNegativeSignal(_maker, makerRep, disputeLossPenaltyPts);
-        }
-
-        _emitReputationUpdated(_maker, makerRep);
-        _emitReputationUpdated(_taker, takerRep);
-    }
-
-    function _recordBurn(address _maker, address _taker) internal {
-        Reputation storage makerRep = reputation[_maker];
-        Reputation storage takerRep = reputation[_taker];
-        makerRep.burnCount++;
-        takerRep.burnCount++;
-        makerRep.failedDisputes++;
-        takerRep.failedDisputes++;
-
-        _applyNegativeSignal(_maker, makerRep, burnPenaltyPts);
-        _applyNegativeSignal(_taker, takerRep, burnPenaltyPts);
-        _emitReputationUpdated(_maker, makerRep);
-        _emitReputationUpdated(_taker, takerRep);
-    }
-
-    function _recordPartialSettlement(Trade storage t) internal {
-        address _maker = t.maker;
-        address _taker = t.taker;
-        bool q = _repUnit(t);
-        Reputation storage makerRep = reputation[_maker];
-        Reputation storage takerRep = reputation[_taker];
-        makerRep.partialSettlementCount++;
-        takerRep.partialSettlementCount++;
-
-        // [TR] Partial settlement ceza semantiği taşımaz; risk/failure artışı üretmez. Sıfır puanlı pozitif
-        //      sinyal yalnız firstSuccessfulTradeAt/lastPositiveEventAt alanlarını tutarlı başlatır.
-        // [EN] Partial settlement is non-penal. The zero-point positive signal only keeps
-        //      firstSuccessfulTradeAt/lastPositiveEventAt consistent with successfulTrades.
-        _applyPositiveSignal(_maker, makerRep, 0, q);
-        _applyPositiveSignal(_taker, takerRep, 0, q);
-        _emitReputationUpdated(_maker, makerRep);
-        _emitReputationUpdated(_taker, takerRep);
-    }
-
-    // [TR] Başarılı işlem sayacı yalnız burada artar; `qualifies` false ise (mikro işlem) sinyal yok sayılır.
-    // [EN] The successful-trade counter only grows here; a non-qualifying (micro) trade is ignored.
-    function _applyPositiveSignal(address _wallet, Reputation storage rep, uint32 rewardPts, bool qualifies) internal {
-        if (!qualifies) return;
-        rep.successfulTrades++;
-        uint64 nowTs = uint64(block.timestamp);
-        rep.lastPositiveEventAt = nowTs;
-
-        // [TR] Başarı geçmişi oluştuğunda firstSuccessfulTradeAt, ödül puanı sıfır olsa bile bir kez initialize edilir.
-        // [EN] Initialize firstSuccessfulTradeAt once when success history exists, even if reward points are zero.
-        if (firstSuccessfulTradeAt[_wallet] == 0 && rep.successfulTrades > 0) {
-            firstSuccessfulTradeAt[_wallet] = block.timestamp;
-        }
-
-        if (rewardPts > 0) {
-            if (rep.riskPoints <= rewardPts) rep.riskPoints = 0;
-            else rep.riskPoints -= rewardPts;
-        }
-        // [TR] Pozitif sinyal ban/tier cezası tetiklemez. Eşik üstündeyken başarılı bir işlem
-        //      yeni (üstel uzayan) ban başlatıp tier tavanını düşürmemelidir.
-        // [EN] Positive signals never trigger ban/tier penalties. A successful trade while still
-        //      above the threshold must not start a new (escalating) ban or lower the tier ceiling.
-    }
-
-    function _applyNegativeSignal(address _wallet, Reputation storage rep, uint32 penaltyPts) internal {
-        uint64 nowTs = uint64(block.timestamp);
-        rep.lastNegativeEventAt = nowTs;
-
-        if (penaltyPts > 0) {
-            uint256 nextRisk = uint256(rep.riskPoints) + penaltyPts;
-            rep.riskPoints = nextRisk > type(uint32).max ? type(uint32).max : uint32(nextRisk);
-        }
-        _refreshTierAndBanState(_wallet, rep);
-    }
-
-    function _refreshTierAndBanState(address _wallet, Reputation storage rep) internal {
-        if (rep.riskPoints >= banRiskPointsThreshold) {
-            if (block.timestamp > rep.bannedUntil) {
-                rep.consecutiveBans++;
-                // [TR] Overflow güvenliği için üstel katsayı saturating shift ile sınırlandırılır.
-                // [EN] Exponential factor uses saturating shift bounds for overflow-safe escalation.
-                uint256 escalationSteps = rep.consecutiveBans > 1 ? uint256(rep.consecutiveBans - 1) : 0;
-                if (escalationSteps > 31) escalationSteps = 31;
-                uint256 banWindow = uint256(baseBanDuration) * (uint256(1) << escalationSteps);
-                if (banWindow > MAX_BAN_DURATION) banWindow = MAX_BAN_DURATION;
-                rep.bannedUntil = uint64(block.timestamp + banWindow);
-            }
-            if (!hasTierPenalty[_wallet]) {
-                hasTierPenalty[_wallet] = true;
-                maxAllowedTier[_wallet] = 4;
-            }
-            if (maxAllowedTier[_wallet] > 0) {
-                maxAllowedTier[_wallet] = maxAllowedTier[_wallet] - 1;
-            }
-        }
-    }
-
-    function _emitReputationUpdated(address _wallet, Reputation storage rep) internal {
-        emit ReputationUpdated(
-            _wallet,
-            rep.successfulTrades,
-            rep.failedDisputes,
-            rep.bannedUntil,
-            _getEffectiveTier(_wallet),
-            rep.manualReleaseCount,
-            rep.autoReleaseCount,
-            rep.mutualCancelCount,
-            rep.disputedResolvedCount,
-            rep.burnCount,
-            rep.disputeWinCount,
-            rep.disputeLossCount,
-            rep.partialSettlementCount,
-            rep.riskPoints,
-            rep.lastPositiveEventAt,
-            rep.lastNegativeEventAt
-        );
+    /**
+     * @notice Terminal sonucu reputation motoruna (ArafReputationLib, DELEGATECALL) yazar; ReputationUpdated
+     *         event'leri escrow adresinden yayınlanır.
+     * @notice Records a terminal outcome through the reputation engine (ArafReputationLib, DELEGATECALL);
+     *         ReputationUpdated events are emitted from the escrow address.
+     */
+    function _recordReputation(Trade storage t, ArafReputationLib.Outcome _kind) internal {
+        ArafReputationLib.recordOutcome(rs, _kind, t.maker, t.taker, _repUnit(t));
     }
 
     /**
@@ -1709,16 +1472,7 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
      *         This is a controlled forgetting rule so penalties do not persist forever.
      */
     function decayReputation(address _wallet) external nonReentrant {
-        Reputation storage rep = reputation[_wallet];
-        if (rep.bannedUntil == 0) revert NoPriorBanHistory();
-        if (block.timestamp <= rep.bannedUntil + cleanPeriod) revert CleanPeriodNotElapsed();
-        if (rep.consecutiveBans == 0) revert NoBansToReset();
-
-        rep.consecutiveBans = 0;
-        rep.riskPoints = 0;
-        hasTierPenalty[_wallet] = false;
-        maxAllowedTier[_wallet] = 4;
-        _emitReputationUpdated(_wallet, rep);
+        ArafReputationLib.decayReputation(rs, _wallet);
     }
 
     /**
@@ -1728,24 +1482,7 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
      *         The result is a combination of performance, time, and penalty ceiling.
      */
     function _getEffectiveTier(address _wallet) internal view returns (uint8) {
-        Reputation storage rep = reputation[_wallet];
-        uint8 calculatedTier;
-
-        if      (rep.successfulTrades >= tierMinSuccessfulTrades[4] && rep.riskPoints <= tierMaxRiskPoints[4]) calculatedTier = 4;
-        else if (rep.successfulTrades >= tierMinSuccessfulTrades[3] && rep.riskPoints <= tierMaxRiskPoints[3]) calculatedTier = 3;
-        else if (rep.successfulTrades >= tierMinSuccessfulTrades[2] && rep.riskPoints <= tierMaxRiskPoints[2]) calculatedTier = 2;
-        else if (rep.successfulTrades >= tierMinSuccessfulTrades[1] && rep.riskPoints <= tierMaxRiskPoints[1]) calculatedTier = 1;
-        else                                                                                                     calculatedTier = 0;
-
-        if (calculatedTier > 0) {
-            if (firstSuccessfulTradeAt[_wallet] == 0 ||
-                block.timestamp < firstSuccessfulTradeAt[_wallet] + MIN_ACTIVE_PERIOD) {
-                calculatedTier = 0;
-            }
-        }
-
-        if (!hasTierPenalty[_wallet]) return calculatedTier;
-        return calculatedTier > maxAllowedTier[_wallet] ? maxAllowedTier[_wallet] : calculatedTier;
+        return ArafReputationLib.effectiveTier(rs, _wallet);
     }
 
     /**
@@ -1812,7 +1549,7 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
             uint256 lastNegativeEventAt
         )
     {
-        Reputation storage rep = reputation[_wallet];
+        ArafReputationLib.Reputation storage rep = rs.reputation[_wallet];
         return (
             rep.successfulTrades,
             rep.failedDisputes,
@@ -1840,7 +1577,7 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
      *         Kept separate so the time component of tier progression can also be explained in the frontend.
      */
     function getFirstSuccessfulTradeAt(address _wallet) external view returns (uint256) {
-        return firstSuccessfulTradeAt[_wallet];
+        return rs.firstSuccessfulTradeAt[_wallet];
     }
 
     /**
@@ -2053,8 +1790,14 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
     ) external onlyOwner {
         if (_token == address(0)) revert OwnableInvalidOwner(address(0));
         if (_decimals == 0 || _decimals > 18) revert InvalidDecimals();
-        for (uint256 i = 0; i < 4; i++) {
+        // [TR] K14: girilen ondalık token'ın kendi decimals() değeriyle aynı olmalı; çağrı başarısızsa (kod yok,
+        //      fonksiyon yok, kısa dönüş) da revert. Yanlış decimals tier limitlerini ve reward notional'ını bozar.
+        // [EN] K14: the supplied decimals must equal the token's own decimals(); a failed/short call reverts too.
+        (bool ok, bytes memory ret) = _token.staticcall(abi.encodeWithSelector(0x313ce567)); // decimals()
+        if (!ok || ret.length < 32 || abi.decode(ret, (uint256)) != _decimals) revert InvalidDecimals();
+        for (uint256 i; i < 4; ) {
             if (_tierMaxAmountsBaseUnit[i] == 0) revert ZeroAmount();
+            unchecked { ++i; }
         }
 
         TokenConfig storage cfg = tokenConfigs[_token];
@@ -2069,9 +1812,9 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
 
     /**
      * @notice Reputation policy katsayılarını owner seviyesinde günceller.
-     *         Değişiklikler yalnız gelecekteki outcome kayıtlarına uygulanır.
+     *         Değişiklikler yalnız gelecekteki outcome kayıtlarına uygulanır. Doğrulama + event ArafReputationLib'de.
      * @notice Updates reputation policy coefficients at owner level.
-     *         Changes apply only to future outcome recordings.
+     *         Changes apply only to future outcome recordings. Validation + event live in ArafReputationLib.
      */
     function setReputationPolicy(
         uint256 _cleanPeriod,
@@ -2084,34 +1827,8 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         uint32 _baseBanDuration,
         uint32 _banRiskPointsThreshold
     ) external onlyOwner {
-        if (_cleanPeriod < 7 days) revert InvalidState();
-        if (_cleanPeriod > MAX_REPUTATION_DECAY_PERIOD) revert DecayTooHigh();
-        if (_baseBanDuration == 0) revert ZeroAmount();
-        if (_baseBanDuration > MAX_BAN_DURATION) revert BanTooHigh();
-        if (_banRiskPointsThreshold == 0) revert ZeroAmount();
-        if (_banRiskPointsThreshold > tierMaxRiskPoints[0]) revert InvalidTier();
-        // [TR] Ödül/ceza delta'ları ban eşiğini aşmamalı.
-        // [EN] Reward/penalty deltas must stay within ban threshold.
-        if (
-            _manualReleaseRewardPts > _banRiskPointsThreshold ||
-            _autoReleasePenaltyPts > _banRiskPointsThreshold ||
-            _disputeWinRewardPts > _banRiskPointsThreshold ||
-            _disputeLossPenaltyPts > _banRiskPointsThreshold ||
-            _burnPenaltyPts > _banRiskPointsThreshold ||
-            _mutualCancelPenaltyPts > _banRiskPointsThreshold
-        ) revert InvalidState();
-
-        cleanPeriod = _cleanPeriod;
-        manualReleaseRewardPts = _manualReleaseRewardPts;
-        autoReleasePenaltyPts = _autoReleasePenaltyPts;
-        disputeWinRewardPts = _disputeWinRewardPts;
-        disputeLossPenaltyPts = _disputeLossPenaltyPts;
-        burnPenaltyPts = _burnPenaltyPts;
-        mutualCancelPenaltyPts = _mutualCancelPenaltyPts;
-        baseBanDuration = _baseBanDuration;
-        banRiskPointsThreshold = _banRiskPointsThreshold;
-
-        emit ReputationPolicyUpdated(
+        ArafReputationLib.setReputationPolicy(
+            rs,
             _cleanPeriod,
             _manualReleaseRewardPts,
             _autoReleasePenaltyPts,
@@ -2134,15 +1851,23 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
         uint32[5] calldata _minSuccessfulTrades,
         uint32[5] calldata _maxRiskPoints
     ) external onlyOwner {
-        for (uint256 i = 1; i < 5; i++) {
-            if (_minSuccessfulTrades[i] < _minSuccessfulTrades[i - 1]) revert InvalidTier();
-            if (_maxRiskPoints[i] > _maxRiskPoints[i - 1]) revert InvalidTier();
-        }
-        if (_maxRiskPoints[0] < banRiskPointsThreshold) revert InvalidTier();
+        ArafReputationLib.setReputationTierThresholds(rs, _minSuccessfulTrades, _maxRiskPoints);
+    }
 
-        tierMinSuccessfulTrades = _minSuccessfulTrades;
-        tierMaxRiskPoints = _maxRiskPoints;
-        emit ReputationTierThresholdsUpdated(_minSuccessfulTrades, _maxRiskPoints);
+    /**
+     * @notice Temiz dönem süresi (eski `uint256 public cleanPeriod` getter'ı ile aynı ABI).
+     * @notice Clean period (same ABI as the former `uint256 public cleanPeriod` getter).
+     */
+    function cleanPeriod() external view returns (uint256) {
+        return rs.cleanPeriod;
+    }
+
+    /**
+     * @notice Cüzdanın ceza tier tavanı (eski `mapping(address => uint8) public maxAllowedTier` getter'ı ile aynı ABI).
+     * @notice Penalty tier ceiling of a wallet (same ABI as the former public mapping getter).
+     */
+    function maxAllowedTier(address _wallet) external view returns (uint8) {
+        return rs.maxAllowedTier[_wallet];
     }
 
     /**
@@ -2220,31 +1945,24 @@ contract ArafEscrow is ReentrancyGuard, Ownable, Pausable {
      *         for bans; age/dust/cooldown gates are taker-entry specific since makers lock bond + inventory.
      */
     function _enforceNotBanned(address _wallet, bool _asMaker) internal view {
-        uint64 bannedUntil = reputation[_wallet].bannedUntil;
+        uint64 bannedUntil = rs.reputation[_wallet].bannedUntil;
         if (bannedUntil != 0 && block.timestamp <= bannedUntil) {
             if (_asMaker) revert MakerBanActive();
             revert TakerBanActive();
         }
     }
 
-    /**
-     * @notice CHALLENGED trade'in canlı (PROPOSED + süresi dolmamış) settlement teklifini döndürür.
-     * @notice Returns the live (PROPOSED and unexpired) settlement proposal of a CHALLENGED trade.
-     */
-    function _liveProposal(uint256 _tradeId) internal view returns (SettlementProposal storage sp) {
-        if (trades[_tradeId].state != TradeState.CHALLENGED) revert SettlementNotAllowedInState();
-        sp = settlementProposalsByTrade[_tradeId];
-        if (sp.state != SettlementProposalState.PROPOSED) revert NoActiveSettlementProposal();
-        if (block.timestamp > sp.expiresAt) revert SettlementProposalExpired();
-    }
 
     /**
      * @notice Canlı teklifi yalnız karşı taraf (teklif sahibi olmayan trade tarafı) için döndürür.
      * @notice Returns the live proposal only for the counterparty (the non-proposing trade party).
      */
     function _counterpartyProposal(uint256 _tradeId) internal view returns (SettlementProposal storage sp) {
-        sp = _liveProposal(_tradeId);
         Trade storage t = trades[_tradeId];
+        if (t.state != TradeState.CHALLENGED) revert SettlementNotAllowedInState();
+        sp = settlementProposalsByTrade[_tradeId];
+        if (sp.state != SettlementProposalState.PROPOSED) revert NoActiveSettlementProposal();
+        if (block.timestamp > sp.expiresAt) revert SettlementProposalExpired();
         if (msg.sender != t.maker && msg.sender != t.taker) revert NotTradeParty();
         if (msg.sender == sp.proposer) revert OnlySettlementCounterparty();
     }

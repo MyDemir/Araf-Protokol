@@ -1,6 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { loadFixture, time } = require("@nomicfoundation/hardhat-network-helpers");
+const { deployEscrowWithLibraries } = require("../../contracts/scripts/deploy");
 
 // [TR] Ekonomik değişmezler: parçalı fill envanter/bond korunumu ve mikro işlemlerin reputation'ı şişirememesi.
 // [EN] Economic invariants: partial-fill inventory/bond conservation and micro trades not inflating reputation.
@@ -25,7 +26,7 @@ describe("ArafEscrow economic invariants", function () {
     const [owner, treasury, maker, taker] = await ethers.getSigners();
     const MockERC20 = await ethers.getContractFactory("MockERC20");
     const token = await MockERC20.deploy("Mock USDT", "USDT", D);
-    const escrow = await (await ethers.getContractFactory("ArafEscrow")).deploy(treasury.address);
+    const escrow = (await deployEscrowWithLibraries(treasury.address)).escrow;
     const tokenAddress = await token.getAddress();
     await escrow.connect(owner).setTokenConfig(tokenAddress, true, true, true, D, TIER_MAX);
     // [TR] Testleri hızlandırmak için bekleme süreleri kapatılır. [EN] Cooldowns off to keep tests fast.

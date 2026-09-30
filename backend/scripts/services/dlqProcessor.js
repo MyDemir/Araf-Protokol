@@ -21,6 +21,10 @@ const logger = require("../utils/logger");
 
 const DLQ_KEY = "worker:dlq";
 const DLQ_ARCHIVE_KEY = "worker:dlq:archive"; // İnceleme için arşiv (7 gün TTL)
+const DLQ_QUARANTINE_KEY = "worker:dlq:quarantine"; // Kalıcı poison girdileri (TTL yok; manuel inceleme)
+const DLQ_LIVE_KEYS_SET = "worker:dlq:keys";
+const DLQ_ARCHIVE_KEYS_SET = "worker:dlq:archive:keys";
+const DLQ_QUARANTINE_KEYS_SET = "worker:dlq:quarantine:keys";
 const ALERT_THRESHOLD = 5;
 const MAX_DLQ_SIZE = 100;
 const BATCH_SIZE = 10;
@@ -112,7 +116,20 @@ async function archiveOverflow(redis, length) {
   const multi = redis.multi();
   for (const entry of oldEntries) {
     multi.lPush(DLQ_ARCHIVE_KEY, entry);
+    // [TR] Arşivlenen girdinin anahtarı arşiv indeksine geçer: aynı event tekrar DLQ'ya eklenmez.
+    // [EN] The archived entry's key moves to the archive index so the same event is not re-added to the DLQ.
+    let key = null;
+    try {
+      key = JSON.parse(entry)?.idempotencyKey;
+    } catch (_) {
+      key = null;
+    }
+    if (key) {
+      multi.sAdd(DLQ_ARCHIVE_KEYS_SET, key);
+      multi.sRem(DLQ_LIVE_KEYS_SET, key);
+    }
   }
+  multi.expire(DLQ_ARCHIVE_KEYS_SET, 7 * 24 * 3600);
   multi.lTrim(DLQ_ARCHIVE_KEY, 0, 999);
   multi.expire(DLQ_ARCHIVE_KEY, 7 * 24 * 3600);
   multi.lTrim(DLQ_KEY, overflow, -1);
@@ -123,6 +140,14 @@ async function archiveOverflow(redis, length) {
 
 async function processDLQ() {
   try {
+    // [TR] Worker henüz bağlanmadıysa (arka plan start) re-drive zincir okuyamaz; deneme hakkı yakılmaz.
+    // [EN] While the worker is still connecting (background start) a re-drive cannot read the chain; do not
+    //      burn attempts.
+    if (!eventWorker.isRunning || !eventWorker.contract) {
+      logger.debug("[DLQ] Worker hazır değil; re-drive sonraki tura ertelendi.");
+      return;
+    }
+
     const redis = getRedisClient();
     let length = await redis.lLen(DLQ_KEY);
 
@@ -170,6 +195,7 @@ async function processDLQ() {
       if (result.success) {
         _redriveSuccess += 1;
         await redis.lRem(DLQ_KEY, 1, raw);
+        await redis.sRem(DLQ_LIVE_KEYS_SET, idempotencyKey);
         logger.info(
           `[DLQ][Metrics] re-drive success event=${entry.eventName} key=${idempotencyKey} ` +
           `retry_success_rate=${getRetrySuccessRate()}%`
@@ -193,15 +219,25 @@ async function processDLQ() {
       };
 
       await redis.lRem(DLQ_KEY, 1, raw);
-      await redis.rPush(DLQ_KEY, toRaw(updated));
 
       if (nextAttempt >= MAX_REDRIVE_ATTEMPTS) {
+        // [TR] Kalıcı poison: karantinaya taşı (DLQ'dan çıkar), event "acked-poison" sayılsın ki checkpoint
+        //      sonsuza dek takılmasın. Alarm: logger.error + worker sayaç (getDiagnostics.quarantinedEvents).
+        // [EN] Permanent poison: move to quarantine (out of the DLQ) and mark the event "acked-poison" so the
+        //      checkpoint is not frozen forever. Alarm: logger.error + worker counter.
+        await redis.lPush(DLQ_QUARANTINE_KEY, toRaw(updated));
+        await redis.sAdd(DLQ_QUARANTINE_KEYS_SET, idempotencyKey);
+        await redis.sRem(DLQ_LIVE_KEYS_SET, idempotencyKey);
         poisonCount += 1;
         logger.error(
-          `[DLQ][Metrics] poison_event_count=1 event=${entry.eventName} key=${idempotencyKey} ` +
+          `[DLQ][Metrics] poison_event_count=1 quarantined event=${entry.eventName} key=${idempotencyKey} ` +
           `attempt=${nextAttempt}`
         );
+        eventWorker.markEventQuarantined(updated);
+        continue;
       }
+
+      await redis.rPush(DLQ_KEY, toRaw(updated));
 
       logger.warn(
         `[DLQ] Re-drive başarısız event=${entry.eventName} key=${idempotencyKey} ` +

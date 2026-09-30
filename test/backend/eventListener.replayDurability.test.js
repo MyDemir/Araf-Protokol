@@ -1,10 +1,10 @@
 "use strict";
 
-const mockRedis = { get: jest.fn(), set: jest.fn(), rPush: jest.fn(), lLen: jest.fn().mockResolvedValue(0) };
+const mockRedis = { get: jest.fn(), set: jest.fn(), rPush: jest.fn(), lRange: jest.fn().mockResolvedValue([]), sIsMember: jest.fn().mockResolvedValue(0), sAdd: jest.fn(), lLen: jest.fn().mockResolvedValue(0) };
 
 jest.mock("../../backend/scripts/config/redis", () => ({ getRedisClient: jest.fn(() => mockRedis) }));
 jest.mock("../../backend/scripts/utils/logger", () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }));
-jest.mock("../../backend/scripts/models/Trade", () => ({ find: jest.fn(() => ({ select: jest.fn().mockReturnThis(), limit: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue([]) })) }));
+jest.mock("../../backend/scripts/models/Trade", () => ({ find: jest.fn(() => ({ select: jest.fn().mockReturnThis(), sort: jest.fn().mockReturnThis(), limit: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue([]) })) }));
 jest.mock("../../backend/scripts/models/Order", () => ({ findOneAndUpdate: jest.fn(), updateOne: jest.fn() }));
 jest.mock("../../backend/scripts/models/User", () => ({ findOneAndUpdate: jest.fn(), findOne: jest.fn() }));
 jest.mock("../../backend/scripts/models/RevenueEvent", () => ({ findOneAndUpdate: jest.fn() }));
@@ -58,6 +58,7 @@ describe("eventListener replay durability", () => {
     const Trade = require("../../backend/scripts/models/Trade");
     Trade.find.mockReturnValue({
       select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
       lean: jest.fn().mockResolvedValue([
         { onchain_escrow_id: "1", status: "RESOLVED", timers: {} },

@@ -43,7 +43,7 @@ flowchart TD
     auto_release --> resolved_penalty[RESOLVED auto-release]
 
     paid_state --> ping_taker[Maker pingTakerForChallenge cagirir]
-    ping_taker --> challenge_call[Maker pencere sonrasi challengeTrade cagirir]
+    ping_taker --> challenge_call[Pencere sonrasi maker ya da susan maker karsisinda taker challengeTrade cagirir]
     challenge_call --> challenged_state[CHALLENGED]
 
     challenged_state --> release_after_challenge[Maker yine releaseFunds cagirabilir]
@@ -71,10 +71,10 @@ flowchart TD
 | Hızlı clean release | Taker ödemeyi işaretler, maker hızlı onaylar | `releaseFunds` | `RESOLVED` | En iyi iş birliği dengesi | En yüksek pozitif weight |
 | Yavaş clean release | Taker ödemeyi işaretler, maker geç onaylar | `releaseFunds` | `RESOLVED` | Kabul edilebilir ama gecikmiş iş birliği | Daha düşük pozitif weight |
 | Liveness release | `PAID` sonrası maker inaktif kalır | `pingMaker` -> bekleme -> `autoRelease` | `RESOLVED` | İnaktiviteyi cezalandırmak ve dürüst taker'ı kilitten çıkarmak | Zero weight |
-| Dispute escalation | Maker ödeme sorununu bildirir | `pingTakerForChallenge` -> bekleme -> `challengeTrade` | `CHALLENGED` | Çatışmayı deterministik decay penceresine taşımak | Henüz terminal reward yok |
+| Dispute escalation | Maker ödeme sorununu bildirir | `pingTakerForChallenge` -> 24 saat -> `challengeTrade` (maker; maker susarsa taker da açabilir, böylece ping-and-ghost kilidi yoktur) | `CHALLENGED` | Çatışmayı deterministik decay penceresine taşımak | Henüz terminal reward yok |
 | Disputed release | Maker challenge sonrası release eder | `CHALLENGED` durumundan `releaseFunds` | `RESOLVED` | Çatışma sonrası geç düzeltme | MVP'de zero weight |
-| Partial settlement | Taraflar dispute içinde split üzerinde anlaşır | `proposeSettlement` -> `acceptSettlement` | `RESOLVED` | Hakemsiz pazarlıklı çıkış | Düşük pozitif weight |
-| Mutual cancel | Her iki taraf unwind konusunda uzlaşır | iki taraf da `proposeOrApproveCancel` çağırır | `CANCELED` | Oracle yargısı olmadan çift taraflı çıkış | Zero weight |
+| Partial settlement | Taraflar dispute içinde split üzerinde anlaşır | `proposeSettlement` -> `acceptSettlement(tradeId, proposalId)` (görülen teklife bağlı) | `RESOLVED` | Hakemsiz pazarlıklı çıkış | Düşük pozitif weight |
+| Mutual cancel | Her iki taraf unwind konusunda uzlaşır | iki taraf da `proposeOrApproveCancel` çağırır (ikinci onaydan önce `revokeCancel` ile geri alınabilir) | `CANCELED` | Oracle yargısı olmadan çift taraflı çıkış | Zero weight |
 | Ödeme penceresi aşımı | `LOCKED` sonrası 48 saatte ödeme bildirilmez | taraflardan biri `expirePaymentWindow` çağırır | `CANCELED` | Bond'suz taker'ın maker fonunu rehin tutmasını zamanla bitirmek | Zero weight + taker negatif sinyal |
 | Terminal burn | Challenge ufku sonunda uzlaşma yok | `burnExpired` | `BURNED` | Permissionless deadlock kapanışı | Zero weight |
 

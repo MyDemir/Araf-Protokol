@@ -33,6 +33,7 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
     error MissingRevenueIntent();
     error RevenueAmountMismatch();
     error StaleTargetEpoch();
+    error RewardsAlreadySet();
 
     uint256 public constant BPS = 10_000;
     uint256 public constant MIN_REWARD_BPS = 4_000;
@@ -58,8 +59,13 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
 
     mapping(bytes32 => ProductPool) public productPools;
     mapping(uint256 => mapping(bytes32 => mapping(address => uint256))) public productFundingByEpoch;
-    mapping(bytes32 => uint256) private pendingRevenueBalanceBefore;
-    mapping(bytes32 => uint256) private pendingRevenueAmount;
+    // [TR] G2: escrow intent handshake'i (balanceBefore + amount) transient storage'da tutulur (EIP-1153, tstore/tload).
+    //      Niyet ve tüketim aynı escrow işleminin içindedir; tx sonunda kendiliğinden silinir, kalıcı SSTORE yoktur.
+    //      Slot = keccak256(intentKey, TRANSIENT_*_SALT); kalıcı storage ile çakışmaz (transient ayrı adres uzayıdır).
+    // [EN] G2: the escrow intent handshake lives in transient storage (EIP-1153); intent and consumption happen in
+    //      the same escrow transaction and are cleared automatically at tx end.
+    bytes32 private constant TRANSIENT_BALANCE_SALT = keccak256("araf.vault.intent.balanceBefore");
+    bytes32 private constant TRANSIENT_AMOUNT_SALT = keccak256("araf.vault.intent.amount");
 
     event EscrowRevenueReceived(
         address indexed token,
@@ -116,8 +122,15 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
         emit FinalTreasuryUpdated(_finalTreasury);
     }
 
+    /**
+     * @notice Rewards kontratını bağlar. K4: yalnız bir kez ayarlanabilir; aksi halde owner rewards'ı kendi adresine
+     *         çevirip transferEpochAllocation ile reward rezervini ve sponsor fonlarını çekebilirdi.
+     * @notice Wires the rewards contract. K4: settable only once; otherwise the owner could repoint rewards to itself
+     *         and drain the reward reserve and sponsor funding via transferEpochAllocation.
+     */
     function setRewards(address _rewards) external onlyOwner {
         if (_rewards == address(0)) revert InvalidRecipient();
+        if (rewards != address(0)) revert RewardsAlreadySet();
         rewards = _rewards;
         emit RewardsUpdated(_rewards);
     }
@@ -161,13 +174,15 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
         if (amount == 0) revert ZeroAmount();
 
         bytes32 key = _revenueIntentKey(token, kind, tradeId);
-        uint256 expectedAmount = pendingRevenueAmount[key];
+        (bytes32 amountSlot, bytes32 balanceSlot) = _intentSlots(key);
+        uint256 expectedAmount = _tload(amountSlot);
         if (expectedAmount == 0) revert MissingRevenueIntent();
         if (expectedAmount != amount) revert RevenueAmountMismatch();
 
-        uint256 balanceBefore = pendingRevenueBalanceBefore[key];
-        delete pendingRevenueBalanceBefore[key];
-        delete pendingRevenueAmount[key];
+        uint256 balanceBefore = _tload(balanceSlot);
+        // [TR] Aynı tx içinde tekrar kullanılamasın diye tüketilen niyet silinir. [EN] Consumed intent is cleared.
+        _tstore(balanceSlot, 0);
+        _tstore(amountSlot, 0);
 
         uint256 balanceAfterTransfer = IERC20(token).balanceOf(address(this));
         if (balanceAfterTransfer - balanceBefore != amount) revert ExactInMismatch();
@@ -319,9 +334,27 @@ contract ArafRevenueVault is Ownable, ReentrancyGuard, Pausable {
         if (amount == 0) revert ZeroAmount();
 
         bytes32 key = _revenueIntentKey(token, kind, tradeId);
-        pendingRevenueBalanceBefore[key] = IERC20(token).balanceOf(address(this));
-        pendingRevenueAmount[key] = amount;
+        (bytes32 amountSlot, bytes32 balanceSlot) = _intentSlots(key);
+        _tstore(balanceSlot, IERC20(token).balanceOf(address(this)));
+        _tstore(amountSlot, amount);
         emit EscrowRevenueIntent(token, amount, kind, tradeId);
+    }
+
+    function _intentSlots(bytes32 key) internal pure returns (bytes32 amountSlot, bytes32 balanceSlot) {
+        amountSlot = keccak256(abi.encode(key, TRANSIENT_AMOUNT_SALT));
+        balanceSlot = keccak256(abi.encode(key, TRANSIENT_BALANCE_SALT));
+    }
+
+    function _tstore(bytes32 slot, uint256 value) private {
+        assembly ("memory-safe") {
+            tstore(slot, value)
+        }
+    }
+
+    function _tload(bytes32 slot) private view returns (uint256 value) {
+        assembly ("memory-safe") {
+            value := tload(slot)
+        }
     }
 
     function pause() external onlyOwner { _pause(); }

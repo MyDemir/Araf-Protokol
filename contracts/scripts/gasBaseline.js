@@ -7,6 +7,7 @@
 
 const fs = require("fs");
 const { ethers, network } = require("hardhat");
+const { deployEscrowWithLibraries } = require("./deploy");
 
 const D = 6;
 const u = (v) => ethers.parseUnits(String(v), D);
@@ -27,7 +28,7 @@ async function main() {
   const [dispM, dispT, autoM, autoT, expM, expT, burnM, burnT] = signers.slice(5, 13);
   const token = await (await ethers.getContractFactory("MockERC20")).deploy("Mock USDT", "USDT", D);
   const tokenAddress = await token.getAddress();
-  const escrow = await (await ethers.getContractFactory("ArafEscrow")).deploy(owner.address);
+  const { escrow } = await deployEscrowWithLibraries(owner.address, owner);
   const escrowAddress = await escrow.getAddress();
   const vault = await (await ethers.getContractFactory("ArafRevenueVault")).deploy(escrowAddress, owner.address, owner.address);
   const rewards = await (await ethers.getContractFactory("ArafRewards")).deploy(escrowAddress, await vault.getAddress(), owner.address);
@@ -103,7 +104,8 @@ async function main() {
     await increase(3 * DAY);
     const now = (await ethers.provider.getBlock("latest")).timestamp;
     await measure("proposeSettlement", escrow.connect(dispM).proposeSettlement(id, 6000, now + DAY));
-    await measure("acceptSettlement", escrow.connect(dispT).acceptSettlement(id));
+    const proposalId = (await escrow.getSettlementProposal(id)).id;
+    await measure("acceptSettlement", escrow.connect(dispT).acceptSettlement(id, proposalId));
   }
 
   // Liveness: pingMaker + autoRelease

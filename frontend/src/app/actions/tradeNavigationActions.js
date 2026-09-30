@@ -24,6 +24,19 @@ export function writeAppHashRoute(route) {
   if (window.location.hash !== route) window.location.hash = route;
 }
 
+// [TR] Hash yalnız yazılıyordu; odadan çıkınca eski #/trade/.. kalıyor, sayfa yenilenince ya da hashchange'de
+//      kullanıcı tekrar odaya çekiliyordu. Uygulamanın kendi rotası varsa history.replaceState ile temizlenir
+//      (replaceState hashchange tetiklemez, geçmişe yeni kayıt eklemez). Başka bir hash'e dokunulmaz.
+// [EN] The hash was write-only: after leaving the room the stale #/trade/.. pulled users back in. Clear our own
+//      route with replaceState (no hashchange event, no history entry); foreign hashes are left alone.
+export function clearAppHashRoute() {
+  if (typeof window === 'undefined' || !window.location?.hash) return false;
+  if (!parseAppHashRoute(window.location.hash)) return false;
+  const { pathname, search } = window.location;
+  window.history.replaceState(window.history.state, '', `${pathname}${search}`);
+  return true;
+}
+
 export function parseAppHashRoute(hashValue = '') {
   const hash = String(hashValue || '').replace(/^#/, '');
   const params = typeof URLSearchParams !== 'undefined' ? new URLSearchParams(hash.startsWith('?') ? hash.slice(1) : '') : null;

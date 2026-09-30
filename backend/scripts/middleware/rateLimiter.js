@@ -297,40 +297,91 @@ function makeTieredSensitiveLimiter({
   };
 }
 
-// ─── PII / IBAN Endpoint — En Sıkı ───────────────────────────────────────────
-// 10 dakikada 3 istek — IP + wallet kombinasyonu
-const piiRedisLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000,
-  max: 3,
-  keyGenerator: (req) => `${req.ip}:${req.wallet || "anon"}`,
-  store: makeStore("pii"),
-  handler: (req, res) => {
-    onLimitReached(req);
-    res.status(429).json({
-      error: "Çok fazla PII isteği. 10 dakikada maksimum 3 istek.",
-      retryAfter: Math.ceil(10 * 60),
-    });
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
+// ─── PII / IBAN Endpoint'leri — Endpoint Başına Ayrı Bucket ─────────────────
+// [TR] Önceden dört PII endpoint'i tek bucket'ı (10 dk / 3 istek) paylaşıyordu; bir endpoint'e
+//      yapılan istekler diğerlerini de 429'a düşürüyordu (ör. /my → request-token kilidi).
+//      Artık her endpoint kendi Redis prefix'i, kendi limiti ve (trade'e bağlı olanlar için)
+//      trade başına anahtarı kullanır. Redis down iken process-local fallback aynı anahtarı kullanır.
+// [EN] Each PII endpoint now owns its bucket; trade-scoped endpoints key per trade.
+function makePiiLimiter({ label, storePrefix, windowMs, max, extraKey = () => "", message }) {
+  const keyGenerator = (req) => {
+    const extra = extraKey(req);
+    return `${req.ip}:${req.wallet || "anon"}${extra ? `:${extra}` : ""}`;
+  };
+  const errorBody = () => ({
+    error: message,
+    retryAfter: Math.ceil(windowMs / 1000),
+  });
+
+  const redisLimiter = rateLimit({
+    windowMs,
+    max,
+    keyGenerator,
+    store: makeStore(storePrefix),
+    handler: (req, res) => {
+      onLimitReached(req);
+      res.status(429).json(errorBody());
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  const inMemoryLimiter = makeInMemoryLimiter({
+    label,
+    windowMs,
+    max,
+    keyGenerator,
+    errorMessage: errorBody,
+  });
+
+  return makeSensitiveLimiter({ label, redisLimiter, inMemoryLimiter });
+}
+
+const PII_WINDOW_MS = 10 * 60 * 1000;
+const _tradeParam = (req) => String(req.params?.tradeId || "").toLowerCase();
+const _onchainParam = (req) => String(req.params?.onchainId || "");
+
+// GET /api/pii/my — kendi profili
+const piiProfileLimiter = makePiiLimiter({
+  label: "PII-MY",
+  storePrefix: "pii-my",
+  windowMs: PII_WINDOW_MS,
+  max: 10,
+  message: "Çok fazla profil isteği. 10 dakikada maksimum 10 istek.",
 });
 
-const piiInMemoryLimiter = makeInMemoryLimiter({
-  label: "PII",
-  windowMs: 10 * 60 * 1000,
-  max: 3,
-  keyGenerator: (req) => `${req.ip}:${req.wallet || "anon"}`,
-  errorMessage: () => ({
-    error: "Çok fazla PII isteği. 10 dakikada maksimum 3 istek.",
-    retryAfter: Math.ceil(10 * 60),
-  }),
+// GET /api/pii/taker-name/:onchainId — trade başına
+const piiTakerNameLimiter = makePiiLimiter({
+  label: "PII-TAKER-NAME",
+  storePrefix: "pii-taker-name",
+  windowMs: PII_WINDOW_MS,
+  max: 10,
+  extraKey: _onchainParam,
+  message: "Çok fazla taker-name isteği. Bu trade için 10 dakikada maksimum 10 istek.",
 });
 
-const piiLimiter = makeSensitiveLimiter({
-  label: "PII",
-  redisLimiter: piiRedisLimiter,
-  inMemoryLimiter: piiInMemoryLimiter,
+// POST /api/pii/request-token/:tradeId — trade başına
+const piiTokenRequestLimiter = makePiiLimiter({
+  label: "PII-TOKEN",
+  storePrefix: "pii-token",
+  windowMs: PII_WINDOW_MS,
+  max: 5,
+  extraKey: _tradeParam,
+  message: "Çok fazla PII token isteği. Bu trade için 10 dakikada maksimum 5 istek.",
 });
+
+// GET /api/pii/:tradeId — trade başına (en hassas okuma)
+const piiFetchLimiter = makePiiLimiter({
+  label: "PII-FETCH",
+  storePrefix: "pii-fetch",
+  windowMs: PII_WINDOW_MS,
+  max: 5,
+  extraKey: _tradeParam,
+  message: "Çok fazla PII isteği. Bu trade için 10 dakikada maksimum 5 istek.",
+});
+
+// [TR] Geriye dönük uyumluluk: eski isim artık /my bucket'ına eşlenir (paylaşımlı bucket yok).
+const piiLimiter = piiProfileLimiter;
 
 // ─── SIWE Auth — Brute Force Koruması ────────────────────────────────────────
 // 1 dakikada 10 istek — IP bazlı
@@ -628,6 +679,10 @@ const feedbackLimiter = makeTieredSensitiveLimiter({
 
 module.exports = {
   piiLimiter,
+  piiProfileLimiter,
+  piiTakerNameLimiter,
+  piiTokenRequestLimiter,
+  piiFetchLimiter,
   authLimiter,
   nonceLimiter,
   marketReadLimiter,

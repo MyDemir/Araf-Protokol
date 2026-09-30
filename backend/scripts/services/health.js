@@ -1,6 +1,7 @@
 
 "use strict";
 
+const crypto = require("crypto");
 const mongoose = require("mongoose");
 const { isReady: isRedisReady, getRedisClient } = require("../config/redis");
 const { EXPECTED_CHAIN_ENV, resolveExpectedChainIdOrThrow } = require("./expectedChain");
@@ -266,8 +267,119 @@ async function getReadiness({ worker, provider } = {}) {
   };
 }
 
-function getLiveness() {
-  return { status: "ok", timestamp: new Date().toISOString() };
+/**
+ * [TR] Liveness (B6): worker izleniyorsa ve "son blok görülme" eşiği aşıldıysa "stale" (HTTP 503). Bellek içi,
+ *      RPC çağırmaz. worker verilmezse eski davranış (her zaman ok).
+ * [EN] Liveness (B6): "stale" (HTTP 503) when the worker is watching blocks and the last-block threshold was
+ *      exceeded. In-memory only, no RPC. Without a worker it keeps the old always-ok behaviour.
+ */
+function getLiveness({ worker } = {}) {
+  const base = { status: "ok", timestamp: new Date().toISOString() };
+  if (!worker || typeof worker.getLivenessSnapshot !== "function") return base;
+
+  const snap = worker.getLivenessSnapshot();
+  return {
+    ...base,
+    status: snap.stale ? "stale" : "ok",
+    worker: { state: snap.state, lastBlockAgeMs: snap.lastBlockAgeMs },
+  };
 }
 
-module.exports = { getReadiness, getLiveness };
+// ── /ready: cache + public redaction (B27) ──────────────────────────────────
+
+function _readyCacheTtlMs() {
+  const parsed = Number.parseInt(String(process.env.READY_CACHE_TTL_MS ?? ""), 10);
+  const ttl = Number.isInteger(parsed) ? parsed : 7_000;
+  return Math.min(10_000, Math.max(5_000, ttl));
+}
+
+let _readyCache = { at: 0, value: null, promise: null };
+
+function _resetReadinessCacheForTests() {
+  _readyCache = { at: 0, value: null, promise: null };
+}
+
+/**
+ * [TR] getReadiness sonucunu 5-10 sn önbellekler ve eşzamanlı çağrıları tek çağrıda birleştirir; böylece
+ *      kimliksiz /ready her istekte 2 RPC (getBlockNumber + getNetwork) tetikleyemez.
+ * [EN] Caches the getReadiness result for 5-10s and coalesces concurrent calls so the unauthenticated /ready
+ *      cannot trigger 2 RPC calls per request.
+ */
+async function getCachedReadiness({ worker, provider } = {}) {
+  const now = Date.now();
+  if (_readyCache.value && now - _readyCache.at < _readyCacheTtlMs()) return _readyCache.value;
+  if (_readyCache.promise) return _readyCache.promise;
+
+  const promise = getReadiness({ worker, provider })
+    .then((value) => {
+      _readyCache = { at: Date.now(), value, promise: null };
+      return value;
+    })
+    .catch((err) => {
+      _readyCache.promise = null;
+      throw err;
+    });
+  _readyCache.promise = promise;
+  return promise;
+}
+
+/**
+ * [TR] Kimliksiz görünüm: iç teşhis (missingConfig adları, worker.diagnostics, reconciliation örnekleri,
+ *      zincir/ blok numaraları) çıkarılır.
+ * [EN] Unauthenticated view: internal diagnostics (missingConfig names, worker.diagnostics, reconciliation
+ *      samples, chain/block numbers) are stripped.
+ */
+function toPublicReadiness(readiness) {
+  return {
+    ok: readiness.ok,
+    checks: readiness.checks,
+    worker: {
+      state: readiness.worker?.state,
+      replaying: readiness.worker?.state === "replaying",
+      lagBlocks: readiness.worker?.lagBlocks ?? null,
+    },
+    configIssueCount: Array.isArray(readiness.missingConfig) ? readiness.missingConfig.length : 0,
+    degraded: readiness.degraded,
+    degradedReasons: readiness.degradedReasons,
+  };
+}
+
+function _isInternalRequest(req) {
+  const expected = process.env.READY_INTERNAL_TOKEN;
+  if (!expected) return false;
+  const provided = req?.headers?.["x-internal-token"];
+  if (typeof provided !== "string" || !provided) return false;
+  const a = crypto.createHash("sha256").update(provided).digest();
+  const b = crypto.createHash("sha256").update(expected).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+function createReadyHandler({ worker, getProvider }) {
+  return async (req, res) => {
+    let readiness;
+    try {
+      readiness = await getCachedReadiness({ worker, provider: getProvider ? getProvider() : worker?.provider });
+    } catch (_err) {
+      return res.status(503).json({ ok: false, error: "readiness_unavailable" });
+    }
+    const body = _isInternalRequest(req) ? readiness : toPublicReadiness(readiness);
+    return res.status(readiness.ok ? 200 : 503).json(body);
+  };
+}
+
+function createHealthHandler({ worker }) {
+  return (_req, res) => {
+    const liveness = getLiveness({ worker });
+    return res.status(liveness.status === "ok" ? 200 : 503).json(liveness);
+  };
+}
+
+module.exports = {
+  getReadiness,
+  getLiveness,
+  getCachedReadiness,
+  toPublicReadiness,
+  createReadyHandler,
+  createHealthHandler,
+  _resetReadinessCacheForTests,
+};

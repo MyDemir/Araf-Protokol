@@ -3,7 +3,8 @@ import { buildApiUrl } from './app/apiConfig';
 import { fmtPct, shortAddress as shortenWallet } from './app/copy';
 import { mapResolutionTypeLabel } from './app/useAppSessionData';
 import AdminRevenuePanel from './app/contexts/admin/AdminRevenuePanel';
-import AdminChainPanel from './app/contexts/admin/AdminChainPanel';
+// [TR] P5 — Zincir sekmesi yalnız açılınca yüklenir. [EN] Chain tab loads on first open.
+const AdminChainPanel = React.lazy(() => import('./app/contexts/admin/AdminChainPanel'));
 
 const TAB_OVERVIEW = 'overview';
 const TAB_SYNC = 'sync';
@@ -1132,7 +1133,9 @@ function AdminPanel({ lang, authenticatedFetch, isAuthenticated, authChecked, sh
       )}
 
       {activeTab === TAB_CHAIN && (
-        <AdminChainPanel lang={lang} readProtocolConfig={readProtocolConfig} />
+        <React.Suspense fallback={<div className="p-4 text-sm text-textMuted" role="status">{lang === 'TR' ? 'Yükleniyor…' : 'Loading…'}</div>}>
+          <AdminChainPanel lang={lang} readProtocolConfig={readProtocolConfig} />
+        </React.Suspense>
       )}
     </div>
   );

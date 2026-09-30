@@ -42,7 +42,6 @@ const tradeSchema = new mongoose.Schema(
     parent_order_id: {
       type: String,
       default: null,
-      index: true,
       match: /^\d+$/,
     },
 
@@ -54,7 +53,6 @@ const tradeSchema = new mongoose.Schema(
       type: String,
       enum: ["ORDER_CHILD", "DIRECT_ESCROW"],
       default: "ORDER_CHILD",
-      index: true,
     },
 
     // [TR] Parent order yönü. Child trade market semantics'i için yararlıdır.
@@ -63,7 +61,6 @@ const tradeSchema = new mongoose.Schema(
       type: String,
       enum: ["SELL_CRYPTO", "BUY_CRYPTO", null],
       default: null,
-      index: true,
     },
 
     maker_address: {
@@ -71,14 +68,12 @@ const tradeSchema = new mongoose.Schema(
       required: true,
       lowercase: true,
       match: /^0x[a-fA-F0-9]{40}$/,
-      index: true,
     },
     taker_address: {
       type: String,
       lowercase: true,
       match: /^0x[a-fA-F0-9]{40}$/,
       default: null,
-      index: true,
     },
 
     token_address: {
@@ -86,7 +81,6 @@ const tradeSchema = new mongoose.Schema(
       lowercase: true,
       default: null,
       match: /^0x[a-fA-F0-9]{40}$/,
-      index: true,
     },
 
     // [TR] Kontrat referans izleri. listing_ref V3 primitive değildir ve authority taşımaz;
@@ -171,7 +165,7 @@ const tradeSchema = new mongoose.Schema(
       index: true,
     },
 
-    tier: { type: Number, enum: [0, 1, 2, 3, 4], required: true, index: true },
+    tier: { type: Number, enum: [0, 1, 2, 3, 4], required: true },
 
     payment_risk_level_snapshot: {
       type: String,
@@ -307,7 +301,7 @@ const tradeSchema = new mongoose.Schema(
         },
       },
       captured_at: { type: Date, default: null },
-      snapshot_delete_at: { type: Date, default: null },
+      snapshot_delete_at: { type: Date }, // default yok: sparse index yalnız gerçek kayıtları tutar
       is_complete: { type: Boolean, default: true },
       incomplete_reason: { type: String, default: null },
     },
@@ -332,7 +326,6 @@ const tradeSchema = new mongoose.Schema(
         type: String,
         enum: ["NONE", "PROPOSED", "REJECTED", "WITHDRAWN", "EXPIRED", "FINALIZED", null],
         default: null,
-        index: true,
       },
       proposed_by: { type: String, lowercase: true, default: null },
       maker_share_bps: { type: Number, default: null, min: 0, max: 10000 },
@@ -363,11 +356,16 @@ const tradeSchema = new mongoose.Schema(
 );
 
 // ── Indexes ───────────────────────────────────────────────────────────────────
+// [TR] Bileşik indekslerin ÖNEKİYLE örtüşen tekli index:true tanımları kaldırıldı
+//      (parent_order_id, maker_address, taker_address, trade_origin, parent_order_side, token_address,
+//      tier, settlement_proposal.state). Tek başına status/resolution_type/risk indexleri korunur.
 tradeSchema.index({ parent_order_id: 1, status: 1 });
 tradeSchema.index({ maker_address: 1, status: 1 });
 // [TR] Pazar güven özeti: maker başına en son trade. [EN] Market trust summary: latest trade per maker.
 tradeSchema.index({ maker_address: 1, created_at: -1 });
 tradeSchema.index({ taker_address: 1, status: 1 });
+// [TR] Alıcı-sahibi (BUY_CRYPTO) emirlerinde pazar güven özeti: taker başına en son trade.
+tradeSchema.index({ taker_address: 1, created_at: -1 });
 tradeSchema.index({ trade_origin: 1, status: 1 });
 tradeSchema.index({ parent_order_side: 1, status: 1 });
 tradeSchema.index({ token_address: 1, status: 1 });
@@ -391,6 +389,8 @@ tradeSchema.index(
 //      MongoDB TTL dokümanı siler, field'ı değil — cleanup job bu index'i kullanır.
 // [EN] Sparse index to find trades with expired receipts for cleanup.
 tradeSchema.index({ "evidence.receipt_delete_at": 1 }, { sparse: true });
+// [TR] payout snapshot retention temizliği (cleanupSensitiveData.runPIISnapshotCleanup) bu alanı tarar.
+tradeSchema.index({ "payout_snapshot.snapshot_delete_at": 1 }, { sparse: true });
 
 // ── Virtuals ─────────────────────────────────────────────────────────────────
 tradeSchema.virtual("isInGracePeriod").get(function () {

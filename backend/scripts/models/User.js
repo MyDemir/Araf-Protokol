@@ -29,7 +29,7 @@ const userSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
       match: /^0x[a-fA-F0-9]{40}$/,
-      index: true,
+      // [TR] unique:true zaten index üretir; index:true ve schema.index çift tanımı kaldırıldı.
     },
 
     // ── Generic Payout Profile (rail-aware) ──────────────────────────────────
@@ -53,6 +53,8 @@ const userSchema = new mongoose.Schema(
       payout_details_enc: { type: String, default: null },
       fingerprint: {
         hash: { type: String, default: null },
+        // [TR] Hash şeması: eksik/"sha256" = eski tuzsuz SHA-256, "hmac-v1" = master-key HMAC.
+        hash_scheme: { type: String, default: null },
         version: { type: Number, default: 0, min: 0 },
         last_changed_at: { type: Date, default: null },
       },
@@ -148,7 +150,6 @@ const userSchema = new mongoose.Schema(
 );
 
 // ── Index'ler ─────────────────────────────────────────────────────────────────
-userSchema.index({ wallet_address: 1 });
 userSchema.index({ is_banned: 1 });
 userSchema.index({ lastBankChangeAt: -1 });
 

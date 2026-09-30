@@ -65,7 +65,7 @@ describe("auth profile payout rail validation", () => {
           contact: { channel: "telegram", value: "tester1" },
           fields: { account_holder_name: "Test User", iban: "TR963456789012345678901234", bank_name: "Bank" },
         }),
-        buildPayoutFingerprint: jest.fn().mockImplementation((details) => JSON.stringify(details)),
+        buildPayoutFingerprintHmac: jest.fn().mockImplementation(async (details) => JSON.stringify(details)),
       }));
       jest.doMock("../../backend/scripts/models/User", () => UserMock);
       TradeMock = { exists: jest.fn().mockResolvedValue(false) };

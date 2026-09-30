@@ -191,7 +191,7 @@ On-chain child-trade kimliği (`onchain_escrow_id`) ile trade döner.
 Mongo `_id` ile trade döner (party-restricted).
 
 ### İptal koordinasyonu (backend route'u yok)
-Karşılıklı iptal tamamen on-chain yürür: her taraf kendi `proposeOrApproveCancel(tradeId)` işlemini gönderir, ikinci onay iptali yürütür.
+Karşılıklı iptal tamamen on-chain yürür: her taraf kendi `proposeOrApproveCancel(tradeId)` işlemini gönderir, ikinci onay iptali yürütür. İkinci onaydan önce taraf kendi onayını `revokeCancel(tradeId)` ile geri çekebilir (`CancelRevoked` event'i).
 Worker `CancelProposed` event'ini `cancel_proposal` alanına mirror'lar. Backend imza saklamaz; eski `POST /api/trades/propose-cancel` kaldırıldı.
 
 ### `POST /api/trades/:id/chargeback-ack`

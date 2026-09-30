@@ -52,14 +52,40 @@ function _toSafeFixedNumber(value, digits = 6) {
   return Number(n.toFixed(digits));
 }
 
-function _sumDecimalStrings(values = []) {
-  let total = 0n;
-  for (const raw of values) {
-    const normalized = String(raw ?? "0").trim();
-    if (!/^-?\d+$/.test(normalized)) continue;
-    total += BigInt(normalized);
+/**
+ * [TR] Base-unit sayı metinlerini Mongo tarafında Decimal128 olarak toplar (belleğe trade çekilmez).
+ *      Geçersiz/boş metinler 0 sayılır (önceki JS toplamasındaki "atla" davranışıyla aynı).
+ * [EN] Sums digit-string amounts inside Mongo as Decimal128 ($group) instead of loading every trade.
+ */
+function _decimalSumExpr(paths) {
+  const conv = (path) => ({ $convert: { input: path, to: "decimal", onError: 0, onNull: 0 } });
+  return paths.length === 1 ? conv(paths[0]) : { $add: paths.map(conv) };
+}
+
+function _decimal128ToIntString(value) {
+  if (value === null || value === undefined) return "0";
+  const text = String(value);
+  if (/^-?\d+$/.test(text)) return text;
+  // Bilimsel gösterim (ör. "1.5E+3") — tam sayıya çevir.
+  const m = /^(-?)(\d+)(?:\.(\d+))?E([+-]?\d+)$/i.exec(text);
+  if (m) {
+    const exp = Number(m[4]);
+    const frac = m[3] || "";
+    const digits = m[2] + frac;
+    const shift = exp - frac.length;
+    if (shift >= 0) return `${m[1] === "-" ? "-" : ""}${BigInt(digits) * 10n ** BigInt(shift)}`;
+    return `${m[1] === "-" ? "-" : ""}${BigInt(digits) / 10n ** BigInt(-shift)}`;
   }
-  return total.toString();
+  const dot = text.split(".")[0];
+  return /^-?\d+$/.test(dot) ? dot : "0";
+}
+
+async function _sumAmountStrings(match, paths) {
+  const rows = await Trade.aggregate([
+    { $match: match },
+    { $group: { _id: null, total: { $sum: _decimalSumExpr(paths) } } },
+  ]);
+  return _decimal128ToIntString(rows[0]?.total);
 }
 
 /**
@@ -85,9 +111,9 @@ async function computeCurrentStats() {
 
   const [
     resolvedAgg,
-    resolvedTrades,
-    executedTrades,
-    burnedTrades,
+    totalVolumeStr,
+    executedVolumeStr,
+    burnedBondsStr,
     childTradeCount,
     activeChildTrades,
     openSellOrders,
@@ -120,15 +146,9 @@ async function computeCurrentStats() {
         },
       },
     ]),
-    Trade.find({ status: "RESOLVED" })
-      .select("financials.crypto_amount")
-      .lean(),
-    Trade.find({ status: { $in: executedTradeStates } })
-      .select("financials.crypto_amount")
-      .lean(),
-    Trade.find({ status: "BURNED" })
-      .select("financials.total_decayed financials.burned_amount")
-      .lean(),
+    _sumAmountStrings({ status: "RESOLVED" }, ["$financials.crypto_amount"]),
+    _sumAmountStrings({ status: { $in: executedTradeStates } }, ["$financials.crypto_amount"]),
+    _sumAmountStrings({ status: "BURNED" }, ["$financials.total_decayed", "$financials.burned_amount"]),
     Trade.countDocuments({}),
     Trade.countDocuments({ status: { $in: activeTradeStates } }),
     Order.countDocuments({ side: "SELL_CRYPTO", status: { $in: fillableOrderStates } }),
@@ -167,21 +187,6 @@ async function computeCurrentStats() {
   ]);
 
   const resolved = resolvedAgg[0] || { totalVolumeApprox: 0, count: 0, totalDurationMs: 0 };
-
-  const totalVolumeStr = _sumDecimalStrings(
-    resolvedTrades.map((trade) => trade?.financials?.crypto_amount || "0")
-  );
-
-  const executedVolumeStr = _sumDecimalStrings(
-    executedTrades.map((trade) => trade?.financials?.crypto_amount || "0")
-  );
-
-  const burnedBondsStr = _sumDecimalStrings(
-    burnedTrades.flatMap((trade) => [
-      trade?.financials?.total_decayed || "0",
-      trade?.financials?.burned_amount || "0",
-    ])
-  );
 
   const avgTradeHours = resolved.count > 0
     ? _toSafeFixedNumber(resolved.totalDurationMs / resolved.count / (1000 * 3600), 2)
@@ -234,4 +239,5 @@ async function runStatsSnapshot() {
 module.exports = {
   runStatsSnapshot,
   computeCurrentStats,
+  _decimal128ToIntString,
 };

@@ -35,12 +35,14 @@ const {
   issueRefreshToken,
   rotateRefreshToken,
   revokeRefreshToken,
+  peekRefreshTokenOwner,
   blacklistJWT,
+  verifyJWT,
 } = require("../services/siwe");
 const {
   encryptPayoutProfile,
   decryptPayoutProfile,
-  buildPayoutFingerprint,
+  buildPayoutFingerprintHmac,
 } = require("../services/encryption");
 const User = require("../models/User");
 const Trade = require("../models/Trade");
@@ -276,6 +278,10 @@ const PROFILE_SCHEMA = Joi.object({
   return value;
 });
 
+function _isExpectedAuthError(err) {
+  return Boolean(err) && err.isAuthError === true;
+}
+
 /**
  * GET /api/auth/nonce?wallet=0x...
  * Nonce üretir ve SIWE config bilgisini döndürür.
@@ -411,8 +417,15 @@ router.post("/verify", authLimiter, async (req, res) => {
     logger.info(`[Auth] Giriş başarılı: ${wallet} (koşullar v${termsVersion})`);
     return res.json({ wallet, profile: user.toPublicProfile(), terms: { version: termsVersion } });
   } catch (err) {
-    logger.warn(`[Auth] SIWE başarısız: ${err.message}`);
-    return res.status(401).json({ error: `Kimlik doğrulama başarısız: ${err.message}` });
+    // [TR] Yalnız beklenen (kullanıcı kaynaklı) doğrulama hataları 401 + mesaj olarak döner.
+    //      DB/Redis/config gibi beklenmeyen hatalar 500 + genel mesajdır; ham hata mesajı sızmaz.
+    // [EN] Expected auth failures → 401 with message; unexpected errors → 500 generic.
+    if (_isExpectedAuthError(err)) {
+      logger.warn(`[Auth] SIWE başarısız: ${err.message}`);
+      return res.status(401).json({ error: `Kimlik doğrulama başarısız: ${err.message}` });
+    }
+    logger.error(`[Auth] /verify beklenmeyen hata: ${err?.stack || err?.message || err}`);
+    return res.status(500).json({ error: "Kimlik doğrulama sırasında sunucu hatası oluştu. Lütfen tekrar deneyin." });
   }
 });
 
@@ -444,7 +457,11 @@ router.post("/refresh", authLimiter, async (req, res) => {
     );
 
     res.cookie("araf_jwt", result.token, _getJwtCookieOptions());
-    res.cookie("araf_refresh", result.refreshToken, _getRefreshCookieOptions());
+    // [TR] İki sekme yarışında (tolerans penceresi) refresh token döndürülmez; tarayıcıda zaten
+    //      yarışı kazanan isteğin yeni refresh çerezi durur, üzerine yazılmaz.
+    if (result.refreshToken) {
+      res.cookie("araf_refresh", result.refreshToken, _getRefreshCookieOptions());
+    }
 
     logger.info(`[Auth] Token yenilendi: ${result.wallet}`);
     return res.json({ wallet: result.wallet });
@@ -459,20 +476,49 @@ router.post("/refresh", authLimiter, async (req, res) => {
 /**
  * POST /api/auth/logout
  * Aktif JWT'yi blacklist'e alır, refresh token ailesini iptal eder ve cookie'leri temizler.
+ *
+ * [TR] requireAuth KULLANILMAZ: süresi dolmuş JWT ile de (imzası geçerliyse) ya da yalnız refresh
+ *      çerezi ile çıkış yapılabilir; aksi halde kullanıcı 15 dakika sonra oturumunu kapatamazdı ve
+ *      refresh ailesi canlı kalırdı. Kimlik yine kriptografik olarak doğrulanır (JWT imzası ya da
+ *      sunucuda kayıtlı refresh token). Kimlik çözülemezse çerezler temizlenir, işlem başarılı döner.
+ * [EN] Logout works with an expired-but-validly-signed JWT or with the refresh cookie alone.
  */
-router.post("/logout", requireAuth, async (req, res, next) => {
+router.post("/logout", authLimiter, async (req, res, next) => {
   try {
     const currentJWT = req.cookies?.araf_jwt;
+    const refreshCookie = req.cookies?.araf_refresh;
+
+    let wallet = null;
+    let jwtIsAuthoritative = false;
+
     if (currentJWT) {
-      await blacklistJWT(currentJWT);
+      try {
+        const payload = verifyJWT(currentJWT, { ignoreExpiration: true });
+        if (payload?.type === "auth" && /^0x[a-fA-F0-9]{40}$/.test(payload.sub || "")) {
+          wallet = payload.sub.toLowerCase();
+          jwtIsAuthoritative = true;
+        }
+      } catch (_) {
+        // imza geçersiz → JWT'den kimlik türetilmez; refresh çerezine bakılır.
+      }
     }
 
-    await revokeRefreshToken(req.wallet);
+    if (!wallet && refreshCookie) {
+      const owner = await peekRefreshTokenOwner(refreshCookie);
+      if (owner) wallet = owner.wallet;
+    }
+
+    if (jwtIsAuthoritative) {
+      await blacklistJWT(currentJWT);
+    }
+    if (wallet) {
+      await revokeRefreshToken(wallet);
+    }
 
     res.clearCookie("araf_jwt", { ...COOKIE_OPTIONS_BASE, path: "/" });
     res.clearCookie("araf_refresh", { ...COOKIE_OPTIONS_BASE, path: "/api/auth" });
 
-    logger.info(`[Auth] Çıkış yapıldı: ${req.wallet}`);
+    logger.info(`[Auth] Çıkış yapıldı: ${wallet || "kimlik çözülemedi (yalnız çerezler temizlendi)"}`);
     return res.json({ success: true, message: "Oturum kapatıldı." });
   } catch (err) {
     next(err);
@@ -567,14 +613,22 @@ router.put("/profile", requireAuth, requireSessionWalletMatch, authLimiter, asyn
     );
     const nextGenericDetails = _buildCanonicalDetailsByRail(incoming.rail, incoming.fields);
 
+    // [TR] Her iki taraf da aynı (HMAC) şemayla hesaplanır; saklı fingerprint.hash ile karşılaştırma
+    //      gerekmez, dolayısıyla eski sha256 kayıtları ilk kaydetmede sorunsuz HMAC'e yükselir.
     const detailsChanged =
-      buildPayoutFingerprint(existingGenericDetails) !==
-      buildPayoutFingerprint(nextGenericDetails);
+      (await buildPayoutFingerprintHmac(existingGenericDetails)) !==
+      (await buildPayoutFingerprintHmac(nextGenericDetails));
 
     const bankProfileChanged = railChanged || countryChanged || detailsChanged;
 
+    // [TR] Mevcut (şifreli) profil yoksa bu bir İLK oluşturmadır: değiştirilecek bir şey olmadığı için
+    //      aktif trade kilidinden muaftır (profilsiz kullanıcı aktif trade'de profil oluşturabilir).
+    //      Mevcut profilin değiştirilmesi aktif trade sırasında kilitli kalır.
+    // [EN] First-ever profile creation is exempt from the active-trade lock; changing an existing one is not.
+    const isFirstProfileCreation = !user.payout_profile?.payout_details_enc;
+
     // [TR] Contact değişimi serbest; payout details değişimi aktif trade sırasında kilitli.
-    if (bankProfileChanged) {
+    if (bankProfileChanged && !isFirstProfileCreation) {
       const activeTradeExists = await Trade.exists({
         status: { $in: ACTIVE_TRADE_STATUSES_FOR_BANK_PROFILE_LOCK },
         $or: [

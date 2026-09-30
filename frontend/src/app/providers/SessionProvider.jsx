@@ -56,7 +56,8 @@ export const createSessionActions = ({
 
   const handleLogoutAndDisconnect = async () => {
     await bestEffortBackendLogout();
-    clearLocalSessionState({ navigateHome: true, closeModals: true });
+    // [TR] Gerçek çıkış: bekleyen tx kaydı yalnız burada silinir (F7).
+    clearLocalSessionState({ navigateHome: true, closeModals: true, clearPendingTx: true });
     disconnect();
   };
 
@@ -171,9 +172,12 @@ export const SessionProvider = ({ children, actionFactory = createSessionActions
 };
 
 export const useSessionActions = (dependencies) => {
-  // [TR] dependencies her render'da yeni nesne olduğundan memo hiçbir zaman isabet etmiyordu. [EN] The memo never hit.
+  // [TR] Eskiden her render'da yeni fonksiyonlar üretiliyordu (dependencies her seferinde yeni nesne).
+  //      Şimdi değerler değişmedikçe aynı eylem nesnesi (ve aynı fonksiyon kimlikleri) döner (P3).
   const { createActions } = React.useContext(SessionActionsContext);
-  return createActions(dependencies);
+  const keys = Object.keys(dependencies).sort();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return React.useMemo(() => createActions(dependencies), [createActions, ...keys.map((k) => dependencies[k])]);
 };
 
 export default SessionProvider;

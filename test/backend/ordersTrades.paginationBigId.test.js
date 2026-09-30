@@ -91,8 +91,11 @@ describe("orders/trades pagination + big on-chain id", () => {
       find: jest.fn(() => ({
         select: jest.fn().mockReturnThis(),
         sort: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       })),
+      countDocuments: jest.fn().mockResolvedValue(0),
     };
 
     const ordersReadLimiter = jest.fn((_req, _res, next) => next());

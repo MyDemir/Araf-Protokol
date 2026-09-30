@@ -190,7 +190,7 @@ Fetches child trade by on-chain trade identity (`onchain_escrow_id`).
 Fetches a trade by Mongo `_id` (party-restricted).
 
 ### Cancel coordination (no backend route)
-Mutual cancel runs fully on-chain: each party sends its own `proposeOrApproveCancel(tradeId)` tx and the second consent executes it.
+Mutual cancel runs fully on-chain: each party sends its own `proposeOrApproveCancel(tradeId)` tx and the second consent executes it. Before the second consent a party may withdraw its own consent with `revokeCancel(tradeId)` (`CancelRevoked` event).
 The worker mirrors `CancelProposed` into `cancel_proposal`. The backend stores no signatures; the old `POST /api/trades/propose-cancel` was removed.
 
 ### `POST /api/trades/:id/chargeback-ack`

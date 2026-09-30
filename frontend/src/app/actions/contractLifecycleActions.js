@@ -1,7 +1,11 @@
+import { keccak256, stringToHex } from 'viem';
 import { buildApiUrl } from '../apiConfig';
 import { resolveValidatedFillAmountRaw } from '../fillAmountPolicy';
 import { normalizeOrderSide, removeOrderByOnchainId, resolveOrderActionFns } from '../orderUiModel';
 import { WALLET_AGE_MIN_DAYS } from '../walletAge';
+import { mapChainTradeState, resolveConfirmedState } from '../tradeStateSync';
+import { computeFillAllowance } from './allowanceMath';
+import { clearAppHashRoute } from './tradeNavigationActions';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
@@ -25,14 +29,55 @@ const isPositiveOnchainId = (value) => {
   }
 };
 
+// [TR] window.confirm yoksa (gömülü/kısıtlı tarayıcı) eskiden sessizce "hayır" sayılıyor, kullanıcı butona
+//      basıp hiçbir şey olmadığını görüyordu. Artık null döner ve çağıran kullanıcıya bildirir.
+// [EN] A missing window.confirm used to silently mean "no"; now callers get null and tell the user.
 const getConfirm = () => {
   if (typeof window !== 'undefined' && typeof window.confirm === 'function') return window.confirm.bind(window);
-  return () => false;
+  return null;
 };
 
 const resolveLoadingState = (isContractLoading) => (
   typeof isContractLoading === 'function' ? isContractLoading() : Boolean(isContractLoading)
 );
+
+const isSameTrade = (trade, onchainId) => {
+  const current = String(trade?.onchainId ?? '');
+  return current !== '' && current === String(onchainId ?? '');
+};
+
+const fetchAttempts = 6;
+const FETCH_RETRY_MS = 2000;
+
+/**
+ * [TR] Fill tx'i zincire yazıldı ama OrderFilled olayından tradeId okunamadıysa "tekrar dene" demek çifte doldurma
+ *      riskidir. Bunun yerine backend'in /trades/my kaydında parent order + doldurulan tutar + rol ile trade aranır.
+ * [EN] The fill is already on chain; "retry" would double-fill. Find the trade in /trades/my by parent order,
+ *      filled amount and role instead.
+ */
+const findFilledTradeViaBackend = async ({ authenticatedFetch, order, address, side, fillAmountRaw, sleep }) => {
+  const me = String(address || '').toLowerCase();
+  for (let attempt = 0; attempt < fetchAttempts; attempt += 1) {
+    try {
+      const res = await authenticatedFetch(buildApiUrl('trades/my?page=1&limit=50'));
+      if (res?.ok) {
+        const data = await res.json();
+        const found = (data?.trades || []).find((t) => {
+          if (String(t?.parent_order_id ?? '') !== String(order.onchainId)) return false;
+          // Sell emrini dolduran taker, buy emrini dolduran maker olur.
+          const mine = side === 'BUY_CRYPTO' ? t?.maker_address : t?.taker_address;
+          if (String(mine || '').toLowerCase() !== me) return false;
+          return String(t?.financials?.crypto_amount ?? '') === fillAmountRaw.toString();
+        });
+        if (found?.onchain_escrow_id !== undefined && found?.onchain_escrow_id !== null && found?._id) {
+          return { onchainId: String(found.onchain_escrow_id), id: found._id };
+        }
+      }
+    } catch (_) {}
+    if (attempt < fetchAttempts - 1) await sleep(FETCH_RETRY_MS);
+  }
+  return null;
+};
 
 export const buildStartTradeAction = ({
   lang = 'EN',
@@ -58,10 +103,26 @@ export const buildStartTradeAction = ({
   setCancelStatus,
   setChargebackAccepted,
   setCurrentView,
-  confirmFn = getConfirm(),
+  // [TR] Fill sonrası rol: buy emrini dolduran maker, sell emrini dolduran taker olur.
+  setUserRole = null,
+  fetchMyTrades = null,
+  // [TR] Tam approve tutarı için (yoksa muhafazakâr üst sınır): backend bondMap + cüzdan itibarı okuyucusu.
+  bondMap = null,
+  getReputation = null,
+  confirmFn = null,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) => async (order) => {
-  if (!confirmFn(lang === 'TR' ? 'İşlemi onaylıyor musunuz?' : 'Do you confirm the transaction?')) return;
+  const confirm = confirmFn || getConfirm();
+  if (!confirm) {
+    showToast(
+      lang === 'TR'
+        ? 'Bu tarayıcıda onay penceresi kullanılamıyor. Lütfen işlemi standart bir tarayıcıdan yapın.'
+        : 'Confirmation dialogs are unavailable in this browser. Please use a standard browser to continue.',
+      'error'
+    );
+    return;
+  }
+  if (!confirm(lang === 'TR' ? 'İşlemi onaylıyor musunuz?' : 'Do you confirm the transaction?')) return;
   if (isBanned) {
     showToast(
       lang === 'TR'
@@ -83,7 +144,6 @@ export const buildStartTradeAction = ({
   if (resolveLoadingState(isContractLoading)) return;
 
   let tokenAddress = null;
-  let didIncreaseAllowance = false;
 
   try {
     setIsContractLoading(true);
@@ -135,11 +195,21 @@ export const buildStartTradeAction = ({
       tokenAddress = tokenFromChain;
     }
 
-    // [TR] Frontend taker bond authority üretmez; bu hesap kontrata aittir.
-    //      Approve için konservatif üst sınır kullanırız: fill amount * 2.
-    // [EN] Frontend does not author taker-bond authority; contract does.
-    //      For approve we use a conservative upper bound: fill amount * 2.
-    const requiredAllowance = fillAmountRaw * 2n;
+    // [TR] Approve tutarı kontratın çekeceği tam miktardır (fill + teminat ya da yalnız teminat; tier + itibara
+    //      göre, aşağı yuvarlı). Eski "fill * 2" gereğinden çok büyük izin istiyordu. İtibar okunamazsa
+    //      muhafazakâr üst sınır kullanılır. Başarısızlıkta otomatik approve(0) istenmez.
+    // [EN] Approve the exact amount the contract pulls (fill + bond, or bond only). Not 2x; no auto approve(0).
+    let reputation = null;
+    if (typeof getReputation === 'function') {
+      try { reputation = await getReputation(address); } catch (_) { reputation = null; }
+    }
+    const requiredAllowance = computeFillAllowance({
+      side,
+      fillAmountRaw,
+      tier: getOnchainOrderField(onchainOrder, 'tier', 11),
+      bondMap,
+      reputation,
+    });
 
     const currentAllowance = await getAllowance(tokenAddress, address);
     if (currentAllowance < requiredAllowance) {
@@ -149,7 +219,6 @@ export const buildStartTradeAction = ({
           : `Step 1/2: Approving ${order.crypto}...`
       );
       await approveToken(tokenAddress, requiredAllowance);
-      didIncreaseAllowance = true;
     }
 
     setLoadingText(
@@ -158,27 +227,38 @@ export const buildStartTradeAction = ({
         : 'Step 2/2: Submitting order fill...'
     );
     const childTradeRef = `fill:${order.onchainId}:${Date.now()}:${Math.random()}`;
-    const { keccak256, stringToHex } = await import('viem');
     const childRefHash = keccak256(stringToHex(childTradeRef));
     const fillResult = await fillOrderFn(BigInt(order.onchainId), fillAmountRaw, childRefHash);
-    const onchainTradeId = fillResult?.tradeId ? fillResult.tradeId.toString() : null;
+    let onchainTradeId = fillResult?.tradeId ? fillResult.tradeId.toString() : null;
+    let realTradeId = null;
+    // [TR] Buy emrini dolduran maker, sell emrini dolduran taker olur (kontrat: fillBuyOrder → maker = msg.sender).
+    const myRole = side === 'BUY_CRYPTO' ? 'maker' : 'taker';
 
-    // [TR] Trade odası state'i order id ile değil child trade id ile açılmalıdır.
-    //      Event decode edilemediyse belirsiz state ile devam etmeyip güvenli hata veririz.
-    // [EN] Trade room state must be initialized with child trade id, not parent order id.
-    //      If event decode fails, fail closed instead of continuing with ambiguous authority.
+    // [TR] Trade odası state'i order id ile değil child trade id ile açılmalıdır. Tx zincire yazıldıysa ama olaydan
+    //      id okunamadıysa "tekrar dene" çifte doldurma riskidir: trade backend kaydından bulunur.
+    // [EN] Trade room state must use the child trade id. If the fill is on chain but the id could not be decoded,
+    //      look the trade up via the backend instead of asking the user to retry (double fill).
     if (!onchainTradeId) {
-      throw new Error(
-        lang === 'TR'
-          ? 'OrderFilled eventinden child trade id okunamadı. Lütfen tekrar deneyin.'
-          : 'Failed to read child trade id from OrderFilled event. Please retry.'
-      );
+      const found = await findFilledTradeViaBackend({ authenticatedFetch, order, address, side, fillAmountRaw, sleep });
+      if (!found) {
+        showToast(
+          lang === 'TR'
+            ? 'Doldurma işlemi zincire yazıldı ancak işlem kimliği okunamadı. Tekrar denemeyin; "Aktif İşlemler" ekranını kontrol edin.'
+            : 'The fill was confirmed on-chain but the trade id could not be read. Do not retry; check "Active Trades".',
+          'info'
+        );
+        if (typeof fetchMyTrades === 'function') {
+          try { await fetchMyTrades(); } catch (_) {}
+        }
+        return;
+      }
+      onchainTradeId = found.onchainId;
+      realTradeId = found.id;
     }
 
     // Backend trade kaydı listener gecikmesiyle gelebilir.
     // Bu yüzden birkaç deneme yapılır; gerçek trade ID yoksa sahte/fallback ID ile devam edilmez.
-    let realTradeId = null;
-    for (let attempt = 0; attempt < 6; attempt++) {
+    for (let attempt = 0; !realTradeId && attempt < fetchAttempts; attempt++) {
       try {
         const res = await authenticatedFetch(buildApiUrl(`trades/by-escrow/${onchainTradeId}`));
         if (res.ok) {
@@ -187,7 +267,7 @@ export const buildStartTradeAction = ({
           if (realTradeId) break;
         }
       } catch (_) {}
-      if (attempt < 5) await sleep(2000);
+      if (attempt < fetchAttempts - 1) await sleep(FETCH_RETRY_MS);
     }
 
     if (!realTradeId) {
@@ -204,6 +284,7 @@ export const buildStartTradeAction = ({
         onchainId: onchainTradeId,
         _pendingBackendSync: true,
       });
+      if (typeof setUserRole === 'function') setUserRole(myRole);
       setTradeState('LOCKED');
       setCancelStatus(null);
       setChargebackAccepted(false);
@@ -212,6 +293,7 @@ export const buildStartTradeAction = ({
     }
 
     setActiveTrade({ ...order, id: realTradeId, onchainId: onchainTradeId });
+    if (typeof setUserRole === 'function') setUserRole(myRole);
     setTradeState('LOCKED');
     setCancelStatus(null);
     setChargebackAccepted(false);
@@ -219,10 +301,6 @@ export const buildStartTradeAction = ({
     showToast(lang === 'TR' ? 'İşlem başarıyla kilitlendi!' : 'Trade locked successfully!', 'success');
   } catch (err) {
     console.error('handleStartTrade error:', err);
-
-    if (didIncreaseAllowance && tokenAddress) {
-      try { await approveToken(tokenAddress, 0n); } catch (_) {}
-    }
 
     const errorMessage = err.shortMessage || err.reason || err.message || (lang === 'TR' ? 'İşlem kilitlenemedi.' : 'Failed to lock trade.');
     if (errorMessage.includes('rejected') || errorMessage.includes('User rejected')) {
@@ -303,14 +381,56 @@ export const buildTradeRoomActions = ({
   setCancelStatus,
   setChargebackAccepted,
   setCurrentView,
+  // [TR] Tx sonrası durumu kontrattan okumak (getTrade) ve backend aynası yetişene kadar pin'lemek için.
+  getTrade = null,
+  pinTradeState = null,
   fetchFn = fetch,
 }) => {
-  const finishTrade = (state) => {
-    setTradeState(state);
+  // [TR] fetchMyTrades hatası, zincirde başarılı olmuş bir tx'i "başarısız" gösterdiği için ayrı korunur.
+  // [EN] A refresh failure must not make an already-confirmed tx look failed.
+  const refreshTrades = async () => {
+    if (typeof fetchMyTrades !== 'function') return;
+    try {
+      await fetchMyTrades();
+    } catch (err) {
+      console.error('fetchMyTrades after tx failed:', err);
+    }
+  };
+
+  // [TR] İyimser durum yerine kontrattaki gerçek durum okunur; RPC geride kalırsa beklenen durum kullanılır.
+  //      Sonuç pin'lenir: gecikmeli backend aynası daha eski bir durumla ezmez.
+  // [EN] Read the real state from the contract after a tx (fall back to the expected one) and pin it so a lagging
+  //      mirror cannot overwrite it.
+  const confirmTradeState = async (onchainId, expectedState) => {
+    let chainState = null;
+    if (typeof getTrade === 'function') {
+      try { chainState = mapChainTradeState(await getTrade(onchainId)); } catch (_) { chainState = null; }
+    }
+    const state = resolveConfirmedState(chainState, expectedState);
+    if (typeof pinTradeState === 'function') pinTradeState(onchainId, state);
+    return state;
+  };
+
+  const finishTrade = async (state, onchainId = activeTrade?.onchainId) => {
+    const confirmed = await confirmTradeState(onchainId, state);
+    // [TR] Oda yalnız biten trade açıksa kapatılır; başka bir trade'in odası ezilmez.
+    if (!isSameTrade(activeTrade, onchainId)) return confirmed;
+    setTradeState(confirmed);
     setActiveTrade(null);
     setCancelStatus(null);
     setChargebackAccepted(false);
+    // [TR] Odadan çıkışta #/trade/.. hash'i temizlenir; yoksa yenileme/hashchange kullanıcıyı geri çeker.
+    clearAppHashRoute();
     setCurrentView('home');
+    return confirmed;
+  };
+
+  const applyConfirmedState = async (onchainId, expectedState, patch = {}) => {
+    const confirmed = await confirmTradeState(onchainId, expectedState);
+    // [TR] Yalnız hâlâ aynı trade açıksa: başka/null trade ezilmez.
+    if (isSameTrade(activeTrade, onchainId)) setTradeState(confirmed);
+    setActiveTrade((prev) => (isSameTrade(prev, onchainId) ? { ...prev, state: confirmed, ...patch } : prev));
+    return confirmed;
   };
 
   const invalidOnchainIdMessage = lang === 'TR' ? 'On-chain işlem ID bulunamadı.' : 'On-chain trade ID not found.';
@@ -371,7 +491,7 @@ export const buildTradeRoomActions = ({
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'Ödeme bildirimi gönderiliyor... Cüzdanınızdan onaylayın.' : 'Reporting payment... Confirm in wallet.', 'info');
       await reportPayment(BigInt(activeTrade.onchainId), paymentIpfsHash.trim());
-      setTradeState('PAID');
+      await applyConfirmedState(activeTrade.onchainId, 'PAID');
       setPaymentIpfsHash('');
       showToast(lang === 'TR' ? 'Ödeme bildirildi! 48 saatlik grace period başladı.' : 'Payment reported! 48h grace period started.', 'success');
     } catch (err) {
@@ -394,16 +514,24 @@ export const buildTradeRoomActions = ({
       // [EN] Cancel is fully on-chain: each party sends its own tx and the second consent executes it.
       //      No separate signature or backend relay; counterparty consent comes from the mirrored CancelProposed.
       const counterpartyAlreadyConsented = cancelStatus === 'proposed_by_other';
-      await proposeOrApproveCancel(activeTrade.onchainId);
+      const onchainId = activeTrade.onchainId;
+      await proposeOrApproveCancel(onchainId);
 
-      if (counterpartyAlreadyConsented) {
-        finishTrade('CANCELED');
+      // [TR] İkinci onay iptali yürüttü mü, kontrattan okunur; okunamazsa aynadaki bilgi (cancelStatus) kullanılır.
+      let chainState = null;
+      if (typeof getTrade === 'function') {
+        try { chainState = mapChainTradeState(await getTrade(onchainId)); } catch (_) { chainState = null; }
+      }
+      const executed = chainState ? chainState === 'CANCELED' : counterpartyAlreadyConsented;
+
+      if (executed) {
+        await finishTrade('CANCELED', onchainId);
         showToast(lang === 'TR' ? 'İşlem iptal edildi.' : 'Trade cancelled.', 'success');
       } else {
         setCancelStatus('proposed_by_me');
         showToast(lang === 'TR' ? 'İptal teklifi gönderildi. Karşı taraf onaylayınca işlem kapanır.' : 'Cancel proposed. It completes when the counterparty approves.', 'success');
       }
-      if (typeof fetchMyTrades === 'function') fetchMyTrades();
+      refreshTrades();
     } catch (err) {
       console.error('handleProposeCancel error:', err);
       const errorMessage = getTxErrorMessage(err, lang === 'TR' ? 'İptal teklifi başarısız.' : 'Cancel proposal failed.');
@@ -421,9 +549,9 @@ export const buildTradeRoomActions = ({
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'Kilit çözülüyor... Cüzdanınızdan onaylayın.' : 'Unlocking... Confirm in wallet.', 'info');
       await expirePaymentWindow(activeTrade.onchainId);
-      finishTrade('CANCELED');
+      await finishTrade('CANCELED');
       showToast(lang === 'TR' ? 'Ödeme süresi doldu; fonlar satıcıya iade edildi.' : 'Payment window expired; funds returned to the seller.', 'success');
-      if (typeof fetchMyTrades === 'function') fetchMyTrades();
+      refreshTrades();
     } catch (err) {
       console.error('expirePaymentWindow error:', err);
       showToast(getTxErrorMessage(err, lang === 'TR' ? 'Kilit çözülemedi.' : 'Unlock failed.'), 'error');
@@ -443,15 +571,20 @@ export const buildTradeRoomActions = ({
     if (isContractLoading) return;
     try {
       setIsContractLoading(true);
-      try {
-        await authenticatedFetch(buildApiUrl(`trades/${activeTrade.id}/chargeback-ack`), { method: 'POST' });
-      } catch (err) {
-        console.error('Backend chargeback-ack log hatası:', err);
+      // [TR] Backend kaydı (id) henüz yoksa (_pendingBackendSync) istek "trades/null/..." olurdu; atlanır.
+      if (activeTrade.id) {
+        try {
+          await authenticatedFetch(buildApiUrl(`trades/${activeTrade.id}/chargeback-ack`), { method: 'POST' });
+        } catch (err) {
+          console.error('Backend chargeback-ack log hatası:', err);
+        }
       }
       showToast(lang === 'TR' ? 'İşlem cüzdanınıza gönderildi, onaylayın...' : 'Transaction sent to wallet, please confirm...', 'info');
       await releaseFunds(BigInt(activeTrade.onchainId));
-      finishTrade('RESOLVED');
-      showToast(lang === 'TR' ? 'USDT başarıyla serbest bırakıldı!' : 'USDT successfully released!', 'success');
+      await finishTrade('RESOLVED');
+      // [TR] Sabit "USDT" yerine trade'in gerçek token sembolü (USDC işlemi "USDT serbest bırakıldı" demesin).
+      const symbol = activeTrade.crypto || activeTrade.cryptoAsset || 'USDT';
+      showToast(lang === 'TR' ? `${symbol} başarıyla serbest bırakıldı!` : `${symbol} successfully released!`, 'success');
     } catch (err) {
       console.error('releaseFunds error:', err);
       const errorMessage = getTxErrorMessage(err, lang === 'TR' ? 'Kontrat işlemi başarısız oldu.' : 'Contract transaction failed.');
@@ -477,9 +610,11 @@ export const buildTradeRoomActions = ({
       try {
         setIsContractLoading(true);
         showToast(lang === 'TR' ? 'Alıcıya uyarı gönderiliyor...' : 'Pinging taker...', 'info');
-        await pingTakerForChallenge(BigInt(activeTrade.onchainId));
-        setActiveTrade((prev) => ({ ...prev, challengePingedAt: new Date().toISOString() }));
-        await fetchMyTrades();
+        const onchainId = activeTrade.onchainId;
+        await pingTakerForChallenge(BigInt(onchainId));
+        const pingedAt = new Date().toISOString();
+        setActiveTrade((prev) => (isSameTrade(prev, onchainId) ? { ...prev, challengePingedAt: pingedAt } : prev));
+        await refreshTrades();
         showToast(lang === 'TR' ? 'Alıcı uyarıldı. İtiraz için 24 saat beklemeniz gerekiyor.' : 'Taker pinged. You must wait 24h to challenge.', 'success');
       } catch (err) {
         console.error('pingTakerForChallenge error:', err);
@@ -493,10 +628,10 @@ export const buildTradeRoomActions = ({
     try {
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'İtiraz işlemi cüzdanınıza gönderildi...' : 'Challenge transaction sent to wallet...', 'info');
-      await challengeTrade(BigInt(activeTrade.onchainId));
-      setTradeState('CHALLENGED');
-      setActiveTrade((prev) => ({ ...prev, challengedAt: new Date().toISOString() }));
-      await fetchMyTrades();
+      const onchainId = activeTrade.onchainId;
+      await challengeTrade(BigInt(onchainId));
+      await applyConfirmedState(onchainId, 'CHALLENGED', { challengedAt: new Date().toISOString() });
+      await refreshTrades();
       showToast(lang === 'TR' ? 'İtiraz başlatıldı. Bleeding Escrow aktif.' : 'Challenge opened. Bleeding Escrow active.', 'success');
     } catch (err) {
       console.error('challengeTrade error:', err);
@@ -513,7 +648,8 @@ export const buildTradeRoomActions = ({
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'Uyarı işlemi cüzdanınıza gönderiliyor...' : 'Pinging maker, please confirm in wallet...', 'info');
       await pingMaker(BigInt(tradeId));
-      setActiveTrade((prev) => ({ ...prev, pingedAt: new Date().toISOString() }));
+      const pingedAt = new Date().toISOString();
+      setActiveTrade((prev) => (isSameTrade(prev, tradeId) ? { ...prev, pingedAt } : prev));
       showToast(lang === 'TR' ? 'Maker uyarıldı. Yanıt için 24 saati var.' : 'Maker has been pinged. They have 24h to respond.', 'success');
     } catch (err) {
       console.error('pingMaker error:', err);
@@ -533,7 +669,7 @@ export const buildTradeRoomActions = ({
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'Otomatik serbest bırakma işlemi cüzdanınıza gönderiliyor...' : 'Auto-release transaction sent to wallet...', 'info');
       await autoRelease(BigInt(tradeId));
-      finishTrade('RESOLVED');
+      await finishTrade('RESOLVED', tradeId);
       showToast(lang === 'TR' ? 'İşlem başarıyla sonlandırıldı. Fonlar cüzdanınıza aktarıldı.' : 'Trade successfully resolved. Funds transferred to your wallet.', 'success');
     } catch (err) {
       console.error('autoRelease error:', err);
@@ -551,7 +687,7 @@ export const buildTradeRoomActions = ({
       setIsContractLoading(true);
       showToast(lang === 'TR' ? 'Yakma işlemi gönderiliyor... Cüzdanınızdan onaylayın.' : 'Burn transaction sent... Confirm in wallet.', 'info');
       await burnExpired(BigInt(activeTrade.onchainId));
-      finishTrade('BURNED');
+      await finishTrade('BURNED');
       showToast(lang === 'TR' ? 'Süre doldu: kilitli tutar ve teminatlar hazineye aktarıldı.' : 'Expired: locked amount and bonds moved to treasury.', 'success');
     } catch (err) {
       console.error('burnExpired error:', err);
@@ -601,11 +737,21 @@ export const buildProfileActions = ({
         method: 'PUT',
         body: JSON.stringify({ payoutProfile: canonicalizePayoutProfileDraft(payoutProfileDraft) }),
       });
-      const data = await res.json();
+      // [TR] Durum önce kontrol edilir, gövde güvenli okunur (JSON olmayan/boş yanıt akışı kırmaz).
+      const readBody = async () => {
+        try { return (await res.json()) || {}; } catch { return {}; }
+      };
       if (res.status === 409) {
+        const body = await readBody();
+        // Oturum-cüzdan uyuşmazlığı authenticatedFetch tarafından zaten işlendi (çıkış + bildirim); yanıltıcı
+        // "aktif trade" mesajı gösterme.
+        if (body.code === 'SESSION_WALLET_MISMATCH') return;
         throw new Error(lang === 'TR' ? 'Aktif trade varken payout profili değiştirilemez.' : 'Payout profile cannot be changed during active trades.');
       }
-      if (!res.ok) throw new Error(data.error || 'Güncelleme başarısız oldu.');
+      if (!res.ok) {
+        const body = await readBody();
+        throw new Error(body.error || (lang === 'TR' ? 'Güncelleme başarısız oldu.' : 'Update failed.'));
+      }
       showToast(lang === 'TR' ? 'Ödeme profili güncellendi.' : 'Payout profile updated.', 'success');
     } catch (err) {
       console.error('PII update error:', err);

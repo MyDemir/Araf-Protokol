@@ -12,6 +12,7 @@ const { roomReadLimiter, coordinationWriteLimiter } = require("../middleware/rat
 const Trade = require("../models/Trade");
 const User = require("../models/User");
 const logger = require("../utils/logger");
+const { hmacDigest } = require("../services/encryption");
 const { buildBankProfileRisk, buildTradeHealthSignals } = require("./tradeRisk");
 const { assertProviderExpectedChainOrThrow } = require("../services/expectedChain");
 
@@ -44,12 +45,21 @@ async function _getPreviewReadContract() {
     return null;
   }
 
-  previewReadProvider = new ethers.JsonRpcProvider(rpcUrl);
-  await assertProviderExpectedChainOrThrow(previewReadProvider, {
-    rpcUrl,
-    rpcEnvName: "BASE_RPC_URL",
-    surface: "TradesSettlementPreview",
-  });
+  // [TR] Provider yerel oluşturulur; zincir doğrulaması başarılı olana kadar modül cache'ine yazılmaz.
+  //      Başarısızlıkta provider kapatılır (her istekte sızan yeni provider oluşmaz).
+  // [EN] Build locally, publish to the cache only after chain validation succeeds; destroy on failure.
+  const candidate = new ethers.JsonRpcProvider(rpcUrl);
+  try {
+    await assertProviderExpectedChainOrThrow(candidate, {
+      rpcUrl,
+      rpcEnvName: "BASE_RPC_URL",
+      surface: "TradesSettlementPreview",
+    });
+  } catch (err) {
+    try { candidate.destroy(); } catch (_) { /* ignore */ }
+    throw err;
+  }
+  previewReadProvider = candidate;
   previewReadContract = new ethers.Contract(contractAddress, PREVIEW_READ_ABI, previewReadProvider);
   previewReadCacheKey = cacheKey;
   return { provider: previewReadProvider, contract: previewReadContract };
@@ -260,7 +270,7 @@ async function _attachBankProfileRisk(trades) {
   const participantUsers = await User.find({ wallet_address: { $in: participantAddresses } })
     .select(
       "wallet_address profileVersion bankChangeCount7d bankChangeCount30d " +
-      "payout_profile reputation_cache reputation_breakdown is_banned banned_until consecutive_bans"
+      "payout_profile.fingerprint.version reputation_cache reputation_breakdown is_banned banned_until consecutive_bans"
     )
     .lean();
 
@@ -555,7 +565,8 @@ router.post("/:id/chargeback-ack", requireAuth, requireSessionWalletMatch, coord
     }
 
     const rawIp = _getRealIP(req);
-    const ipHash = crypto.createHash("sha256").update(rawIp).digest("hex");
+    // [TR] Tuzsuz SHA-256 IPv4 uzayında brute-force ile çözülebilir; master-key HMAC kullanılır.
+    const ipHash = await hmacDigest("chargeback-ip", rawIp);
 
     const updatedTrade = await Trade.findOneAndUpdate(
       {
@@ -604,12 +615,11 @@ router.post("/:id/chargeback-ack", requireAuth, requireSessionWalletMatch, coord
   }
 });
 
-router.__resetCancelVerifier = () => {
-  cancelVerifyProvider = null;
-  cancelVerifyContract = null;
-  cancelVerifyCacheKey = null;
-};
+// [TR] __resetCancelVerifier / __getCancelVerifierCacheKey kaldırıldı: iptal koordinasyonu tamamen
+//      on-chain olduğundan cancelVerify* değişkenleri yoktu (tanımsız değişkenlere atama).
+// [EN] Removed dead cancel-verifier test hooks that assigned to undeclared variables.
 
-router.__getCancelVerifierCacheKey = () => cancelVerifyCacheKey;
+// Test surface (B38): preview provider cache behaviour.
+router.__getPreviewReadContract = _getPreviewReadContract;
 
 module.exports = router;

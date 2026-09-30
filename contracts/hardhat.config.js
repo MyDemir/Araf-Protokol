@@ -41,6 +41,26 @@ extendEnvironment((hre) => {
   assertRequiredRpcEnvForNetwork(hre.network.name);
 });
 
+// [TR] İsteğe bağlı solc-js düşme yolu: native derleyici indirilemeyen (ağ kısıtlı) ortamlarda
+//      ARAF_SOLCJS_PATH=<solc@0.8.24 paketinin soljson.js yolu> verilirse o derleyici kullanılır.
+//      Env yoksa davranış değişmez (Hardhat native 0.8.24'ü indirir).
+// [EN] Optional solc-js fallback for network-restricted environments; no-op unless ARAF_SOLCJS_PATH is set.
+if (process.env.ARAF_SOLCJS_PATH) {
+  const { subtask } = require("hardhat/config");
+  const { TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD } = require("hardhat/builtin-tasks/task-names");
+  subtask(TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD, async (args, _hre, runSuper) => {
+    if (args.solcVersion === "0.8.24") {
+      return {
+        compilerPath: process.env.ARAF_SOLCJS_PATH,
+        isSolcJs: true,
+        version: "0.8.24",
+        longVersion: "0.8.24+commit.e11b9ed9",
+      };
+    }
+    return runSuper();
+  });
+}
+
 /** @type import('hardhat/config').HardhatUserConfig */
 const config = {
   solidity: {

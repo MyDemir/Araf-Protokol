@@ -48,6 +48,9 @@ export function usePII(tradeId, authenticatedFetch) {
   // [EN] Clear state and abort active request on tradeId change or unmount
   useEffect(() => {
     mountedRef.current = true;
+    // [TR] Önceki işlemin hata/yükleniyor durumu yeni işleme taşınmasın.
+    setError(null);
+    setLoading(false);
     return () => {
       mountedRef.current = false;
       setPii(null); // unmount → payout profile bellekten sil

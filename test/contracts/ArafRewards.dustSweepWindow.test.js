@@ -1,6 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
+const { deployRevenueEscrow, pushRevenue } = require("./helpers/revenue");
 
 describe("ArafRewards dust sweep claim window", function () {
   const DECIMALS = 6;
@@ -21,7 +22,7 @@ describe("ArafRewards dust sweep claim window", function () {
     const mockEscrow = await MockEscrow.deploy();
 
     const Vault = await ethers.getContractFactory("ArafRevenueVault");
-    const vault = await Vault.deploy(owner.address, owner.address, owner.address);
+    const vault = await Vault.deploy(await (await deployRevenueEscrow()).getAddress(), owner.address, owner.address);
 
     const MockERC20 = await ethers.getContractFactory("MockERC20");
     const token = await MockERC20.deploy("Mock USDT", "USDT", DECIMALS);
@@ -63,9 +64,7 @@ describe("ArafRewards dust sweep claim window", function () {
     await mockEscrow.setRewardableTrade(1, mkTrade({ tradeId: 1, maker: maker.address, taker: taker.address, terminalAt, paidAt }));
     await rewards.connect(owner).recordTradeOutcome(1);
 
-    await vault.connect(owner).noteEscrowRevenueIntent(await token.getAddress(), 12n, 0, 9001);
-    await token.mint(await vault.getAddress(), 12n);
-    await vault.connect(owner).onArafRevenue(await token.getAddress(), 12n, 0, 9001);
+    await pushRevenue(vault, token, 12n, 0, 9001, 12n);
 
     await rewards.connect(owner).allocateEpochRewards(epoch, await token.getAddress(), 3n);
     const epochEndPlusOne = ((epoch + 1) * epochDuration) + 1;

@@ -24,16 +24,24 @@ import { resolveClientErrorLogUrl } from '../app/apiConfig';
 
 // [TR] Hassas veri pattern'ları — log göndermeden önce temizlenir
 // [EN] Sensitive data patterns — scrubbed before sending logs
-const PII_PATTERNS = [
-  // IBAN: TR + 24 rakam
-  /TR\d{24}/gi,
-  // US routing number (9 digits)
-  /\brouting[_\s-]?number[:=\s-]*\d{9}\b/gi,
-  /\baccount[_\s-]?number[:=\s-]*\d{4,17}\b/gi,
+export const PII_PATTERNS = [
+  // [TR] E-posta adresi. [EN] Email address.
+  /[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}/gi,
+  // [TR] Genel IBAN: 2 harf + 2 rakam + 11-30 alfanümerik (boşluk/tire gruplu yazımlar dahil). TR IBAN da buna girer.
+  // [EN] Generic IBAN: 2 letters + 2 digits + 11-30 alphanumerics (grouped with spaces/dashes too). Covers TR IBAN.
+  /\b[A-Z]{2}\d{2}[ -]?(?:[A-Z0-9][ -]?){11,30}\b/gi,
+  // [TR] US routing (9 hane) ve hesap numarası; JSON/tırnaklı biçimler dahil ("routing_number":"021000021").
+  // [EN] US routing (9 digits) and account numbers, including JSON/quoted forms.
+  /\b(?:routing|aba)(?:[_\s-]?(?:number|no))?["'\s:=#-]*\d{9}\b/gi,
+  /\b(?:account|acct)(?:[_\s-]?(?:number|no))?["'\s:=#-]*\d{4,17}\b/gi,
   // Kart numaraları (16 hane)
   /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g,
-  // Türk telefon numaraları
+  // [TR] Telefon: uluslararası (+ ile), Türk cep, ulusal 0'lı ve US (xxx) xxx-xxxx biçimleri.
+  // [EN] Phones: international (+ prefix), Turkish mobile, national 0-prefixed and US formats.
+  /\+\d[\d\s().-]{8,16}\d/g,
   /(\+90|0)?\s?[5][0-9]{2}[\s-]?[0-9]{3}[\s-]?[0-9]{2}[\s-]?[0-9]{2}/g,
+  /\b0\d{2,3}[\s.-]?\d{3}[\s.-]?\d{2}[\s.-]?\d{2}\b/g,
+  /\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g,
   // Ethereum adresleri (logda gerekli değilse)
   // /0x[a-fA-F0-9]{40}/g,
 ];
@@ -43,7 +51,7 @@ const PII_PATTERNS = [
  * @param {string} text - Temizlenecek metin
  * @returns {string} Scrub edilmiş metin
  */
-function scrubPII(text) {
+export function scrubPII(text) {
   if (!text || typeof text !== 'string') return text;
   let clean = text;
   for (const pattern of PII_PATTERNS) {
@@ -89,7 +97,7 @@ export default class ErrorBoundary extends React.Component {
           level:          'ERROR',
           message:        scrubbedMessage,
           stack:          scrubbedStack,
-          componentStack: componentStackLines.join('\n'), // plaintext PII yok
+          componentStack: scrubPII(componentStackLines.join('\n')), // plaintext PII yok
           url:            window.location.href,
           timestamp:      new Date().toISOString(),
         }),
